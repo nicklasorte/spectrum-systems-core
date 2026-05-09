@@ -43,6 +43,14 @@ def artifact_index_path(lake_root: Path | str) -> Path:
 MANIFEST_PREFIX = "manifest__"
 DEBUG_PREFIX = "debug__"
 
+FAILURES_SUBDIR = "failures"
+EVAL_CANDIDATES_SUBDIR = "eval_candidates"
+REVIEWED_EVALS_SUBDIR = "reviewed_evals"
+
+LEARNING_SUBDIRS: frozenset[str] = frozenset(
+    {FAILURES_SUBDIR, EVAL_CANDIDATES_SUBDIR, REVIEWED_EVALS_SUBDIR}
+)
+
 
 def manifest_filename(run_id: str) -> str:
     return f"{MANIFEST_PREFIX}{run_id}.json"
@@ -55,3 +63,15 @@ def debug_filename(run_id: str) -> str:
 def is_run_metadata_filename(name: str) -> bool:
     """True for manifest/debug records that are not product artifacts."""
     return name.startswith(MANIFEST_PREFIX) or name.startswith(DEBUG_PREFIX)
+
+
+def failures_dir(lake_root: Path | str, meeting_id: str) -> Path:
+    return processed_meeting_dir(lake_root, meeting_id) / FAILURES_SUBDIR
+
+
+def eval_candidates_dir(lake_root: Path | str, meeting_id: str) -> Path:
+    return processed_meeting_dir(lake_root, meeting_id) / EVAL_CANDIDATES_SUBDIR
+
+
+def reviewed_evals_dir(lake_root: Path | str, meeting_id: str) -> Path:
+    return processed_meeting_dir(lake_root, meeting_id) / REVIEWED_EVALS_SUBDIR
