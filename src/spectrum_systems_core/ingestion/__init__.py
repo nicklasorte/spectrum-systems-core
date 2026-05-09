@@ -10,6 +10,8 @@ from .grounding import GroundingHelper
 from .source_eval import SourceEval
 from .obsidian_projection import ObsidianProjection
 from .promoter import Promoter
+from .pdf_guard import PDFAdmissionGuard
+from .pdf_extractor import PDFExtractor
 
 __all__ = [
     "SourceLoader",
@@ -17,4 +19,6 @@ __all__ = [
     "SourceEval",
     "ObsidianProjection",
     "Promoter",
+    "PDFAdmissionGuard",
+    "PDFExtractor",
 ]

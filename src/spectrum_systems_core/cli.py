@@ -23,6 +23,7 @@ import yaml
 from .ingestion import (
     GroundingHelper,
     ObsidianProjection,
+    PDFExtractor,
     Promoter,
     SourceEval,
     SourceLoader,
@@ -186,6 +187,68 @@ def process_source(
     return 0
 
 
+def prepare_pdf(
+    *,
+    source_id: str,
+    repo_root: Path | None = None,
+    out_stream=None,
+) -> int:
+    """Phase B: validate + extract a book PDF into raw/books/<id>/.
+
+    Writes source.txt, pages.jsonl, extraction_report.json, and a Markdown
+    projection under processed/books/<id>/markdown/index.md. Does NOT call
+    process-source — Phase A and Phase B are deliberately separate steps.
+    """
+    out = out_stream if out_stream is not None else sys.stdout
+    repo_root_path = (repo_root or Path.cwd()).resolve()
+
+    if not source_id:
+        print("error: must provide --source-id", file=out)
+        return 1
+
+    extractor_result = PDFExtractor().extract(source_id, str(repo_root_path))
+    if extractor_result["status"] != "success":
+        print(f"error: {extractor_result['reason']}", file=out)
+        return 1
+
+    extraction_report = extractor_result["extraction_report"]
+
+    metadata_path = (
+        repo_root_path / "raw" / "books" / source_id / "metadata.json"
+    )
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"error: failed to read metadata.json: {exc}", file=out)
+        return 1
+
+    projection_path = ObsidianProjection().write_book_extraction_index(
+        source_id, metadata, extraction_report, str(repo_root_path)
+    )
+
+    print(f"✓ source_id: {source_id}", file=out)
+    print(f"✓ pages extracted: {extraction_report['page_count']}", file=out)
+    print(f"✓ characters: {extraction_report['total_char_count']}", file=out)
+    print(
+        f"✓ extracted_text_hash: {extraction_report['extracted_text_hash']}",
+        file=out,
+    )
+    print(
+        "✓ pdfminer.six version: "
+        f"{extraction_report['extraction_library_version']}",
+        file=out,
+    )
+    print(f"✓ projection: {projection_path}", file=out)
+    print("", file=out)
+    print("Next step:", file=out)
+    print(
+        "  python -m spectrum_systems_core.cli process-source "
+        f"--source-id {source_id}",
+        file=out,
+    )
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m spectrum_systems_core.cli",
@@ -217,6 +280,25 @@ def _build_parser() -> argparse.ArgumentParser:
             "Requires --vault."
         ),
     )
+
+    pp = sub.add_parser(
+        "prepare-pdf",
+        help="Phase B: extract text from a book PDF (run before process-source).",
+        description=(
+            "Phase B PDF preparation. Validates raw/books/<source_id>/ and "
+            "extracts source.pdf into source.txt + pages.jsonl + "
+            "extraction_report.json. Writes a view-only Markdown projection "
+            "under processed/books/<source_id>/markdown/index.md. "
+            "This command does NOT call process-source — Phase A and Phase "
+            "B are deliberately separate steps. After prepare-pdf succeeds, "
+            "run process-source with the same --source-id."
+        ),
+    )
+    pp.add_argument(
+        "--source-id",
+        required=True,
+        help="The book source_id (must match raw/books/<source_id>/ directory).",
+    )
     return parser
 
 
@@ -229,6 +311,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             vault=args.vault,
             note=args.note,
         )
+    if args.command == "prepare-pdf":
+        return prepare_pdf(source_id=args.source_id)
     parser.error(f"unknown command: {args.command}")
     return 2
 

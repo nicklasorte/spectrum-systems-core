@@ -30,7 +30,7 @@
       "type": "array",
       "items": { "type": "string" }
     },
-    "raw_format": { "enum": ["txt", "md"] },
+    "raw_format": { "enum": ["txt", "md", "pdf"] },
     "private_use_only": { "type": "boolean" }
   },
   "allOf": [

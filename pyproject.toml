@@ -13,6 +13,7 @@ authors = [{ name = "Spectrum Systems Core" }]
 dependencies = [
     "jsonschema>=4.0",
     "PyYAML>=6.0",
+    "pdfminer.six>=20231228",
 ]
 
 [project.optional-dependencies]

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/pdf_page.schema.json",
+  "title": "pdf_page",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "page_number",
+    "source_id",
+    "text",
+    "text_hash",
+    "char_count",
+    "char_start_advisory",
+    "char_end_advisory",
+    "extraction_library",
+    "extraction_library_version"
+  ],
+  "properties": {
+    "page_number": { "type": "integer", "minimum": 1 },
+    "source_id": { "type": "string", "minLength": 1 },
+    "text": { "type": "string" },
+    "text_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "char_count": { "type": "integer", "minimum": 0 },
+    "char_start_advisory": { "type": "integer", "minimum": 0 },
+    "char_end_advisory": { "type": "integer", "minimum": 0 },
+    "extraction_library": { "type": "string", "minLength": 1 },
+    "extraction_library_version": { "type": "string", "minLength": 1 }
+  }
+}
