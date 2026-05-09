@@ -1,0 +1,73 @@
+[
+  {
+    "id": "8b80fdcb-daf0-4a20-b90e-a3784fadd275",
+    "name": "EVAL-FMT-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "formatted_paper_artifact.schema_validates",
+    "target_artifact_type": "formatted_paper_artifact",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "66319409-11d1-41e7-a19c-194e59e3b274",
+    "name": "EVAL-FMT-002",
+    "eval_type": "referential_integrity",
+    "metric_name": "formatted_paper_artifact.all_citations_resolve",
+    "target_artifact_type": "formatted_paper_artifact",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic",
+    "resolver": "DataLake.exists"
+  },
+  {
+    "id": "1c6f2219-9f84-4e03-926a-bbe623111adf",
+    "name": "EVAL-FMT-003",
+    "eval_type": "count_match",
+    "metric_name": "formatted_paper_artifact.references_match_unique_citations",
+    "target_artifact_type": "formatted_paper_artifact",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "0df31f75-1012-47f2-bbc7-e447ab839b50",
+    "name": "EVAL-FMT-004",
+    "eval_type": "status_check",
+    "metric_name": "formatted_paper_artifact.status_ready_for_certification",
+    "target_artifact_type": "formatted_paper_artifact",
+    "required": true,
+    "pass_condition": "equals:ready_for_certification",
+    "runner": "deterministic"
+  },
+  {
+    "id": "59ecf9cc-64b4-42bb-8a13-f404606e916e",
+    "name": "EVAL-FMT-005",
+    "eval_type": "field_length",
+    "metric_name": "formatted_paper_artifact.sections_have_content",
+    "target_artifact_type": "formatted_paper_artifact",
+    "required": true,
+    "pass_condition": "min_body_length:20",
+    "runner": "deterministic"
+  },
+  {
+    "id": "4a2512f6-09f3-4d86-916e-1a4018ae95bb",
+    "name": "EVAL-FMT-006",
+    "eval_type": "determinism_guard",
+    "metric_name": "formatted_paper_artifact.deterministic_content_hash",
+    "target_artifact_type": "formatted_paper_artifact",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "ba8b7d6f-c239-4d02-8b31-0e6f617e0dd7",
+    "name": "EVAL-FMT-007",
+    "eval_type": "view_only_banner",
+    "metric_name": "formatted_paper_projection.view_only_banner_first_line",
+    "target_artifact_type": "formatted_paper_projection",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  }
+]

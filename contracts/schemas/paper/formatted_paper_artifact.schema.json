@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/paper/formatted_paper_artifact.schema.json",
+  "title": "formatted_paper_artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "paper_id",
+    "source_revised_draft_id",
+    "formatted_at",
+    "title",
+    "authors",
+    "abstract",
+    "sections",
+    "citations",
+    "tables",
+    "figures",
+    "references",
+    "publication_metadata",
+    "schema_version",
+    "content_hash",
+    "provenance"
+  ],
+  "properties": {
+    "paper_id": { "type": "string", "format": "uuid" },
+    "source_revised_draft_id": { "type": "string", "format": "uuid" },
+    "formatted_at": { "type": "string", "format": "date-time" },
+    "title": { "type": "string", "minLength": 1 },
+    "authors": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "abstract": { "type": "string", "minLength": 50 },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["section_id", "heading", "body", "order"],
+        "properties": {
+          "section_id": { "type": "string", "minLength": 1 },
+          "heading": { "type": "string", "minLength": 1 },
+          "body": { "type": "string" },
+          "order": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "citation_id",
+          "source_artifact_id",
+          "inline_marker",
+          "formatted_text"
+        ],
+        "properties": {
+          "citation_id": { "type": "string", "minLength": 1 },
+          "source_artifact_id": { "type": "string", "format": "uuid" },
+          "inline_marker": { "type": "string", "minLength": 1 },
+          "formatted_text": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "tables": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["table_id", "caption", "rows", "columns"],
+        "properties": {
+          "table_id": { "type": "string", "minLength": 1 },
+          "caption": { "type": "string" },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "columns": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "figures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["figure_id", "caption", "source_path"],
+        "properties": {
+          "figure_id": { "type": "string", "minLength": 1 },
+          "caption": { "type": "string" },
+          "source_path": {
+            "type": ["string", "null"]
+          }
+        }
+      }
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ref_id", "formatted_text", "source_artifact_id"],
+        "properties": {
+          "ref_id": { "type": "string", "minLength": 1 },
+          "formatted_text": { "type": "string", "minLength": 1 },
+          "source_artifact_id": { "type": "string", "format": "uuid" }
+        }
+      }
+    },
+    "publication_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "doi_placeholder",
+        "publication_date",
+        "status"
+      ],
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "doi_placeholder": { "type": "string" },
+        "publication_date": { "type": "string", "format": "date-time" },
+        "status": {
+          "enum": [
+            "draft",
+            "ready_for_certification",
+            "certified",
+            "released"
+          ]
+        }
+      }
+    },
+    "schema_version": { "const": "1.0.0" },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "produced_by",
+        "input_artifact_ids",
+        "formatter_version"
+      ],
+      "properties": {
+        "produced_by": { "const": "PublicationFormatter" },
+        "input_artifact_ids": {
+          "type": "array",
+          "items": { "type": "string", "format": "uuid" }
+        },
+        "formatter_version": { "const": "1.0.0" }
+      }
+    }
+  }
+}
