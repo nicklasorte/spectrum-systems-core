@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/obsidian_input_artifact.schema.json",
+  "title": "obsidian_input_artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_kind",
+    "artifact_id",
+    "created_at",
+    "schema_ref",
+    "trace",
+    "provenance",
+    "payload",
+    "ingestion_status"
+  ],
+  "properties": {
+    "artifact_kind": { "const": "obsidian_input_artifact" },
+    "artifact_id": { "type": "string", "format": "uuid" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "schema_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "digest"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "digest": { "type": "string" }
+      }
+    },
+    "trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "span_id", "parent_span_id"],
+      "properties": {
+        "trace_id": { "type": "string" },
+        "span_id": { "type": "string" },
+        "parent_span_id": { "type": ["string", "null"] }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "produced_by",
+        "input_artifact_ids",
+        "execution_fingerprint_hash"
+      ],
+      "properties": {
+        "produced_by": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["component", "version"],
+          "properties": {
+            "component": { "type": "string" },
+            "version": { "type": "string" }
+          }
+        },
+        "input_artifact_ids": {
+          "type": "array",
+          "minItems": 0,
+          "items": { "type": "string" }
+        },
+        "execution_fingerprint_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "vault_relative_path",
+        "content_hash",
+        "raw_content",
+        "frontmatter",
+        "byte_length",
+        "encoding"
+      ],
+      "properties": {
+        "vault_relative_path": { "type": "string", "minLength": 1 },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "raw_content": { "type": "string" },
+        "frontmatter": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "byte_length": { "type": "integer", "minimum": 0 },
+        "encoding": { "const": "utf-8" }
+      }
+    },
+    "ingestion_status": { "enum": ["success"] }
+  }
+}

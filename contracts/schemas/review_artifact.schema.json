@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/review_artifact.schema.json",
+  "title": "review_artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_kind",
+    "artifact_id",
+    "created_at",
+    "schema_ref",
+    "trace",
+    "provenance",
+    "payload"
+  ],
+  "properties": {
+    "artifact_kind": { "const": "review_artifact" },
+    "artifact_id": { "type": "string", "format": "uuid" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "schema_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "digest"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "digest": { "type": "string" }
+      }
+    },
+    "trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "span_id", "parent_span_id"],
+      "properties": {
+        "trace_id": { "type": "string" },
+        "span_id": { "type": "string" },
+        "parent_span_id": { "type": ["string", "null"] }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "produced_by",
+        "input_artifact_ids",
+        "execution_fingerprint_hash"
+      ],
+      "properties": {
+        "produced_by": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["component", "version"],
+          "properties": {
+            "component": { "type": "string" },
+            "version": { "type": "string" }
+          }
+        },
+        "input_artifact_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "execution_fingerprint_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "review_for_artifact_id",
+        "review_for_artifact_type",
+        "pipeline_run_id",
+        "reviewer_id",
+        "decision",
+        "reviewed_at",
+        "findings",
+        "reviewer_notes",
+        "source_note_path",
+        "source_note_content_hash"
+      ],
+      "properties": {
+        "review_for_artifact_id": { "type": "string", "format": "uuid" },
+        "review_for_artifact_type": { "type": "string", "minLength": 1 },
+        "pipeline_run_id": { "type": "string", "minLength": 1 },
+        "reviewer_id": { "type": "string", "minLength": 1 },
+        "decision": { "enum": ["approve", "revise", "block"] },
+        "reviewed_at": { "type": "string", "format": "date-time" },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "finding_id",
+              "severity",
+              "section",
+              "description",
+              "required_action"
+            ],
+            "properties": {
+              "finding_id": { "type": "string", "format": "uuid" },
+              "severity": { "enum": ["S0", "S1", "S2", "S3", "S4"] },
+              "section": { "type": "string", "minLength": 1 },
+              "description": { "type": "string", "minLength": 1 },
+              "required_action": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "reviewer_notes": { "type": "string" },
+        "source_note_path": { "type": "string", "minLength": 1 },
+        "source_note_content_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}
