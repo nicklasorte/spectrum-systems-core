@@ -60,6 +60,21 @@ from .paper import (
     RevisionGenerator,
     RevisionWorkflow,
 )
+from .synthesis import (
+    BundleAssembler,
+    BundleEval,
+    GroundingEval,
+    KeynoteEval,
+    KeynoteGenerator,
+    ReportGenerator,
+    RunManifest,
+    StoryMatrix,
+    SynthesisReviewGateway,
+    ThemeSynthesizer,
+    VALID_AUDIENCES,
+    VALID_PURPOSES,
+    total_cost_usd,
+)
 
 
 _SLUG_RE = re.compile(r"[^a-z0-9_-]+")
@@ -1100,6 +1115,163 @@ def _load_candidates(repo_root: Path, source_id: str) -> list[Dict[str, Any]]:
     return out
 
 
+def synthesize(
+    *,
+    audience: str,
+    purpose: str,
+    recipe_id: str | None = None,
+    vault: str | None = None,
+) -> int:
+    """Run a Phase F synthesis end-to-end.
+
+    Loop: structured retrieval -> context bundle -> Sonnet generation ->
+    grounding eval -> human review.
+    """
+    import uuid
+
+    if audience not in VALID_AUDIENCES:
+        print(f"error: invalid audience: {audience}", file=sys.stderr)
+        return 2
+    if purpose not in VALID_PURPOSES:
+        print(f"error: invalid purpose: {purpose}", file=sys.stderr)
+        return 2
+
+    repo_root = Path.cwd().resolve()
+    run_id = str(uuid.uuid4())
+
+    if recipe_id is None:
+        recipe_id = (
+            "default_keynote_v1" if purpose == "keynote" else "default_report_v1"
+        )
+
+    RunManifest().open_run(run_id, audience, purpose, str(repo_root))
+
+    bundle_result = BundleAssembler().assemble(
+        run_id, recipe_id, audience, purpose, str(repo_root)
+    )
+    if bundle_result["status"] != "success":
+        print(
+            f"error: bundle assembly {bundle_result['status']}: "
+            f"{bundle_result['reason']}",
+            file=sys.stderr,
+        )
+        return 3
+    bundle = bundle_result["bundle"]
+
+    bundle_eval = BundleEval().run(bundle)
+    if bundle_eval["decision"] != "allow":
+        print(
+            "error: bundle blocked: " + ", ".join(bundle_eval["reason_codes"]),
+            file=sys.stderr,
+        )
+        return 3
+
+    theme_result = ThemeSynthesizer().synthesize(run_id, str(repo_root))
+    themes_path = repo_root / "synthesis" / run_id / "themes.jsonl"
+    themes: list = []
+    if themes_path.is_file():
+        for line in themes_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            themes.append(json.loads(line))
+
+    matrix_result = StoryMatrix().build(run_id, audience, themes, str(repo_root))
+
+    report_summary: Dict[str, Any] = {}
+    keynote_summary: Dict[str, Any] = {}
+    report_draft: Dict[str, Any] = {}
+    keynote_scaffold: Dict[str, Any] = {}
+
+    if purpose in ("report", "both"):
+        report_result = ReportGenerator().generate(
+            run_id, bundle, audience, str(repo_root)
+        )
+        if report_result["status"] != "success":
+            print(
+                f"error: report generation: {report_result['reason']}",
+                file=sys.stderr,
+            )
+            return 4
+        report_path = repo_root / "synthesis" / run_id / "report_draft.json"
+        report_draft = json.loads(report_path.read_text(encoding="utf-8"))
+        grounding = GroundingEval().run(report_draft, str(repo_root))
+        report_draft = json.loads(report_path.read_text(encoding="utf-8"))
+        if grounding["decision"] == "block":
+            print(
+                "error: grounding eval blocked: "
+                + ", ".join(grounding["reason_codes"]),
+                file=sys.stderr,
+            )
+            return 4
+        report_summary = {
+            "section_count": len(report_draft.get("sections", [])),
+            "grounded_count": sum(
+                1 for s in report_draft.get("sections", []) if s.get("grounded")
+            ),
+        }
+
+    if purpose in ("keynote", "both"):
+        keynote_result = KeynoteGenerator().generate(
+            run_id, bundle, audience, matrix_result, str(repo_root)
+        )
+        if keynote_result["status"] != "success":
+            print(
+                f"error: keynote generation: {keynote_result['reason']}",
+                file=sys.stderr,
+            )
+            return 5
+        scaffold_path = repo_root / "synthesis" / run_id / "keynote_scaffold.json"
+        keynote_scaffold = json.loads(scaffold_path.read_text(encoding="utf-8"))
+        key_eval = KeynoteEval().run(
+            keynote_scaffold, bundle, repo_root=str(repo_root)
+        )
+        if key_eval["decision"] == "block":
+            print(
+                "error: keynote eval blocked: " + ", ".join(key_eval["reason_codes"]),
+                file=sys.stderr,
+            )
+            return 5
+        keynote_summary = {"beat_count": len(keynote_scaffold.get("arc", []))}
+
+    close_result = RunManifest().close_run(run_id, str(repo_root))
+    cost_total = total_cost_usd(run_id, str(repo_root))
+
+    review_form_path = ""
+    if vault:
+        review_form_path = SynthesisReviewGateway().emit_review_form(
+            run_id=run_id,
+            audience=audience,
+            purpose=purpose,
+            report_draft=report_draft or None,
+            keynote_scaffold=keynote_scaffold or None,
+            cost_total=cost_total,
+            vault_root=vault,
+            repo_root=str(repo_root),
+        )
+
+    print(f"✓ run_id: {run_id}")
+    print(
+        f"✓ bundle: {len(bundle.get('items', []))} items, "
+        f"~{bundle.get('total_token_estimate', 0)} tokens"
+    )
+    print(f"✓ themes: {theme_result.get('theme_count', 0)}")
+    print(f"✓ stories in matrix: {matrix_result.get('matrix_entries', 0)}")
+    if report_summary:
+        print(
+            f"✓ report sections: {report_summary['section_count']} "
+            f"({report_summary['grounded_count']} grounded)"
+        )
+    if keynote_summary:
+        print(f"✓ keynote arc: {keynote_summary['beat_count']} beats")
+    print(f"✓ estimated cost: ${cost_total:.4f}")
+    if review_form_path:
+        print(f"✓ review form: {review_form_path}")
+    print("")
+    print(f"Next: review synthesis/{run_id}/ and submit review form.")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m spectrum_systems_core.cli",
@@ -1299,6 +1471,45 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["effective", "ineffective", "partial", "unknown"],
     )
     to.add_argument("--secondary-source-id")
+
+    sy = sub.add_parser(
+        "synthesize",
+        help="Phase F: assemble a context bundle and synthesize report+keynote.",
+        description=(
+            "Phase F synthesis run. Single compound entry point. Loop: "
+            "structured retrieval -> context bundle -> Sonnet generation -> "
+            "grounding eval -> human review. Writes synthesis/<run_id>/ with "
+            "context_bundle.json, themes.jsonl, story_matrix.json, "
+            "report_draft.json, keynote_scaffold.json, cost.jsonl, "
+            "run_manifest.json, and view-only Markdown projections."
+        ),
+    )
+    sy.add_argument(
+        "--audience",
+        required=True,
+        choices=list(VALID_AUDIENCES),
+        help="Fixed audience enum (FINDING-F-003).",
+    )
+    sy.add_argument(
+        "--purpose",
+        required=True,
+        choices=list(VALID_PURPOSES),
+        help="report | keynote | both",
+    )
+    sy.add_argument(
+        "--recipe-id",
+        help=(
+            "Retrieval recipe id (default: default_report_v1 for report, "
+            "default_keynote_v1 for keynote)."
+        ),
+    )
+    sy.add_argument(
+        "--vault",
+        help=(
+            "Path to Obsidian vault root. If provided, a review form is "
+            "written to vault/Reviews/Synthesis/Pending/."
+        ),
+    )
     return parser
 
 
@@ -1355,6 +1566,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             paper_source_id=args.paper_source_id,
             outcome=args.outcome,
             secondary_source_id=args.secondary_source_id,
+        )
+    if args.command == "synthesize":
+        return synthesize(
+            audience=args.audience,
+            purpose=args.purpose,
+            recipe_id=args.recipe_id,
+            vault=args.vault,
         )
     parser.error(f"unknown command: {args.command}")
     return 2

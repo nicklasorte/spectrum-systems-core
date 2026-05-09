@@ -1,0 +1,42 @@
+[
+  {
+    "id": "b06d433e-03b1-44aa-8ef1-54405ae4b791",
+    "name": "EVAL-GEN-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "report_draft.schema_valid",
+    "target_artifact_type": "report_draft",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "a665499c-0f93-40a5-aeef-9d9975fc4e84",
+    "name": "EVAL-GEN-002",
+    "eval_type": "citation_exists",
+    "metric_name": "report_draft.inline_citations_resolve",
+    "target_artifact_type": "report_draft",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "a88731c4-6610-4ec7-8190-91d6fbe1390b",
+    "name": "EVAL-GEN-003",
+    "eval_type": "extraction_temperature",
+    "metric_name": "report_draft.temperature_zero",
+    "target_artifact_type": "report_draft",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "7ae5c343-c55e-45b7-9d4e-a95ff152f04d",
+    "name": "EVAL-GEN-004",
+    "eval_type": "cost_within_budget",
+    "metric_name": "synthesis_run.estimated_cost_within_budget",
+    "target_artifact_type": "report_draft",
+    "required": false,
+    "pass_condition": "warn",
+    "runner": "deterministic"
+  }
+]

@@ -1086,6 +1086,256 @@ class ObsidianProjection:
         lines.append("")
         return "\n".join(lines)
 
+    # ------------------------------------------------------------------
+    # Phase F: synthesis projections (report.md, keynote.md, review_summary.md)
+    # ------------------------------------------------------------------
+
+    def write_report_projection(
+        self,
+        report_draft: Dict[str, Any],
+        repo_root: str | Path,
+    ) -> str:
+        """Write synthesis/<run_id>/markdown/report.md. VIEW ONLY."""
+        repo_root_path = Path(repo_root).resolve()
+        run_id = report_draft.get("run_id", "")
+        run_dir = repo_root_path / "synthesis" / run_id
+        markdown_dir = run_dir / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        target_path = markdown_dir / "report.md"
+        target_path.write_text(
+            self._render_report_projection(report_draft),
+            encoding="utf-8",
+        )
+        return str(target_path)
+
+    def _render_report_projection(
+        self,
+        report_draft: Dict[str, Any],
+    ) -> str:
+        generated_at = _now_iso()
+        sections = report_draft.get("sections", []) or []
+        grounded = sum(1 for s in sections if s.get("grounded"))
+        lines = [
+            "---",
+            f"draft_id: {report_draft.get('draft_id', '')}",
+            f"run_id: {report_draft.get('run_id', '')}",
+            f"bundle_id: {report_draft.get('bundle_id', '')}",
+            f"bundle_hash: {report_draft.get('bundle_hash', '')}",
+            f"audience: {report_draft.get('audience', '')}",
+            f"status: {report_draft.get('status', '')}",
+            f"section_count: {len(sections)}",
+            f"grounded_section_count: {grounded}",
+            f"generated_at: {generated_at}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            f"# {report_draft.get('title', 'Report')}",
+            "",
+            f"> Generated: {generated_at} | VIEW ONLY",
+            "> Regenerated on every run. Never authoritative. Do not edit.",
+            "",
+        ]
+        for section in sections:
+            lines.append(
+                f"## {section.get('section_title', '?')} "
+                f"(`{section.get('section_type', '?')}`)"
+            )
+            lines.append("")
+            lines.append(
+                f"_grounded_: **{bool(section.get('grounded'))}** | "
+                f"citations: {len(section.get('inline_citations', []))} | "
+                f"unverified: {len(section.get('unverified_citations', []))}"
+            )
+            lines.append("")
+            content = section.get("content") or "_(empty)_"
+            lines.append(content)
+            lines.append("")
+        return "\n".join(lines)
+
+    def write_keynote_projection(
+        self,
+        keynote_scaffold: Dict[str, Any],
+        repo_root: str | Path,
+    ) -> str:
+        """Write synthesis/<run_id>/markdown/keynote.md. VIEW ONLY."""
+        repo_root_path = Path(repo_root).resolve()
+        run_id = keynote_scaffold.get("run_id", "")
+        run_dir = repo_root_path / "synthesis" / run_id
+        markdown_dir = run_dir / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        target_path = markdown_dir / "keynote.md"
+        target_path.write_text(
+            self._render_keynote_projection(keynote_scaffold),
+            encoding="utf-8",
+        )
+        return str(target_path)
+
+    def _render_keynote_projection(
+        self,
+        keynote_scaffold: Dict[str, Any],
+    ) -> str:
+        generated_at = _now_iso()
+        arc = keynote_scaffold.get("arc", []) or []
+        opener = keynote_scaffold.get("opener", {}) or {}
+        lines = [
+            "---",
+            f"scaffold_id: {keynote_scaffold.get('scaffold_id', '')}",
+            f"run_id: {keynote_scaffold.get('run_id', '')}",
+            f"bundle_id: {keynote_scaffold.get('bundle_id', '')}",
+            f"bundle_hash: {keynote_scaffold.get('bundle_hash', '')}",
+            f"audience: {keynote_scaffold.get('audience', '')}",
+            f"status: {keynote_scaffold.get('status', '')}",
+            f"beat_count: {len(arc)}",
+            f"generated_at: {generated_at}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            f"# {keynote_scaffold.get('title', 'Keynote')}",
+            "",
+            f"> Generated: {generated_at} | VIEW ONLY",
+            "> Regenerated on every run. Never authoritative. Do not edit.",
+            "",
+            "## Opener",
+            "",
+            f"- **story_id:** `{opener.get('story_id', '')}`",
+            f"- **hook:** {opener.get('hook_text', '')}",
+            f"- **why this story:** {opener.get('why_this_story', '')}",
+            "",
+            "## Central Tension",
+            "",
+            keynote_scaffold.get("central_tension", "") or "_(empty)_",
+            "",
+            "## Arc",
+            "",
+        ]
+        for idx, beat in enumerate(arc, start=1):
+            lines.append(
+                f"### Beat {idx}: {beat.get('beat_type', '?')}"
+            )
+            lines.append("")
+            lines.append(beat.get("content", "") or "_(empty)_")
+            sid = beat.get("story_id")
+            if sid:
+                lines.append(f"- story_id: `{sid}`")
+            for cid in beat.get("claim_ids") or []:
+                lines.append(f"- claim_id: `{cid}`")
+            lines.append("")
+        lines.append("## Closing Call to Action")
+        lines.append("")
+        lines.append(
+            keynote_scaffold.get("closing_call_to_action", "") or "_(empty)_"
+        )
+        lines.append("")
+        return "\n".join(lines)
+
+    def write_review_summary_projection(
+        self,
+        run_id: str,
+        repo_root: str | Path,
+    ) -> str:
+        """Write synthesis/<run_id>/markdown/review_summary.md. VIEW ONLY."""
+        repo_root_path = Path(repo_root).resolve()
+        run_dir = repo_root_path / "synthesis" / run_id
+        markdown_dir = run_dir / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        target_path = markdown_dir / "review_summary.md"
+        target_path.write_text(
+            self._render_review_summary_projection(run_id, run_dir),
+            encoding="utf-8",
+        )
+        return str(target_path)
+
+    def _render_review_summary_projection(
+        self,
+        run_id: str,
+        run_dir: Path,
+    ) -> str:
+        generated_at = _now_iso()
+        manifest_path = run_dir / "run_manifest.json"
+        manifest: Dict[str, Any] = {}
+        if manifest_path.is_file():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                manifest = {}
+
+        cost_path = run_dir / "cost.jsonl"
+        cost_lines: List[Dict[str, Any]] = []
+        if cost_path.is_file():
+            try:
+                with cost_path.open("r", encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            cost_lines.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            continue
+            except OSError:
+                pass
+
+        lines = [
+            "---",
+            f"run_id: {run_id}",
+            f"audience: {manifest.get('audience', '')}",
+            f"purpose: {manifest.get('purpose', '')}",
+            f"generated_at: {generated_at}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            f"# Synthesis Run Review Summary — {run_id}",
+            "",
+            f"> Generated: {generated_at} | VIEW ONLY",
+            "> Regenerated on every run. Never authoritative. Do not edit.",
+            "",
+            "## Run Manifest",
+            "",
+            f"- audience: `{manifest.get('audience', '')}`",
+            f"- purpose: `{manifest.get('purpose', '')}`",
+            f"- started_at: `{manifest.get('started_at', '')}`",
+            f"- completed_at: `{manifest.get('completed_at', '')}`",
+            f"- source_ids: {len(manifest.get('source_ids_included', []))}",
+            f"- story_ids: {len(manifest.get('story_ids_included', []))}",
+            f"- claim_ids: {len(manifest.get('claim_ids_included', []))}",
+            f"- theme_ids: {len(manifest.get('theme_ids_included', []))}",
+            f"- total_input_tokens: {manifest.get('total_input_tokens', 0)}",
+            f"- total_output_tokens: {manifest.get('total_output_tokens', 0)}",
+            (
+                "- **total_estimated_cost_usd:** "
+                f"**${float(manifest.get('total_estimated_cost_usd', 0.0)):.4f}**"
+            ),
+            "",
+            "## Per-call cost breakdown",
+            "",
+        ]
+        if not cost_lines:
+            lines.append("_(no cost records)_")
+        else:
+            lines.append(
+                "| call_purpose | input_tokens | output_tokens | cost_usd | model |"
+            )
+            lines.append(
+                "| ------------ | ------------ | ------------- | -------- | ----- |"
+            )
+            for rec in cost_lines:
+                lines.append(
+                    f"| {rec.get('call_purpose', '?')} | "
+                    f"{rec.get('input_tokens', 0)} | "
+                    f"{rec.get('output_tokens', 0)} | "
+                    f"${float(rec.get('estimated_cost_usd', 0.0)):.6f} | "
+                    f"{rec.get('model', '?')} |"
+                )
+        lines.append("")
+        lines.append("## Files in this run directory")
+        lines.append("")
+        for child in sorted(run_dir.iterdir()):
+            if child.name == "markdown":
+                continue
+            lines.append(f"- `{child.name}`")
+        lines.append("")
+        return "\n".join(lines)
+
 
 def _load_jsonl(path: Path) -> List[Dict[str, Any]]:
     if not path.is_file():
