@@ -1,0 +1,52 @@
+[
+  {
+    "id": "9a1b2c3d-0001-4000-8000-000000000001",
+    "name": "EVAL-HARN-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "run_history_entry.schema_valid",
+    "target_artifact_type": "run_history_entry",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "9a1b2c3d-0001-4000-8000-000000000002",
+    "name": "EVAL-HARN-002",
+    "eval_type": "evidence_coverage",
+    "metric_name": "run_history_index.retention_applied",
+    "target_artifact_type": "run_history_entry",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "9a1b2c3d-0001-4000-8000-000000000003",
+    "name": "EVAL-HARN-003",
+    "eval_type": "policy_alignment",
+    "metric_name": "eval_case_candidate.requires_human_promotion_true",
+    "target_artifact_type": "eval_case_candidate",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "9a1b2c3d-0001-4000-8000-000000000004",
+    "name": "EVAL-HARN-004",
+    "eval_type": "policy_alignment",
+    "metric_name": "override_artifact.no_expired_active",
+    "target_artifact_type": "override_artifact",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "9a1b2c3d-0001-4000-8000-000000000005",
+    "name": "EVAL-HARN-005",
+    "eval_type": "schema_conformance",
+    "metric_name": "entropy_report.schema_valid",
+    "target_artifact_type": "entropy_report",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  }
+]

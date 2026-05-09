@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/harness/run_history_entry.schema.json",
+  "title": "run_history_entry",
+  "description": "Entry in harness/runs/index.json. One per recorded synthesis/extraction/revision run. The MAX_ACTIVE_RUN_HISTORY=1000 cap is enforced by RunHistoryStore at write time, not by the schema (CHECK-RT1-001).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "entry_id",
+    "run_id",
+    "run_type",
+    "source_ids",
+    "audience",
+    "purpose",
+    "started_at",
+    "completed_at",
+    "outcome",
+    "eval_pass_count",
+    "eval_fail_count",
+    "eval_warn_count",
+    "block_reason_codes",
+    "total_cost_usd",
+    "artifact_ids_produced",
+    "recorded_at"
+  ],
+  "properties": {
+    "entry_id": { "type": "string", "format": "uuid" },
+    "run_id": { "type": "string", "format": "uuid" },
+    "run_type": { "enum": ["synthesis", "extraction", "revision"] },
+    "source_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "audience": { "type": ["string", "null"] },
+    "purpose": { "type": ["string", "null"] },
+    "started_at": { "type": "string", "format": "date-time" },
+    "completed_at": {
+      "anyOf": [
+        { "type": "string", "format": "date-time" },
+        { "type": "null" }
+      ]
+    },
+    "outcome": { "enum": ["success", "partial", "failure", "blocked"] },
+    "eval_pass_count": { "type": "integer", "minimum": 0 },
+    "eval_fail_count": { "type": "integer", "minimum": 0 },
+    "eval_warn_count": { "type": "integer", "minimum": 0 },
+    "block_reason_codes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "total_cost_usd": { "type": "number", "minimum": 0.0 },
+    "artifact_ids_produced": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "recorded_at": { "type": "string", "format": "date-time" }
+  }
+}

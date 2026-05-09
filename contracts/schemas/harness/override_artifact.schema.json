@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/harness/override_artifact.schema.json",
+  "title": "override_artifact",
+  "description": "Recorded human override of an eval result or block. expires_at must be strictly after created_at (enforced by OverrideStore — schema cannot compare two date-time fields). 30-day expiry warning enforced by store (FINDING-G-006 / CHECK-RT1-004).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "override_id",
+    "decision_context",
+    "overridden_artifact_id",
+    "overridden_eval_or_block",
+    "rationale",
+    "overriding_human_id",
+    "created_at",
+    "expires_at",
+    "superseded_by",
+    "status"
+  ],
+  "properties": {
+    "override_id": { "type": "string", "format": "uuid" },
+    "decision_context": { "type": "string", "minLength": 10 },
+    "overridden_artifact_id": { "type": "string", "format": "uuid" },
+    "overridden_eval_or_block": { "type": "string", "minLength": 1 },
+    "rationale": { "type": "string", "minLength": 20 },
+    "overriding_human_id": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "superseded_by": {
+      "anyOf": [
+        { "type": "string", "format": "uuid" },
+        { "type": "null" }
+      ]
+    },
+    "status": { "enum": ["active", "expired", "superseded"] }
+  }
+}

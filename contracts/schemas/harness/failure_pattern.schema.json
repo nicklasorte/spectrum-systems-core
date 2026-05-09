@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/harness/failure_pattern.schema.json",
+  "title": "failure_pattern",
+  "description": "Cluster of similar failures. Clustering is reason_code first, then Jaccard word similarity (threshold 0.7) per FINDING-G-002. Single-occurrence failures are buffered, not promoted to patterns.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "pattern_id",
+    "reason_code",
+    "cluster_method",
+    "jaccard_threshold",
+    "member_run_ids",
+    "member_failure_details",
+    "first_seen_at",
+    "last_seen_at",
+    "occurrence_count",
+    "eval_candidate_id",
+    "created_at"
+  ],
+  "properties": {
+    "pattern_id": { "type": "string", "format": "uuid" },
+    "reason_code": { "type": "string", "minLength": 1 },
+    "cluster_method": { "const": "reason_code_then_jaccard" },
+    "jaccard_threshold": { "const": 0.7 },
+    "member_run_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 2
+    },
+    "member_failure_details": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "first_seen_at": { "type": "string", "format": "date-time" },
+    "last_seen_at": { "type": "string", "format": "date-time" },
+    "occurrence_count": { "type": "integer", "minimum": 2 },
+    "eval_candidate_id": {
+      "anyOf": [
+        { "type": "string", "format": "uuid" },
+        { "type": "null" }
+      ]
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

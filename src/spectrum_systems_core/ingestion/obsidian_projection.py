@@ -1336,6 +1336,366 @@ class ObsidianProjection:
         lines.append("")
         return "\n".join(lines)
 
+    # ----- Phase G harness projections (view only) -----
+
+    def write_run_history_projection(
+        self,
+        repo_root: str | Path,
+        vault_root: str | Path | None = None,
+    ) -> str:
+        """Write harness/markdown/run_history.md. VIEW ONLY (FINDING-G-001)."""
+        repo_root_path = Path(repo_root).resolve()
+        markdown_dir = repo_root_path / "harness" / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        target = markdown_dir / "run_history.md"
+        index_path = repo_root_path / "harness" / "runs" / "index.json"
+        index: Dict[str, Any] = {}
+        if index_path.is_file():
+            try:
+                index = json.loads(index_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                index = {}
+        runs = list(index.get("runs", []) or [])
+        runs.sort(
+            key=lambda e: e.get("recorded_at") or e.get("started_at") or "",
+            reverse=True,
+        )
+        runs = runs[:20]
+        generated_at = _now_iso()
+        lines = [
+            "---",
+            f"generated_at: {generated_at}",
+            f"total_runs: {len(index.get('runs', []) or [])}",
+            f"last_archived_at: {index.get('last_archived_at') or ''}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            "# Harness — Run History",
+            "",
+            f"> Generated: {generated_at} | VIEW ONLY",
+            "> Regenerated on every record-run. Never authoritative. Do not edit.",
+            "",
+            "| run_id | run_type | outcome | pass/fail/warn | cost_usd | completed_at |",
+            "| ------ | -------- | ------- | -------------- | -------- | ------------ |",
+        ]
+        for entry in runs:
+            run_id = str(entry.get("run_id", ""))[:12]
+            lines.append(
+                f"| `{run_id}` | {entry.get('run_type', '?')} | "
+                f"{entry.get('outcome', '?')} | "
+                f"{entry.get('eval_pass_count', 0)}/"
+                f"{entry.get('eval_fail_count', 0)}/"
+                f"{entry.get('eval_warn_count', 0)} | "
+                f"${float(entry.get('total_cost_usd', 0.0) or 0.0):.4f} | "
+                f"{entry.get('completed_at') or ''} |"
+            )
+        lines.append("")
+        target.write_text("\n".join(lines), encoding="utf-8")
+        if vault_root:
+            self._copy_harness_md_to_vault(target, vault_root, "run_history.md")
+        return str(target)
+
+    def write_eval_history_projection(
+        self,
+        repo_root: str | Path,
+        vault_root: str | Path | None = None,
+    ) -> str:
+        """Write harness/markdown/eval_history.md. VIEW ONLY."""
+        repo_root_path = Path(repo_root).resolve()
+        markdown_dir = repo_root_path / "harness" / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        target = markdown_dir / "eval_history.md"
+        evals_dir = repo_root_path / "harness" / "evals"
+        rows: List[Dict[str, Any]] = []
+        if evals_dir.is_dir():
+            from ..harness.eval_history import EvalScoreHistory
+
+            history = EvalScoreHistory()
+            for path in sorted(evals_dir.glob("*_history.jsonl")):
+                artifact_type = path.name[: -len("_history.jsonl")]
+                records = _load_jsonl(path)
+                eval_names = sorted(
+                    {r.get("eval_name", "") for r in records if r.get("eval_name")}
+                )
+                for name in eval_names:
+                    stats = history.get_pass_rate(
+                        name, artifact_type, str(repo_root_path), last_n_runs=20
+                    )
+                    rows.append(
+                        {
+                            "artifact_type": artifact_type,
+                            **stats,
+                        }
+                    )
+        generated_at = _now_iso()
+        lines = [
+            "---",
+            f"generated_at: {generated_at}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            "# Harness — Eval History",
+            "",
+            f"> Generated: {generated_at} | VIEW ONLY",
+            "> Regenerated on every record-run. Do not edit.",
+            "",
+            "| eval_name | artifact_type | pass_rate (last 20) | trend |",
+            "| --------- | ------------- | ------------------- | ----- |",
+        ]
+        for row in rows:
+            rate = row.get("pass_rate")
+            rate_str = "n/a" if rate is None else f"{rate * 100:.1f}%"
+            trend = "⚠ degrading" if rate is not None and rate < 0.8 else "ok"
+            lines.append(
+                f"| {row.get('eval_name', '?')} | "
+                f"{row.get('artifact_type', '?')} | "
+                f"{rate_str} ({row.get('total', 0)}) | {trend} |"
+            )
+        lines.append("")
+        target.write_text("\n".join(lines), encoding="utf-8")
+        if vault_root:
+            self._copy_harness_md_to_vault(target, vault_root, "eval_history.md")
+        return str(target)
+
+    def write_failure_patterns_projection(
+        self,
+        repo_root: str | Path,
+        vault_root: str | Path | None = None,
+    ) -> str:
+        """Write harness/markdown/failure_patterns.md. VIEW ONLY."""
+        repo_root_path = Path(repo_root).resolve()
+        markdown_dir = repo_root_path / "harness" / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        target = markdown_dir / "failure_patterns.md"
+        patterns = _load_jsonl(
+            repo_root_path / "harness" / "failures" / "patterns.jsonl"
+        )
+        patterns.sort(
+            key=lambda p: int(p.get("occurrence_count", 0)), reverse=True
+        )
+        generated_at = _now_iso()
+        lines = [
+            "---",
+            f"generated_at: {generated_at}",
+            f"total_patterns: {len(patterns)}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            "# Harness — Failure Patterns",
+            "",
+            f"> Generated: {generated_at} | VIEW ONLY",
+            "> Cluster method: reason_code, then Jaccard >= 0.7. Do not edit.",
+            "",
+            "| reason_code | occurrence_count | last_seen_at | eval_candidate? |",
+            "| ----------- | ---------------- | ------------ | --------------- |",
+        ]
+        for pattern in patterns:
+            cand = pattern.get("eval_candidate_id")
+            cand_str = "yes" if cand else "no"
+            lines.append(
+                f"| {pattern.get('reason_code', '?')} | "
+                f"{pattern.get('occurrence_count', 0)} | "
+                f"{pattern.get('last_seen_at', '')} | {cand_str} |"
+            )
+        lines.append("")
+        target.write_text("\n".join(lines), encoding="utf-8")
+        if vault_root:
+            self._copy_harness_md_to_vault(
+                target, vault_root, "failure_patterns.md"
+            )
+        return str(target)
+
+    def write_outcomes_projection(
+        self,
+        repo_root: str | Path,
+        vault_root: str | Path | None = None,
+    ) -> str:
+        """Write harness/markdown/outcomes.md. VIEW ONLY."""
+        repo_root_path = Path(repo_root).resolve()
+        markdown_dir = repo_root_path / "harness" / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        target = markdown_dir / "outcomes.md"
+        from ..harness.outcome_memory import OutcomeMemoryStore
+
+        store = OutcomeMemoryStore()
+        rev = store.get_effectiveness_rate("revision", str(repo_root_path))
+        mit = store.get_effectiveness_rate("mitigation", str(repo_root_path))
+        records = _load_jsonl(
+            repo_root_path / "harness" / "outcomes" / "memory.jsonl"
+        )
+        # Top 5 effective + top 5 ineffective by recency.
+        effective = [r for r in records if r.get("final_outcome") == "effective"][-5:]
+        ineffective = [
+            r for r in records if r.get("final_outcome") == "ineffective"
+        ][-5:]
+        generated_at = _now_iso()
+
+        def _fmt_rate(stats: Dict[str, Any]) -> str:
+            r = stats.get("effectiveness_rate")
+            if r is None:
+                return "n/a"
+            return f"{r * 100:.1f}% ({stats.get('effective', 0)}/{stats.get('total', 0)})"
+
+        lines = [
+            "---",
+            f"generated_at: {generated_at}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            "# Harness — Outcome Memory",
+            "",
+            f"> Generated: {generated_at} | VIEW ONLY. Do not edit.",
+            "",
+            "## Effectiveness Rates",
+            "",
+            f"- **revision:** {_fmt_rate(rev)}",
+            f"- **mitigation:** {_fmt_rate(mit)}",
+            "",
+            "## Recent Effective Actions",
+            "",
+        ]
+        if not effective:
+            lines.append("_(none)_")
+        else:
+            for r in effective:
+                lines.append(
+                    f"- `{r.get('outcome_type', '?')}` "
+                    f"{r.get('record_id', '')[:8]}: "
+                    f"{r.get('action_taken', '')[:120]}"
+                )
+        lines.extend(["", "## Recent Ineffective Actions", ""])
+        if not ineffective:
+            lines.append("_(none)_")
+        else:
+            for r in ineffective:
+                lines.append(
+                    f"- `{r.get('outcome_type', '?')}` "
+                    f"{r.get('record_id', '')[:8]}: "
+                    f"{r.get('action_taken', '')[:120]}"
+                )
+        lines.append("")
+        target.write_text("\n".join(lines), encoding="utf-8")
+        if vault_root:
+            self._copy_harness_md_to_vault(target, vault_root, "outcomes.md")
+        return str(target)
+
+    def write_overrides_projection(
+        self,
+        repo_root: str | Path,
+        vault_root: str | Path | None = None,
+    ) -> str:
+        """Write harness/markdown/overrides.md. VIEW ONLY (FINDING-G-006)."""
+        repo_root_path = Path(repo_root).resolve()
+        markdown_dir = repo_root_path / "harness" / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        target = markdown_dir / "overrides.md"
+        from ..harness.override_store import OverrideStore
+
+        actives = OverrideStore().get_active_overrides(str(repo_root_path))
+        generated_at = _now_iso()
+        now = datetime.datetime.now(datetime.timezone.utc)
+        lines = [
+            "---",
+            f"generated_at: {generated_at}",
+            f"active_overrides: {len(actives)}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            "# Harness — Active Overrides",
+            "",
+            f"> Generated: {generated_at} | VIEW ONLY. Do not edit.",
+            "",
+            "| override_id | context | expires_at | days_remaining | warning |",
+            "| ----------- | ------- | ---------- | -------------- | ------- |",
+        ]
+        for override in actives:
+            expires = override.get("expires_at", "")
+            warn = "⚠️ expiring soon" if override.get("_warning") else ""
+            try:
+                expires_dt = datetime.datetime.fromisoformat(
+                    str(expires).replace("Z", "+00:00")
+                )
+                if expires_dt.tzinfo is None:
+                    expires_dt = expires_dt.replace(tzinfo=datetime.timezone.utc)
+                days_remaining = max(0, (expires_dt - now).days)
+            except (TypeError, ValueError):
+                days_remaining = "?"
+            ctx = (override.get("decision_context", "") or "")[:60]
+            lines.append(
+                f"| `{str(override.get('override_id', ''))[:12]}` | {ctx} | "
+                f"{expires} | {days_remaining} | {warn} |"
+            )
+        lines.append("")
+        target.write_text("\n".join(lines), encoding="utf-8")
+        if vault_root:
+            self._copy_harness_md_to_vault(target, vault_root, "overrides.md")
+        return str(target)
+
+    def write_entropy_projection(
+        self,
+        report: Dict[str, Any],
+        repo_root: str | Path,
+        vault_root: str | Path | None = None,
+    ) -> str:
+        """Write harness/markdown/entropy.md. VIEW ONLY (FINDING-G-007)."""
+        repo_root_path = Path(repo_root).resolve()
+        markdown_dir = repo_root_path / "harness" / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        target = markdown_dir / "entropy.md"
+        flagged = list(report.get("flagged_items", []) or [])
+        severity_order = {"high": 0, "medium": 1, "low": 2}
+        flagged.sort(key=lambda f: severity_order.get(f.get("severity", "low"), 3))
+        generated_at = report.get("generated_at") or _now_iso()
+        lines = [
+            "---",
+            f"report_id: {report.get('report_id', '')}",
+            f"generated_at: {generated_at}",
+            f"total_flagged: {report.get('total_flagged', 0)}",
+            f"total_scanned: {report.get('total_scanned', 0)}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            "# Harness — Entropy & Complexity Audit",
+            "",
+            f"> Generated: {generated_at} | VIEW ONLY. Do not edit.",
+            "> The auditor never auto-deletes or auto-merges; act on each item via CLI.",
+            "",
+        ]
+        for severity in ("high", "medium", "low"):
+            buckets = [f for f in flagged if f.get("severity") == severity]
+            if not buckets:
+                continue
+            lines.append(f"## {severity.upper()} severity")
+            lines.append("")
+            for item in buckets:
+                lines.append(
+                    f"- **{item.get('item_type', '?')}** "
+                    f"`{item.get('item_id', '')}`: {item.get('reason', '')}"
+                )
+                lines.append(
+                    f"    - action: {item.get('recommended_action', '')}"
+                )
+            lines.append("")
+        if not flagged:
+            lines.append("_(no entropy flagged in this audit)_")
+            lines.append("")
+        target.write_text("\n".join(lines), encoding="utf-8")
+        if vault_root:
+            self._copy_harness_md_to_vault(target, vault_root, "entropy.md")
+        return str(target)
+
+    def _copy_harness_md_to_vault(
+        self,
+        source: Path,
+        vault_root: str | Path,
+        filename: str,
+    ) -> Path:
+        target_dir = Path(vault_root).resolve() / "Harness"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / filename
+        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        return target
+
 
 def _load_jsonl(path: Path) -> List[Dict[str, Any]]:
     if not path.is_file():
