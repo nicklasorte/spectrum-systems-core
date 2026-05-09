@@ -144,27 +144,79 @@ inside manifests and debug reports.
 
 ### 6.3 Markdown views
 
-Path: `processed/meetings/<meeting_id>/markdown/<name>.md`
+Layout (binding for SSC-025 onward):
+
+```
+processed/meetings/<meeting_id>/markdown/index.md
+processed/meetings/<meeting_id>/markdown/artifacts/<artifact_type>.md
+processed/meetings/<meeting_id>/markdown/agencies/<agency_slug>.md
+processed/meetings/<meeting_id>/markdown/topics/<topic_slug>.md
+processed/meetings/<meeting_id>/markdown/runs/<run_id>.md
+```
 
 Markdown views are a separate, read-only-from-core's-perspective rendering
-of promoted artifacts. They exist so a human can read the outputs in any
-plain-text editor or in Obsidian.
+of promoted artifacts and the harness-memory projections that explain
+each run. They exist so a human can read the outputs in any plain-text
+editor or in Obsidian.
 
 Rules:
 
-- Markdown is regenerated from canonical JSON. It is never the canonical
-  form of an artifact.
+- Markdown is regenerated from canonical JSON / JSONL. It is never the
+  canonical form of an artifact.
 - Core never reads Markdown as input to the loop. The CLI may rewrite
   any file under `markdown/` on every run.
-- Markdown is not a product artifact and is not subject to the promotion
-  gate. The promotion gate applies to JSON artifacts only.
-- Filenames: `<artifact_type>.md` for one promoted artifact's view, and
-  `index.md` for the per-meeting index. The `__` separator is reserved
-  for the JSON artifact filename convention and must not appear here.
-- Each Markdown file begins with YAML frontmatter containing
-  `artifact_type`, `meeting_id`, `date`, `title`, `status`, `trace_id`.
+- Markdown is not a product artifact and is not subject to the
+  promotion gate. The promotion gate applies to JSON artifacts only.
+- Markdown files MUST NOT appear in `indexes/meetings/artifact_index.jsonl`.
+- Filenames: `<artifact_type>.md` for one promoted artifact's view
+  (under `artifacts/`), `index.md` for the per-meeting index,
+  `<slug>.md` under `agencies/` and `topics/`, and `<run_id>.md` under
+  `runs/`. The `__` separator is reserved for the JSON artifact
+  filename convention and must not appear in Markdown filenames.
+- Determinism: identical inputs MUST produce byte-identical Markdown
+  files. Two `process-meeting` runs over the same raw inputs leave the
+  whole `markdown/` subtree byte-identical.
+
+Each Markdown file begins with YAML frontmatter. The required keys
+depend on the file's `artifact_type` token:
+
+| File | `artifact_type` | Required frontmatter keys |
+| --- | --- | --- |
+| `index.md` | `meeting_index` | `meeting_id`, `date`, `title`, `status: view`, `trace_id`, `canonical: false` |
+| `artifacts/<type>.md` | `meeting_minutes` / `decision_brief` / `agency_question_summary` / `meeting_action_log` | `artifact_id`, `meeting_id`, `date`, `title`, `status: promoted`, `trace_id`, `content_hash`, `canonical_json_path` |
+| `agencies/<slug>.md` | `agency_note` | `meeting_id`, `date`, `title`, `agency`, `status: view`, `canonical: false` |
+| `topics/<slug>.md` | `topic_note` | `meeting_id`, `date`, `title`, `topic`, `status: view`, `canonical: false` |
+| `runs/<run_id>.md` | `run_note` | `meeting_id`, `run_id`, `workflow_name`, `decision`, `promoted`, `status: view`, `canonical: false` |
+
+The tokens `meeting_index`, `agency_note`, `topic_note`, and
+`run_note` are part of this contract and may not be renamed without
+amending it. They are not artifact types of the core envelope; they
+are the Markdown layer's view shapes.
 
 Markdown is a view of the source of truth, not the source of truth.
+
+### 6.4 Per-meeting harness memory
+
+Three meeting-level JSONL files complement the canonical artifacts and
+the Markdown views:
+
+```
+processed/meetings/<meeting_id>/run_history.jsonl
+processed/meetings/<meeting_id>/experience_history.jsonl
+processed/meetings/<meeting_id>/eval_history.jsonl
+```
+
+Rules:
+
+- Harness-memory JSONL files are NOT product artifacts. They never
+  appear in `indexes/meetings/artifact_index.jsonl`.
+- Each file is one JSON object per line, deterministic field order
+  via `serialize.canonical_json`, sorted on a stable key.
+- Two runs over the same raw inputs produce byte-identical files.
+- Records carry pointers (`manifest_path`, `debug_path`) but no
+  authority. The control function and promotion gate are unaffected.
+- A future learning-loop step (constitution §10) MUST read JSON, not
+  these JSONL files, when making governed decisions.
 
 ---
 

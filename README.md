@@ -162,22 +162,37 @@ spectrum-core process-meeting --lake /path/to/lake --meeting-id m-2026-05-09-q3
   decision_brief__<slug>.json
   manifest__<run_id>.json                 # one per workflow run
   debug__<run_id>.json
+  run_history.jsonl                       # harness memory: where to look
+  experience_history.jsonl                # harness memory: what happened
+  eval_history.jsonl                      # harness memory: per-eval rows
   markdown/                               # human-readable views
-    meeting_minutes.md
-    meeting_action_log.md
-    agency_question_summary.md
-    decision_brief.md
     index.md
+    artifacts/
+      meeting_minutes.md
+      meeting_action_log.md
+      agency_question_summary.md
+      decision_brief.md
+    agencies/
+      <agency-slug>.md                    # when metadata.json has agency
+    topics/
+      <topic-slug>.md                     # when metadata.json has topic
+    runs/
+      <run_id>.md                         # one per workflow run
 ```
 
 JSON is the canonical, governed artifact. Markdown is a regenerated
 view: it never feeds back into the loop, and editing it does not change
 any artifact. The Markdown contract is in §6.3 of
-`docs/contracts/data_lake_contract.md`.
+`docs/contracts/data_lake_contract.md`. The JSONL harness-memory files
+are pinned in §6.4 of the same contract — they are filesystem
+artifacts only, never authoritative.
 
 A workflow whose extractor finds nothing in the transcript is blocked
 fail-closed. The index Markdown lists blocked workflows alongside the
-reason code and a one-line plain-English explanation.
+reason code and a one-line plain-English explanation. The
+`debug__<run_id>.json` file additionally lists `inspect_next` hints
+and a `failure_path` block so a new engineer can locate the cause
+without reading core source.
 
 ## Deferred
 
@@ -192,3 +207,10 @@ scope. They are reserved by the constitution but not built here.
 pip install -e ".[dev]"
 pytest
 ```
+
+## Obsidian / Claude / MCP
+
+The vault and integration boundaries are documented in
+`docs/integrations/claude_mcp_obsidian.md`. Practical Dataview
+queries live in `docs/integrations/obsidian_dataview_examples.md`.
+JSON stays canonical regardless of which tool is reading the lake.
