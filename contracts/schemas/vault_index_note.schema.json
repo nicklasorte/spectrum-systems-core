@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/vault_index_note.schema.json",
+  "title": "vault_index_note",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_id",
+    "artifact_type",
+    "schema_version",
+    "promoted_at",
+    "pipeline_run_id",
+    "data_lake_ref",
+    "source_note",
+    "eval_gate_status",
+    "reviewer_id",
+    "review_decision",
+    "vault_note_status"
+  ],
+  "properties": {
+    "artifact_id": { "type": "string", "format": "uuid" },
+    "artifact_type": { "type": "string", "minLength": 1 },
+    "schema_version": { "type": "string", "minLength": 1 },
+    "promoted_at": { "type": "string", "format": "date-time" },
+    "pipeline_run_id": { "type": "string", "minLength": 1 },
+    "data_lake_ref": { "type": "string", "pattern": "^sdl://" },
+    "source_note": { "type": "string", "minLength": 1 },
+    "eval_gate_status": { "const": "passed" },
+    "reviewer_id": { "type": "string", "minLength": 1 },
+    "review_decision": { "enum": ["approve", "revise", "block"] },
+    "vault_note_status": { "const": "index" }
+  }
+}

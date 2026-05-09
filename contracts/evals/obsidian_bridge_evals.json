@@ -1,0 +1,77 @@
+[
+  {
+    "id": "abfb73f5-735d-4cfa-b195-b38b158b3870",
+    "name": "EVAL-BRIDGE-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "obsidian_input_artifact.schema_valid",
+    "target_artifact_type": "obsidian_input_artifact",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "7b46cf1c-5c4f-4bae-81a7-8a0889e4df34",
+    "name": "EVAL-BRIDGE-002",
+    "eval_type": "evidence_coverage",
+    "metric_name": "obsidian_input_artifact.trigger_tag_present",
+    "target_artifact_type": "obsidian_input_artifact",
+    "required": true,
+    "pass_condition": "min_score_1.0",
+    "runner": "deterministic"
+  },
+  {
+    "id": "777722fb-bcf1-493c-9561-dca3f21755ec",
+    "name": "EVAL-BRIDGE-003",
+    "eval_type": "replay_consistency",
+    "metric_name": "obsidian_input_artifact.content_hash_stable",
+    "target_artifact_type": "obsidian_input_artifact",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "fa3204a4-cc8a-4f72-bcb2-1e30425697c6",
+    "name": "EVAL-BRIDGE-004",
+    "eval_type": "schema_conformance",
+    "metric_name": "review_artifact.schema_valid",
+    "target_artifact_type": "review_artifact",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "80c4a224-0fa3-4049-ab8f-aaeb73d19ac5",
+    "name": "EVAL-BRIDGE-005",
+    "eval_type": "policy_alignment",
+    "metric_name": "review_artifact.severity_decision_consistent",
+    "target_artifact_type": "review_artifact",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic",
+    "policy_rules": [
+      "S3 or S4 finding present AND decision != block → FAIL",
+      "decision == revise AND findings empty → FAIL",
+      "decision == block AND no S3/S4 findings → FAIL"
+    ]
+  },
+  {
+    "id": "2f6a2125-fe53-4474-99a1-829a4f9bf1e5",
+    "name": "EVAL-BRIDGE-006",
+    "eval_type": "schema_conformance",
+    "metric_name": "vault_index_note.frontmatter_valid",
+    "target_artifact_type": "vault_index_note",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "db4c404d-cfed-40c4-a058-87c93b1b1474",
+    "name": "EVAL-BRIDGE-007",
+    "eval_type": "evidence_coverage",
+    "metric_name": "vault_index_note.data_lake_ref_resolvable",
+    "target_artifact_type": "vault_index_note",
+    "required": true,
+    "pass_condition": "min_score_1.0",
+    "runner": "deterministic"
+  }
+]
