@@ -254,6 +254,326 @@ class ObsidianProjection:
         return "\n".join(frontmatter + body)
 
 
+    # ---------- Phase C projections (story / knowledge / connections) ----------
+
+    def write_story_projection(
+        self,
+        source_id: str,
+        candidates: List[Dict[str, Any]],
+        repo_root: str | Path,
+        label: str = "",
+    ) -> str:
+        """Write processed/<family>/<source_id>/markdown/stories.md.
+
+        VIEW ONLY. Regenerated each call. ``label`` records which step in
+        the Phase C pipeline produced this projection (FINDING-C-004 fix).
+        Blocked candidates are listed by ID + reason but their excerpts
+        are NOT shown — they may be hallucinated (RT2-004).
+        """
+        repo_root_path = Path(repo_root).resolve()
+        processed_dir = _resolve_phase_c_dir(repo_root_path, source_id)
+        markdown_dir = processed_dir / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+
+        target_path = markdown_dir / "stories.md"
+        target_path.write_text(
+            self._render_story_projection(source_id, candidates, label),
+            encoding="utf-8",
+        )
+        return str(target_path)
+
+    def _render_story_projection(
+        self,
+        source_id: str,
+        candidates: List[Dict[str, Any]],
+        label: str,
+    ) -> str:
+        generated_at = _now_iso()
+        non_blocked = [c for c in candidates if c.get("status") != "blocked"]
+        blocked = [c for c in candidates if c.get("status") == "blocked"]
+        grounded = [c for c in non_blocked if c.get("grounded")]
+
+        lines = [
+            "---",
+            f"source_id: {source_id}",
+            f"generated_at: {generated_at}",
+            f"step_label: {label}",
+            f"total_candidates: {len(candidates)}",
+            f"grounded_candidates: {len(grounded)}",
+            f"blocked_candidates: {len(blocked)}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            f"# Story Bank — {source_id}",
+            "",
+            f"> Step: {label} | Generated: {generated_at} | VIEW ONLY",
+            "> This projection is regenerated on every run. Do not edit.",
+            "",
+            f"## Candidates ({len(non_blocked)})",
+            "",
+        ]
+        if not non_blocked:
+            lines.append("_No non-blocked candidates._")
+            lines.append("")
+        else:
+            for candidate in non_blocked:
+                tier = candidate.get("tier_guess", "")
+                verdict = candidate.get("storyworthy_verdict", "")
+                story_id = candidate.get("story_id", "")
+                theme = candidate.get("possible_theme", "")
+                page_numbers = candidate.get("page_numbers", [])
+                status = candidate.get("status", "")
+                grounded_flag = candidate.get("grounded", False)
+                excerpt = candidate.get("source_excerpt", "")
+                summary = candidate.get("story_summary", "")
+                why = candidate.get("why_it_might_work", "")
+                risks = ", ".join(candidate.get("risk_flags", []) or []) or "—"
+                lines.extend(
+                    [
+                        f"### {story_id} | {tier} | {verdict}",
+                        f"**Theme:** {theme}",
+                        f"**Pages:** {page_numbers}",
+                        f"**Status:** {status}",
+                        f"**Grounded:** {grounded_flag}",
+                        "",
+                        "> " + excerpt.replace("\n", "\n> "),
+                        "",
+                        f"**Summary:** {summary}",
+                        f"**Why it works:** {why}",
+                        f"**Risks:** {risks}",
+                        "",
+                        "---",
+                        "",
+                    ]
+                )
+
+        lines.extend(
+            [
+                f"## Blocked ({len(blocked)})",
+                "",
+                "> Blocked candidate excerpts are not shown — they may be ungrounded.",
+                "",
+            ]
+        )
+        if not blocked:
+            lines.append("_No blocked candidates._")
+            lines.append("")
+        else:
+            for candidate in blocked:
+                story_id = candidate.get("story_id", "")
+                reason = candidate.get("block_reason", "unknown")
+                lines.append(f"- `{story_id}` — {reason}")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    def write_knowledge_projection(
+        self,
+        source_id: str,
+        repo_root: str | Path,
+        label: str = "",
+    ) -> str:
+        """Write processed/<family>/<source_id>/markdown/knowledge.md.
+
+        VIEW ONLY. Regenerated each call. Lists concept, theme, and analogy
+        candidates produced by KnowledgeSynthesizer.
+        """
+        repo_root_path = Path(repo_root).resolve()
+        processed_dir = _resolve_phase_c_dir(repo_root_path, source_id)
+        markdown_dir = processed_dir / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+
+        knowledge_dir = processed_dir / "knowledge"
+        concepts = _load_jsonl(knowledge_dir / "concepts.jsonl")
+        themes = _load_jsonl(knowledge_dir / "themes.jsonl")
+        analogies = _load_jsonl(knowledge_dir / "analogies.jsonl")
+
+        target_path = markdown_dir / "knowledge.md"
+        target_path.write_text(
+            self._render_knowledge_projection(
+                source_id, label, concepts, themes, analogies
+            ),
+            encoding="utf-8",
+        )
+        return str(target_path)
+
+    def _render_knowledge_projection(
+        self,
+        source_id: str,
+        label: str,
+        concepts: List[Dict[str, Any]],
+        themes: List[Dict[str, Any]],
+        analogies: List[Dict[str, Any]],
+    ) -> str:
+        generated_at = _now_iso()
+        lines = [
+            "---",
+            f"source_id: {source_id}",
+            f"generated_at: {generated_at}",
+            f"step_label: {label}",
+            f"concept_count: {len(concepts)}",
+            f"theme_count: {len(themes)}",
+            f"analogy_count: {len(analogies)}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            f"# Knowledge Index — {source_id}",
+            "",
+            f"> Step: {label} | Generated: {generated_at} | VIEW ONLY",
+            "> Do not edit. Knowledge artifacts are candidate status until a "
+            "human runs `promote-knowledge`.",
+            "",
+        ]
+
+        def _block(title: str, items: List[Dict[str, Any]], name_key: str,
+                   id_key: str) -> List[str]:
+            out = [f"## {title} ({len(items)})", ""]
+            if not items:
+                out.append(f"_No {title.lower()} candidates._")
+                out.append("")
+                return out
+            for item in items:
+                name = item.get(name_key, "")
+                aid = item.get(id_key, "")
+                status = item.get("status", "")
+                story_ids = item.get("source_story_ids", []) or []
+                excerpts = item.get("supporting_excerpts", []) or []
+                first_excerpt = ""
+                if excerpts:
+                    first_excerpt = (
+                        excerpts[0].get("excerpt", "")
+                        if isinstance(excerpts[0], dict)
+                        else ""
+                    )
+                out.extend(
+                    [
+                        f"### {name}",
+                        f"- ID: `{aid}`",
+                        f"- Status: `{status}`",
+                        f"- Source stories: {len(story_ids)}",
+                    ]
+                )
+                if first_excerpt:
+                    out.append("> " + first_excerpt.replace("\n", "\n> "))
+                out.append("")
+            return out
+
+        lines.extend(_block("Concepts", concepts, "concept_name", "concept_id"))
+        lines.extend(_block("Themes", themes, "theme_name", "theme_id"))
+        lines.extend(_block("Analogies", analogies, "analogy_name", "analogy_id"))
+        return "\n".join(lines)
+
+    def write_connection_projection(
+        self,
+        source_id: str,
+        repo_root: str | Path,
+        label: str = "",
+    ) -> str:
+        """Write processed/<family>/<source_id>/markdown/connections.md.
+
+        VIEW ONLY. Regenerated each call.
+        """
+        repo_root_path = Path(repo_root).resolve()
+        processed_dir = _resolve_phase_c_dir(repo_root_path, source_id)
+        markdown_dir = processed_dir / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+
+        knowledge_dir = processed_dir / "knowledge"
+        connections = _load_jsonl(knowledge_dir / "connections.jsonl")
+
+        target_path = markdown_dir / "connections.md"
+        target_path.write_text(
+            self._render_connection_projection(source_id, label, connections),
+            encoding="utf-8",
+        )
+        return str(target_path)
+
+    def _render_connection_projection(
+        self,
+        source_id: str,
+        label: str,
+        connections: List[Dict[str, Any]],
+    ) -> str:
+        generated_at = _now_iso()
+        lines = [
+            "---",
+            f"source_id: {source_id}",
+            f"generated_at: {generated_at}",
+            f"step_label: {label}",
+            f"connection_count: {len(connections)}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            f"# Connection Map — {source_id}",
+            "",
+            f"> Step: {label} | Generated: {generated_at} | VIEW ONLY",
+            "> Do not edit. Regenerated on every run.",
+            "",
+        ]
+        if not connections:
+            lines.append("_No connections found yet._")
+            lines.append("")
+            return "\n".join(lines)
+
+        for conn in connections:
+            cid = conn.get("connection_id", "")
+            sa = conn.get("source_id_a", "")
+            sb = conn.get("source_id_b", "")
+            ctype = conn.get("connection_type", "")
+            strength = conn.get("strength", "")
+            matching = conn.get("matching_fields", []) or []
+            lines.extend(
+                [
+                    f"### {sa} ↔ {sb}",
+                    f"- ID: `{cid}`",
+                    f"- Type: `{ctype}`",
+                    f"- Strength: `{strength}`",
+                    "- Matching fields:",
+                ]
+            )
+            for field in matching:
+                name = field.get("field_name", "")
+                va = field.get("value_a", "")
+                vb = field.get("value_b", "")
+                lines.append(f"  - **{name}**: `{va}` ↔ `{vb}`")
+            lines.append("")
+
+        return "\n".join(lines)
+
+
+def _load_jsonl(path: Path) -> List[Dict[str, Any]]:
+    if not path.is_file():
+        return []
+    out: List[Dict[str, Any]] = []
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return []
+    return out
+
+
+def _resolve_phase_c_dir(repo_root: Path, source_id: str) -> Path:
+    """Locate processed/<family>/<source_id>/ for Phase C projections."""
+    from ..ingestion.source_loader import SOURCE_FAMILIES
+
+    for family in SOURCE_FAMILIES:
+        candidate = repo_root / "processed" / family / source_id
+        if candidate.is_dir():
+            return candidate
+    # Fall back to notes/ if the directory hasn't been created yet (test setups).
+    fallback = repo_root / "processed" / "notes" / source_id
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
 def _load_pages(pages_path: Path) -> List[Dict[str, Any]]:
     if not pages_path.is_file():
         return []

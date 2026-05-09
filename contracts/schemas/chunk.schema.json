@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/chunk.schema.json",
+  "title": "chunk",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "chunk_id",
+    "source_id",
+    "source_family",
+    "chunk_index",
+    "unit_ids",
+    "text",
+    "text_hash",
+    "unit_count",
+    "overlap_unit_id",
+    "page_numbers",
+    "char_count"
+  ],
+  "properties": {
+    "chunk_id": { "type": "string", "format": "uuid" },
+    "source_id": { "type": "string", "minLength": 1 },
+    "source_family": { "type": "string", "minLength": 1 },
+    "chunk_index": { "type": "integer", "minimum": 0 },
+    "unit_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "text": { "type": "string", "minLength": 1 },
+    "text_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "unit_count": { "type": "integer", "minimum": 1 },
+    "overlap_unit_id": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "page_numbers": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 1 }
+    },
+    "char_count": { "type": "integer", "minimum": 0 }
+  }
+}

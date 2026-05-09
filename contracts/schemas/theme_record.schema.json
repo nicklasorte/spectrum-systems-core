@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/theme_record.schema.json",
+  "title": "theme_record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "theme_id",
+    "theme_name",
+    "description",
+    "source_story_ids",
+    "source_ids",
+    "supporting_excerpts",
+    "status",
+    "created_at"
+  ],
+  "properties": {
+    "theme_id": { "type": "string", "format": "uuid" },
+    "theme_name": { "type": "string", "minLength": 3 },
+    "description": { "type": "string", "minLength": 20 },
+    "source_story_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "source_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "supporting_excerpts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["unit_id", "excerpt", "source_id"],
+        "properties": {
+          "unit_id": { "type": "string" },
+          "excerpt": { "type": "string", "minLength": 1 },
+          "source_id": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "status": { "enum": ["candidate", "promoted"] },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

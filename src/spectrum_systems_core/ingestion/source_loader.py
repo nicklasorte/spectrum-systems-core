@@ -159,6 +159,13 @@ class SourceLoader:
         # 8. Split into text units
         text_units = self._split_text_units(raw_content, source_family, source_id)
 
+        # 8b. CHECK-COMPAT-001: enrich book units with page_number from
+        # raw/books/<source_id>/pages.jsonl (Phase B authoritative locator).
+        if source_family == "books":
+            text_units = self._enrich_book_units_with_pages(
+                text_units, source_id, repo_root_path
+            )
+
         # 9. execution_fingerprint_hash
         fingerprint_seed = (
             source_id + raw_hash + f"{_COMPONENT_NAME}:{_COMPONENT_VERSION}"
@@ -387,6 +394,60 @@ class SourceLoader:
             )
             units.append(unit)
             ordinal += 1
+        return units
+
+    def _enrich_book_units_with_pages(
+        self,
+        units: List[Dict[str, Any]],
+        source_id: str,
+        repo_root: Path,
+    ) -> List[Dict[str, Any]]:
+        """Set locator.page_number on each book text unit using pages.jsonl.
+
+        For each unit, find which page contains its char_start by comparing
+        against char_start_advisory / char_end_advisory ranges from pages.jsonl.
+        If pages.jsonl is absent or no page matches, page_number is set to None.
+        Never raises. Fails gracefully.
+        """
+        pages_path = repo_root / "raw" / "books" / source_id / "pages.jsonl"
+        page_ranges: List[Tuple[int, int, int]] = []
+        if pages_path.is_file():
+            try:
+                with pages_path.open("r", encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        page_number = entry.get("page_number")
+                        char_start = entry.get("char_start_advisory")
+                        char_end = entry.get("char_end_advisory")
+                        if (
+                            isinstance(page_number, int)
+                            and isinstance(char_start, int)
+                            and isinstance(char_end, int)
+                        ):
+                            page_ranges.append((char_start, char_end, page_number))
+            except OSError:
+                page_ranges = []
+
+        for unit in units:
+            locator = unit.setdefault("locator", {})
+            char_start = locator.get("char_start", 0)
+            matched: int | None = None
+            for start, end, page_number in page_ranges:
+                if start <= char_start < end:
+                    matched = page_number
+                    break
+            if matched is None and page_ranges:
+                # Fallback: snap to last page if past end (extraction separators
+                # mean cumulative char counts may not match raw_content exactly).
+                if char_start >= page_ranges[-1][1]:
+                    matched = page_ranges[-1][2]
+            locator["page_number"] = matched
         return units
 
     def _build_unit(

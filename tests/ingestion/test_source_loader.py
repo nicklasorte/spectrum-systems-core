@@ -178,6 +178,99 @@ class SourceLoaderTests(unittest.TestCase):
         texts_b = [(u["ordinal"], u["text"]) for u in result_b["text_units"]]
         self.assertEqual(texts_a, texts_b)
 
+    def test_book_text_units_have_page_number(self) -> None:
+        """CHECK-COMPAT-001: Phase A enriches book units with page_number.
+
+        After Phase B writes pages.jsonl, Phase A's SourceLoader must set
+        locator.page_number on every text unit so Phase C's chunker can
+        produce non-empty page_numbers arrays for book sources.
+        """
+        sid = "books-20260509-paginated"
+        target = self.repo_root / "raw" / "books" / sid
+        target.mkdir(parents=True, exist_ok=True)
+
+        # Two pages: page 1 contains paragraph 1, page 2 contains paragraphs 2-3.
+        page1_text = "Chapter one opens with a quiet observation."
+        page2_text = (
+            "The second paragraph picks up the thread.\n"
+            "\n"
+            "Finally, a closing thought."
+        )
+        full_text = page1_text + "\n\n" + page2_text + "\n"
+        (target / "source.txt").write_text(full_text, encoding="utf-8")
+
+        page_entries = [
+            {
+                "page_number": 1,
+                "source_id": sid,
+                "text": page1_text,
+                "text_hash": "sha256:" + ("a" * 64),
+                "char_count": len(page1_text),
+                "char_start_advisory": 0,
+                "char_end_advisory": len(page1_text),
+                "extraction_library": "pdfminer.six",
+                "extraction_library_version": "test",
+            },
+            {
+                "page_number": 2,
+                "source_id": sid,
+                "text": page2_text,
+                "text_hash": "sha256:" + ("b" * 64),
+                "char_count": len(page2_text),
+                "char_start_advisory": len(page1_text) + 2,
+                "char_end_advisory": len(page1_text) + 2 + len(page2_text),
+                "extraction_library": "pdfminer.six",
+                "extraction_library_version": "test",
+            },
+        ]
+        with (target / "pages.jsonl").open("w", encoding="utf-8") as fh:
+            for entry in page_entries:
+                fh.write(json.dumps(entry, sort_keys=True) + "\n")
+
+        metadata = {
+            "source_id": sid,
+            "source_family": "books",
+            "source_type": "book_chapter",
+            "title": "Paginated",
+            "description": "",
+            "date": "2026-05-09",
+            "author": "",
+            "tags": [],
+            "raw_format": "txt",
+            "private_use_only": True,
+        }
+        (target / "metadata.json").write_text(
+            json.dumps(metadata, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+        result = SourceLoader().load(sid, str(self.repo_root))
+        self.assertEqual(result["status"], "success", msg=result.get("reason"))
+
+        units_path = (
+            self.repo_root / "processed" / "books" / sid / "text_units.jsonl"
+        )
+        units = []
+        with units_path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                units.append(json.loads(line))
+
+        self.assertGreater(len(units), 0)
+        for unit in units:
+            page_number = unit["locator"].get("page_number", "missing")
+            self.assertIn(
+                page_number, [1, 2, None],
+                msg=f"unit {unit['ordinal']} has page_number={page_number!r}",
+            )
+        non_none = [
+            u for u in units if u["locator"].get("page_number") is not None
+        ]
+        self.assertGreater(
+            len(non_none), 0, msg="at least one unit must have a page_number"
+        )
+
     def test_source_md_file_supported(self) -> None:
         sid = "notes-20260509-md-only"
         target = self.repo_root / "raw" / "notes" / sid

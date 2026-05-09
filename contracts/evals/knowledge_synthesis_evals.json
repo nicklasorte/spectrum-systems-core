@@ -1,0 +1,42 @@
+[
+  {
+    "id": "d5e10036-e821-5e7d-871c-0043f5e1ebfa",
+    "name": "EVAL-KNOW-001",
+    "eval_type": "evidence_coverage",
+    "metric_name": "concept_record.has_supporting_excerpts",
+    "target_artifact_type": "concept_record",
+    "required": true,
+    "pass_condition": "min_count_1",
+    "runner": "deterministic"
+  },
+  {
+    "id": "a1482162-59d4-5734-a82a-39ca637f398b",
+    "name": "EVAL-KNOW-002",
+    "eval_type": "field_minimum_count",
+    "metric_name": "connection_record.matching_fields_min_2",
+    "target_artifact_type": "connection_record",
+    "required": true,
+    "pass_condition": "min_count_2",
+    "runner": "deterministic"
+  },
+  {
+    "id": "6b9d1f33-77fd-5092-b7b5-3b4b9fa794bc",
+    "name": "EVAL-KNOW-003",
+    "eval_type": "field_minimum_length",
+    "metric_name": "connection_record.matching_field_values_non_trivial",
+    "target_artifact_type": "connection_record",
+    "required": true,
+    "pass_condition": "min_length_10",
+    "runner": "deterministic"
+  },
+  {
+    "id": "4a86f484-2427-50fb-8c62-4fd2bc4babf1",
+    "name": "EVAL-KNOW-004",
+    "eval_type": "promotion_gate",
+    "metric_name": "synthesis_artifact.status_is_candidate",
+    "target_artifact_type": "knowledge_artifact",
+    "required": true,
+    "pass_condition": "equals_candidate",
+    "runner": "deterministic"
+  }
+]

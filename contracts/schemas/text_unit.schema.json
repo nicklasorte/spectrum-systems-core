@@ -33,7 +33,11 @@
         "line_start": { "type": "integer", "minimum": 0 },
         "line_end": { "type": "integer", "minimum": 0 },
         "char_start": { "type": "integer", "minimum": 0 },
-        "char_end": { "type": "integer", "minimum": 0 }
+        "char_end": { "type": "integer", "minimum": 0 },
+        "page_number": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        }
       }
     }
   }

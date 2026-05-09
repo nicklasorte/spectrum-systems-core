@@ -1,0 +1,82 @@
+[
+  {
+    "id": "c6d1042d-4d46-52ed-866f-782b78d8c940",
+    "name": "EVAL-STORY-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "story_candidate.schema_valid",
+    "target_artifact_type": "story_candidate",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "618357d7-f2b2-5725-9ce6-1bc4b6c7ccee",
+    "name": "EVAL-STORY-002",
+    "eval_type": "grounding_check",
+    "metric_name": "story_candidate.excerpt_grounded_in_text_units",
+    "target_artifact_type": "story_candidate",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "1829b54f-7b88-5fa0-8ad3-728fcb4afa99",
+    "name": "EVAL-STORY-003",
+    "eval_type": "enum_membership",
+    "metric_name": "story_candidate.tier_guess_valid",
+    "target_artifact_type": "story_candidate",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "c6f68693-fec1-5958-abc8-b1056e63ec33",
+    "name": "EVAL-STORY-004",
+    "eval_type": "field_minimum_length",
+    "metric_name": "story_candidate.source_excerpt_min_length",
+    "target_artifact_type": "story_candidate",
+    "required": true,
+    "pass_condition": "min_length_10",
+    "runner": "deterministic"
+  },
+  {
+    "id": "163c38ef-b66e-5a13-9e07-66457a72d81a",
+    "name": "EVAL-STORY-005",
+    "eval_type": "evidence_coverage",
+    "metric_name": "story_candidate.unit_ids_non_empty",
+    "target_artifact_type": "story_candidate",
+    "required": true,
+    "pass_condition": "min_count_1",
+    "runner": "deterministic"
+  },
+  {
+    "id": "e64e1d97-4eb7-5a16-95ab-7b7d16408790",
+    "name": "EVAL-STORY-006",
+    "eval_type": "score_present",
+    "metric_name": "story_candidate.storyworthy_score_total_in_range",
+    "target_artifact_type": "story_candidate",
+    "required": true,
+    "pass_condition": "range_0_15",
+    "runner": "deterministic"
+  },
+  {
+    "id": "641c64be-1cf1-5df8-9fdb-4406eb4d5334",
+    "name": "EVAL-STORY-007",
+    "eval_type": "determinism_guard",
+    "metric_name": "story_candidate.extraction_temperature_zero",
+    "target_artifact_type": "story_candidate",
+    "required": true,
+    "pass_condition": "equals_0",
+    "runner": "deterministic"
+  },
+  {
+    "id": "5a934dfe-26e4-540b-9483-dca4490725e8",
+    "name": "EVAL-STORY-008",
+    "eval_type": "replay_consistency",
+    "metric_name": "chunk.text_hash_recomputable",
+    "target_artifact_type": "chunk",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  }
+]
