@@ -1,0 +1,62 @@
+[
+  {
+    "id": "a1b2c3d4-0001-4000-8000-000000000001",
+    "name": "EVAL-GOV-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "governance_audit_record.schema_valid",
+    "target_artifact_type": "governance_audit_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "a1b2c3d4-0001-4000-8000-000000000002",
+    "name": "EVAL-GOV-002",
+    "eval_type": "policy_alignment",
+    "metric_name": "dashboard_within_line_cap",
+    "target_artifact_type": "governance_dashboard",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "a1b2c3d4-0001-4000-8000-000000000003",
+    "name": "EVAL-GOV-003",
+    "eval_type": "policy_alignment",
+    "metric_name": "no_autonomous_deletion_in_scanners",
+    "target_artifact_type": "governance_audit_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "a1b2c3d4-0001-4000-8000-000000000004",
+    "name": "EVAL-GOV-004",
+    "eval_type": "policy_alignment",
+    "metric_name": "markdown_authority_clean",
+    "target_artifact_type": "governance_audit_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "a1b2c3d4-0001-4000-8000-000000000005",
+    "name": "EVAL-GOV-005",
+    "eval_type": "policy_alignment",
+    "metric_name": "hidden_logic_no_high_severity",
+    "target_artifact_type": "governance_audit_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "a1b2c3d4-0001-4000-8000-000000000006",
+    "name": "EVAL-GOV-006",
+    "eval_type": "schema_conformance",
+    "metric_name": "candidate_recommended_action_in_enum",
+    "target_artifact_type": "compression_candidate",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  }
+]

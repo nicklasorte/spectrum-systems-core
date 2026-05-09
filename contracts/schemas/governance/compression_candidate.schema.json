@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/governance/compression_candidate.schema.json",
+  "title": "compression_candidate",
+  "description": "Recommendation-only candidate produced by CompressionScanner. NEVER triggers autonomous deletion (FINDING-I-006). Humans actuate via apply-compression CLI.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "candidate_id",
+    "candidate_type",
+    "candidate_path",
+    "candidate_name",
+    "reason",
+    "evidence",
+    "recommended_action",
+    "status",
+    "proposed_at",
+    "applied_at",
+    "applied_by",
+    "applied_action_detail"
+  ],
+  "properties": {
+    "candidate_id": { "type": "string", "format": "uuid" },
+    "candidate_type": {
+      "enum": ["class", "schema", "eval_case", "cli_command", "directory", "file"]
+    },
+    "candidate_path": { "type": "string", "minLength": 1 },
+    "candidate_name": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string", "minLength": 10 },
+    "evidence": { "type": "object" },
+    "recommended_action": {
+      "enum": ["remove", "merge", "deprecate", "investigate"]
+    },
+    "status": { "enum": ["proposed", "applied", "rejected", "deferred"] },
+    "proposed_at": { "type": "string", "format": "date-time" },
+    "applied_at": {
+      "anyOf": [
+        { "type": "string", "format": "date-time" },
+        { "type": "null" }
+      ]
+    },
+    "applied_by": {
+      "anyOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "null" }
+      ]
+    },
+    "applied_action_detail": { "type": "string" }
+  }
+}

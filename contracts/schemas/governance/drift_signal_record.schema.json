@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/governance/drift_signal_record.schema.json",
+  "title": "drift_signal_record",
+  "description": "One drift signal emitted by a Phase I scanner. baseline_value and current_value may be null when no historical data exists.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "signal_id",
+    "signal_type",
+    "signal_strength",
+    "affected_artifact_types",
+    "detail",
+    "baseline_value",
+    "current_value",
+    "delta_pct",
+    "detected_at"
+  ],
+  "properties": {
+    "signal_id": { "type": "string", "format": "uuid" },
+    "signal_type": {
+      "enum": [
+        "decision_divergence",
+        "exception_accumulation",
+        "schema_drift",
+        "eval_pass_rate_drop",
+        "cost_increase",
+        "latency_increase"
+      ]
+    },
+    "signal_strength": { "enum": ["weak", "moderate", "strong"] },
+    "affected_artifact_types": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "detail": { "type": "string", "minLength": 10 },
+    "baseline_value": {
+      "anyOf": [
+        { "type": "number" },
+        { "type": "null" }
+      ]
+    },
+    "current_value": {
+      "anyOf": [
+        { "type": "number" },
+        { "type": "null" }
+      ]
+    },
+    "delta_pct": {
+      "anyOf": [
+        { "type": "number" },
+        { "type": "null" }
+      ]
+    },
+    "detected_at": { "type": "string", "format": "date-time" }
+  }
+}

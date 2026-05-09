@@ -1,0 +1,10 @@
+{
+  "audit_id": null,
+  "cost_trend": {},
+  "decision_consistency": {},
+  "drift_signals": [],
+  "eval_health": {},
+  "generated_at": null,
+  "schema_health": {},
+  "top_candidates": []
+}

@@ -86,6 +86,8 @@ from .harness import (
     WorkflowComparator,
 )
 from .ai import AIAdapter, PromptRegistry
+from .governance import GovernanceDashboard
+from .governance.apply_compression import apply_compression as _apply_compression
 
 
 _AI_ADVISORY_BANNER = "⚠️ AI output is advisory only. Review before acting."
@@ -1923,6 +1925,122 @@ def ask_memory(
     return 0
 
 
+def audit_governance(
+    *,
+    vault: str | None = None,
+    repo_root: Path | None = None,
+    out_stream=None,
+) -> int:
+    """Phase I: run all scanners and write the 30-line dashboard projection.
+
+    Governance audit failures NEVER block the synthesis pipeline (FINDING-I:
+    same rule as Phase G harness audits).
+    """
+    out = out_stream if out_stream is not None else sys.stdout
+    repo_root_path = (repo_root or Path.cwd()).resolve()
+    try:
+        result = GovernanceDashboard().generate(repo_root_path, vault)
+    except Exception as exc:  # pragma: no cover — fail-closed
+        print(f"warning: governance audit failed: {exc}", file=out)
+        return 0
+
+    if result.get("status") != "success":
+        print(
+            f"warning: governance audit returned: {result.get('reason', '')}",
+            file=out,
+        )
+        return 0
+
+    audit_id = result.get("audit_id", "")
+    total_flagged = int(result.get("total_flagged") or 0)
+    high_count = int(result.get("high_count") or 0)
+    print(f"✓ audit_id: {audit_id}", file=out)
+    print(f"✓ total_flagged: {total_flagged}  high: {high_count}", file=out)
+
+    dashboard = result.get("dashboard") or {}
+    cost_status = (dashboard.get("cost_trend") or {}).get(
+        "status", "insufficient_history"
+    )
+    print(f"✓ cost trend: {cost_status}", file=out)
+
+    drift_signals = dashboard.get("drift_signals") or []
+    if drift_signals:
+        print("Top drift signals:", file=out)
+        for sig in drift_signals[:3]:
+            print(
+                f"  - [{sig.get('signal_strength', '?')}] "
+                f"{sig.get('signal_type', '?')}: "
+                f"{(sig.get('detail') or '')[:120]}",
+                file=out,
+            )
+
+    print(
+        "See governance/markdown/dashboard.md for the 30-line summary.",
+        file=out,
+    )
+    if high_count > 0:
+        return 1
+    return 0
+
+
+def apply_compression_cli(
+    *,
+    candidate_id: str,
+    action: str,
+    human_id: str,
+    note: str = "",
+    yes: bool = False,
+    repo_root: Path | None = None,
+    out_stream=None,
+    in_stream=None,
+) -> int:
+    """Phase I: human path to act on a compression_candidate.
+
+    NEVER auto-deletes (FINDING-I-006). For action='remove' / 'merge' the
+    CLI prints exact commands the human must run manually.
+    """
+    out = out_stream if out_stream is not None else sys.stdout
+    inp = in_stream if in_stream is not None else sys.stdin
+    repo_root_path = (repo_root or Path.cwd()).resolve()
+
+    print(
+        f"This will {action} candidate {candidate_id}. "
+        "The system will NOT auto-delete or auto-merge. "
+        "Confirm? [yes/no]",
+        file=out,
+    )
+    if not yes:
+        try:
+            answer = (inp.readline() or "").strip().lower()
+        except Exception:
+            answer = ""
+        if answer != "yes":
+            print("aborted: confirmation not received.", file=out)
+            return 1
+
+    out_lines: list[str] = []
+    result = _apply_compression(
+        candidate_id=candidate_id,
+        action=action,
+        human_id=human_id,
+        note=note,
+        repo_root=repo_root_path,
+        out_lines=out_lines,
+    )
+    for line in out_lines:
+        print(line, file=out)
+    if result.get("status") != "success":
+        print(f"error: {result.get('reason', '')}", file=out)
+        return 1
+    print(f"✓ candidate_id: {result.get('candidate_id', '')}", file=out)
+    print(f"✓ action: {result.get('action', '')}", file=out)
+    print(
+        f"✓ applied_action_detail: {result.get('applied_action_detail', '')}",
+        file=out,
+    )
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m spectrum_systems_core.cli",
@@ -2285,6 +2403,43 @@ def _build_parser() -> argparse.ArgumentParser:
             "advisory projection is written to vault/AI/<query_id>.md."
         ),
     )
+
+    ag = sub.add_parser(
+        "audit-governance",
+        help="Phase I: run all governance scanners + dashboard.",
+        description=(
+            "Phase I governance audit. Runs every scanner (schema drift, "
+            "eval coverage, decision divergence, exception accumulation, "
+            "hidden logic creep, markdown authority, cost trend, "
+            "compression scan) and writes governance/markdown/dashboard.md "
+            "(capped at 30 lines). NEVER blocks synthesis."
+        ),
+    )
+    ag.add_argument("--vault", help="Path to Obsidian vault root.")
+
+    ac = sub.add_parser(
+        "apply-compression",
+        help="Phase I: human-gated compression candidate action.",
+        description=(
+            "Phase I human path to act on a compression_candidate. NEVER "
+            "auto-deletes. For 'remove' or 'merge' the CLI prints the "
+            "exact commands a human must run manually (FINDING-I-006)."
+        ),
+    )
+    ac.add_argument("--candidate-id", required=True)
+    ac.add_argument(
+        "--action",
+        required=True,
+        choices=["remove", "merge", "deprecate", "investigate"],
+    )
+    ac.add_argument("--human-id", required=True)
+    ac.add_argument("--note", default="")
+    ac.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip the interactive confirmation prompt.",
+    )
+
     return parser
 
 
@@ -2388,6 +2543,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             task=args.task,
             question=args.question,
             vault=args.vault,
+        )
+    if args.command == "audit-governance":
+        return audit_governance(vault=args.vault)
+    if args.command == "apply-compression":
+        return apply_compression_cli(
+            candidate_id=args.candidate_id,
+            action=args.action,
+            human_id=args.human_id,
+            note=args.note,
+            yes=args.yes,
         )
     parser.error(f"unknown command: {args.command}")
     return 2

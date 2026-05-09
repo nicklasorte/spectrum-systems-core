@@ -5,3 +5,11 @@ __pycache__/
 build/
 dist/
 .venv/
+
+# Phase I governance: audit-time outputs are runtime data, not source.
+governance/audits/*.json
+!governance/audits/index.json
+governance/candidates/*.json
+governance/candidates/archive/*.json
+governance/drift/*.jsonl
+governance/markdown/*.md
