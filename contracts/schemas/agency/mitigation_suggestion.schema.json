@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/agency/mitigation_suggestion.schema.json",
+  "title": "mitigation_suggestion",
+  "description": "Suggested mitigation for one prediction. evidence_search_terms must be non-empty when mitigation_type=\"add_evidence\". The schema lists evidence_search_terms as required but cannot enforce non-empty conditional on type — EVAL-MIT-002 enforces it (FINDING-E-006).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mitigation_id",
+    "prediction_id",
+    "agency_slug",
+    "mitigation_text",
+    "mitigation_type",
+    "evidence_search_terms",
+    "expected_effectiveness",
+    "rationale",
+    "extraction_model",
+    "extraction_temperature",
+    "status",
+    "created_at",
+    "provenance"
+  ],
+  "properties": {
+    "mitigation_id": { "type": "string", "format": "uuid" },
+    "prediction_id": { "type": "string", "format": "uuid" },
+    "agency_slug": { "type": "string", "pattern": "^[a-z0-9_-]{2,64}$" },
+    "mitigation_text": { "type": "string", "minLength": 20 },
+    "mitigation_type": {
+      "enum": [
+        "add_evidence",
+        "revise_claim",
+        "add_caveat",
+        "restructure_argument",
+        "add_sensitivity_analysis",
+        "cite_precedent"
+      ]
+    },
+    "evidence_search_terms": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "expected_effectiveness": { "enum": ["high", "medium", "low"] },
+    "rationale": { "type": "string", "minLength": 10 },
+    "extraction_model": { "type": "string", "minLength": 1 },
+    "extraction_temperature": { "type": "number", "const": 0 },
+    "status": { "enum": ["pending", "applied", "dismissed"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "produced_by",
+        "input_artifact_ids",
+        "execution_fingerprint_hash"
+      ],
+      "properties": {
+        "produced_by": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["component", "version"],
+          "properties": {
+            "component": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "input_artifact_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "execution_fingerprint_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}

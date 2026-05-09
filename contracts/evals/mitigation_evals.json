@@ -1,0 +1,42 @@
+[
+  {
+    "id": "08d47f8d-2457-4327-b97a-738b92a57235",
+    "name": "EVAL-MIT-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "mitigation_suggestion.schema_valid",
+    "target_artifact_type": "mitigation_suggestion",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "e70e1972-6b86-4bdf-a000-72977f50b07f",
+    "name": "EVAL-MIT-002",
+    "eval_type": "field_present",
+    "metric_name": "mitigation_suggestion.add_evidence_has_search_terms",
+    "target_artifact_type": "mitigation_suggestion",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "5249ff9a-c84b-47de-bfd6-6a218bfe2fdf",
+    "name": "EVAL-MIT-003",
+    "eval_type": "referential_integrity",
+    "metric_name": "mitigation_suggestion.prediction_id_exists",
+    "target_artifact_type": "mitigation_suggestion",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "b538f498-69f6-4960-9fae-9a435bf39c31",
+    "name": "EVAL-MIT-004",
+    "eval_type": "extraction_temperature",
+    "metric_name": "mitigation_suggestion.temperature_zero",
+    "target_artifact_type": "mitigation_suggestion",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  }
+]

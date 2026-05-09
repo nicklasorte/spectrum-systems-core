@@ -107,11 +107,11 @@ class IssueRegistry:
         }
 
     def _jaccard(self, text_a: str, text_b: str) -> float:
-        words_a = {w.lower() for w in text_a.split() if len(w) > 3}
-        words_b = {w.lower() for w in text_b.split() if len(w) > 3}
-        if not words_a or not words_b:
-            return 0.0
-        return len(words_a & words_b) / len(words_a | words_b)
+        # Shared deterministic Jaccard. Phase E's PatternIndexer imports the
+        # same helper. Do not duplicate.
+        from ..utils.text_similarity import jaccard
+
+        return jaccard(text_a, text_b, min_word_length=4)
 
     def get_all(
         self, working_paper_source_id: str, repo_root: str

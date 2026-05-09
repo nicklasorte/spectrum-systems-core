@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/agency/outcome_record.schema.json",
+  "title": "outcome_record",
+  "description": "Outcome of an applied mitigation. final_outcome is computed by MitigationOutcomeTracker, not by the human (CHECK-RT1-005). Schema validation alone cannot verify correctness of final_outcome relative to secondary_check_objection_recurred.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "outcome_id",
+    "mitigation_id",
+    "agency_slug",
+    "paper_source_id",
+    "human_marked_outcome",
+    "secondary_check_source_id",
+    "secondary_check_objection_recurred",
+    "final_outcome",
+    "outcome_note",
+    "recorded_at"
+  ],
+  "properties": {
+    "outcome_id": { "type": "string", "format": "uuid" },
+    "mitigation_id": { "type": "string", "format": "uuid" },
+    "agency_slug": { "type": "string", "pattern": "^[a-z0-9_-]{2,64}$" },
+    "paper_source_id": { "type": "string", "minLength": 1 },
+    "human_marked_outcome": {
+      "enum": ["effective", "ineffective", "partial", "unknown"]
+    },
+    "secondary_check_source_id": {
+      "type": ["string", "null"]
+    },
+    "secondary_check_objection_recurred": {
+      "type": ["boolean", "null"]
+    },
+    "final_outcome": {
+      "enum": ["effective", "ineffective", "partial", "unknown"]
+    },
+    "outcome_note": { "type": "string" },
+    "recorded_at": { "type": "string", "format": "date-time" }
+  }
+}

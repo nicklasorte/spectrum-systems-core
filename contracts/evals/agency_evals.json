@@ -1,0 +1,42 @@
+[
+  {
+    "id": "578a60dc-087a-41b8-a04d-07ec116f3ed3",
+    "name": "EVAL-AGENCY-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "agency_profile.schema_valid",
+    "target_artifact_type": "agency_profile",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "d1700cc5-5091-4fa2-9f91-c35e54900d36",
+    "name": "EVAL-AGENCY-002",
+    "eval_type": "uniqueness",
+    "metric_name": "agency_profile.no_duplicate",
+    "target_artifact_type": "agency_profile",
+    "required": false,
+    "pass_condition": "warn",
+    "runner": "deterministic"
+  },
+  {
+    "id": "ad866d7d-a695-41a1-9b2b-1ab27eab90e3",
+    "name": "EVAL-AGENCY-003",
+    "eval_type": "referential_integrity",
+    "metric_name": "position_entry.has_traceable_source_issue",
+    "target_artifact_type": "position_entry",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "829c502f-2cc7-4737-b201-a0cce9ad703e",
+    "name": "EVAL-AGENCY-004",
+    "eval_type": "temporal_freshness",
+    "metric_name": "position_entry.no_stale_primary",
+    "target_artifact_type": "position_entry",
+    "required": false,
+    "pass_condition": "warn",
+    "runner": "deterministic"
+  }
+]
