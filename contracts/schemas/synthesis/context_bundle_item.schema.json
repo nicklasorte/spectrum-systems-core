@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/synthesis/context_bundle_item.schema.json",
+  "title": "context_bundle_item",
+  "description": "One item inside a context_bundle. promoted_status MUST be 'promoted' or 'evidenced' — assembler enforces this at write time (CHECK-RT1-001 / FINDING-F-002).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "item_id",
+    "artifact_id",
+    "artifact_type",
+    "source_id",
+    "content_excerpt",
+    "token_estimate",
+    "promoted_status",
+    "inclusion_reason"
+  ],
+  "properties": {
+    "item_id": { "type": "string", "format": "uuid" },
+    "artifact_id": { "type": "string", "format": "uuid" },
+    "artifact_type": { "type": "string", "minLength": 1 },
+    "source_id": { "type": "string", "minLength": 1 },
+    "content_excerpt": { "type": "string", "minLength": 10 },
+    "token_estimate": { "type": "integer", "minimum": 1 },
+    "promoted_status": { "type": "string", "minLength": 1 },
+    "inclusion_reason": { "type": "string", "minLength": 1 }
+  }
+}

@@ -1,0 +1,72 @@
+[
+  {
+    "id": "c96c4166-7d26-4979-9057-9f1266ea9511",
+    "name": "EVAL-KEY-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "keynote_scaffold.schema_valid",
+    "target_artifact_type": "keynote_scaffold",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "13bfcd06-76a7-4f25-aed0-01e624396a76",
+    "name": "EVAL-KEY-002",
+    "eval_type": "referential_integrity",
+    "metric_name": "keynote_scaffold.opener_story_in_bundle",
+    "target_artifact_type": "keynote_scaffold",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "4eb91f22-7732-4f97-a8b2-5c3e19bec69f",
+    "name": "EVAL-KEY-003",
+    "eval_type": "arc_minimum_beats",
+    "metric_name": "keynote_scaffold.arc_has_minimum_beats",
+    "target_artifact_type": "keynote_scaffold",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "fad7e8bb-2565-4597-b174-701f6a254782",
+    "name": "EVAL-KEY-004",
+    "eval_type": "arc_required_beat_types",
+    "metric_name": "keynote_scaffold.arc_has_opener_and_call_to_action",
+    "target_artifact_type": "keynote_scaffold",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "112c8fd7-818e-4669-9755-6dad3d0bfb47",
+    "name": "EVAL-KEY-005",
+    "eval_type": "referential_integrity",
+    "metric_name": "keynote_scaffold.arc_claim_ids_in_bundle",
+    "target_artifact_type": "keynote_scaffold",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "4aab3ae9-6a86-4b14-a3f0-f4cd617165fa",
+    "name": "EVAL-KEY-006",
+    "eval_type": "extraction_temperature",
+    "metric_name": "keynote_scaffold.temperature_zero",
+    "target_artifact_type": "keynote_scaffold",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "e572fb41-aa5d-46f2-b289-b919d983a9df",
+    "name": "EVAL-KEY-007",
+    "eval_type": "bundle_consistency",
+    "metric_name": "keynote_scaffold.bundle_hash_matches_report_draft",
+    "target_artifact_type": "keynote_scaffold",
+    "required": false,
+    "pass_condition": "warn",
+    "runner": "deterministic"
+  }
+]

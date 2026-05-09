@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/synthesis/story_matrix_entry.schema.json",
+  "title": "story_matrix_entry",
+  "description": "One row in the story retrieval matrix. relevance_score is jaccard_similarity * audience_weight.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "entry_id",
+    "run_id",
+    "theme_name",
+    "audience",
+    "story_id",
+    "story_title",
+    "story_source_id",
+    "relevance_score",
+    "selection_reason"
+  ],
+  "properties": {
+    "entry_id": { "type": "string", "format": "uuid" },
+    "run_id": { "type": "string", "format": "uuid" },
+    "theme_name": { "type": "string", "minLength": 1 },
+    "audience": {
+      "enum": ["technical", "policy", "executive", "public"]
+    },
+    "story_id": { "type": "string", "format": "uuid" },
+    "story_title": { "type": "string", "minLength": 1 },
+    "story_source_id": { "type": "string", "minLength": 1 },
+    "relevance_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "selection_reason": { "type": "string", "minLength": 1 }
+  }
+}

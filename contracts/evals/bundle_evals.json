@@ -1,0 +1,52 @@
+[
+  {
+    "id": "a13de586-875e-4b70-b387-edb5f149dbe1",
+    "name": "EVAL-CTX-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "context_bundle.schema_valid",
+    "target_artifact_type": "context_bundle",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "164bf37e-1890-4122-b011-2074fbc93494",
+    "name": "EVAL-CTX-002",
+    "eval_type": "promoted_only_enforced",
+    "metric_name": "context_bundle.items_all_promoted_or_evidenced",
+    "target_artifact_type": "context_bundle",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "3b8d70b5-7410-4dcd-9017-6edd52efebaf",
+    "name": "EVAL-CTX-003",
+    "eval_type": "token_budget_enforced",
+    "metric_name": "context_bundle.total_tokens_within_budget",
+    "target_artifact_type": "context_bundle",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "b51b24af-e51e-48a3-9f77-6f0bedec6f4a",
+    "name": "EVAL-CTX-004",
+    "eval_type": "minimum_items",
+    "metric_name": "context_bundle.minimum_items_present",
+    "target_artifact_type": "context_bundle",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "c8f357a5-daaf-4e16-a5db-0dc9aa920a64",
+    "name": "EVAL-CTX-005",
+    "eval_type": "audience_valid",
+    "metric_name": "context_bundle.audience_in_enum",
+    "target_artifact_type": "context_bundle",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  }
+]

@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/synthesis/keynote_scaffold.schema.json",
+  "title": "keynote_scaffold",
+  "description": "Keynote scaffold. arc must include opener and call_to_action beat_types (EVAL-KEY-004). bundle_hash must equal the report_draft bundle_hash for the same run (FINDING-F-005).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "scaffold_id",
+    "run_id",
+    "bundle_id",
+    "bundle_hash",
+    "audience",
+    "title",
+    "opener",
+    "central_tension",
+    "arc",
+    "closing_call_to_action",
+    "estimated_duration_minutes",
+    "generation_model",
+    "generation_temperature",
+    "status",
+    "created_at",
+    "provenance"
+  ],
+  "properties": {
+    "scaffold_id": { "type": "string", "format": "uuid" },
+    "run_id": { "type": "string", "format": "uuid" },
+    "bundle_id": { "type": "string", "format": "uuid" },
+    "bundle_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "audience": {
+      "enum": ["technical", "policy", "executive", "public"]
+    },
+    "title": { "type": "string", "minLength": 5 },
+    "opener": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["story_id", "hook_text", "why_this_story"],
+      "properties": {
+        "story_id": { "type": "string", "format": "uuid" },
+        "hook_text": { "type": "string", "minLength": 20 },
+        "why_this_story": { "type": "string", "minLength": 1 }
+      }
+    },
+    "central_tension": { "type": "string", "minLength": 20 },
+    "arc": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["beat_type", "content", "story_id", "claim_ids"],
+        "properties": {
+          "beat_type": {
+            "enum": [
+              "opener",
+              "rising",
+              "climax",
+              "resolution",
+              "call_to_action"
+            ]
+          },
+          "content": { "type": "string", "minLength": 20 },
+          "story_id": {
+            "anyOf": [
+              { "type": "string", "format": "uuid" },
+              { "type": "null" }
+            ]
+          },
+          "claim_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "closing_call_to_action": { "type": "string", "minLength": 10 },
+    "estimated_duration_minutes": { "type": "integer", "minimum": 1 },
+    "generation_model": { "type": "string", "minLength": 1 },
+    "generation_temperature": { "type": "number", "const": 0 },
+    "status": {
+      "enum": ["draft", "reviewed", "approved", "rejected"]
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "produced_by",
+        "input_artifact_ids",
+        "execution_fingerprint_hash"
+      ],
+      "properties": {
+        "produced_by": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["component", "version"],
+          "properties": {
+            "component": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "input_artifact_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "execution_fingerprint_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}
