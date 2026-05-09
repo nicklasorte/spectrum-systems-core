@@ -1,0 +1,6 @@
+{
+  "promoted": false,
+  "decision": "block",
+  "reason_code_includes": "transcript_evidence",
+  "rationale": "no DECISION/ACTION/QUESTION lines means no grounded spans, so transcript_evidence eval blocks promotion"
+}

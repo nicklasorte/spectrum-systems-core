@@ -88,21 +88,47 @@ assert log.promoted
 
 ## Modules
 
-Active in this slice:
+Active core (unchanged since SSC-002):
 
 - `artifacts` — one envelope, in-memory store, status validation.
 - `context` — context bundle builder.
-- `workflows` — deterministic meeting-minutes workflow.
+- `workflows` — deterministic extractor workflows.
 - `evals` — required eval runner producing `eval_result` artifacts.
 - `control` — pure decision function (`allow` / `block`).
 - `promotion` — gates `promoted` status on `allow`.
 
+Added by SSC-003 through SSC-018:
+
+- `data_lake` — read raw transcripts, write promoted artifacts, build a
+  deterministic JSONL index, and answer plain filter queries. The data
+  lake is a directory tree on disk; this module is its only producer.
+
+The data lake's binding layout and rules live in
+`docs/contracts/data_lake_contract.md`.
+
+## Transcript pipeline
+
+```python
+from spectrum_systems_core.data_lake import run_transcript_pipeline, query
+
+# Given a layout under /lake/raw/meetings/<meeting_id>/transcript.txt and metadata.json:
+result = run_transcript_pipeline(
+    lake_root="/lake",
+    meeting_id="m-2026-05-09-q3",
+    workflow_name="meeting_minutes",
+)
+assert result.promoted
+
+# Cross-meeting query (no vector search, no embeddings):
+hits = query("/lake", agency="FCC", artifact_type="meeting_minutes")
+```
+
 ## Deferred
 
-Live model calls, autonomous agents, dashboards, failure-learning,
-ai_adapter, certification gates, PR-readiness systems, and persistence
-layers are deliberately out of scope until the core loop is real and
-useful. They are reserved by the constitution but not built here.
+Live model calls, autonomous agents, dashboards, vector indexes,
+embeddings, semantic search, ai_adapter, certification gates,
+PR-readiness systems, and remote persistence are deliberately out of
+scope. They are reserved by the constitution but not built here.
 
 ## Develop
 

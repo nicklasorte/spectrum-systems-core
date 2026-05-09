@@ -1,0 +1,18 @@
+{
+  "promoted": true,
+  "decision": "allow",
+  "artifact_type": "meeting_minutes",
+  "decisions": [
+    "Adopt the SAS-only sharing model for Phase 1.",
+    "Schedule the public comment review for next week."
+  ],
+  "action_items": [
+    "Alice drafts the FCC response by Friday.",
+    "Bob coordinates with NTIA on test schedule."
+  ],
+  "open_questions": [
+    "Do we need a separate eval for ambiguous sharing rules?",
+    "When does the coordination window close?"
+  ],
+  "grounding_kinds": ["decision", "decision", "action_item", "action_item", "open_question", "open_question"]
+}

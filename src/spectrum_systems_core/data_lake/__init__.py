@@ -1,0 +1,113 @@
+"""Data lake boundary: read raw inputs, write promoted outputs.
+
+See docs/contracts/data_lake_contract.md for the binding layout and rules.
+"""
+from .paths import (
+    raw_meeting_dir,
+    raw_transcript_path,
+    raw_metadata_path,
+    processed_meeting_dir,
+    artifact_index_path,
+)
+from .loader import (
+    TranscriptInput,
+    REQUIRED_METADATA_FIELDS,
+    ALLOWED_SOURCE_TYPES,
+    load_meeting,
+    load_meeting_from_dir,
+    LoaderError,
+)
+from .writer import write_promoted_artifact, WriterError
+from .serialize import canonical_json, slugify, artifact_to_dict
+from .grounding import (
+    GROUNDING_KEY,
+    MEETING_ID_KEY,
+    evaluate_grounding,
+    grounding_span,
+    excerpt_is_in_transcript,
+)
+from .extract import build_grounded_payload, supported_workflow
+from .manifest import (
+    MANIFEST_SCHEMA_VERSION,
+    REQUIRED_MANIFEST_FIELDS,
+    ManifestError,
+    build_manifest,
+    derive_run_id,
+    manifest_to_json,
+    validate_manifest,
+)
+from .debug import build_debug_report, DEBUG_SCHEMA_VERSION
+from .pipeline import PipelineResult, run_transcript_pipeline
+from .index import (
+    INDEX_FIELDS,
+    IndexError,
+    IndexRecord,
+    collect_index_records,
+    read_artifact_index,
+    write_artifact_index,
+)
+from .query import (
+    QueryError,
+    QueryResult,
+    SUPPORTED_FILTERS,
+    query,
+)
+from .failure_seed import (
+    FAILURE_RECORD_TYPE,
+    EVAL_CASE_CANDIDATE_TYPE,
+    candidate_eval_case_from_failure,
+    is_required_eval,
+    record_failure,
+)
+
+__all__ = [
+    "raw_meeting_dir",
+    "raw_transcript_path",
+    "raw_metadata_path",
+    "processed_meeting_dir",
+    "artifact_index_path",
+    "TranscriptInput",
+    "REQUIRED_METADATA_FIELDS",
+    "ALLOWED_SOURCE_TYPES",
+    "load_meeting",
+    "load_meeting_from_dir",
+    "LoaderError",
+    "write_promoted_artifact",
+    "WriterError",
+    "canonical_json",
+    "slugify",
+    "artifact_to_dict",
+    "GROUNDING_KEY",
+    "MEETING_ID_KEY",
+    "evaluate_grounding",
+    "grounding_span",
+    "excerpt_is_in_transcript",
+    "build_grounded_payload",
+    "supported_workflow",
+    "MANIFEST_SCHEMA_VERSION",
+    "REQUIRED_MANIFEST_FIELDS",
+    "ManifestError",
+    "build_manifest",
+    "derive_run_id",
+    "manifest_to_json",
+    "validate_manifest",
+    "build_debug_report",
+    "DEBUG_SCHEMA_VERSION",
+    "PipelineResult",
+    "run_transcript_pipeline",
+    "INDEX_FIELDS",
+    "IndexError",
+    "IndexRecord",
+    "collect_index_records",
+    "read_artifact_index",
+    "write_artifact_index",
+    "QueryError",
+    "QueryResult",
+    "SUPPORTED_FILTERS",
+    "query",
+    "FAILURE_RECORD_TYPE",
+    "EVAL_CASE_CANDIDATE_TYPE",
+    "candidate_eval_case_from_failure",
+    "is_required_eval",
+    "record_failure",
+]
