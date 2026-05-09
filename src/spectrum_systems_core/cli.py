@@ -20,6 +20,13 @@ from typing import Any, Dict, Sequence
 
 import yaml
 
+from .extraction import (
+    Chunker,
+    StoryEval,
+    StoryExtractor,
+    StoryReviewGateway,
+    StoryworthyFilter,
+)
 from .ingestion import (
     GroundingHelper,
     ObsidianProjection,
@@ -249,6 +256,190 @@ def prepare_pdf(
     return 0
 
 
+def extract_stories(
+    *,
+    source_id: str,
+    vault: str | None = None,
+    repo_root: Path | None = None,
+    out_stream=None,
+) -> int:
+    """Phase C: chunk → extract → eval → score → review-form.
+
+    Reads processed/<family>/<source_id>/text_units.jsonl. Writes:
+      stories/chunks.jsonl
+      stories/candidates.jsonl
+      markdown/stories.md (post-eval projection)
+    Emits a review form for each tier_1 admit candidate (no auto-promotion).
+    """
+    out = out_stream if out_stream is not None else sys.stdout
+    repo_root_path = (repo_root or Path.cwd()).resolve()
+
+    if not source_id:
+        print("error: must provide --source-id", file=out)
+        return 1
+
+    chunk_result = Chunker().chunk(source_id, str(repo_root_path))
+    if chunk_result["status"] != "success":
+        print(f"error: chunker failed: {chunk_result['reason']}", file=out)
+        return 1
+    chunks = chunk_result["chunks"]
+
+    extractor_result = StoryExtractor().extract_from_source(
+        source_id, str(repo_root_path)
+    )
+    if extractor_result["status"] != "success":
+        print(
+            f"error: extractor failed: {extractor_result['reason']}",
+            file=out,
+        )
+        return 1
+    all_records = extractor_result.get("all_records", [])
+
+    StoryEval().run(all_records, source_id, str(repo_root_path))
+    StoryworthyFilter().run_on_source(source_id, str(repo_root_path))
+
+    # Reload candidates after filter rewrites.
+    candidates = _load_candidates(repo_root_path, source_id)
+
+    ObsidianProjection().write_story_projection(
+        source_id, candidates, str(repo_root_path), label="post-eval"
+    )
+
+    sent_for_review = 0
+    if vault:
+        gateway = StoryReviewGateway()
+        for candidate in candidates:
+            if (
+                candidate.get("status") == "candidate"
+                and candidate.get("storyworthy_verdict") == "admit"
+                and candidate.get("tier_guess") == "tier_1"
+            ):
+                gateway.emit_review_form(
+                    candidate["story_id"], candidate, vault
+                )
+                sent_for_review += 1
+
+    grounded = sum(1 for c in candidates if c.get("grounded"))
+    blocked = sum(1 for c in candidates if c.get("status") == "blocked")
+    print(f"✓ source_id: {source_id}", file=out)
+    print(f"✓ chunks: {len(chunks)}", file=out)
+    print(f"✓ candidates: {len(candidates)}", file=out)
+    print(f"✓ grounded: {grounded}", file=out)
+    print(f"✓ blocked: {blocked}", file=out)
+    print(f"✓ sent for review: {sent_for_review}", file=out)
+    return 0
+
+
+def promote_knowledge(
+    *,
+    artifact_id: str,
+    source_id: str,
+    artifact_type: str,
+    repo_root: Path | None = None,
+    out_stream=None,
+) -> int:
+    """Phase C: explicit human promotion of a knowledge artifact.
+
+    Reads knowledge/<type>s.jsonl. Validates status == 'candidate'. Writes
+    knowledge/promoted/<artifact_id>.json. Updates source jsonl entry to
+    status='promoted'. (FINDING-C-003 fix: no auto-promotion path exists.)
+    """
+    out = out_stream if out_stream is not None else sys.stdout
+    repo_root_path = (repo_root or Path.cwd()).resolve()
+
+    type_to_id_field = {
+        "concept": ("concepts.jsonl", "concept_id"),
+        "theme": ("themes.jsonl", "theme_id"),
+        "analogy": ("analogies.jsonl", "analogy_id"),
+        "connection": ("connections.jsonl", "connection_id"),
+    }
+    if artifact_type not in type_to_id_field:
+        print(
+            "error: --artifact-type must be one of "
+            "concept|theme|analogy|connection",
+            file=out,
+        )
+        return 1
+    filename, id_field = type_to_id_field[artifact_type]
+
+    from .extraction._paths import find_processed_dir
+    processed_dir, _ = find_processed_dir(repo_root_path, source_id)
+    if processed_dir is None:
+        print(f"error: source_id not found: {source_id}", file=out)
+        return 1
+    knowledge_dir = processed_dir / "knowledge"
+    jsonl_path = knowledge_dir / filename
+    if not jsonl_path.is_file():
+        print(f"error: {jsonl_path} not found", file=out)
+        return 1
+
+    records: list[Dict[str, Any]] = []
+    with jsonl_path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            records.append(json.loads(line))
+
+    target = None
+    for record in records:
+        if record.get(id_field) == artifact_id:
+            target = record
+            break
+    if target is None:
+        print(
+            f"error: {artifact_type} {artifact_id} not found in {jsonl_path}",
+            file=out,
+        )
+        return 1
+    if target.get("status") == "promoted":
+        print(
+            f"error: already_promoted: {artifact_type} {artifact_id}",
+            file=out,
+        )
+        return 1
+    if target.get("status") != "candidate":
+        print(
+            f"error: cannot promote — status={target.get('status')!r}",
+            file=out,
+        )
+        return 1
+
+    target["status"] = "promoted"
+    promoted_dir = knowledge_dir / "promoted"
+    promoted_dir.mkdir(parents=True, exist_ok=True)
+    (promoted_dir / f"{artifact_id}.json").write_text(
+        json.dumps(target, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    with jsonl_path.open("w", encoding="utf-8") as fh:
+        for record in records:
+            fh.write(
+                json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
+            )
+
+    print(f"✓ Promoted {artifact_type} {artifact_id}", file=out)
+    return 0
+
+
+def _load_candidates(repo_root: Path, source_id: str) -> list[Dict[str, Any]]:
+    from .extraction._paths import find_processed_dir
+    processed_dir, _ = find_processed_dir(repo_root, source_id)
+    if processed_dir is None:
+        return []
+    path = processed_dir / "stories" / "candidates.jsonl"
+    if not path.is_file():
+        return []
+    out: list[Dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            out.append(json.loads(line))
+    return out
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m spectrum_systems_core.cli",
@@ -299,6 +490,48 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         help="The book source_id (must match raw/books/<source_id>/ directory).",
     )
+
+    es = sub.add_parser(
+        "extract-stories",
+        help="Phase C: chunk a source, extract story candidates, score, gate.",
+        description=(
+            "Phase C story extraction pipeline. Reads "
+            "processed/<family>/<source_id>/text_units.jsonl. Writes "
+            "stories/chunks.jsonl, stories/candidates.jsonl, and "
+            "markdown/stories.md. Emits Tier-1 review forms to the vault. "
+            "No auto-promotion: human review required for promotion."
+        ),
+    )
+    es.add_argument(
+        "--source-id",
+        required=True,
+        help="Source identifier (must exist under processed/<family>/).",
+    )
+    es.add_argument(
+        "--vault",
+        help=(
+            "Path to Obsidian vault root. If provided, review forms for "
+            "Tier-1 admit candidates are written under "
+            "Reviews/Stories/Pending/."
+        ),
+    )
+
+    pk = sub.add_parser(
+        "promote-knowledge",
+        help="Phase C: human promotion of a concept/theme/analogy/connection.",
+        description=(
+            "Promote a knowledge artifact from candidate to promoted status. "
+            "FINDING-C-003 fix: synthesis artifacts never auto-promote — a "
+            "human must run this command per artifact."
+        ),
+    )
+    pk.add_argument("--artifact-id", required=True)
+    pk.add_argument("--source-id", required=True)
+    pk.add_argument(
+        "--artifact-type",
+        required=True,
+        choices=["concept", "theme", "analogy", "connection"],
+    )
     return parser
 
 
@@ -313,6 +546,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if args.command == "prepare-pdf":
         return prepare_pdf(source_id=args.source_id)
+    if args.command == "extract-stories":
+        return extract_stories(
+            source_id=args.source_id, vault=args.vault
+        )
+    if args.command == "promote-knowledge":
+        return promote_knowledge(
+            artifact_id=args.artifact_id,
+            source_id=args.source_id,
+            artifact_type=args.artifact_type,
+        )
     parser.error(f"unknown command: {args.command}")
     return 2
 

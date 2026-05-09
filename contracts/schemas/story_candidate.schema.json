@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/story_candidate.schema.json",
+  "title": "story_candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "story_id",
+    "source_id",
+    "source_family",
+    "chunk_id",
+    "unit_ids",
+    "page_numbers",
+    "source_excerpt",
+    "story_summary",
+    "possible_theme",
+    "tier_guess",
+    "why_it_might_work",
+    "risk_flags",
+    "storyworthy_score",
+    "storyworthy_verdict",
+    "extraction_model",
+    "extraction_temperature",
+    "grounded",
+    "grounded_unit_ids",
+    "status",
+    "superseded_by",
+    "created_at",
+    "provenance"
+  ],
+  "properties": {
+    "story_id": { "type": "string", "format": "uuid" },
+    "source_id": { "type": "string", "minLength": 1 },
+    "source_family": { "type": "string", "minLength": 1 },
+    "chunk_id": { "type": "string", "format": "uuid" },
+    "unit_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "page_numbers": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 1 }
+    },
+    "source_excerpt": { "type": "string", "minLength": 10 },
+    "story_summary": { "type": "string", "minLength": 20 },
+    "possible_theme": { "type": "string", "minLength": 3 },
+    "tier_guess": { "enum": ["tier_1", "tier_2", "tier_3"] },
+    "why_it_might_work": { "type": "string", "minLength": 10 },
+    "risk_flags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "storyworthy_score": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "five_second_moment",
+        "stakes",
+        "central_question",
+        "vulnerability",
+        "narrative_compression",
+        "total"
+      ],
+      "properties": {
+        "five_second_moment": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "stakes": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "central_question": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "vulnerability": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "narrative_compression": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "total": { "type": "integer", "minimum": 0, "maximum": 15 }
+      }
+    },
+    "storyworthy_verdict": { "enum": ["admit", "revise", "reject"] },
+    "extraction_model": { "type": "string", "minLength": 1 },
+    "extraction_temperature": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 0
+    },
+    "grounded": { "type": "boolean" },
+    "grounded_unit_ids": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "status": { "enum": ["candidate", "promoted", "blocked", "superseded"] },
+    "superseded_by": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "produced_by",
+        "input_artifact_ids",
+        "execution_fingerprint_hash"
+      ],
+      "properties": {
+        "produced_by": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["component", "version"],
+          "properties": {
+            "component": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "input_artifact_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "execution_fingerprint_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}

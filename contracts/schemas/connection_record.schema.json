@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/connection_record.schema.json",
+  "title": "connection_record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "connection_id",
+    "source_id_a",
+    "source_id_b",
+    "matching_fields",
+    "connection_type",
+    "strength",
+    "status",
+    "created_at"
+  ],
+  "properties": {
+    "connection_id": { "type": "string", "format": "uuid" },
+    "source_id_a": { "type": "string", "minLength": 1 },
+    "source_id_b": { "type": "string", "minLength": 1 },
+    "matching_fields": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field_name", "value_a", "value_b"],
+        "properties": {
+          "field_name": { "type": "string", "minLength": 1 },
+          "value_a": { "type": "string", "minLength": 10 },
+          "value_b": { "type": "string", "minLength": 10 }
+        }
+      }
+    },
+    "connection_type": {
+      "enum": ["theme_overlap", "concept_overlap", "pattern_overlap"]
+    },
+    "strength": { "enum": ["strong", "moderate", "weak"] },
+    "status": { "enum": ["candidate", "promoted"] },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}
