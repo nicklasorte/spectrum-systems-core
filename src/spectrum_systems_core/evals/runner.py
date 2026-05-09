@@ -52,6 +52,15 @@ REQUIRED_FIELDS_BY_TYPE: dict[str, tuple[tuple[str, ...], str]] = {
     ),
 }
 
+# Fields that must be present AND non-empty. Presence is already covered by
+# REQUIRED_FIELDS_BY_TYPE; this layer adds the "field is empty" check so
+# `agency: ""` no longer slips through as if `agency` were truly populated.
+# Keep this list narrow: only fields whose absence makes the artifact a lie.
+NON_EMPTY_REQUIRED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "agency_question_summary": ("agency", "question"),
+    "decision_brief": ("recommendation",),
+}
+
 
 def _eval_result(
     eval_type: str,
@@ -88,16 +97,35 @@ def _check_non_empty_payload(target: Artifact) -> Artifact:
     return _eval_result("non_empty_payload", target, passed=True, reason_codes=[])
 
 
+def _is_empty_value(value) -> bool:
+    """A field is empty if it is None, a blank/whitespace string, or an
+    empty list/tuple/dict/set. Numbers (e.g. ``open_count: 0``) are never
+    considered empty here — semantic emptiness for numeric fields needs
+    its own rule and is out of scope for this check."""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() == ""
+    if isinstance(value, (list, tuple, dict, set)):
+        return len(value) == 0
+    return False
+
+
 def _check_required_fields(
-    target: Artifact, eval_type: str, required: tuple[str, ...]
+    target: Artifact,
+    eval_type: str,
+    required: tuple[str, ...],
+    non_empty: tuple[str, ...] = (),
 ) -> Artifact:
-    missing = [f for f in required if f not in target.payload]
-    if missing:
+    reason_codes: list[str] = [
+        f"missing_field:{f}" for f in required if f not in target.payload
+    ]
+    for f in non_empty:
+        if f in target.payload and _is_empty_value(target.payload[f]):
+            reason_codes.append(f"empty_required_field:{f}")
+    if reason_codes:
         return _eval_result(
-            eval_type,
-            target,
-            passed=False,
-            reason_codes=[f"missing_field:{f}" for f in missing],
+            eval_type, target, passed=False, reason_codes=reason_codes
         )
     return _eval_result(eval_type, target, passed=True, reason_codes=[])
 
@@ -107,5 +135,10 @@ def run_required_evals(artifact: Artifact) -> list[Artifact]:
     spec = REQUIRED_FIELDS_BY_TYPE.get(artifact.artifact_type)
     if spec is not None:
         required, eval_type = spec
-        results.append(_check_required_fields(artifact, eval_type, required))
+        non_empty = NON_EMPTY_REQUIRED_FIELDS_BY_TYPE.get(
+            artifact.artifact_type, ()
+        )
+        results.append(
+            _check_required_fields(artifact, eval_type, required, non_empty)
+        )
     return results

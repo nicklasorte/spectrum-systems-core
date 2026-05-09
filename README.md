@@ -123,6 +123,62 @@ assert result.promoted
 hits = query("/lake", agency="FCC", artifact_type="meeting_minutes")
 ```
 
+## Quickstart: one command, one meeting
+
+`spectrum-core process-meeting` runs all four supported workflows over a
+single meeting in the data lake and writes both governed JSON artifacts
+and human-readable Markdown views.
+
+### Expected data lake layout
+
+```
+<lake_root>/
+  raw/meetings/<meeting_id>/transcript.txt
+  raw/meetings/<meeting_id>/metadata.json
+```
+
+`metadata.json` is a single JSON object. Required fields:
+`meeting_id`, `title`, `date` (`YYYY-MM-DD`), `source_type` (one of
+`transcript`, `notes`, `summary`). The `meeting_id` value must equal the
+directory name.
+
+### Run it
+
+```bash
+pip install -e ".[dev]"
+spectrum-core process-meeting --lake /path/to/lake --meeting-id m-2026-05-09-q3
+```
+
+`--workflow <name>` is repeatable to run a subset (e.g.
+`--workflow meeting_minutes`).
+
+### Where outputs appear
+
+```
+<lake_root>/processed/meetings/<meeting_id>/
+  meeting_minutes__<slug>.json            # canonical promoted artifacts
+  meeting_action_log__<slug>.json
+  agency_question_summary__<slug>.json
+  decision_brief__<slug>.json
+  manifest__<run_id>.json                 # one per workflow run
+  debug__<run_id>.json
+  markdown/                               # human-readable views
+    meeting_minutes.md
+    meeting_action_log.md
+    agency_question_summary.md
+    decision_brief.md
+    index.md
+```
+
+JSON is the canonical, governed artifact. Markdown is a regenerated
+view: it never feeds back into the loop, and editing it does not change
+any artifact. The Markdown contract is in §6.3 of
+`docs/contracts/data_lake_contract.md`.
+
+A workflow whose extractor finds nothing in the transcript is blocked
+fail-closed. The index Markdown lists blocked workflows alongside the
+reason code and a one-line plain-English explanation.
+
 ## Deferred
 
 Live model calls, autonomous agents, dashboards, vector indexes,
