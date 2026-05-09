@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/source_record.schema.json",
+  "title": "source_record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_kind",
+    "artifact_id",
+    "created_at",
+    "schema_ref",
+    "trace",
+    "provenance",
+    "payload"
+  ],
+  "properties": {
+    "artifact_kind": { "const": "source_record" },
+    "artifact_id": { "type": "string", "format": "uuid" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "schema_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "digest"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "digest": { "type": "string" }
+      }
+    },
+    "trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trace_id", "span_id", "parent_span_id"],
+      "properties": {
+        "trace_id": { "type": "string" },
+        "span_id": { "type": "string" },
+        "parent_span_id": { "type": ["string", "null"] }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "produced_by",
+        "input_artifact_ids",
+        "execution_fingerprint_hash"
+      ],
+      "properties": {
+        "produced_by": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["component", "version"],
+          "properties": {
+            "component": { "type": "string" },
+            "version": { "type": "string" }
+          }
+        },
+        "input_artifact_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "execution_fingerprint_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "source_family",
+        "source_type",
+        "title",
+        "metadata",
+        "raw_path",
+        "raw_hash",
+        "text_unit_count",
+        "processed_path"
+      ],
+      "properties": {
+        "source_id": { "type": "string", "minLength": 1 },
+        "source_family": {
+          "enum": ["meetings", "books", "comments", "working_papers", "notes"]
+        },
+        "source_type": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "raw_path": { "type": "string", "minLength": 1 },
+        "raw_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "text_unit_count": { "type": "integer", "minimum": 0 },
+        "processed_path": { "type": "string", "minLength": 1 },
+        "summary": { "type": "string" }
+      }
+    }
+  }
+}

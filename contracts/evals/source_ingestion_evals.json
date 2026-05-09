@@ -1,0 +1,52 @@
+[
+  {
+    "id": "88e0d801-05b5-5405-a784-718e1e658b59",
+    "name": "EVAL-SRC-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "source_record.schema_valid",
+    "target_artifact_type": "source_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "589341d6-245c-54f4-91b2-fba47a02f09d",
+    "name": "EVAL-SRC-002",
+    "eval_type": "evidence_coverage",
+    "metric_name": "source_record.has_text_units",
+    "target_artifact_type": "source_record",
+    "required": true,
+    "pass_condition": "min_count_1",
+    "runner": "deterministic"
+  },
+  {
+    "id": "d8fbde23-cab0-5bc4-a57f-29ed321303d4",
+    "name": "EVAL-SRC-003",
+    "eval_type": "replay_consistency",
+    "metric_name": "source_record.raw_hash_stable",
+    "target_artifact_type": "source_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "9147779f-0696-50ac-b8b1-7df9d86e2432",
+    "name": "EVAL-SRC-004",
+    "eval_type": "evidence_coverage",
+    "metric_name": "source_record.text_units_readable",
+    "target_artifact_type": "source_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "56ba32f9-8894-5728-9e26-3770c5eed910",
+    "name": "EVAL-SRC-005",
+    "eval_type": "replay_consistency",
+    "metric_name": "source_record.text_unit_hashes_stable",
+    "target_artifact_type": "source_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  }
+]
