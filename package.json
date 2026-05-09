@@ -1,0 +1,13 @@
+{
+  "name": "spectrum-systems-core",
+  "version": "0.1.0",
+  "description": "Governed artifact engine scripts",
+  "private": true,
+  "scripts": {
+    "log-session": "ts-node scripts/log-session.ts"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  }
+}
