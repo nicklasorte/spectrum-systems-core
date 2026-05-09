@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/paper/issue_record.schema.json",
+  "title": "issue_record",
+  "description": "similar_issue_ids is informational and may form mutual references (A→B and B→A). The system never auto-merges; humans resolve.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "issue_id",
+    "issue_type",
+    "source_id",
+    "source_unit_id",
+    "claim_id",
+    "assumption_id",
+    "description",
+    "severity",
+    "similar_issue_ids",
+    "status",
+    "created_at",
+    "provenance"
+  ],
+  "properties": {
+    "issue_id": { "type": "string", "format": "uuid" },
+    "issue_type": {
+      "enum": [
+        "unsupported_claim",
+        "contradicted_claim",
+        "unvalidated_assumption",
+        "agency_comment",
+        "missing_evidence",
+        "scope_gap"
+      ]
+    },
+    "source_id": { "type": "string", "minLength": 1 },
+    "source_unit_id": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "claim_id": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "assumption_id": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "description": { "type": "string", "minLength": 20 },
+    "severity": { "enum": ["critical", "major", "minor"] },
+    "similar_issue_ids": {
+      "type": "array",
+      "default": [],
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "status": { "enum": ["open", "addressed", "deferred", "wont_fix"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "produced_by",
+        "input_artifact_ids",
+        "execution_fingerprint_hash"
+      ],
+      "properties": {
+        "produced_by": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["component", "version"],
+          "properties": {
+            "component": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "input_artifact_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "execution_fingerprint_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}

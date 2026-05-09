@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/paper/assumption_record.schema.json",
+  "title": "assumption_record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "assumption_id",
+    "source_id",
+    "source_unit_id",
+    "source_excerpt",
+    "assumption_text",
+    "assumption_type",
+    "risk_if_wrong",
+    "explicit",
+    "status",
+    "created_at",
+    "provenance"
+  ],
+  "properties": {
+    "assumption_id": { "type": "string", "format": "uuid" },
+    "source_id": { "type": "string", "minLength": 1 },
+    "source_unit_id": { "type": "string", "format": "uuid" },
+    "source_excerpt": {
+      "type": ["string", "null"],
+      "minLength": 10
+    },
+    "assumption_text": { "type": "string", "minLength": 10 },
+    "assumption_type": {
+      "enum": ["methodological", "scope", "data_quality", "policy"]
+    },
+    "risk_if_wrong": { "enum": ["high", "medium", "low"] },
+    "explicit": { "type": "boolean" },
+    "status": {
+      "enum": ["candidate", "validated", "flagged", "superseded"]
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "produced_by",
+        "input_artifact_ids",
+        "execution_fingerprint_hash"
+      ],
+      "properties": {
+        "produced_by": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["component", "version"],
+          "properties": {
+            "component": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "input_artifact_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "execution_fingerprint_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}

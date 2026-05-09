@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/paper/evidence_record.schema.json",
+  "title": "evidence_record",
+  "description": "claim_id is required but referential integrity is not enforced at schema level; the evidence eval validates that claim_id points to a real claim.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "evidence_id",
+    "claim_id",
+    "source_id",
+    "source_unit_id",
+    "source_excerpt",
+    "evidence_type",
+    "source_record_hash",
+    "grounded",
+    "grounded_unit_ids",
+    "created_at",
+    "provenance"
+  ],
+  "properties": {
+    "evidence_id": { "type": "string", "format": "uuid" },
+    "claim_id": { "type": "string", "format": "uuid" },
+    "source_id": { "type": "string", "minLength": 1 },
+    "source_unit_id": { "type": "string", "format": "uuid" },
+    "source_excerpt": { "type": "string", "minLength": 10 },
+    "evidence_type": {
+      "enum": ["direct_support", "indirect_support", "counter_evidence"]
+    },
+    "source_record_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "grounded": { "type": "boolean" },
+    "grounded_unit_ids": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "produced_by",
+        "input_artifact_ids",
+        "execution_fingerprint_hash"
+      ],
+      "properties": {
+        "produced_by": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["component", "version"],
+          "properties": {
+            "component": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "input_artifact_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "execution_fingerprint_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}

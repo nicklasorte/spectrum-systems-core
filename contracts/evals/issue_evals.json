@@ -1,0 +1,42 @@
+[
+  {
+    "id": "8068e226-9a35-4d33-9807-f14a19094847",
+    "name": "EVAL-ISSUE-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "issue_record.schema_valid",
+    "target_artifact_type": "issue_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "d88aea0b-a2c1-4f6d-8a20-7ddbecd02e49",
+    "name": "EVAL-ISSUE-002",
+    "eval_type": "review_required",
+    "metric_name": "issue_record.critical_issues_addressed",
+    "target_artifact_type": "issue_record",
+    "required": false,
+    "pass_condition": "warn",
+    "runner": "deterministic"
+  },
+  {
+    "id": "a6eb105a-6061-48b7-ae19-1ba2e13c6d57",
+    "name": "EVAL-ISSUE-003",
+    "eval_type": "referential_integrity",
+    "metric_name": "issue_record.no_orphan_claim_ids",
+    "target_artifact_type": "issue_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "add741f1-a135-4f10-ac03-1ba1459c940c",
+    "name": "EVAL-ISSUE-004",
+    "eval_type": "field_present",
+    "metric_name": "issue_record.non_comment_has_source_unit_id",
+    "target_artifact_type": "issue_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  }
+]

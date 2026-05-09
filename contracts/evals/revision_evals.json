@@ -1,0 +1,42 @@
+[
+  {
+    "id": "bcfe91c3-d2a3-44d9-97a0-770bf8758be6",
+    "name": "EVAL-REV-001",
+    "eval_type": "field_present",
+    "metric_name": "revision_instruction.required_fields_present",
+    "target_artifact_type": "revision_instruction",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "771a759a-bfa2-4338-b08b-20e0c9d2bd22",
+    "name": "EVAL-REV-002",
+    "eval_type": "referential_integrity",
+    "metric_name": "revision_instruction.claim_id_exists",
+    "target_artifact_type": "revision_instruction",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "bc40c194-fb47-4ff9-8c28-aa2791f7c9b0",
+    "name": "EVAL-REV-003",
+    "eval_type": "determinism_guard",
+    "metric_name": "revision_instruction.extraction_temperature_zero",
+    "target_artifact_type": "revision_instruction",
+    "required": true,
+    "pass_condition": "equals_0",
+    "runner": "deterministic"
+  },
+  {
+    "id": "315c579e-b757-418d-9f1c-36aaa05bc31b",
+    "name": "EVAL-REV-004",
+    "eval_type": "status_check",
+    "metric_name": "revision_instruction.status_pending",
+    "target_artifact_type": "revision_instruction",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  }
+]
