@@ -92,6 +92,11 @@ def process_meeting(
             reason_codes = list(
                 result.control_decision.payload.get("reason_codes", [])
             )
+            for ev in result.eval_results:
+                if ev.payload.get("status") == "fail":
+                    for rc in ev.payload.get("reason_codes", []):
+                        if rc not in reason_codes:
+                            reason_codes.append(rc)
             blocked_entries.append(
                 {
                     "artifact_type": workflow_name,

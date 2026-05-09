@@ -177,7 +177,15 @@ _BLOCK_EXPLANATIONS: dict[str, str] = {
 
 
 def _explain_reason(reason_code: str) -> str:
-    return _BLOCK_EXPLANATIONS.get(reason_code, reason_code)
+    if reason_code in _BLOCK_EXPLANATIONS:
+        return _BLOCK_EXPLANATIONS[reason_code]
+    if reason_code.startswith("empty_required_field:"):
+        field = reason_code.split(":", 1)[1]
+        return f"required field '{field}' was empty"
+    if reason_code.startswith("missing_field:"):
+        field = reason_code.split(":", 1)[1]
+        return f"required field '{field}' was missing"
+    return reason_code
 
 
 def _index_trace_id(meeting_id: str) -> str:
