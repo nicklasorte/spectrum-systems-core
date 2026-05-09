@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/text_unit.schema.json",
+  "title": "text_unit",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "unit_id",
+    "source_id",
+    "unit_type",
+    "ordinal",
+    "text",
+    "text_hash",
+    "locator"
+  ],
+  "properties": {
+    "unit_id": { "type": "string", "format": "uuid" },
+    "source_id": { "type": "string", "minLength": 1 },
+    "unit_type": {
+      "enum": ["paragraph", "speaker_turn", "section", "line", "block"]
+    },
+    "ordinal": { "type": "integer", "minimum": 0 },
+    "text": { "type": "string", "minLength": 1 },
+    "text_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "locator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line_start", "line_end", "char_start", "char_end"],
+      "properties": {
+        "line_start": { "type": "integer", "minimum": 0 },
+        "line_end": { "type": "integer", "minimum": 0 },
+        "char_start": { "type": "integer", "minimum": 0 },
+        "char_end": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}
