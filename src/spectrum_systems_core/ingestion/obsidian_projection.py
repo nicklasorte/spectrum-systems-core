@@ -764,6 +764,328 @@ class ObsidianProjection:
             lines.append("")
         return "\n".join(lines)
 
+    # ---------- Phase E projections (agency / objections / mitigations / patterns) ----------
+
+    def write_agency_profile_projection(
+        self,
+        profile: Dict[str, Any],
+        active_positions: List[Dict[str, Any]],
+        all_positions: List[Dict[str, Any]],
+        recent_history: List[Dict[str, Any]],
+        repo_root: str | Path,
+    ) -> str:
+        """Write agency/<slug>/markdown/profile.md.
+
+        VIEW ONLY. Regenerated each call. Never read back as authority.
+        """
+        repo_root_path = Path(repo_root).resolve()
+        agency_slug = str(profile.get("agency_slug") or "unknown")
+        markdown_dir = repo_root_path / "agency" / agency_slug / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        target_path = markdown_dir / "profile.md"
+        target_path.write_text(
+            self._render_agency_profile_projection(
+                profile, active_positions, all_positions, recent_history
+            ),
+            encoding="utf-8",
+        )
+        return str(target_path)
+
+    def _render_agency_profile_projection(
+        self,
+        profile: Dict[str, Any],
+        active_positions: List[Dict[str, Any]],
+        all_positions: List[Dict[str, Any]],
+        recent_history: List[Dict[str, Any]],
+    ) -> str:
+        generated_at = _now_iso()
+        slug = profile.get("agency_slug", "?")
+        agency_name = profile.get("agency_name", "?")
+        active_ids = {p.get("position_id") for p in active_positions}
+        # Detect stale primary positions (newest per topic with valid_until in past).
+        import datetime as _dt
+        today = _dt.datetime.now(_dt.timezone.utc).date()
+        by_topic: Dict[str, List[Dict[str, Any]]] = {}
+        for pos in all_positions:
+            topic = str(pos.get("topic") or "").strip().lower()
+            if not topic:
+                continue
+            by_topic.setdefault(topic, []).append(pos)
+        stale_topics: set = set()
+        stale_position_ids: set = set()
+        for topic, plist in by_topic.items():
+            primary = sorted(
+                plist, key=lambda p: str(p.get("valid_from") or ""), reverse=True
+            )[0]
+            valid_until = primary.get("valid_until")
+            if valid_until is None:
+                continue
+            try:
+                vu = _dt.date.fromisoformat(str(valid_until))
+            except ValueError:
+                continue
+            if vu < today:
+                stale_topics.add(topic)
+                stale_position_ids.add(primary.get("position_id"))
+
+        lines = [
+            "---",
+            f"agency_slug: {slug}",
+            f"agency_name: {agency_name}",
+            f"generated_at: {generated_at}",
+            f"active_position_count: {len(active_positions)}",
+            f"total_position_count: {len(all_positions)}",
+            f"recent_history_count: {len(recent_history)}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            f"# Agency Profile - {agency_name}",
+            "",
+            f"> Generated: {generated_at} | VIEW ONLY",
+            "> Do not edit. Regenerated on every run. Never authoritative.",
+            "",
+            f"**Slug:** `{slug}`",
+            f"**Jurisdiction:** {profile.get('jurisdiction', '') or '_n/a_'}",
+            f"**Active:** {profile.get('active', False)}",
+            f"**Total comments:** {profile.get('total_comment_count', 0)}",
+            f"**Total objections:** {profile.get('total_objection_count', 0)}",
+            f"**Aliases:** {', '.join(profile.get('aliases') or []) or '_none_'}",
+            "",
+            "## Active Positions",
+            "",
+            "| topic | position_type | valid_from | valid_until | stale | position_id |",
+            "| ----- | ------------- | ---------- | ----------- | ----- | ----------- |",
+        ]
+        for pos in active_positions:
+            topic = str(pos.get("topic") or "").replace("|", "\\|")
+            stale_flag = "STALE" if pos.get("position_id") in stale_position_ids else ""
+            lines.append(
+                f"| {topic} | {pos.get('position_type', '')} | "
+                f"{pos.get('valid_from', '')} | "
+                f"{pos.get('valid_until') or 'null'} | {stale_flag} | "
+                f"`{pos.get('position_id', '')}` |"
+            )
+        if not active_positions:
+            lines.append("| — | — | — | — | — | _no active positions_ |")
+        lines.append("")
+
+        if stale_position_ids:
+            lines.append("> ⚠ Stale primary positions detected:")
+            for pid in sorted(p for p in stale_position_ids if p):
+                lines.append(f"> - `{pid}`")
+            lines.append("")
+
+        lines.extend([
+            "## Recent Objection History (top 10)",
+            "",
+            "| objection_type | raised_at | paper_source_id | resolved | entry_id |",
+            "| -------------- | --------- | --------------- | -------- | -------- |",
+        ])
+        for entry in recent_history:
+            lines.append(
+                f"| {entry.get('objection_type', '')} | "
+                f"{entry.get('raised_at', '')} | "
+                f"{entry.get('paper_source_id', '')} | "
+                f"{entry.get('resolved', False)} | "
+                f"`{entry.get('entry_id', '')}` |"
+            )
+        if not recent_history:
+            lines.append("| — | — | — | — | _no history_ |")
+        lines.append("")
+        return "\n".join(lines)
+
+    def write_objections_projection(
+        self,
+        paper_source_id: str,
+        predictions: List[Dict[str, Any]],
+        repo_root: str | Path,
+    ) -> str:
+        """Write processed/<family>/<source_id>/paper/markdown/objections.md."""
+        repo_root_path = Path(repo_root).resolve()
+        processed_dir = _resolve_phase_c_dir(repo_root_path, paper_source_id)
+        markdown_dir = processed_dir / "paper" / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        target_path = markdown_dir / "objections.md"
+        target_path.write_text(
+            self._render_objections_projection(paper_source_id, predictions),
+            encoding="utf-8",
+        )
+        return str(target_path)
+
+    def _render_objections_projection(
+        self,
+        paper_source_id: str,
+        predictions: List[Dict[str, Any]],
+    ) -> str:
+        generated_at = _now_iso()
+        lines = [
+            "---",
+            f"source_id: {paper_source_id}",
+            f"generated_at: {generated_at}",
+            f"prediction_count: {len(predictions)}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            f"# Objection Predictions - {paper_source_id}",
+            "",
+            f"> Generated: {generated_at} | VIEW ONLY",
+            "> Predictions are advisory only. Humans decide what to revise.",
+            "> Do not edit. Regenerated on every run. Never authoritative.",
+            "",
+            "| prediction_id | agency_slug | confidence | objection_type | "
+            "evidence_basis | flag |",
+            "| ------------- | ----------- | ---------- | -------------- | "
+            "-------------- | ---- |",
+        ]
+        for pred in predictions:
+            ev = pred.get("evidence_basis") or []
+            flag = "no_evidence_basis" if pred.get("no_evidence_basis_flag") else ""
+            lines.append(
+                f"| `{pred.get('prediction_id', '')}` | "
+                f"{pred.get('agency_slug', '')} | "
+                f"{pred.get('confidence', '')} | "
+                f"{pred.get('objection_type', '')} | "
+                f"{len(ev)} | {flag} |"
+            )
+        if not predictions:
+            lines.append("| — | — | — | — | — | _no predictions_ |")
+        lines.append("")
+        for pred in predictions:
+            lines.append(f"### `{pred.get('prediction_id', '')}`")
+            lines.append("")
+            lines.append(
+                f"**Predicted:** {pred.get('predicted_objection_text', '')}"
+            )
+            lines.append("")
+            lines.append(f"**Rationale:** {pred.get('rationale', '')}")
+            lines.append("")
+        return "\n".join(lines)
+
+    def write_mitigations_projection(
+        self,
+        paper_source_id: str,
+        mitigations: List[Dict[str, Any]],
+        blocked_reasons: List[str],
+        repo_root: str | Path,
+    ) -> str:
+        """Write processed/<family>/<source_id>/paper/markdown/mitigations.md."""
+        repo_root_path = Path(repo_root).resolve()
+        processed_dir = _resolve_phase_c_dir(repo_root_path, paper_source_id)
+        markdown_dir = processed_dir / "paper" / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        target_path = markdown_dir / "mitigations.md"
+        target_path.write_text(
+            self._render_mitigations_projection(
+                paper_source_id, mitigations, blocked_reasons
+            ),
+            encoding="utf-8",
+        )
+        return str(target_path)
+
+    def _render_mitigations_projection(
+        self,
+        paper_source_id: str,
+        mitigations: List[Dict[str, Any]],
+        blocked_reasons: List[str],
+    ) -> str:
+        generated_at = _now_iso()
+        lines = [
+            "---",
+            f"source_id: {paper_source_id}",
+            f"generated_at: {generated_at}",
+            f"mitigation_count: {len(mitigations)}",
+            f"blocked_count: {len(blocked_reasons)}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            f"# Mitigation Suggestions - {paper_source_id}",
+            "",
+            f"> Generated: {generated_at} | VIEW ONLY",
+            "> Mitigations are advisory only. Humans decide what to apply.",
+            "> Do not edit. Regenerated on every run. Never authoritative.",
+            "",
+            "| mitigation_id | mitigation_type | effectiveness | search_terms | prediction_id |",
+            "| ------------- | --------------- | ------------- | ------------ | ------------- |",
+        ]
+        for mit in mitigations:
+            terms = mit.get("evidence_search_terms") or []
+            terms_text = ", ".join(terms) if terms else "_n/a_"
+            lines.append(
+                f"| `{mit.get('mitigation_id', '')}` | "
+                f"{mit.get('mitigation_type', '')} | "
+                f"{mit.get('expected_effectiveness', '')} | "
+                f"{terms_text} | `{mit.get('prediction_id', '')}` |"
+            )
+        if not mitigations:
+            lines.append("| — | — | — | — | _no actionable mitigations_ |")
+        lines.append("")
+
+        if blocked_reasons:
+            lines.append("## Blocked Mitigations")
+            lines.append("")
+            lines.append(
+                "> The following mitigations were blocked at generation and "
+                "are NOT actionable suggestions."
+            )
+            lines.append("")
+            for reason in blocked_reasons:
+                lines.append(f"- {reason}")
+            lines.append("")
+        return "\n".join(lines)
+
+    def write_patterns_projection(
+        self,
+        patterns: List[Dict[str, Any]],
+        repo_root: str | Path,
+    ) -> str:
+        """Write agency/markdown/patterns.md (cross-agency pattern index)."""
+        repo_root_path = Path(repo_root).resolve()
+        markdown_dir = repo_root_path / "agency" / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        target_path = markdown_dir / "patterns.md"
+        target_path.write_text(
+            self._render_patterns_projection(patterns),
+            encoding="utf-8",
+        )
+        return str(target_path)
+
+    def _render_patterns_projection(
+        self,
+        patterns: List[Dict[str, Any]],
+    ) -> str:
+        generated_at = _now_iso()
+        lines = [
+            "---",
+            f"generated_at: {generated_at}",
+            f"pattern_count: {len(patterns)}",
+            "similarity_method: jaccard_word",
+            "vault_note_status: projection",
+            "---",
+            "",
+            "# Recurring Patterns",
+            "",
+            f"> Generated: {generated_at} | VIEW ONLY",
+            "> Similarity method: `jaccard_word` (deterministic word-set overlap).",
+            "> No semantic, vector, or AI-based similarity is used.",
+            "> Do not edit. Regenerated on every run. Never authoritative.",
+            "",
+            "| pattern_id | pattern_type | jaccard | agency_slugs | topic_keywords |",
+            "| ---------- | ------------ | ------- | ------------ | -------------- |",
+        ]
+        for pattern in patterns:
+            slugs = ", ".join(pattern.get("agency_slugs") or [])
+            keywords = ", ".join(pattern.get("topic_keywords") or [])
+            lines.append(
+                f"| `{pattern.get('pattern_id', '')}` | "
+                f"{pattern.get('pattern_type', '')} | "
+                f"{pattern.get('jaccard_similarity', '')} | "
+                f"{slugs} | {keywords} |"
+            )
+        if not patterns:
+            lines.append("| — | — | — | — | _no patterns found_ |")
+        lines.append("")
+        return "\n".join(lines)
+
 
 def _load_jsonl(path: Path) -> List[Dict[str, Any]]:
     if not path.is_file():

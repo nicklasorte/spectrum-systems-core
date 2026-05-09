@@ -35,6 +35,17 @@ from .ingestion import (
     SourceEval,
     SourceLoader,
 )
+from .agency import (
+    AgencyEval,
+    AgencyProfileStore,
+    MitigationEval,
+    MitigationOutcomeTracker,
+    MitigationSuggester,
+    ObjectionEval,
+    ObjectionPredictor,
+    PatternIndexer,
+    ProfileBuilder,
+)
 from .paper import (
     AssumptionExtractor,
     ClaimEval,
@@ -828,6 +839,207 @@ def _read_revision_decision(form_path: Path) -> str:
     return str(fm.get("decision") or "").strip()
 
 
+def build_agency_profile(
+    *,
+    paper_source_id: str,
+    agency_name: str,
+    repo_root: Path | None = None,
+    out_stream=None,
+) -> int:
+    """Phase E: ingest agency_comment issues from a paper into the agency profile."""
+    out = out_stream if out_stream is not None else sys.stdout
+    repo_root_path = (repo_root or Path.cwd()).resolve()
+
+    if not paper_source_id:
+        print("error: must provide --paper-source-id", file=out)
+        return 1
+    if not agency_name:
+        print("error: must provide --agency-name", file=out)
+        return 1
+
+    builder_result = ProfileBuilder().ingest_issues_into_profile(
+        paper_source_id, agency_name, str(repo_root_path)
+    )
+    if builder_result["status"] != "success":
+        print(
+            f"error: profile build failed: {builder_result.get('reason', '')}",
+            file=out,
+        )
+        return 1
+
+    agency_slug = builder_result.get("agency_slug") or ""
+    if not agency_slug:
+        print("error: profile build returned no agency_slug", file=out)
+        return 1
+
+    eval_result = AgencyEval().run(agency_slug, str(repo_root_path))
+    if eval_result["decision"] == "block":
+        print(
+            "error: blocked: " + ", ".join(eval_result["reason_codes"]),
+            file=out,
+        )
+        return 1
+
+    warnings = [
+        e for e in eval_result.get("eval_results", []) if e.get("status") == "warn"
+    ]
+    if warnings:
+        for w in warnings:
+            print(f"⚠ warn: {w['name']}: {w.get('reason', '')}", file=out)
+
+    profile_path = (
+        repo_root_path / "agency" / agency_slug / "profile.json"
+    )
+    print(f"✓ paper_source_id: {paper_source_id}", file=out)
+    print(f"✓ agency_slug: {agency_slug}", file=out)
+    print(f"✓ positions added: {builder_result['positions_added']}", file=out)
+    print(f"✓ history entries added: {builder_result['history_added']}", file=out)
+    print(f"✓ build warnings: {builder_result['warnings']}", file=out)
+    print(f"✓ profile: {profile_path}", file=out)
+    return 0
+
+
+def predict_objections(
+    *,
+    paper_source_id: str,
+    agency_slug: str,
+    repo_root: Path | None = None,
+    out_stream=None,
+) -> int:
+    """Phase E: predict objections, suggest mitigations, build pattern index."""
+    out = out_stream if out_stream is not None else sys.stdout
+    repo_root_path = (repo_root or Path.cwd()).resolve()
+
+    if not paper_source_id or not agency_slug:
+        print("error: must provide --paper-source-id and --agency-slug", file=out)
+        return 1
+
+    pred_result = ObjectionPredictor().predict_for_paper(
+        paper_source_id, agency_slug, str(repo_root_path)
+    )
+    if pred_result["status"] == "insufficient_history":
+        print(
+            f"insufficient history: {pred_result.get('reason', '')}", file=out
+        )
+        return 0
+    if pred_result["status"] != "success":
+        print(
+            f"error: prediction failed: {pred_result.get('reason', '')}",
+            file=out,
+        )
+        return 1
+
+    predictions = pred_result["predictions"]
+    obj_eval = ObjectionEval().run(predictions)
+    if obj_eval["decision"] == "block":
+        print(
+            "error: blocked: " + ", ".join(obj_eval["reason_codes"]),
+            file=out,
+        )
+        return 1
+
+    mit_result = MitigationSuggester().suggest_for_predictions(
+        paper_source_id, str(repo_root_path)
+    )
+    if mit_result["status"] != "success":
+        print(
+            f"error: mitigation suggestion failed: "
+            f"{mit_result.get('reason', '')}",
+            file=out,
+        )
+        return 1
+
+    # Reload mitigations.jsonl now that the suggester appended.
+    from .extraction._paths import find_processed_dir as _fpd
+
+    processed_dir, _ = _fpd(repo_root_path, paper_source_id)
+    mitigations: list[Dict[str, Any]] = []
+    if processed_dir is not None:
+        m_path = processed_dir / "paper" / "objections" / "mitigations.jsonl"
+        if m_path.is_file():
+            with m_path.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    mitigations.append(json.loads(line))
+
+    mit_eval = MitigationEval().run(mitigations, predictions)
+    if mit_eval["decision"] == "block":
+        print(
+            "error: blocked: " + ", ".join(mit_eval["reason_codes"]),
+            file=out,
+        )
+        return 1
+
+    pattern_result = PatternIndexer().build_patterns(str(repo_root_path))
+    if pattern_result["status"] != "success":
+        print(
+            f"error: pattern indexer failed: "
+            f"{pattern_result.get('reason', '')}",
+            file=out,
+        )
+        return 1
+
+    print(f"✓ paper_source_id: {paper_source_id}", file=out)
+    print(f"✓ agency_slug: {agency_slug}", file=out)
+    print(f"✓ predictions: {len(predictions)}", file=out)
+    print(f"✓ mitigations: {mit_result['mitigations']}", file=out)
+    print(f"✓ blocked at generation: {mit_result['blocked']}", file=out)
+    print(f"✓ recurring patterns: {pattern_result['pattern_count']}", file=out)
+    print("", file=out)
+    print(
+        "Review predictions in paper/objections/predictions.jsonl",
+        file=out,
+    )
+    return 0
+
+
+def track_outcome(
+    *,
+    mitigation_id: str,
+    agency_slug: str,
+    paper_source_id: str,
+    outcome: str,
+    secondary_source_id: str | None = None,
+    repo_root: Path | None = None,
+    out_stream=None,
+) -> int:
+    """Phase E: record the outcome of an applied mitigation (FINDING-E-004)."""
+    out = out_stream if out_stream is not None else sys.stdout
+    repo_root_path = (repo_root or Path.cwd()).resolve()
+
+    if not mitigation_id or not agency_slug or not paper_source_id or not outcome:
+        print(
+            "error: must provide --mitigation-id, --agency-slug, "
+            "--paper-source-id and --outcome",
+            file=out,
+        )
+        return 1
+
+    result = MitigationOutcomeTracker().record_outcome(
+        mitigation_id=mitigation_id,
+        agency_slug=agency_slug,
+        paper_source_id=paper_source_id,
+        human_marked_outcome=outcome,
+        secondary_check_source_id=secondary_source_id,
+        repo_root=str(repo_root_path),
+    )
+    if result["status"] != "success":
+        print(
+            f"error: outcome tracking failed: {result.get('reason', '')}",
+            file=out,
+        )
+        return 1
+
+    print(f"✓ mitigation_id: {mitigation_id}", file=out)
+    print(f"✓ agency_slug: {agency_slug}", file=out)
+    print(f"✓ human_marked_outcome: {outcome}", file=out)
+    print(f"✓ final_outcome: {result['final_outcome']}", file=out)
+    print(f"✓ auto_downgraded: {result['auto_downgraded']}", file=out)
+    return 0
+
+
 def _load_paper_jsonl(
     repo_root: Path, source_id: str, filename: str
 ) -> list[Dict[str, Any]]:
@@ -1039,6 +1251,54 @@ def _build_parser() -> argparse.ArgumentParser:
             "apply them. Without --poll, exits after writing forms."
         ),
     )
+
+    bap = sub.add_parser(
+        "build-agency-profile",
+        help="Phase E: ingest agency_comment issues into an agency profile.",
+        description=(
+            "Phase E agency profile builder. Reads paper/issues.jsonl issues "
+            "with issue_type=='agency_comment' from the named paper, "
+            "normalizes the agency name to a canonical agency_slug, and "
+            "writes / updates agency/<slug>/profile.json + positions.jsonl + "
+            "objection_history.jsonl. Runs AgencyEval after the build."
+        ),
+    )
+    bap.add_argument("--paper-source-id", required=True)
+    bap.add_argument("--agency-name", required=True)
+
+    po = sub.add_parser(
+        "predict-objections",
+        help="Phase E: predict agency objections + suggest mitigations.",
+        description=(
+            "Phase E objection prediction + mitigation suggestion. Reads the "
+            "paper's claims and the agency profile. Writes "
+            "paper/objections/predictions.jsonl, mitigations.jsonl, and "
+            "rebuilds agency/patterns.jsonl. Predictions are advisory only."
+        ),
+    )
+    po.add_argument("--paper-source-id", required=True)
+    po.add_argument("--agency-slug", required=True)
+
+    to = sub.add_parser(
+        "track-outcome",
+        help="Phase E: record the outcome of an applied mitigation.",
+        description=(
+            "Phase E mitigation outcome tracker. Records the human-marked "
+            "outcome and runs the secondary recurrence check. If the "
+            "objection recurs from the same agency in the secondary source, "
+            "the outcome is auto-downgraded to ineffective regardless of "
+            "the human mark (FINDING-E-004)."
+        ),
+    )
+    to.add_argument("--mitigation-id", required=True)
+    to.add_argument("--agency-slug", required=True)
+    to.add_argument("--paper-source-id", required=True)
+    to.add_argument(
+        "--outcome",
+        required=True,
+        choices=["effective", "ineffective", "partial", "unknown"],
+    )
+    to.add_argument("--secondary-source-id")
     return parser
 
 
@@ -1077,6 +1337,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             all_pending=args.all_pending,
             vault=args.vault,
             poll=args.poll,
+        )
+    if args.command == "build-agency-profile":
+        return build_agency_profile(
+            paper_source_id=args.paper_source_id,
+            agency_name=args.agency_name,
+        )
+    if args.command == "predict-objections":
+        return predict_objections(
+            paper_source_id=args.paper_source_id,
+            agency_slug=args.agency_slug,
+        )
+    if args.command == "track-outcome":
+        return track_outcome(
+            mitigation_id=args.mitigation_id,
+            agency_slug=args.agency_slug,
+            paper_source_id=args.paper_source_id,
+            outcome=args.outcome,
+            secondary_source_id=args.secondary_source_id,
         )
     parser.error(f"unknown command: {args.command}")
     return 2

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/agency/recurring_pattern.schema.json",
+  "title": "recurring_pattern",
+  "description": "Recurring pattern across two or more objection_history_entries. minItems=2 because a pattern from a single source is not a pattern (CHECK-RT1-004). Similarity is Jaccard word similarity only (FINDING-E-005).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "pattern_id",
+    "pattern_type",
+    "description",
+    "agency_slugs",
+    "source_objection_entry_ids",
+    "jaccard_similarity",
+    "similarity_method",
+    "topic_keywords",
+    "created_at"
+  ],
+  "properties": {
+    "pattern_id": { "type": "string", "format": "uuid" },
+    "pattern_type": {
+      "enum": [
+        "recurring_objection",
+        "recurring_concern",
+        "negotiation_pattern",
+        "resolution_pattern"
+      ]
+    },
+    "description": { "type": "string", "minLength": 20 },
+    "agency_slugs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "pattern": "^[a-z0-9_-]{2,64}$" }
+    },
+    "source_objection_entry_ids": {
+      "type": "array",
+      "minItems": 2,
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "jaccard_similarity": { "type": "number", "minimum": 0.6, "maximum": 1.0 },
+    "similarity_method": { "const": "jaccard_word" },
+    "topic_keywords": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

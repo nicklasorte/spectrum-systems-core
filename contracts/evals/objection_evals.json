@@ -1,0 +1,52 @@
+[
+  {
+    "id": "43d0e2fe-bef3-409c-b18b-248a046a8dc2",
+    "name": "EVAL-OBJ-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "objection_prediction.schema_valid",
+    "target_artifact_type": "objection_prediction",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "747be65b-d042-4368-8ca4-4171c7931281",
+    "name": "EVAL-OBJ-002",
+    "eval_type": "evidence_required",
+    "metric_name": "objection_prediction.high_confidence_requires_evidence",
+    "target_artifact_type": "objection_prediction",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "eaba0f17-daa7-42ff-b9e6-eeaa5fa28bdb",
+    "name": "EVAL-OBJ-003",
+    "eval_type": "extraction_temperature",
+    "metric_name": "objection_prediction.temperature_zero",
+    "target_artifact_type": "objection_prediction",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "c91b2a13-f8fa-4a10-8b59-f425c13ebf0e",
+    "name": "EVAL-OBJ-004",
+    "eval_type": "field_present",
+    "metric_name": "objection_prediction.recency_cutoff_applied",
+    "target_artifact_type": "objection_prediction",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "23728dac-e473-4a42-a9fa-9b1da87868c5",
+    "name": "EVAL-OBJ-005",
+    "eval_type": "field_consistency",
+    "metric_name": "objection_prediction.no_evidence_basis_flag_consistent",
+    "target_artifact_type": "objection_prediction",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  }
+]

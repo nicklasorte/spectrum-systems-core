@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/agency/objection_history_entry.schema.json",
+  "title": "objection_history_entry",
+  "description": "Past objection raised by an agency against a paper. Append-only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "entry_id",
+    "agency_slug",
+    "objection_text",
+    "objection_type",
+    "source_issue_id",
+    "paper_source_id",
+    "raised_at",
+    "resolved",
+    "resolution_description",
+    "created_at"
+  ],
+  "properties": {
+    "entry_id": { "type": "string", "format": "uuid" },
+    "agency_slug": { "type": "string", "pattern": "^[a-z0-9_-]{2,64}$" },
+    "objection_text": { "type": "string", "minLength": 20 },
+    "objection_type": {
+      "enum": [
+        "technical_dispute",
+        "scope_objection",
+        "methodology_concern",
+        "evidence_gap",
+        "policy_conflict",
+        "procedural"
+      ]
+    },
+    "source_issue_id": { "type": "string", "format": "uuid" },
+    "paper_source_id": { "type": "string", "minLength": 1 },
+    "raised_at": { "type": "string", "format": "date" },
+    "resolved": { "type": "boolean" },
+    "resolution_description": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

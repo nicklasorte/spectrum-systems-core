@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/agency/objection_prediction.schema.json",
+  "title": "objection_prediction",
+  "description": "Predicted objection. evidence_basis may be empty per schema, but if it is, no_evidence_basis_flag MUST be true and confidence MUST be \"low\". The full constraint is enforced by EVAL-OBJ-002 and EVAL-OBJ-005, not by schema alone (CHECK-RT1-003).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "prediction_id",
+    "agency_slug",
+    "paper_source_id",
+    "predicted_objection_text",
+    "objection_type",
+    "confidence",
+    "evidence_basis",
+    "no_evidence_basis_flag",
+    "rationale",
+    "positions_referenced",
+    "recency_cutoff_applied",
+    "extraction_model",
+    "extraction_temperature",
+    "status",
+    "created_at",
+    "provenance"
+  ],
+  "properties": {
+    "prediction_id": { "type": "string", "format": "uuid" },
+    "agency_slug": { "type": "string", "pattern": "^[a-z0-9_-]{2,64}$" },
+    "paper_source_id": { "type": "string", "minLength": 1 },
+    "predicted_objection_text": { "type": "string", "minLength": 20 },
+    "objection_type": {
+      "enum": [
+        "technical_dispute",
+        "scope_objection",
+        "methodology_concern",
+        "evidence_gap",
+        "policy_conflict",
+        "procedural"
+      ]
+    },
+    "confidence": { "enum": ["high", "medium", "low"] },
+    "evidence_basis": {
+      "type": "array",
+      "minItems": 0,
+      "items": { "type": "string" }
+    },
+    "no_evidence_basis_flag": { "type": "boolean" },
+    "rationale": { "type": "string", "minLength": 10 },
+    "positions_referenced": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "recency_cutoff_applied": { "type": "boolean" },
+    "extraction_model": { "type": "string", "minLength": 1 },
+    "extraction_temperature": { "type": "number", "const": 0 },
+    "status": { "enum": ["candidate", "reviewed", "dismissed"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "produced_by",
+        "input_artifact_ids",
+        "execution_fingerprint_hash"
+      ],
+      "properties": {
+        "produced_by": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["component", "version"],
+          "properties": {
+            "component": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "input_artifact_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "execution_fingerprint_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}

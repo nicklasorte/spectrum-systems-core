@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/agency/position_entry.schema.json",
+  "title": "position_entry",
+  "description": "An agency position attributed from one or more issue_records. The writer must enforce valid_until >= valid_from when both are set (CHECK-RT1-002).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "position_id",
+    "agency_slug",
+    "topic",
+    "position_statement",
+    "position_type",
+    "source_issue_ids",
+    "source_comment_ids",
+    "valid_from",
+    "valid_until",
+    "superseded_by",
+    "confidence_basis",
+    "created_at"
+  ],
+  "properties": {
+    "position_id": { "type": "string", "format": "uuid" },
+    "agency_slug": { "type": "string", "pattern": "^[a-z0-9_-]{2,64}$" },
+    "topic": { "type": "string", "minLength": 3 },
+    "position_statement": { "type": "string", "minLength": 20 },
+    "position_type": {
+      "enum": [
+        "supports",
+        "opposes",
+        "conditionally_supports",
+        "requests_clarification",
+        "raises_concern"
+      ]
+    },
+    "source_issue_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "source_comment_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" }
+    },
+    "valid_from": { "type": "string", "format": "date" },
+    "valid_until": {
+      "type": ["string", "null"],
+      "format": "date"
+    },
+    "superseded_by": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "confidence_basis": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}
