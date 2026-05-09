@@ -1,0 +1,4 @@
+{
+  "loader_should_reject": true,
+  "missing_field": "date"
+}

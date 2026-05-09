@@ -1,0 +1,8 @@
+{
+  "promoted": true,
+  "decision": "allow",
+  "artifact_type": "agency_question_summary",
+  "agency": "FCC",
+  "citations": ["47 CFR 96.41", "47 CFR 96.43"],
+  "grounding_kinds_include": ["agency", "question", "citation"]
+}

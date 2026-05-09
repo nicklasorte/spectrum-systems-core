@@ -1,0 +1,8 @@
+Q3 spectrum coordination sync
+The team reviewed the 3.5 GHz sharing proposal and the response timeline.
+DECISION: Adopt the SAS-only sharing model for Phase 1.
+DECISION: Schedule the public comment review for next week.
+ACTION: Alice drafts the FCC response by Friday.
+ACTION: Bob coordinates with NTIA on test schedule.
+QUESTION: Do we need a separate eval for ambiguous sharing rules?
+QUESTION: When does the coordination window close?

@@ -1,0 +1,2 @@
+Some prose without any required-field metadata.
+DECISION: Approve approach.
