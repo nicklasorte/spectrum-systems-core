@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/ai/ai_grounding_failure.schema.json",
+  "title": "ai_grounding_failure",
+  "description": "Phase H grounding failure record. Written whenever an AI query is blocked or fails.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "failure_id",
+    "query_id",
+    "task_type",
+    "failure_type",
+    "failure_detail",
+    "raw_response_hash",
+    "created_at"
+  ],
+  "properties": {
+    "failure_id": { "type": "string", "format": "uuid" },
+    "query_id": { "type": "string", "format": "uuid" },
+    "task_type": { "type": "string", "minLength": 1 },
+    "failure_type": {
+      "enum": [
+        "fabricated_citation",
+        "non_uuid_citation",
+        "missing_advisory_flag",
+        "schema_violation",
+        "unregistered_task_type",
+        "no_citations_in_output"
+      ]
+    },
+    "failure_detail": { "type": "string" },
+    "raw_response_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

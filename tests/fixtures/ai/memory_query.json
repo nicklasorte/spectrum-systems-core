@@ -1,0 +1,11 @@
+{
+  "task_type": "memory_query",
+  "mock_context_text": "technical_claim [source: f0c6a1e0-4a89-4ed1-8b5e-85c9a79d1f7f]:\nSpectrum allocation affects interference in the 3.5GHz band.\n\n---\nstory_candidate [source: a2bf8c2f-cc2b-4caa-a9bb-6f7d17c9b3d0]:\nThe agency raised concerns about adjacent band interference.\n",
+  "mock_question": "What spectrum concerns were raised?",
+  "canonical_response": "{\"answer\": \"The agency raised concerns about adjacent band interference in the 3.5GHz band [source: f0c6a1e0-4a89-4ed1-8b5e-85c9a79d1f7f].\", \"citations\": [\"f0c6a1e0-4a89-4ed1-8b5e-85c9a79d1f7f\"], \"confidence\": \"high\", \"gaps\": \"\"}",
+  "expected_citations": ["f0c6a1e0-4a89-4ed1-8b5e-85c9a79d1f7f"],
+  "mock_data_lake_exists": {
+    "f0c6a1e0-4a89-4ed1-8b5e-85c9a79d1f7f": true,
+    "a2bf8c2f-cc2b-4caa-a9bb-6f7d17c9b3d0": true
+  }
+}

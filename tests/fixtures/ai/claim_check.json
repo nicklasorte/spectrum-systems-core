@@ -1,0 +1,10 @@
+{
+  "task_type": "claim_check",
+  "mock_context_text": "technical_claim [source: f0c6a1e0-4a89-4ed1-8b5e-85c9a79d1f7f]:\nSpectrum allocation affects interference.\n",
+  "mock_question": "Does spectrum allocation affect interference?",
+  "canonical_response": "{\"supported\": true, \"supporting_citations\": [\"f0c6a1e0-4a89-4ed1-8b5e-85c9a79d1f7f\"], \"counter_citations\": [], \"assessment\": \"Claim is directly supported by evidence.\", \"confidence\": \"high\"}",
+  "expected_citations": ["f0c6a1e0-4a89-4ed1-8b5e-85c9a79d1f7f"],
+  "mock_data_lake_exists": {
+    "f0c6a1e0-4a89-4ed1-8b5e-85c9a79d1f7f": true
+  }
+}
