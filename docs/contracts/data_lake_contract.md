@@ -29,12 +29,20 @@ raw/meetings/<meeting_id>/metadata.json
 processed/meetings/<meeting_id>/<artifact_type>__<slug>.json
 processed/meetings/<meeting_id>/manifest__<run_id>.json        # optional
 processed/meetings/<meeting_id>/debug__<run_id>.json           # optional
+processed/meetings/<meeting_id>/failures/<failure_id>.json
+processed/meetings/<meeting_id>/eval_candidates/<candidate_id>.json
+processed/meetings/<meeting_id>/reviewed_evals/<eval_case_id>.json
 indexes/meetings/artifact_index.jsonl
 ```
 
 - `raw/meetings/<meeting_id>/` — the inputs core reads. Owned by the lake.
 - `processed/meetings/<meeting_id>/` — the outputs core writes. Only
-  promoted artifacts, plus optional run manifests and debug reports, live here.
+  promoted artifacts, plus optional run manifests and debug reports, live
+  at the top of this directory.
+- `processed/meetings/<meeting_id>/failures/`,
+  `eval_candidates/`, and `reviewed_evals/` — learning artifacts written
+  to dedicated subdirectories. They are NOT promoted product artifacts and
+  do not enter the artifact index.
 - `indexes/meetings/artifact_index.jsonl` — deterministic JSONL index over
   promoted processed artifacts.
 
@@ -144,6 +152,67 @@ inside manifests and debug reports.
 
 ---
 
+## 6A. Learning Artifacts
+
+The constitution (section 10) reserves the loop:
+
+```
+failure -> failure_record -> eval_case_candidate -> reviewed eval_case
+        -> regression suite
+```
+
+Learning artifacts are the persistent form of the first three arrows. They
+are kept under `processed/meetings/<meeting_id>/` so a reviewer can locate
+the failure, the candidate, and the human-reviewed eval for any given
+meeting in one place — but they are stored in dedicated subdirectories so
+they never blur into product artifacts.
+
+### 6A.1 Paths
+
+```
+processed/meetings/<meeting_id>/failures/<failure_id>.json
+processed/meetings/<meeting_id>/eval_candidates/<candidate_id>.json
+processed/meetings/<meeting_id>/reviewed_evals/<eval_case_id>.json
+```
+
+- `<failure_id>` is the `artifact_id` of the `failure_record`.
+- `<candidate_id>` is the `artifact_id` of the `eval_case_candidate`.
+- `<eval_case_id>` is the `artifact_id` of the `reviewed_eval_case`.
+- Filenames have no `__` separator; the directory itself names the kind.
+- File extension is always `.json`. UTF-8. Canonical JSON (sorted keys,
+  trailing newline). Two writes of the same artifact produce byte-identical
+  files.
+
+### 6A.2 Contents
+
+Each file contains the full artifact envelope (`artifact_id`,
+`artifact_type`, `schema_version`, `status`, `created_at`, `trace_id`,
+`input_refs`, `content_hash`, `payload`).
+
+Allowed `artifact_type` values per directory:
+
+- `failures/` — `failure_record`.
+- `eval_candidates/` — `eval_case_candidate`.
+- `reviewed_evals/` — `reviewed_eval_case`.
+
+Any other `artifact_type` written through the learning-artifact writer is
+rejected.
+
+### 6A.3 Rules
+
+- Learning artifacts are NOT promoted product artifacts. They do not enter
+  the artifact index. Their envelope `status` is not `promoted`.
+- Learning artifacts MAY be written even when product promotion is blocked,
+  because their reason for existing is to record blocked runs.
+- A `reviewed_eval_case` requires `payload.human_review_status == "accepted"`,
+  `"rejected"`, or `"needs_revision"`. Only `"accepted"` may be referenced
+  by a future regression fixture; `"rejected"` and `"needs_revision"`
+  remain stored but never become required eval coverage.
+- Promotion of a candidate into a required eval is a separate, explicit
+  step (a future slice). Persistence here does not create a required eval.
+
+---
+
 ## 7. Index
 
 Path: `indexes/meetings/artifact_index.jsonl`
@@ -164,6 +233,9 @@ These rules separate `spectrum-systems-core` from `spectrum-data-lake`:
 - Core reads `raw/meetings/<meeting_id>/transcript.txt` and
   `raw/meetings/<meeting_id>/metadata.json`. Core does not write to `raw/`.
 - Core writes only under `processed/meetings/` and `indexes/meetings/`.
+  Learning artifacts are written under
+  `processed/meetings/<meeting_id>/failures/`,
+  `eval_candidates/`, and `reviewed_evals/`.
 - Core never deletes anything. The data lake is append-only from core's
   perspective.
 - Core does not assume a database, schema registry, or remote service. The

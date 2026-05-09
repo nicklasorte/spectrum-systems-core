@@ -8,6 +8,13 @@ from .paths import (
     raw_metadata_path,
     processed_meeting_dir,
     artifact_index_path,
+    eval_candidates_dir,
+    failures_dir,
+    reviewed_evals_dir,
+    EVAL_CANDIDATES_SUBDIR,
+    FAILURES_SUBDIR,
+    REVIEWED_EVALS_SUBDIR,
+    LEARNING_SUBDIRS,
 )
 from .loader import (
     TranscriptInput,
@@ -17,7 +24,12 @@ from .loader import (
     load_meeting_from_dir,
     LoaderError,
 )
-from .writer import write_promoted_artifact, WriterError
+from .writer import (
+    write_promoted_artifact,
+    write_learning_artifact,
+    WriterError,
+    LEARNING_ARTIFACT_TYPES,
+)
 from .serialize import canonical_json, slugify, artifact_to_dict
 from .grounding import (
     GROUNDING_KEY,
@@ -55,9 +67,14 @@ from .query import (
 from .failure_seed import (
     FAILURE_RECORD_TYPE,
     EVAL_CASE_CANDIDATE_TYPE,
+    REVIEWED_EVAL_CASE_TYPE,
+    ALLOWED_REVIEW_STATUSES,
+    REVIEWED_EVAL_CASE_FIELDS,
     candidate_eval_case_from_failure,
     is_required_eval,
+    is_eligible_for_regression,
     record_failure,
+    review_eval_candidate,
 )
 
 __all__ = [
@@ -66,6 +83,13 @@ __all__ = [
     "raw_metadata_path",
     "processed_meeting_dir",
     "artifact_index_path",
+    "eval_candidates_dir",
+    "failures_dir",
+    "reviewed_evals_dir",
+    "EVAL_CANDIDATES_SUBDIR",
+    "FAILURES_SUBDIR",
+    "REVIEWED_EVALS_SUBDIR",
+    "LEARNING_SUBDIRS",
     "TranscriptInput",
     "REQUIRED_METADATA_FIELDS",
     "ALLOWED_SOURCE_TYPES",
@@ -73,7 +97,9 @@ __all__ = [
     "load_meeting_from_dir",
     "LoaderError",
     "write_promoted_artifact",
+    "write_learning_artifact",
     "WriterError",
+    "LEARNING_ARTIFACT_TYPES",
     "canonical_json",
     "slugify",
     "artifact_to_dict",
@@ -107,7 +133,12 @@ __all__ = [
     "query",
     "FAILURE_RECORD_TYPE",
     "EVAL_CASE_CANDIDATE_TYPE",
+    "REVIEWED_EVAL_CASE_TYPE",
+    "ALLOWED_REVIEW_STATUSES",
+    "REVIEWED_EVAL_CASE_FIELDS",
     "candidate_eval_case_from_failure",
     "is_required_eval",
+    "is_eligible_for_regression",
     "record_failure",
+    "review_eval_candidate",
 ]
