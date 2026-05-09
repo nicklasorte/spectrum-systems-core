@@ -37,6 +37,55 @@ assert result.promoted
 assert result.meeting_minutes.status == "promoted"
 ```
 
+## SSC-002: more artifact types through the same loop
+
+Three more artifact types now run through the same envelope, the same
+control function, and the same promotion gate. No new modules.
+
+| artifact_type             | required payload fields                                               |
+| ------------------------- | --------------------------------------------------------------------- |
+| `meeting_minutes`         | title, summary, decisions, action_items, open_questions               |
+| `decision_brief`          | title, context, options, recommendation, rationale                    |
+| `agency_question_summary` | title, agency, question, summary, citations                           |
+| `meeting_action_log`      | title, meeting_ref, actions, open_count                               |
+
+The shared loop lives in `workflows/_loop.py` (`run_governed_loop`):
+build context bundle → produce target artifact → run required evals →
+decide control → promote if allowed. Each workflow file only supplies
+its `artifact_type` and a deterministic `extract` function.
+
+```python
+from spectrum_systems_core.workflows import (
+    run_decision_brief_workflow,
+    run_agency_question_summary_workflow,
+    run_meeting_action_log_workflow,
+)
+
+brief = run_decision_brief_workflow("""
+Adopt SSC-002 second artifact type
+CONTEXT: Constitution requires one envelope and one control model.
+OPTION: Add decision_brief alongside meeting_minutes.
+RECOMMENDATION: Add decision_brief first.
+RATIONALE: Validates generality before introducing I/O complexity.
+""")
+assert brief.promoted
+
+inquiry = run_agency_question_summary_workflow("""
+FCC inquiry on band plan
+AGENCY: FCC
+QUESTION: What is the proposed sharing rule for 3.5 GHz?
+CITATION: 47 CFR 96.41
+""")
+assert inquiry.promoted
+
+log = run_meeting_action_log_workflow("""
+Q3 planning action log
+MEETING_REF: meeting-2026-05-09
+ACTION: Owner Alice ships SSC-002 docs
+""")
+assert log.promoted
+```
+
 ## Modules
 
 Active in this slice:

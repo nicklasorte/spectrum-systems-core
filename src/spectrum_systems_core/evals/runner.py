@@ -10,6 +10,48 @@ REQUIRED_MEETING_MINUTES_FIELDS: tuple[str, ...] = (
     "open_questions",
 )
 
+REQUIRED_DECISION_BRIEF_FIELDS: tuple[str, ...] = (
+    "title",
+    "context",
+    "options",
+    "recommendation",
+    "rationale",
+)
+
+REQUIRED_AGENCY_QUESTION_SUMMARY_FIELDS: tuple[str, ...] = (
+    "title",
+    "agency",
+    "question",
+    "summary",
+    "citations",
+)
+
+REQUIRED_MEETING_ACTION_LOG_FIELDS: tuple[str, ...] = (
+    "title",
+    "meeting_ref",
+    "actions",
+    "open_count",
+)
+
+REQUIRED_FIELDS_BY_TYPE: dict[str, tuple[tuple[str, ...], str]] = {
+    "meeting_minutes": (
+        REQUIRED_MEETING_MINUTES_FIELDS,
+        "required_meeting_minutes_fields",
+    ),
+    "decision_brief": (
+        REQUIRED_DECISION_BRIEF_FIELDS,
+        "required_decision_brief_fields",
+    ),
+    "agency_question_summary": (
+        REQUIRED_AGENCY_QUESTION_SUMMARY_FIELDS,
+        "required_agency_question_summary_fields",
+    ),
+    "meeting_action_log": (
+        REQUIRED_MEETING_ACTION_LOG_FIELDS,
+        "required_meeting_action_log_fields",
+    ),
+}
+
 
 def _eval_result(
     eval_type: str,
@@ -46,25 +88,24 @@ def _check_non_empty_payload(target: Artifact) -> Artifact:
     return _eval_result("non_empty_payload", target, passed=True, reason_codes=[])
 
 
-def _check_required_meeting_minutes_fields(target: Artifact) -> Artifact:
-    missing = [f for f in REQUIRED_MEETING_MINUTES_FIELDS if f not in target.payload]
+def _check_required_fields(
+    target: Artifact, eval_type: str, required: tuple[str, ...]
+) -> Artifact:
+    missing = [f for f in required if f not in target.payload]
     if missing:
         return _eval_result(
-            "required_meeting_minutes_fields",
+            eval_type,
             target,
             passed=False,
             reason_codes=[f"missing_field:{f}" for f in missing],
         )
-    return _eval_result(
-        "required_meeting_minutes_fields",
-        target,
-        passed=True,
-        reason_codes=[],
-    )
+    return _eval_result(eval_type, target, passed=True, reason_codes=[])
 
 
 def run_required_evals(artifact: Artifact) -> list[Artifact]:
     results: list[Artifact] = [_check_non_empty_payload(artifact)]
-    if artifact.artifact_type == "meeting_minutes":
-        results.append(_check_required_meeting_minutes_fields(artifact))
+    spec = REQUIRED_FIELDS_BY_TYPE.get(artifact.artifact_type)
+    if spec is not None:
+        required, eval_type = spec
+        results.append(_check_required_fields(artifact, eval_type, required))
     return results

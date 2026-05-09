@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
 
-from ..artifacts import Artifact, ArtifactStore, new_artifact
-from ..context import build_context_bundle
-from ..control import decide_control
-from ..evals import run_required_evals
-from ..promotion import promote_if_allowed
+from ..artifacts import Artifact, ArtifactStore
+from ._loop import run_governed_loop
 
 
 @dataclass
@@ -18,11 +14,6 @@ class WorkflowResult:
     control_decision: Artifact
     promoted: bool
     store: ArtifactStore = field(default_factory=ArtifactStore)
-
-
-def _derive_trace_id(input_text: str) -> str:
-    digest = hashlib.sha256(input_text.encode("utf-8")).hexdigest()
-    return f"trace-{digest[:16]}"
 
 
 def _extract_meeting_minutes(input_text: str) -> dict:
@@ -57,41 +48,16 @@ def _extract_meeting_minutes(input_text: str) -> dict:
 
 
 def run_meeting_minutes_workflow(input_text: str) -> WorkflowResult:
-    store = ArtifactStore()
-    trace_id = _derive_trace_id(input_text)
-
-    context_bundle = build_context_bundle(
+    run = run_governed_loop(
         input_text=input_text,
-        purpose="meeting_minutes",
-        trace_id=trace_id,
-    )
-    store.put(context_bundle)
-
-    payload = _extract_meeting_minutes(input_text)
-    minutes = new_artifact(
         artifact_type="meeting_minutes",
-        payload=payload,
-        trace_id=trace_id,
-        status="draft",
-        input_refs=[context_bundle.artifact_id],
+        extract=_extract_meeting_minutes,
     )
-    store.put(minutes)
-
-    eval_results = run_required_evals(minutes)
-    for r in eval_results:
-        store.put(r)
-
-    decision = decide_control(minutes, eval_results)
-    store.put(decision)
-
-    promote_if_allowed(store, minutes, decision)
-    promoted = minutes.status == "promoted"
-
     return WorkflowResult(
-        context_bundle=context_bundle,
-        meeting_minutes=minutes,
-        eval_results=eval_results,
-        control_decision=decision,
-        promoted=promoted,
-        store=store,
+        context_bundle=run.context_bundle,
+        meeting_minutes=run.target,
+        eval_results=run.eval_results,
+        control_decision=run.control_decision,
+        promoted=run.promoted,
+        store=run.store,
     )
