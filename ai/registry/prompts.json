@@ -1,0 +1,49 @@
+{
+  "registry_version": "1.0.0",
+  "task_types": {
+    "memory_query": {
+      "version": "1.0.0",
+      "description": "Answer a question using governed operational memory",
+      "model": "claude-haiku-4-5-20251001",
+      "temperature": 0,
+      "max_tokens": 1000,
+      "max_bundle_tokens": 4000,
+      "recipe_id": "default_report_v1",
+      "output_schema": "ai_output",
+      "prompt_template": "You are answering a question using governed operational memory.\n\nContext (use ONLY this information):\n{context}\n\nQuestion: {question}\n\nRules:\n1. Answer ONLY from the context above.\n2. Cite every fact with [source: <artifact_id>].\n3. If the context does not contain the answer, say so explicitly.\n4. Do not introduce facts not present in the context.\n\nReturn ONLY valid JSON:\n{{\"answer\": \"your answer\", \"citations\": [\"artifact_id1\", \"artifact_id2\"], \"confidence\": \"high|medium|low\", \"gaps\": \"what context was missing if any\"}}"
+    },
+    "claim_check": {
+      "version": "1.0.0",
+      "description": "Check whether a claim is supported by operational memory",
+      "model": "claude-haiku-4-5-20251001",
+      "temperature": 0,
+      "max_tokens": 500,
+      "max_bundle_tokens": 3000,
+      "recipe_id": "default_report_v1",
+      "output_schema": "ai_output",
+      "prompt_template": "You are checking whether a claim is supported by governed operational memory.\n\nContext:\n{context}\n\nClaim to check: {question}\n\nReturn ONLY valid JSON:\n{{\"supported\": true or false, \"supporting_citations\": [\"artifact_id\"], \"counter_citations\": [\"artifact_id\"], \"assessment\": \"one sentence\", \"confidence\": \"high|medium|low\"}}"
+    },
+    "objection_check": {
+      "version": "1.0.0",
+      "description": "Check agency memory for likely objections to a claim",
+      "model": "claude-haiku-4-5-20251001",
+      "temperature": 0,
+      "max_tokens": 800,
+      "max_bundle_tokens": 3000,
+      "recipe_id": "default_report_v1",
+      "output_schema": "ai_output",
+      "prompt_template": "You are checking agency memory for likely objections to a claim.\n\nAgency positions and history:\n{context}\n\nClaim: {question}\n\nReturn ONLY valid JSON:\n{{\"likely_objections\": [{{\"objection\": \"text\", \"agency\": \"name\", \"basis_citation\": \"artifact_id\", \"confidence\": \"high|medium|low\"}}], \"mitigation_hints\": [\"hint text\"]}}"
+    },
+    "story_fit": {
+      "version": "1.0.0",
+      "description": "Find promoted stories relevant to a theme or claim",
+      "model": "claude-haiku-4-5-20251001",
+      "temperature": 0,
+      "max_tokens": 600,
+      "max_bundle_tokens": 2000,
+      "recipe_id": "default_keynote_v1",
+      "output_schema": "ai_output",
+      "prompt_template": "You are finding promoted stories relevant to a theme or claim.\n\nAvailable promoted stories:\n{context}\n\nTheme or claim: {question}\n\nReturn ONLY valid JSON:\n{{\"relevant_stories\": [{{\"story_id\": \"uuid\", \"relevance\": \"high|medium|low\", \"reason\": \"one sentence\", \"citation\": \"[source: story_id]\"}}]}}"
+    }
+  }
+}

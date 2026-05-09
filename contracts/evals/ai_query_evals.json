@@ -1,0 +1,62 @@
+[
+  {
+    "id": "7479c7b1-5261-4e44-a301-02828a0a82a9",
+    "name": "EVAL-AI-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "ai_output.schema_valid",
+    "target_artifact_type": "ai_output",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "55b70c63-f53e-4b14-98bf-828399d9d58c",
+    "name": "EVAL-AI-002",
+    "eval_type": "advisory_flag_present",
+    "metric_name": "ai_output.ai_advisory_and_review_required",
+    "target_artifact_type": "ai_output",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "d91119e7-abde-41da-ad35-85ccf2bcd2d8",
+    "name": "EVAL-AI-003",
+    "eval_type": "no_fabricated_citations",
+    "metric_name": "ai_output.all_citations_verified",
+    "target_artifact_type": "ai_output",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "ee4e9794-b4c4-439b-adb4-75f6722d25f0",
+    "name": "EVAL-AI-004",
+    "eval_type": "citations_are_uuids",
+    "metric_name": "ai_output.citations_match_uuid_pattern",
+    "target_artifact_type": "ai_output",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "55b59e3b-61d4-4743-9299-739005ae9751",
+    "name": "EVAL-AI-005",
+    "eval_type": "cost_within_budget",
+    "metric_name": "ai_query_cost_under_threshold",
+    "target_artifact_type": "memory_query_cost_record",
+    "required": true,
+    "pass_condition": "warn",
+    "runner": "deterministic"
+  },
+  {
+    "id": "7d824573-c485-4837-8307-bf6235d7f576",
+    "name": "EVAL-AI-006",
+    "eval_type": "temperature_zero",
+    "metric_name": "ai_output.provenance.temperature_zero",
+    "target_artifact_type": "ai_output",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  }
+]

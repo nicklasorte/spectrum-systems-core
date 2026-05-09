@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/ai/ai_output.schema.json",
+  "title": "ai_output",
+  "description": "Phase H ai_output. Advisory artifact produced by AI over governed memory. ai_advisory and requires_human_review are immutable (FINDING-H-005).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "output_id",
+    "query_id",
+    "task_type",
+    "raw_response",
+    "citations",
+    "verified_citations",
+    "unverified_citations",
+    "grounded",
+    "ai_advisory",
+    "requires_human_review",
+    "confidence",
+    "created_at",
+    "provenance"
+  ],
+  "properties": {
+    "output_id": { "type": "string", "format": "uuid" },
+    "query_id": { "type": "string", "format": "uuid" },
+    "task_type": { "type": "string", "minLength": 1 },
+    "raw_response": { "type": "object" },
+    "citations": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "verified_citations": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "unverified_citations": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "grounded": { "type": "boolean" },
+    "ai_advisory": { "const": true },
+    "requires_human_review": { "const": true },
+    "confidence": {
+      "oneOf": [
+        { "enum": ["high", "medium", "low"] },
+        { "type": "null" }
+      ]
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "produced_by",
+        "bundle_id",
+        "bundle_hash",
+        "model",
+        "temperature"
+      ],
+      "properties": {
+        "produced_by": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["component", "version"],
+          "properties": {
+            "component": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "bundle_id": { "type": "string", "format": "uuid" },
+        "bundle_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "model": { "type": "string", "minLength": 1 },
+        "temperature": { "type": "number", "const": 0 }
+      }
+    }
+  }
+}

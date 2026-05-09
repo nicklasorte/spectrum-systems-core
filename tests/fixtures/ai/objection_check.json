@@ -1,0 +1,10 @@
+{
+  "task_type": "objection_check",
+  "mock_context_text": "agency_position [source: a2bf8c2f-cc2b-4caa-a9bb-6f7d17c9b3d0]:\nFCC opposes adjacent band operations without guard bands.\n",
+  "mock_question": "Is this allocation likely to face FCC objection?",
+  "canonical_response": "{\"likely_objections\": [{\"objection\": \"FCC will object to lack of guard bands\", \"agency\": \"FCC\", \"basis_citation\": \"a2bf8c2f-cc2b-4caa-a9bb-6f7d17c9b3d0\", \"confidence\": \"high\"}], \"mitigation_hints\": [\"Include guard band analysis\"]}",
+  "expected_citations": ["a2bf8c2f-cc2b-4caa-a9bb-6f7d17c9b3d0"],
+  "mock_data_lake_exists": {
+    "a2bf8c2f-cc2b-4caa-a9bb-6f7d17c9b3d0": true
+  }
+}

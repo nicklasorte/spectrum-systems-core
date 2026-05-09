@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/ai/ai_query_record.schema.json",
+  "title": "ai_query_record",
+  "description": "Phase H ai_query_record. One per AI query into governed operational memory.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "query_id",
+    "task_type",
+    "task_version",
+    "question",
+    "bundle_id",
+    "bundle_hash",
+    "model",
+    "temperature",
+    "started_at",
+    "completed_at",
+    "status",
+    "failure_reason"
+  ],
+  "properties": {
+    "query_id": { "type": "string", "format": "uuid" },
+    "task_type": { "type": "string", "minLength": 1 },
+    "task_version": { "type": "string", "minLength": 1 },
+    "question": { "type": "string", "minLength": 3 },
+    "bundle_id": { "type": "string", "format": "uuid" },
+    "bundle_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "model": { "type": "string", "minLength": 1 },
+    "temperature": { "type": "number", "const": 0 },
+    "started_at": { "type": "string", "format": "date-time" },
+    "completed_at": {
+      "oneOf": [
+        { "type": "string", "format": "date-time" },
+        { "type": "null" }
+      ]
+    },
+    "status": { "enum": ["success", "failure", "blocked"] },
+    "failure_reason": { "type": "string" }
+  }
+}

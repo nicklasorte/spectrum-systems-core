@@ -85,6 +85,10 @@ from .harness import (
     RunHistoryStore,
     WorkflowComparator,
 )
+from .ai import AIAdapter, PromptRegistry
+
+
+_AI_ADVISORY_BANNER = "⚠️ AI output is advisory only. Review before acting."
 
 
 _SLUG_RE = re.compile(r"[^a-z0-9_-]+")
@@ -1821,6 +1825,104 @@ def _load_agency_outcomes(repo_root: Path) -> list[Dict[str, Any]]:
     return out
 
 
+def ask_memory(
+    *,
+    task: str,
+    question: str,
+    vault: str | None = None,
+) -> int:
+    """Phase H: ONE entry point for AI memory queries.
+
+    Loop: question -> retrieve -> bundle -> generate -> grounding eval ->
+    advisory output. All AI output is advisory; the banner bookends the
+    answer (FINDING-H-005 / RT5-003).
+    """
+    repo_root = Path.cwd().resolve()
+
+    # Banner BEFORE the work starts.
+    print(_AI_ADVISORY_BANNER)
+
+    # Validate task is a registered task_type before any API call.
+    try:
+        PromptRegistry().get(task, repo_root=str(repo_root))
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"❌ Query failed: unregistered_task_type: {exc}", file=sys.stderr)
+        return 1
+
+    if not isinstance(question, str) or len(question.strip()) < 3:
+        print("❌ Query failed: question must be at least 3 characters.", file=sys.stderr)
+        return 1
+
+    result = AIAdapter().query(
+        task_type=task,
+        question=question,
+        repo_root=str(repo_root),
+        vault_root=vault,
+    )
+
+    if result["status"] == "blocked":
+        failure = result.get("failure") or {}
+        print(f"❌ Query blocked: {result.get('reason', '')}", file=sys.stderr)
+        if failure:
+            print(
+                f"   failure_type: {failure.get('failure_type', '?')}",
+                file=sys.stderr,
+            )
+            print(
+                f"   failure_detail: {failure.get('failure_detail', '?')}",
+                file=sys.stderr,
+            )
+        return 1
+
+    if result["status"] == "failure":
+        print(f"❌ Query failed: {result.get('reason', '')}", file=sys.stderr)
+        failure = result.get("failure") or {}
+        if failure:
+            print(
+                f"   failure_type: {failure.get('failure_type', '?')}",
+                file=sys.stderr,
+            )
+        return 1
+
+    output = result["output"]
+    cost_record = result.get("cost_record") or {}
+    citations = output.get("citations", [])
+    verified = output.get("verified_citations", [])
+    unverified = output.get("unverified_citations", [])
+
+    # Bookend banner BEFORE the answer (so it can't be missed).
+    print(_AI_ADVISORY_BANNER)
+    print("")
+    print(f"Task: {output.get('task_type', '?')}")
+    print(f"Question: {question}")
+    print(f"Grounded: {bool(output.get('grounded'))}")
+    print(f"Confidence: {output.get('confidence')}")
+    print(f"Citations verified: {len(verified)}/{len(citations)}")
+    print(
+        f"Cost: ${float(cost_record.get('estimated_cost_usd', 0.0)):.6f}"
+    )
+    print(f"Output ID: {output.get('output_id', '')}")
+    print("")
+
+    raw_response = output.get("raw_response", {}) or {}
+    if "answer" in raw_response:
+        print(raw_response["answer"])
+    else:
+        print(json.dumps(raw_response, indent=2, sort_keys=True))
+    print("")
+
+    if unverified:
+        print(
+            "⚠️ Unverified citations: "
+            + ", ".join(unverified),
+            file=sys.stderr,
+        )
+
+    # Bookend banner AFTER the answer.
+    print(_AI_ADVISORY_BANNER)
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m spectrum_systems_core.cli",
@@ -2150,6 +2252,39 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     ae.add_argument("--vault", help="Path to Obsidian vault root.")
+
+    am = sub.add_parser(
+        "ask-memory",
+        help="Phase H: governed AI query over operational memory.",
+        description=(
+            "Phase H AI memory query. Single loop: question -> retrieve from "
+            "governed memory -> assemble context bundle -> AI generation -> "
+            "grounding eval -> advisory output. All AI output is advisory "
+            "(FINDING-H-005). Only registered task types accepted "
+            "(FINDING-H-001)."
+        ),
+    )
+    am.add_argument(
+        "--task",
+        required=True,
+        help=(
+            "Registered task_type (memory_query | claim_check | "
+            "objection_check | story_fit). Unknown task_types fail "
+            "before any API call."
+        ),
+    )
+    am.add_argument(
+        "--question",
+        required=True,
+        help="The question or claim to evaluate against governed memory.",
+    )
+    am.add_argument(
+        "--vault",
+        help=(
+            "Optional Obsidian vault root. If provided, a view-only "
+            "advisory projection is written to vault/AI/<query_id>.md."
+        ),
+    )
     return parser
 
 
@@ -2248,6 +2383,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if args.command == "audit-entropy":
         return audit_entropy(vault=args.vault)
+    if args.command == "ask-memory":
+        return ask_memory(
+            task=args.task,
+            question=args.question,
+            vault=args.vault,
+        )
     parser.error(f"unknown command: {args.command}")
     return 2
 

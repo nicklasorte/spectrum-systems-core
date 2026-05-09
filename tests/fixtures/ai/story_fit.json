@@ -1,0 +1,10 @@
+{
+  "task_type": "story_fit",
+  "mock_context_text": "story_candidate [source: b1a0b41f-9cdb-4b5c-92f1-2f4fdf6b7b92]:\nThe spectrum auction revealed unexpected bidding patterns.\n",
+  "mock_question": "Competitive spectrum dynamics",
+  "canonical_response": "{\"relevant_stories\": [{\"story_id\": \"b1a0b41f-9cdb-4b5c-92f1-2f4fdf6b7b92\", \"relevance\": \"high\", \"reason\": \"Directly illustrates competitive dynamics.\", \"citation\": \"[source: b1a0b41f-9cdb-4b5c-92f1-2f4fdf6b7b92]\"}]}",
+  "expected_citations": ["b1a0b41f-9cdb-4b5c-92f1-2f4fdf6b7b92"],
+  "mock_data_lake_exists": {
+    "b1a0b41f-9cdb-4b5c-92f1-2f4fdf6b7b92": true
+  }
+}
