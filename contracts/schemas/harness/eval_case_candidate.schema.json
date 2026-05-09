@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/harness/eval_case_candidate.schema.json",
+  "title": "eval_case_candidate",
+  "description": "Proposed eval case derived from a recurring failure pattern. requires_human_promotion is const true (FINDING-G-003): the system NEVER writes to contracts/evals/. Only the promote-eval-case CLI (run by a human) makes a candidate active.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "candidate_id",
+    "proposed_eval_type",
+    "proposed_metric_name",
+    "proposed_target_artifact_type",
+    "proposed_pass_condition",
+    "triggering_pattern_id",
+    "triggering_failure_detail",
+    "proposed_by",
+    "requires_human_promotion",
+    "status",
+    "promotion_note",
+    "created_at"
+  ],
+  "properties": {
+    "candidate_id": { "type": "string", "format": "uuid" },
+    "proposed_eval_type": { "type": "string", "minLength": 1 },
+    "proposed_metric_name": { "type": "string", "minLength": 3 },
+    "proposed_target_artifact_type": { "type": "string", "minLength": 1 },
+    "proposed_pass_condition": { "type": "string", "minLength": 1 },
+    "triggering_pattern_id": { "type": "string", "format": "uuid" },
+    "triggering_failure_detail": { "type": "string" },
+    "proposed_by": { "const": "harness_memory" },
+    "requires_human_promotion": { "const": true },
+    "status": { "enum": ["candidate", "promoted", "dismissed"] },
+    "promotion_note": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

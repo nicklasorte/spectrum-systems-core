@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/harness/workflow_comparison.schema.json",
+  "title": "workflow_comparison",
+  "description": "Comparison of two synthesis runs across fixed COMPARISON_DIMENSIONS. WorkflowComparator FAILs if run_id_a == run_id_b (FINDING-G-005 / CHECK-RT1-005).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "comparison_id",
+    "run_id_a",
+    "run_id_b",
+    "compared_at",
+    "dimensions",
+    "summary",
+    "recommended_action",
+    "vault_projection_path"
+  ],
+  "properties": {
+    "comparison_id": { "type": "string", "format": "uuid" },
+    "run_id_a": { "type": "string", "format": "uuid" },
+    "run_id_b": { "type": "string", "format": "uuid" },
+    "compared_at": { "type": "string", "format": "date-time" },
+    "dimensions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dimension_name",
+          "value_a",
+          "value_b",
+          "delta",
+          "direction"
+        ],
+        "properties": {
+          "dimension_name": { "type": "string", "minLength": 1 },
+          "value_a": {},
+          "value_b": {},
+          "delta": {},
+          "direction": {
+            "enum": ["improved", "degraded", "unchanged", "not_comparable"]
+          }
+        }
+      }
+    },
+    "summary": { "type": "string", "minLength": 10 },
+    "recommended_action": { "type": "string" },
+    "vault_projection_path": { "type": ["string", "null"] }
+  }
+}

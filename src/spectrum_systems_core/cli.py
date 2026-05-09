@@ -15,6 +15,7 @@ import json
 import re
 import shutil
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Sequence
 
@@ -74,6 +75,15 @@ from .synthesis import (
     VALID_AUDIENCES,
     VALID_PURPOSES,
     total_cost_usd,
+)
+from .harness import (
+    EntropyAuditor,
+    EvalScoreHistory,
+    FailurePatternIndex,
+    OutcomeMemoryStore,
+    OverrideStore,
+    RunHistoryStore,
+    WorkflowComparator,
 )
 
 
@@ -1237,6 +1247,8 @@ def synthesize(
     close_result = RunManifest().close_run(run_id, str(repo_root))
     cost_total = total_cost_usd(run_id, str(repo_root))
 
+    _record_synthesis_run_in_harness(run_id, repo_root, vault)
+
     review_form_path = ""
     if vault:
         review_form_path = SynthesisReviewGateway().emit_review_form(
@@ -1270,6 +1282,543 @@ def synthesize(
     print("")
     print(f"Next: review synthesis/{run_id}/ and submit review form.")
     return 0
+
+
+def _record_synthesis_run_in_harness(
+    run_id: str,
+    repo_root: Path,
+    vault: str | None,
+) -> None:
+    """Best-effort harness recording. NEVER raises (FINDING-G-001 / RT5-002)."""
+    try:
+        manifest_path = repo_root / "synthesis" / run_id / "run_manifest.json"
+        if not manifest_path.is_file():
+            return
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    try:
+        result = RunHistoryStore().record_run(manifest, str(repo_root))
+        if result.get("status") != "success":
+            print(
+                f"warning: harness record_run failed: {result.get('reason', '')}",
+                file=sys.stderr,
+            )
+            return
+
+        # Record eval results from report_draft + keynote_scaffold sections.
+        report_path = repo_root / "synthesis" / run_id / "report_draft.json"
+        keynote_path = repo_root / "synthesis" / run_id / "keynote_scaffold.json"
+        if report_path.is_file():
+            try:
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                eval_results = [
+                    {
+                        "name": "section_grounding",
+                        "status": "pass" if s.get("grounded") else "fail",
+                        "score": None,
+                    }
+                    for s in (report.get("sections") or [])
+                ]
+                EvalScoreHistory().record_eval_results(
+                    run_id, eval_results, "report_draft", str(repo_root)
+                )
+            except (OSError, json.JSONDecodeError):
+                pass
+        if keynote_path.is_file():
+            try:
+                scaffold = json.loads(keynote_path.read_text(encoding="utf-8"))
+                eval_results = [
+                    {
+                        "name": "keynote_status",
+                        "status": (
+                            "pass"
+                            if scaffold.get("status") not in {"blocked", "rejected"}
+                            else "fail"
+                        ),
+                        "score": None,
+                    }
+                ]
+                EvalScoreHistory().record_eval_results(
+                    run_id, eval_results, "keynote_scaffold", str(repo_root)
+                )
+            except (OSError, json.JSONDecodeError):
+                pass
+
+        # Ingest failures (ungrounded sections).
+        failures: list[Dict[str, Any]] = []
+        if report_path.is_file():
+            try:
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                for section in report.get("sections", []) or []:
+                    if not section.get("grounded"):
+                        failures.append(
+                            {
+                                "reason_code": "ungrounded_section",
+                                "failure_detail": (
+                                    f"section {section.get('section_title', '?')} "
+                                    f"({section.get('section_type', '?')}) "
+                                    f"had {len(section.get('unverified_citations', []) or [])} "
+                                    "unverified citations"
+                                ),
+                            }
+                        )
+            except (OSError, json.JSONDecodeError):
+                pass
+        if failures:
+            FailurePatternIndex().ingest_failures(
+                run_id, failures, str(repo_root)
+            )
+            patterns = FailurePatternIndex().get_top_patterns(
+                str(repo_root), n=50
+            )
+            for pattern in patterns:
+                if int(pattern.get("occurrence_count", 0)) >= 3 and not pattern.get(
+                    "eval_candidate_id"
+                ):
+                    FailurePatternIndex().propose_eval_candidate(
+                        pattern, str(repo_root)
+                    )
+
+        try:
+            RunHistoryStore().write_run_history_projection(
+                str(repo_root), vault
+            )
+        except Exception as exc:  # pragma: no cover
+            print(
+                f"warning: harness projection failed: {exc}", file=sys.stderr
+            )
+    except Exception as exc:  # pragma: no cover
+        print(f"warning: harness memory recording failed: {exc}", file=sys.stderr)
+
+
+def record_run(
+    *,
+    run_id: str,
+    vault: str | None = None,
+    repo_root: Path | None = None,
+    out_stream=None,
+) -> int:
+    """Phase G: record a completed synthesis run into harness memory."""
+    out = out_stream if out_stream is not None else sys.stdout
+    repo_root_path = (repo_root or Path.cwd()).resolve()
+    if not run_id:
+        print("error: must provide --run-id", file=out)
+        return 1
+    manifest_path = repo_root_path / "synthesis" / run_id / "run_manifest.json"
+    if not manifest_path.is_file():
+        print(f"error: run_manifest not found: {manifest_path}", file=out)
+        return 1
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"error: failed to read run_manifest: {exc}", file=out)
+        return 1
+
+    rh_result = RunHistoryStore().record_run(manifest, str(repo_root_path))
+    if rh_result["status"] != "success":
+        print(f"warning: record_run: {rh_result.get('reason', '')}", file=out)
+
+    eval_count = 0
+    pattern_count = 0
+    candidate_count = 0
+    report_path = repo_root_path / "synthesis" / run_id / "report_draft.json"
+    keynote_path = repo_root_path / "synthesis" / run_id / "keynote_scaffold.json"
+
+    if report_path.is_file():
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            results = [
+                {
+                    "name": "section_grounding",
+                    "status": "pass" if s.get("grounded") else "fail",
+                    "score": None,
+                }
+                for s in (report.get("sections") or [])
+            ]
+            EvalScoreHistory().record_eval_results(
+                run_id, results, "report_draft", str(repo_root_path)
+            )
+            eval_count += len(results)
+        except (OSError, json.JSONDecodeError):
+            pass
+    if keynote_path.is_file():
+        try:
+            scaffold = json.loads(keynote_path.read_text(encoding="utf-8"))
+            results = [
+                {
+                    "name": "keynote_status",
+                    "status": (
+                        "pass"
+                        if scaffold.get("status") not in {"blocked", "rejected"}
+                        else "fail"
+                    ),
+                    "score": None,
+                }
+            ]
+            EvalScoreHistory().record_eval_results(
+                run_id, results, "keynote_scaffold", str(repo_root_path)
+            )
+            eval_count += len(results)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    failures: list[Dict[str, Any]] = []
+    if report_path.is_file():
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            for section in report.get("sections", []) or []:
+                if not section.get("grounded"):
+                    failures.append(
+                        {
+                            "reason_code": "ungrounded_section",
+                            "failure_detail": (
+                                f"section {section.get('section_title', '?')} "
+                                f"({section.get('section_type', '?')}) "
+                                f"had {len(section.get('unverified_citations', []) or [])} "
+                                "unverified citations"
+                            ),
+                        }
+                    )
+        except (OSError, json.JSONDecodeError):
+            pass
+    if failures:
+        ingest_result = FailurePatternIndex().ingest_failures(
+            run_id, failures, str(repo_root_path)
+        )
+        pattern_count = (
+            ingest_result.get("new_patterns", 0)
+            + ingest_result.get("patterns_updated", 0)
+        )
+        for pattern in FailurePatternIndex().get_top_patterns(
+            str(repo_root_path), n=50
+        ):
+            if int(pattern.get("occurrence_count", 0)) >= 3 and not pattern.get(
+                "eval_candidate_id"
+            ):
+                cand = FailurePatternIndex().propose_eval_candidate(
+                    pattern, str(repo_root_path)
+                )
+                if cand.get("status") == "success":
+                    candidate_count += 1
+
+    try:
+        RunHistoryStore().write_run_history_projection(
+            str(repo_root_path), vault
+        )
+    except Exception as exc:  # pragma: no cover
+        print(f"warning: projection failed: {exc}", file=out)
+
+    print(f"✓ run_id: {run_id}", file=out)
+    print(f"✓ entry_id: {rh_result.get('entry_id', '')}", file=out)
+    print(f"✓ eval results recorded: {eval_count}", file=out)
+    print(f"✓ patterns updated: {pattern_count}", file=out)
+    print(f"✓ candidates proposed: {candidate_count}", file=out)
+    return 0
+
+
+def record_outcome(
+    *,
+    outcome_type: str,
+    source_id: str,
+    paper_source_id: str,
+    vault: str | None = None,
+    repo_root: Path | None = None,
+    out_stream=None,
+) -> int:
+    """Phase G: record a revision or mitigation outcome into harness memory."""
+    out = out_stream if out_stream is not None else sys.stdout
+    repo_root_path = (repo_root or Path.cwd()).resolve()
+    if outcome_type not in ("revision", "mitigation"):
+        print("error: --type must be revision|mitigation", file=out)
+        return 1
+
+    store = OutcomeMemoryStore()
+    if outcome_type == "revision":
+        diffs = _load_paper_jsonl(repo_root_path, paper_source_id, "revision_diff.jsonl")
+        instructions = _load_paper_jsonl(
+            repo_root_path, paper_source_id, "revision_instructions.jsonl"
+        )
+        diff = next((d for d in diffs if d.get("diff_id") == source_id), None)
+        if diff is None:
+            print(f"error: revision_diff not found: {source_id}", file=out)
+            return 1
+        instruction = next(
+            (i for i in instructions
+             if i.get("instruction_id") == diff.get("instruction_id")),
+            {},
+        )
+        result = store.record_revision_outcome(diff, instruction, str(repo_root_path))
+    else:
+        outcomes = _load_agency_outcomes(repo_root_path)
+        outcome_record = next(
+            (o for o in outcomes if o.get("outcome_id") == source_id),
+            None,
+        )
+        if outcome_record is None:
+            print(f"error: outcome_record not found: {source_id}", file=out)
+            return 1
+        if not outcome_record.get("paper_source_id"):
+            outcome_record["paper_source_id"] = paper_source_id
+        result = store.record_mitigation_outcome(
+            outcome_record, str(repo_root_path)
+        )
+
+    if result["status"] != "success":
+        print(f"error: {result.get('reason', '')}", file=out)
+        return 1
+
+    try:
+        store.write_outcome_projection(str(repo_root_path), vault)
+    except Exception as exc:  # pragma: no cover
+        print(f"warning: projection failed: {exc}", file=out)
+
+    rev_rate = store.get_effectiveness_rate("revision", str(repo_root_path))
+    mit_rate = store.get_effectiveness_rate("mitigation", str(repo_root_path))
+    print(f"✓ recorded {outcome_type} outcome: {result.get('record_id', '')}", file=out)
+    print(
+        f"✓ revision effectiveness: "
+        f"{(rev_rate['effectiveness_rate'] or 0) * 100:.1f}% "
+        f"({rev_rate['effective']}/{rev_rate['total']})",
+        file=out,
+    )
+    print(
+        f"✓ mitigation effectiveness: "
+        f"{(mit_rate['effectiveness_rate'] or 0) * 100:.1f}% "
+        f"({mit_rate['effective']}/{mit_rate['total']})",
+        file=out,
+    )
+    return 0
+
+
+def compare_runs(
+    *,
+    run_id_a: str,
+    run_id_b: str,
+    vault: str | None = None,
+    repo_root: Path | None = None,
+    out_stream=None,
+) -> int:
+    """Phase G: compare two synthesis runs across fixed dimensions."""
+    out = out_stream if out_stream is not None else sys.stdout
+    repo_root_path = (repo_root or Path.cwd()).resolve()
+    result = WorkflowComparator().compare(
+        run_id_a, run_id_b, str(repo_root_path), vault_root=vault
+    )
+    if result["status"] != "success":
+        print(f"error: {result.get('reason', '')}", file=out)
+        return 1
+    print(f"✓ comparison_id: {result['comparison_id']}", file=out)
+    print(f"✓ summary: {result.get('summary', '')}", file=out)
+    print(f"✓ recommended_action: {result.get('recommended_action', '')}", file=out)
+    print(f"✓ json: {result.get('json_path', '')}", file=out)
+    if result.get("vault_projection_path"):
+        print(f"✓ vault: {result['vault_projection_path']}", file=out)
+    return 0
+
+
+def record_override(
+    *,
+    artifact_id: str,
+    eval_or_block: str,
+    rationale: str,
+    human_id: str,
+    decision_context: str,
+    expires_days: int | None = None,
+    vault: str | None = None,
+    repo_root: Path | None = None,
+    out_stream=None,
+) -> int:
+    """Phase G: record a human override (FINDING-G-006)."""
+    out = out_stream if out_stream is not None else sys.stdout
+    repo_root_path = (repo_root or Path.cwd()).resolve()
+    result = OverrideStore().record_override(
+        decision_context=decision_context,
+        overridden_artifact_id=artifact_id,
+        overridden_eval_or_block=eval_or_block,
+        rationale=rationale,
+        overriding_human_id=human_id,
+        repo_root=str(repo_root_path),
+        expires_days=expires_days,
+    )
+    if result["status"] != "success":
+        print(f"error: {result.get('reason', '')}", file=out)
+        return 1
+    try:
+        OverrideStore().write_overrides_projection(str(repo_root_path), vault)
+    except Exception as exc:  # pragma: no cover
+        print(f"warning: projection failed: {exc}", file=out)
+
+    print(f"✓ override_id: {result['override_id']}", file=out)
+    print(f"✓ expires_at: {result['expires_at']}", file=out)
+    if result.get("warning"):
+        print("⚠ warning: this override expires within 30 days", file=out)
+    return 0
+
+
+def promote_eval_case(
+    *,
+    candidate_id: str,
+    reviewer_id: str,
+    note: str,
+    auto_confirm: bool = False,
+    repo_root: Path | None = None,
+    in_stream=None,
+    out_stream=None,
+) -> int:
+    """Phase G: human promotion of an eval_case_candidate (FINDING-G-003).
+
+    The ONLY path that writes to contracts/evals/. Requires explicit confirm.
+    """
+    out = out_stream if out_stream is not None else sys.stdout
+    inp = in_stream if in_stream is not None else sys.stdin
+    repo_root_path = (repo_root or Path.cwd()).resolve()
+
+    candidates_path = (
+        repo_root_path / "harness" / "failures" / "eval_candidates.jsonl"
+    )
+    if not candidates_path.is_file():
+        print(f"error: candidates file not found: {candidates_path}", file=out)
+        return 1
+    candidates: list[Dict[str, Any]] = []
+    with candidates_path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                candidates.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    target = next(
+        (c for c in candidates if c.get("candidate_id") == candidate_id), None
+    )
+    if target is None:
+        print(f"error: candidate not found: {candidate_id}", file=out)
+        return 1
+    if target.get("status") != "candidate":
+        print(
+            f"error: cannot promote — status={target.get('status')!r}",
+            file=out,
+        )
+        return 1
+
+    if not auto_confirm:
+        print(
+            "This will add a new eval case to contracts/evals/. "
+            "Type 'confirm' to proceed:",
+            file=out,
+        )
+        try:
+            answer = inp.readline().strip()
+        except (OSError, EOFError):
+            answer = ""
+        if answer != "confirm":
+            print("aborted: confirmation not received", file=out)
+            return 1
+
+    artifact_type = str(target.get("proposed_target_artifact_type") or "report_draft")
+    registry_path = (
+        repo_root_path / "contracts" / "evals" / f"{artifact_type}_evals.json"
+    )
+    if registry_path.is_file():
+        try:
+            registry = json.loads(registry_path.read_text(encoding="utf-8"))
+            if not isinstance(registry, list):
+                registry = []
+        except (OSError, json.JSONDecodeError):
+            registry = []
+    else:
+        registry = []
+
+    short_id = str(uuid.uuid4())[:8]
+    eval_case = {
+        "id": str(uuid.uuid4()),
+        "name": f"EVAL-PROMOTED-{short_id}",
+        "eval_type": str(target.get("proposed_eval_type") or "policy_alignment"),
+        "metric_name": str(target.get("proposed_metric_name") or "promoted_metric"),
+        "target_artifact_type": artifact_type,
+        "required": True,
+        "pass_condition": "boolean",
+        "runner": "deterministic",
+        "promoted_from_candidate_id": candidate_id,
+        "promoted_by": reviewer_id,
+        "promotion_note": note or "",
+    }
+    registry.append(eval_case)
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    registry_path.write_text(
+        json.dumps(registry, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    target["status"] = "promoted"
+    target["promotion_note"] = note or ""
+    with candidates_path.open("w", encoding="utf-8") as fh:
+        for c in candidates:
+            fh.write(json.dumps(c, sort_keys=True, separators=(",", ":")) + "\n")
+
+    print(f"✓ promoted candidate {candidate_id} as {eval_case['name']}", file=out)
+    print(f"✓ written to: {registry_path}", file=out)
+    return 0
+
+
+def audit_entropy(
+    *,
+    vault: str | None = None,
+    repo_root: Path | None = None,
+    out_stream=None,
+) -> int:
+    """Phase G: scan for entropy and produce a report (FINDING-G-007)."""
+    out = out_stream if out_stream is not None else sys.stdout
+    repo_root_path = (repo_root or Path.cwd()).resolve()
+    result = EntropyAuditor().run_audit(str(repo_root_path), vault)
+    if result["status"] != "success":
+        print(f"error: {result.get('reason', '')}", file=out)
+        return 1
+    report = result.get("report") or {}
+    flagged = report.get("flagged_items") or []
+    severity_counts = {"high": 0, "medium": 0, "low": 0}
+    for item in flagged:
+        sev = item.get("severity", "low")
+        severity_counts[sev] = severity_counts.get(sev, 0) + 1
+    print(f"✓ report_id: {report.get('report_id', '')}", file=out)
+    print(f"✓ total_flagged: {result.get('total_flagged', 0)}", file=out)
+    print(
+        f"✓ severity: high={severity_counts['high']} "
+        f"medium={severity_counts['medium']} low={severity_counts['low']}",
+        file=out,
+    )
+    print(
+        "See harness/markdown/entropy.md for the full report.",
+        file=out,
+    )
+    return 0
+
+
+def _load_agency_outcomes(repo_root: Path) -> list[Dict[str, Any]]:
+    """Scan agency/<slug>/mitigation_outcomes.jsonl across all slugs."""
+    out: list[Dict[str, Any]] = []
+    agency_root = repo_root / "agency"
+    if not agency_root.is_dir():
+        return out
+    for slug_dir in sorted(agency_root.iterdir()):
+        if not slug_dir.is_dir():
+            continue
+        path = slug_dir / "mitigation_outcomes.jsonl"
+        if not path.is_file():
+            continue
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    return out
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -1510,6 +2059,97 @@ def _build_parser() -> argparse.ArgumentParser:
             "written to vault/Reviews/Synthesis/Pending/."
         ),
     )
+
+    rr = sub.add_parser(
+        "record-run",
+        help="Phase G: record a synthesis run into harness memory.",
+        description=(
+            "Phase G harness recording. Reads synthesis/<run_id>/run_manifest.json "
+            "and produces a run_history_entry under harness/runs/index.json. "
+            "Also records eval results, ingests failures, and proposes "
+            "eval_case_candidate artifacts for recurring patterns. NEVER blocks "
+            "the synthesis pipeline (RT5-002)."
+        ),
+    )
+    rr.add_argument("--run-id", required=True)
+    rr.add_argument("--vault", help="Path to Obsidian vault root.")
+
+    ro = sub.add_parser(
+        "record-outcome",
+        help="Phase G: record a revision or mitigation outcome.",
+        description=(
+            "Phase G outcome recording. Records into harness/outcomes/memory.jsonl "
+            "(FINDING-G-004 — single store, outcome_type distinguishes flow)."
+        ),
+    )
+    ro.add_argument(
+        "--type", required=True, choices=["revision", "mitigation"], dest="otype"
+    )
+    ro.add_argument("--source-id", required=True, help="diff_id or outcome_id")
+    ro.add_argument("--paper-source-id", required=True)
+    ro.add_argument("--vault", help="Path to Obsidian vault root.")
+
+    cmp_ = sub.add_parser(
+        "compare-runs",
+        help="Phase G: compare two synthesis runs across fixed dimensions.",
+        description=(
+            "Phase G workflow comparator. Writes harness/comparisons/<a>_vs_<b>.json "
+            "and (with --vault) vault/Harness/comparisons/<a>_vs_<b>.md (FINDING-G-005)."
+        ),
+    )
+    cmp_.add_argument("--run-a", required=True)
+    cmp_.add_argument("--run-b", required=True)
+    cmp_.add_argument("--vault", help="Path to Obsidian vault root.")
+
+    rov = sub.add_parser(
+        "record-override",
+        help="Phase G: record a human override of an eval or block.",
+        description=(
+            "Phase G override store. Each override has expires_at (default 365 days). "
+            "Warns if expiring within 30 days. Auto-archives expired overrides "
+            "(FINDING-G-006)."
+        ),
+    )
+    rov.add_argument("--artifact-id", required=True)
+    rov.add_argument("--eval-or-block", required=True)
+    rov.add_argument("--rationale", required=True)
+    rov.add_argument("--human-id", required=True)
+    rov.add_argument(
+        "--decision-context",
+        required=True,
+        help="What decision is being overridden (>=10 chars).",
+    )
+    rov.add_argument("--expires-days", type=int)
+    rov.add_argument("--vault", help="Path to Obsidian vault root.")
+
+    pec = sub.add_parser(
+        "promote-eval-case",
+        help="Phase G: human promotion of an eval_case_candidate.",
+        description=(
+            "Phase G eval case promoter. The ONLY path that writes a new eval to "
+            "contracts/evals/ (FINDING-G-003). Prompts for explicit 'confirm' "
+            "before writing. Updates the candidate status to 'promoted'."
+        ),
+    )
+    pec.add_argument("--candidate-id", required=True)
+    pec.add_argument("--reviewer-id", required=True)
+    pec.add_argument("--note", default="")
+    pec.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip the interactive 'confirm' prompt (use carefully).",
+    )
+
+    ae = sub.add_parser(
+        "audit-entropy",
+        help="Phase G: scan for entropy and produce a report.",
+        description=(
+            "Phase G entropy auditor. Writes entropy_report under "
+            "harness/entropy/reports.jsonl with flagged_items each carrying "
+            "severity + recommended_action. NEVER auto-deletes (FINDING-G-007)."
+        ),
+    )
+    ae.add_argument("--vault", help="Path to Obsidian vault root.")
     return parser
 
 
@@ -1574,6 +2214,40 @@ def main(argv: Sequence[str] | None = None) -> int:
             recipe_id=args.recipe_id,
             vault=args.vault,
         )
+    if args.command == "record-run":
+        return record_run(run_id=args.run_id, vault=args.vault)
+    if args.command == "record-outcome":
+        return record_outcome(
+            outcome_type=args.otype,
+            source_id=args.source_id,
+            paper_source_id=args.paper_source_id,
+            vault=args.vault,
+        )
+    if args.command == "compare-runs":
+        return compare_runs(
+            run_id_a=args.run_a,
+            run_id_b=args.run_b,
+            vault=args.vault,
+        )
+    if args.command == "record-override":
+        return record_override(
+            artifact_id=args.artifact_id,
+            eval_or_block=args.eval_or_block,
+            rationale=args.rationale,
+            human_id=args.human_id,
+            decision_context=args.decision_context,
+            expires_days=args.expires_days,
+            vault=args.vault,
+        )
+    if args.command == "promote-eval-case":
+        return promote_eval_case(
+            candidate_id=args.candidate_id,
+            reviewer_id=args.reviewer_id,
+            note=args.note,
+            auto_confirm=args.yes,
+        )
+    if args.command == "audit-entropy":
+        return audit_entropy(vault=args.vault)
     parser.error(f"unknown command: {args.command}")
     return 2
 

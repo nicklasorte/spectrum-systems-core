@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/harness/outcome_memory_record.schema.json",
+  "title": "outcome_memory_record",
+  "description": "Unified outcome memory record. outcome_type='revision' or 'mitigation' distinguishes the two flows so they share one store and one jsonl file (FINDING-G-004).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "record_id",
+    "outcome_type",
+    "source_artifact_id",
+    "paper_source_id",
+    "issue_type",
+    "issue_severity",
+    "action_taken",
+    "human_marked_outcome",
+    "final_outcome",
+    "auto_downgraded",
+    "secondary_check_performed",
+    "pattern_keywords",
+    "recorded_at"
+  ],
+  "properties": {
+    "record_id": { "type": "string", "format": "uuid" },
+    "outcome_type": { "enum": ["revision", "mitigation"] },
+    "source_artifact_id": { "type": "string", "format": "uuid" },
+    "paper_source_id": { "type": "string" },
+    "issue_type": { "type": "string" },
+    "issue_severity": { "type": "string" },
+    "action_taken": { "type": "string" },
+    "human_marked_outcome": { "type": "string" },
+    "final_outcome": { "type": "string" },
+    "auto_downgraded": { "type": "boolean" },
+    "secondary_check_performed": { "type": "boolean" },
+    "pattern_keywords": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "recorded_at": { "type": "string", "format": "date-time" }
+  }
+}
