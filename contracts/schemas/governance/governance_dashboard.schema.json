@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/governance/governance_dashboard.schema.json",
+  "title": "governance_dashboard",
+  "description": "Phase I dashboard. The 5-item caps on drift_signals and top_candidates are enforced by GovernanceDashboard, not the schema (CHECK-RT1-003). dashboard.md projection is capped at DASHBOARD_SUMMARY_MAX_LINES=30 lines.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "generated_at",
+    "audit_id",
+    "schema_health",
+    "eval_health",
+    "decision_consistency",
+    "cost_trend",
+    "drift_signals",
+    "top_candidates",
+    "last_audit_timestamp"
+  ],
+  "properties": {
+    "generated_at": { "type": "string", "format": "date-time" },
+    "audit_id": { "type": "string", "format": "uuid" },
+    "schema_health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_schemas", "schemas_with_no_evals", "schemas_unused_60d"],
+      "properties": {
+        "total_schemas": { "type": "integer", "minimum": 0 },
+        "schemas_with_no_evals": { "type": "integer", "minimum": 0 },
+        "schemas_unused_60d": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "eval_health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total_evals", "evals_no_recent_failures", "evals_degrading"],
+      "properties": {
+        "total_evals": { "type": "integer", "minimum": 0 },
+        "evals_no_recent_failures": { "type": "integer", "minimum": 0 },
+        "evals_degrading": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "decision_consistency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total_runs_analyzed",
+        "divergent_outcome_count",
+        "divergence_rate"
+      ],
+      "properties": {
+        "total_runs_analyzed": { "type": "integer", "minimum": 0 },
+        "divergent_outcome_count": { "type": "integer", "minimum": 0 },
+        "divergence_rate": { "type": "number", "minimum": 0.0 }
+      }
+    },
+    "cost_trend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "current_30d_total",
+        "prior_30d_total",
+        "delta_pct"
+      ],
+      "properties": {
+        "status": {
+          "enum": ["improving", "stable", "degrading", "insufficient_history"]
+        },
+        "current_30d_total": {
+          "anyOf": [{ "type": "number" }, { "type": "null" }]
+        },
+        "prior_30d_total": {
+          "anyOf": [{ "type": "number" }, { "type": "null" }]
+        },
+        "delta_pct": {
+          "anyOf": [{ "type": "number" }, { "type": "null" }]
+        }
+      }
+    },
+    "drift_signals": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "top_candidates": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "last_audit_timestamp": { "type": "string", "format": "date-time" }
+  }
+}

@@ -1696,6 +1696,58 @@ class ObsidianProjection:
         target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
         return target
 
+    def write_governance_dashboard_projection(
+        self,
+        repo_root: str | Path,
+        vault_root: str | Path,
+        audit_id: str,
+    ) -> str:
+        """Phase I: copy governance/markdown/dashboard.md to vault/Governance/.
+
+        VIEW ONLY (FINDING-I-007). Capped at DASHBOARD_SUMMARY_MAX_LINES=30.
+        """
+        repo_root_path = Path(repo_root).resolve()
+        source_dashboard = (
+            repo_root_path / "governance" / "markdown" / "dashboard.md"
+        )
+        target_dir = Path(vault_root).resolve() / "Governance"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / "dashboard.md"
+        if source_dashboard.is_file():
+            target.write_text(
+                source_dashboard.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+        # Also copy the detail file.
+        detail_source = (
+            repo_root_path / "governance" / "markdown" / f"audit_{audit_id}.md"
+        )
+        detail_target = target_dir / f"audit_{audit_id}.md"
+        if detail_source.is_file():
+            detail_target.write_text(
+                detail_source.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+        return str(target)
+
+    def write_audit_detail_projection(
+        self,
+        repo_root: str | Path,
+        vault_root: str | Path,
+        audit_id: str,
+    ) -> str:
+        """Phase I: copy a specific audit detail file. VIEW ONLY."""
+        repo_root_path = Path(repo_root).resolve()
+        detail_source = (
+            repo_root_path / "governance" / "markdown" / f"audit_{audit_id}.md"
+        )
+        target_dir = Path(vault_root).resolve() / "Governance"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"audit_{audit_id}.md"
+        if detail_source.is_file():
+            target.write_text(
+                detail_source.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+        return str(target)
+
     def write_ai_query_projection(
         self,
         ai_output: Dict[str, Any],

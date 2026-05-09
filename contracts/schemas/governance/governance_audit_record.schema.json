@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/governance/governance_audit_record.schema.json",
+  "title": "governance_audit_record",
+  "description": "One Phase I audit run produced by a single scanner. Includes baseline-vs-current drift fields (FINDING-I-001). prior_value and delta are null on first run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "audit_id",
+    "audit_type",
+    "scope",
+    "generated_at",
+    "current_value",
+    "prior_value",
+    "delta",
+    "flagged_items",
+    "total_scanned",
+    "total_flagged",
+    "status"
+  ],
+  "properties": {
+    "audit_id": { "type": "string", "format": "uuid" },
+    "audit_type": {
+      "enum": [
+        "schema_drift",
+        "eval_coverage",
+        "decision_divergence",
+        "exception_accumulation",
+        "hidden_logic_creep",
+        "markdown_authority",
+        "cost_trend",
+        "perf_trend",
+        "compression_scan",
+        "full_audit"
+      ]
+    },
+    "scope": { "type": "string", "minLength": 1 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "current_value": { "type": "object" },
+    "prior_value": {
+      "anyOf": [
+        { "type": "object" },
+        { "type": "null" }
+      ]
+    },
+    "delta": {
+      "anyOf": [
+        { "type": "object" },
+        { "type": "null" }
+      ]
+    },
+    "flagged_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "item_type",
+          "item_id",
+          "detail",
+          "severity",
+          "recommended_action"
+        ],
+        "properties": {
+          "item_type": { "type": "string", "minLength": 1 },
+          "item_id": { "type": "string", "minLength": 1 },
+          "detail": { "type": "string", "minLength": 5 },
+          "severity": { "enum": ["high", "medium", "low"] },
+          "recommended_action": { "type": "string", "minLength": 5 }
+        }
+      }
+    },
+    "total_scanned": { "type": "integer", "minimum": 0 },
+    "total_flagged": { "type": "integer", "minimum": 0 },
+    "status": {
+      "enum": ["clean", "drift_detected", "insufficient_history", "error"]
+    }
+  }
+}
