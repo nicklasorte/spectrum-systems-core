@@ -59,6 +59,23 @@ from .failure_seed import (
     is_required_eval,
     record_failure,
 )
+from .markdown import (
+    INDEX_FILENAME,
+    MARKDOWN_SUBDIR,
+    artifact_markdown_filename,
+    markdown_dir,
+    render_artifact_markdown,
+    render_index_markdown,
+    supported_artifact_types,
+    write_artifact_markdown,
+    write_index_markdown,
+)
+from .cli import (
+    DEFAULT_WORKFLOWS,
+    ProcessMeetingResult,
+    main as cli_main,
+    process_meeting,
+)
 
 __all__ = [
     "raw_meeting_dir",
@@ -110,4 +127,17 @@ __all__ = [
     "candidate_eval_case_from_failure",
     "is_required_eval",
     "record_failure",
+    "INDEX_FILENAME",
+    "MARKDOWN_SUBDIR",
+    "artifact_markdown_filename",
+    "markdown_dir",
+    "render_artifact_markdown",
+    "render_index_markdown",
+    "supported_artifact_types",
+    "write_artifact_markdown",
+    "write_index_markdown",
+    "DEFAULT_WORKFLOWS",
+    "ProcessMeetingResult",
+    "cli_main",
+    "process_meeting",
 ]

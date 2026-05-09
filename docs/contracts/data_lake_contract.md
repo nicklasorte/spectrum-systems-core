@@ -142,6 +142,30 @@ they exist to explain the run.
 product. They are not written as promoted product artifacts. They appear
 inside manifests and debug reports.
 
+### 6.3 Markdown views
+
+Path: `processed/meetings/<meeting_id>/markdown/<name>.md`
+
+Markdown views are a separate, read-only-from-core's-perspective rendering
+of promoted artifacts. They exist so a human can read the outputs in any
+plain-text editor or in Obsidian.
+
+Rules:
+
+- Markdown is regenerated from canonical JSON. It is never the canonical
+  form of an artifact.
+- Core never reads Markdown as input to the loop. The CLI may rewrite
+  any file under `markdown/` on every run.
+- Markdown is not a product artifact and is not subject to the promotion
+  gate. The promotion gate applies to JSON artifacts only.
+- Filenames: `<artifact_type>.md` for one promoted artifact's view, and
+  `index.md` for the per-meeting index. The `__` separator is reserved
+  for the JSON artifact filename convention and must not appear here.
+- Each Markdown file begins with YAML frontmatter containing
+  `artifact_type`, `meeting_id`, `date`, `title`, `status`, `trace_id`.
+
+Markdown is a view of the source of truth, not the source of truth.
+
 ---
 
 ## 7. Index
