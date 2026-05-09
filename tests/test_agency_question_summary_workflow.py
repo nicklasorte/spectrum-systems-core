@@ -70,3 +70,119 @@ def test_agency_question_summary_workflow_blocks_when_invalid(monkeypatch):
     assert result.promoted is False
     assert result.agency_question_summary.status == "rejected"
     assert result.control_decision.payload["decision"] == "block"
+
+
+# --- SSC-023: non-empty required-field hardening -------------------------
+
+
+def _required_fields_eval(artifact):
+    results = run_required_evals(artifact)
+    by_type = {r.payload["eval_type"]: r for r in results}
+    return by_type["required_agency_question_summary_fields"]
+
+
+def test_empty_agency_fails_required_fields_eval():
+    """Field present but empty must fail with empty_required_field:agency."""
+    bad = new_artifact(
+        "agency_question_summary",
+        {
+            "title": "Inquiry",
+            "agency": "",
+            "question": "What is the rule?",
+            "summary": "s",
+            "citations": [],
+        },
+        trace_id="t",
+    )
+    rfields = _required_fields_eval(bad)
+    assert rfields.payload["status"] == "fail"
+    assert "empty_required_field:agency" in rfields.payload["reason_codes"]
+
+
+def test_whitespace_only_agency_fails_required_fields_eval():
+    bad = new_artifact(
+        "agency_question_summary",
+        {
+            "title": "Inquiry",
+            "agency": "   ",
+            "question": "q",
+            "summary": "s",
+            "citations": [],
+        },
+        trace_id="t",
+    )
+    rfields = _required_fields_eval(bad)
+    assert rfields.payload["status"] == "fail"
+    assert "empty_required_field:agency" in rfields.payload["reason_codes"]
+
+
+def test_empty_question_fails_required_fields_eval():
+    bad = new_artifact(
+        "agency_question_summary",
+        {
+            "title": "Inquiry",
+            "agency": "FCC",
+            "question": "",
+            "summary": "s",
+            "citations": [],
+        },
+        trace_id="t",
+    )
+    rfields = _required_fields_eval(bad)
+    assert rfields.payload["status"] == "fail"
+    assert "empty_required_field:question" in rfields.payload["reason_codes"]
+
+
+def test_missing_agency_field_still_fails_required_fields_eval():
+    """Removing the field entirely keeps the existing missing_field code."""
+    bad = new_artifact(
+        "agency_question_summary",
+        {
+            "title": "Inquiry",
+            "question": "q",
+            "summary": "s",
+            "citations": [],
+        },
+        trace_id="t",
+    )
+    rfields = _required_fields_eval(bad)
+    assert rfields.payload["status"] == "fail"
+    assert "missing_field:agency" in rfields.payload["reason_codes"]
+
+
+def test_valid_agency_question_summary_still_passes():
+    """A populated payload must still pass after the new check is added."""
+    good = new_artifact(
+        "agency_question_summary",
+        {
+            "title": "Inquiry",
+            "agency": "FCC",
+            "question": "What is the rule?",
+            "summary": "s",
+            "citations": ["47 CFR 96.41"],
+        },
+        trace_id="t",
+    )
+    rfields = _required_fields_eval(good)
+    assert rfields.payload["status"] == "pass"
+    assert rfields.payload["reason_codes"] == []
+
+
+def test_agency_question_summary_workflow_blocks_when_no_agency_line():
+    """End-to-end: a transcript without AGENCY: must not promote."""
+    no_agency = """FCC inquiry on band plan
+QUESTION: What is the proposed sharing rule for 3.5 GHz?
+CITATION: 47 CFR 96.41
+We will respond within 30 days.
+"""
+    result = run_agency_question_summary_workflow(no_agency)
+
+    assert result.promoted is False
+    assert result.agency_question_summary.status == "rejected"
+    assert result.control_decision.payload["decision"] == "block"
+    rfields = next(
+        r for r in result.eval_results
+        if r.payload["eval_type"] == "required_agency_question_summary_fields"
+    )
+    assert rfields.payload["status"] == "fail"
+    assert "empty_required_field:agency" in rfields.payload["reason_codes"]

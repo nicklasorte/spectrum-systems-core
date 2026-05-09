@@ -39,10 +39,14 @@ def test_process_meeting_runs_all_default_workflows(tmp_path):
     assert [r.workflow_name for r in result.pipeline_results] == list(DEFAULT_WORKFLOWS)
     # The 'good' golden has DECISION/ACTION/QUESTION lines but no
     # CONTEXT/OPTION/RECOMMENDATION/RATIONALE lines, so decision_brief
-    # is blocked by transcript_evidence. The other three promote.
+    # is blocked. It also has no AGENCY: line, so after SSC-023's
+    # non-empty required-field hardening, agency_question_summary is also
+    # blocked (empty agency, empty question). meeting_minutes and
+    # meeting_action_log promote.
     assert "meeting_minutes" in result.promoted_workflows
     assert "meeting_action_log" in result.promoted_workflows
-    assert "agency_question_summary" in result.promoted_workflows
+    assert "agency_question_summary" in result.blocked_workflows
+    assert "decision_brief" in result.blocked_workflows
 
 
 def test_process_meeting_writes_markdown_for_each_promoted_artifact(tmp_path):
@@ -271,6 +275,68 @@ def test_cli_requires_lake_and_meeting_id(tmp_path, capsys):
 
 
 # --- Determinism ---------------------------------------------------------
+
+
+# --- SSC-023: empty agency on agency_question_summary blocks ------------
+
+
+def test_agency_question_summary_blocks_when_agency_missing(tmp_path):
+    """The 'good' golden has no AGENCY: line. After SSC-023 the
+    agency_question_summary workflow must block, not promote."""
+    meeting_id = "m-golden-good"
+    _seed(tmp_path, meeting_id)
+
+    result = process_meeting(lake_root=tmp_path, meeting_id=meeting_id)
+
+    assert "agency_question_summary" in result.blocked_workflows
+    aqs_result = next(
+        r for r in result.pipeline_results
+        if r.workflow_name == "agency_question_summary"
+    )
+    assert aqs_result.promoted is False
+    assert aqs_result.target.status == "rejected"
+
+
+def test_index_explains_empty_agency_in_plain_english(tmp_path):
+    """The index must surface a readable reason — naming the empty field
+    so a new engineer can diagnose the block without reading source."""
+    meeting_id = "m-golden-good"
+    _seed(tmp_path, meeting_id)
+
+    result = process_meeting(lake_root=tmp_path, meeting_id=meeting_id)
+    index_text = result.index_path.read_text(encoding="utf-8")
+
+    assert "agency_question_summary" in index_text
+    assert "empty_required_field:agency" in index_text
+    assert "required field 'agency' was empty" in index_text
+
+
+def test_no_promoted_agency_question_summary_markdown_when_blocked(tmp_path):
+    """When the artifact blocks, no agency_question_summary.md is written."""
+    meeting_id = "m-golden-good"
+    _seed(tmp_path, meeting_id)
+
+    process_meeting(lake_root=tmp_path, meeting_id=meeting_id)
+
+    md_path = (
+        markdown_dir(tmp_path, meeting_id)
+        / artifact_markdown_filename("agency_question_summary")
+    )
+    assert not md_path.exists()
+
+
+def test_no_promoted_agency_question_summary_json_when_blocked(tmp_path):
+    """JSON is the source of truth: no promoted JSON when the artifact blocks."""
+    meeting_id = "m-golden-good"
+    _seed(tmp_path, meeting_id)
+
+    process_meeting(lake_root=tmp_path, meeting_id=meeting_id)
+
+    processed_dir = tmp_path / "processed" / "meetings" / meeting_id
+    product_jsons = [
+        p for p in processed_dir.glob("agency_question_summary__*.json")
+    ]
+    assert product_jsons == []
 
 
 def test_markdown_is_deterministic_across_runs(tmp_path):
