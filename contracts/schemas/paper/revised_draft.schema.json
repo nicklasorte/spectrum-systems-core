@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/paper/revised_draft.schema.json",
+  "title": "revised_draft",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_id",
+    "generated_at",
+    "revised_sections",
+    "applied_instruction_ids"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "source_id": { "type": "string", "format": "uuid" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "revised_sections": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "applied_instruction_ids": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" }
+    }
+  }
+}

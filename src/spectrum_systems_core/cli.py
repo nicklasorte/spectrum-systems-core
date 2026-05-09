@@ -870,6 +870,59 @@ def _read_revision_decision(form_path: Path) -> str:
     return str(fm.get("decision") or "").strip()
 
 
+def format_paper(
+    *,
+    revised_draft_id: str,
+    vault: str | None = None,
+    repo_root: Path | None = None,
+    out_stream=None,
+) -> int:
+    """Phase J: format an approved revised_draft into a publication artifact."""
+    from .paper import PublicationFormatter
+
+    out = out_stream if out_stream is not None else sys.stdout
+    repo_root_path = (repo_root or Path.cwd()).resolve()
+
+    if not revised_draft_id:
+        print("error: must provide --revised-draft-id", file=out)
+        return 1
+
+    result = PublicationFormatter().format(
+        revised_draft_id=revised_draft_id,
+        repo_root=str(repo_root_path),
+        vault_root=vault,
+    )
+
+    if result["status"] != "success":
+        print(f"error: {result['status']}: {result.get('reason', '')}", file=out)
+        return 1
+
+    artifact = result["artifact"]
+    artifact_path = result.get("artifact_path", "")
+    citation_count = len(artifact.get("citations") or [])
+    content_hash = artifact.get("content_hash", "")
+
+    projection_path: str | None = None
+    if vault:
+        try:
+            projection_path = (
+                ObsidianProjection().write_formatted_paper_projection(
+                    artifact, vault
+                )
+            )
+        except OSError as exc:
+            print(f"error: projection_failed: {exc}", file=out)
+            return 1
+
+    print(f"artifact: {artifact_path}", file=out)
+    print(f"citations: {citation_count}", file=out)
+    print(f"content_hash: {content_hash}", file=out)
+    if projection_path is not None:
+        print(f"projection: {projection_path}", file=out)
+
+    return 0
+
+
 def build_agency_profile(
     *,
     paper_source_id: str,
@@ -2193,6 +2246,29 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    fp = sub.add_parser(
+        "format-paper",
+        help="Phase J: format an approved revised_draft into a publication artifact.",
+        description=(
+            "Phase J publication formatting. Reads "
+            "processed/<family>/<source_id>/paper/revised_draft.json, "
+            "validates against the revised_draft schema, transforms into a "
+            "formatted_paper_artifact with numbered citations and a "
+            "deduplicated reference list, and writes "
+            "paper/formatted/<paper_id>.json. Sets "
+            "publication_metadata.status='ready_for_certification' so Phase "
+            "K (GOV-10) can pick it up. Zero LLM calls."
+        ),
+    )
+    fp.add_argument("--revised-draft-id", required=True)
+    fp.add_argument(
+        "--vault",
+        help=(
+            "If provided, also write a view-only Markdown projection at "
+            "vault/Papers/<paper_id>.md."
+        ),
+    )
+
     bap = sub.add_parser(
         "build-agency-profile",
         help="Phase E: ingest agency_comment issues into an agency profile.",
@@ -2478,6 +2554,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             all_pending=args.all_pending,
             vault=args.vault,
             poll=args.poll,
+        )
+    if args.command == "format-paper":
+        return format_paper(
+            revised_draft_id=args.revised_draft_id,
+            vault=args.vault,
         )
     if args.command == "build-agency-profile":
         return build_agency_profile(

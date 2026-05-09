@@ -12,6 +12,7 @@ from .evidence_builder import EvidenceBuilder
 from .evidence_eval import EvidenceEval
 from .issue_eval import IssueEval
 from .issue_registry import IssueRegistry
+from .publication_formatter import PublicationFormatter
 from .revision_eval import RevisionEval
 from .revision_generator import RevisionGenerator
 from .revision_workflow import RevisionWorkflow
@@ -26,6 +27,7 @@ __all__ = [
     "EvidenceEval",
     "IssueEval",
     "IssueRegistry",
+    "PublicationFormatter",
     "RevisionEval",
     "RevisionGenerator",
     "RevisionWorkflow",
