@@ -194,6 +194,47 @@ reason code and a one-line plain-English explanation. The
 and a `failure_path` block so a new engineer can locate the cause
 without reading core source.
 
+## Books: Phase B PDF preparation
+
+Books arrive as PDFs and require a separate preparation step before the
+generic `process-source` ingestion can run. The two phases are
+deliberately separate commands — Phase B converts the PDF into the
+plain-text form that Phase A consumes, and nothing more.
+
+```
+raw/books/<source_id>/
+  source.pdf            # original (immutable; never modified)
+  metadata.json         # human-authored; private_use_only must be true
+  source.txt            # written by Phase B
+  pages.jsonl           # written by Phase B (page_number is authoritative)
+  extraction_report.json
+processed/books/<source_id>/
+  markdown/index.md     # Phase B view-only projection
+```
+
+Two-step flow:
+
+```bash
+# Phase B: PDF -> source.txt + pages.jsonl + extraction_report.json
+python -m spectrum_systems_core.cli prepare-pdf --source-id <source_id>
+
+# Phase A: source.txt -> source_record + text_units + promotion
+python -m spectrum_systems_core.cli process-source --source-id <source_id>
+```
+
+`prepare-pdf` does **not** call `process-source`. The boundary is a
+hard wall so that PDF preparation failures (scanned PDFs, missing
+private-use declarations, invalid magic bytes) cannot leak into the
+governed loop. Re-running `prepare-pdf` over an already-extracted
+source is blocked by the admission guard; delete `source.txt` first if
+you intend to re-extract.
+
+PDF text extraction uses `pdfminer.six` (no OCR, no native
+dependencies). The library version is recorded in
+`extraction_report.json` so replays can be detected as deterministic
+or not. Scanned PDFs are rejected when total extracted character count
+falls below 500.
+
 ## Deferred
 
 Live model calls, autonomous agents, dashboards, vector indexes,

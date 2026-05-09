@@ -1,0 +1,53 @@
+[
+  {
+    "id": "5b518bbf-58fa-4fff-9096-5c24568e29be",
+    "name": "EVAL-PDF-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "pdf_source.magic_bytes_valid",
+    "target_artifact_type": "extraction_report",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "7a0a9348-a523-4ec1-a8b5-f016d246739d",
+    "name": "EVAL-PDF-002",
+    "eval_type": "policy_alignment",
+    "metric_name": "pdf_source.private_use_only",
+    "target_artifact_type": "extraction_report",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "ec63d152-87f4-425e-bfe9-f1dc76b5d96b",
+    "name": "EVAL-PDF-003",
+    "eval_type": "evidence_coverage",
+    "metric_name": "pdf_source.not_scanned",
+    "target_artifact_type": "extraction_report",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "7d0b4371-15ae-412a-b9f4-2563678baaee",
+    "name": "EVAL-PDF-004",
+    "eval_type": "schema_conformance",
+    "metric_name": "extraction_report.schema_valid",
+    "target_artifact_type": "extraction_report",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "570a1e93-eb8f-4ded-b391-6f4e8a90b6e1",
+    "name": "EVAL-PDF-005",
+    "eval_type": "replay_consistency",
+    "metric_name": "pdf_source.text_hash_stable",
+    "target_artifact_type": "extraction_report",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic",
+    "note": "Replay requires same extraction_library_version. Hash mismatch on same version indicates non-deterministic extraction."
+  }
+]

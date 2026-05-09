@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/extraction_report.schema.json",
+  "title": "extraction_report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_id",
+    "source_family",
+    "extraction_library",
+    "extraction_library_version",
+    "extracted_at",
+    "page_count",
+    "total_char_count",
+    "extracted_text_hash",
+    "pdf_magic_valid",
+    "private_use_only_verified",
+    "min_char_threshold",
+    "scanned_pdf_suspected",
+    "status",
+    "failure_reason"
+  ],
+  "properties": {
+    "source_id": { "type": "string", "minLength": 1 },
+    "source_family": { "const": "books" },
+    "extraction_library": { "type": "string", "minLength": 1 },
+    "extraction_library_version": { "type": "string", "minLength": 1 },
+    "extracted_at": { "type": "string", "format": "date-time" },
+    "page_count": { "type": "integer", "minimum": 0 },
+    "total_char_count": { "type": "integer", "minimum": 0 },
+    "extracted_text_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "pdf_magic_valid": { "type": "boolean" },
+    "private_use_only_verified": { "type": "boolean" },
+    "min_char_threshold": { "type": "integer", "minimum": 0 },
+    "scanned_pdf_suspected": { "type": "boolean" },
+    "status": { "enum": ["success", "failure"] },
+    "failure_reason": { "type": "string" }
+  }
+}
