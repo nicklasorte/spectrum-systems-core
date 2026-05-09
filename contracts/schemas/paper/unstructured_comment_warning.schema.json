@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/paper/unstructured_comment_warning.schema.json",
+  "title": "unstructured_comment_warning",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "warning_id",
+    "source_id",
+    "raw_comment_text",
+    "raw_comment_hash",
+    "reason",
+    "requires_human_tagging",
+    "created_at"
+  ],
+  "properties": {
+    "warning_id": { "type": "string", "format": "uuid" },
+    "source_id": { "type": "string", "minLength": 1 },
+    "raw_comment_text": { "type": "string" },
+    "raw_comment_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "reason": { "type": "string", "minLength": 1 },
+    "requires_human_tagging": { "type": "boolean", "const": true },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

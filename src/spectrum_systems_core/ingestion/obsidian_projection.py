@@ -541,6 +541,230 @@ class ObsidianProjection:
         return "\n".join(lines)
 
 
+    # ---------- Phase D projections (claims / issues / revisions) ----------
+
+    def write_paper_claims_projection(
+        self,
+        source_id: str,
+        claims: List[Dict[str, Any]],
+        repo_root: str | Path,
+    ) -> str:
+        """Write processed/<family>/<source_id>/paper/markdown/claims.md.
+
+        VIEW ONLY. Regenerated each call. Never read back as authority.
+        """
+        repo_root_path = Path(repo_root).resolve()
+        processed_dir = _resolve_phase_c_dir(repo_root_path, source_id)
+        markdown_dir = processed_dir / "paper" / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        target_path = markdown_dir / "claims.md"
+        target_path.write_text(
+            self._render_claims_projection(source_id, claims),
+            encoding="utf-8",
+        )
+        return str(target_path)
+
+    def _render_claims_projection(
+        self,
+        source_id: str,
+        claims: List[Dict[str, Any]],
+    ) -> str:
+        generated_at = _now_iso()
+        lines = [
+            "---",
+            f"source_id: {source_id}",
+            f"generated_at: {generated_at}",
+            f"claim_count: {len(claims)}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            f"# Claim Map - {source_id}",
+            "",
+            f"> Generated: {generated_at} | VIEW ONLY",
+            "> Regenerated on every run. Do not edit. Never authoritative.",
+            "",
+            "| claim_id | claim_type | materiality | claim_text |",
+            "| -------- | ---------- | ----------- | ---------- |",
+        ]
+        for c in claims:
+            cid = c.get("claim_id", "")
+            ctype = c.get("claim_type", "")
+            mat = c.get("materiality", "")
+            text = (c.get("claim_text", "") or "").replace("\n", " ").replace(
+                "|", "\\|"
+            )
+            if len(text) > 80:
+                text = text[:80] + "..."
+            lines.append(f"| `{cid}` | {ctype} | {mat} | {text} |")
+        if not claims:
+            lines.append("| — | — | — | _no claims_ |")
+        lines.append("")
+        return "\n".join(lines)
+
+    def write_paper_issues_projection(
+        self,
+        source_id: str,
+        issues: List[Dict[str, Any]],
+        repo_root: str | Path,
+    ) -> str:
+        """Write processed/<family>/<source_id>/paper/markdown/issues.md."""
+        repo_root_path = Path(repo_root).resolve()
+        processed_dir = _resolve_phase_c_dir(repo_root_path, source_id)
+        markdown_dir = processed_dir / "paper" / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        target_path = markdown_dir / "issues.md"
+        target_path.write_text(
+            self._render_issues_projection(source_id, issues),
+            encoding="utf-8",
+        )
+        return str(target_path)
+
+    def _render_issues_projection(
+        self,
+        source_id: str,
+        issues: List[Dict[str, Any]],
+    ) -> str:
+        generated_at = _now_iso()
+        lines = [
+            "---",
+            f"source_id: {source_id}",
+            f"generated_at: {generated_at}",
+            f"issue_count: {len(issues)}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            f"# Issue Registry - {source_id}",
+            "",
+            f"> Generated: {generated_at} | VIEW ONLY",
+            "> Regenerated on every run. Do not edit. Never authoritative.",
+            "",
+            "| issue_id | issue_type | severity | status | description |",
+            "| -------- | ---------- | -------- | ------ | ----------- |",
+        ]
+        for issue in issues:
+            iid = issue.get("issue_id", "")
+            itype = issue.get("issue_type", "")
+            sev = issue.get("severity", "")
+            stat = issue.get("status", "")
+            desc = (issue.get("description", "") or "").replace(
+                "\n", " "
+            ).replace("|", "\\|")
+            if len(desc) > 60:
+                desc = desc[:60] + "..."
+            lines.append(f"| `{iid}` | {itype} | {sev} | {stat} | {desc} |")
+        if not issues:
+            lines.append("| — | — | — | — | _no issues_ |")
+        lines.append("")
+
+        for issue in issues:
+            similar = issue.get("similar_issue_ids") or []
+            if similar:
+                lines.append(
+                    f"- `{issue.get('issue_id', '')}` similar_issue_ids: "
+                    + ", ".join(f"`{s}`" for s in similar)
+                )
+        if any(issue.get("similar_issue_ids") for issue in issues):
+            lines.append("")
+        return "\n".join(lines)
+
+    def write_paper_revisions_projection(
+        self,
+        source_id: str,
+        instructions: List[Dict[str, Any]],
+        diffs: List[Dict[str, Any]],
+        repo_root: str | Path,
+    ) -> str:
+        """Write processed/<family>/<source_id>/paper/markdown/revisions.md.
+
+        Reflects blocked revisions (RT5-006) — for blocked diffs we surface
+        the failure_reason and the dropped claim ids; we do NOT include the
+        revised_text because there isn't one for a blocked revision.
+        """
+        repo_root_path = Path(repo_root).resolve()
+        processed_dir = _resolve_phase_c_dir(repo_root_path, source_id)
+        markdown_dir = processed_dir / "paper" / "markdown"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        target_path = markdown_dir / "revisions.md"
+        target_path.write_text(
+            self._render_revisions_projection(source_id, instructions, diffs),
+            encoding="utf-8",
+        )
+        return str(target_path)
+
+    def _render_revisions_projection(
+        self,
+        source_id: str,
+        instructions: List[Dict[str, Any]],
+        diffs: List[Dict[str, Any]],
+    ) -> str:
+        generated_at = _now_iso()
+        diffs_by_inst = {d.get("instruction_id"): d for d in diffs}
+        lines = [
+            "---",
+            f"source_id: {source_id}",
+            f"generated_at: {generated_at}",
+            f"instruction_count: {len(instructions)}",
+            f"diff_count: {len(diffs)}",
+            "vault_note_status: projection",
+            "---",
+            "",
+            f"# Revision Log - {source_id}",
+            "",
+            f"> Generated: {generated_at} | VIEW ONLY",
+            "> Regenerated on every run. Do not edit. Never authoritative.",
+            "",
+            "## Instructions",
+            "",
+            "| instruction_id | type | priority | status | target_section |",
+            "| -------------- | ---- | -------- | ------ | -------------- |",
+        ]
+        for inst in instructions:
+            iid = inst.get("instruction_id", "")
+            itype = inst.get("instruction_type", "")
+            prio = inst.get("priority", "")
+            stat = inst.get("status", "")
+            target = (inst.get("target_section", "") or "").replace(
+                "\n", " "
+            ).replace("|", "\\|")
+            if len(target) > 60:
+                target = target[:60] + "..."
+            lines.append(f"| `{iid}` | {itype} | {prio} | {stat} | {target} |")
+        if not instructions:
+            lines.append("| — | — | — | — | _no instructions_ |")
+        lines.append("")
+
+        lines.extend(["## Diffs", ""])
+        if not diffs:
+            lines.append("_No revision diffs recorded yet._")
+            lines.append("")
+        for diff in diffs:
+            iid = diff.get("instruction_id", "")
+            dstatus = diff.get("status", "")
+            section = diff.get("source_section", "")
+            lines.append(f"### `{iid}` — {dstatus}")
+            lines.append(f"- Section: `{section}`")
+            lines.append(
+                f"- Original chars: {diff.get('original_char_count', 0)} "
+                f"-> revised: {diff.get('revised_char_count', 0)}"
+            )
+            lines.append(
+                f"- Claims before: {diff.get('claims_before_count', 0)} "
+                f"-> after: {diff.get('claims_after_count', 0)}"
+            )
+            dropped = diff.get("high_materiality_claims_dropped") or []
+            if dropped:
+                lines.append(
+                    "- Dropped high-materiality claims: "
+                    + ", ".join(f"`{c}`" for c in dropped)
+                )
+            if dstatus != "success":
+                lines.append(
+                    f"- Failure reason: `{diff.get('failure_reason', '') or 'n/a'}`"
+                )
+            lines.append("")
+        return "\n".join(lines)
+
+
 def _load_jsonl(path: Path) -> List[Dict[str, Any]]:
     if not path.is_file():
         return []

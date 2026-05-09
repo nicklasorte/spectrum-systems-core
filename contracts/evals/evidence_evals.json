@@ -1,0 +1,52 @@
+[
+  {
+    "id": "f7836d4c-f13a-4468-8c0b-9c8b44ba449b",
+    "name": "EVAL-EVID-001",
+    "eval_type": "grounding_check",
+    "metric_name": "evidence_record.grounded_true",
+    "target_artifact_type": "evidence_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "f2bd925f-b512-4685-9399-2ab602450e8f",
+    "name": "EVAL-EVID-002",
+    "eval_type": "evidence_coverage",
+    "metric_name": "technical_claim.high_materiality_has_evidence",
+    "target_artifact_type": "technical_claim",
+    "required": true,
+    "pass_condition": "min_count_1",
+    "runner": "deterministic"
+  },
+  {
+    "id": "b9a91c03-80e5-4e0d-aea0-d2fac18d0ca9",
+    "name": "EVAL-EVID-003",
+    "eval_type": "freshness_check",
+    "metric_name": "evidence_record.source_record_hash_current",
+    "target_artifact_type": "evidence_record",
+    "required": false,
+    "pass_condition": "warn",
+    "runner": "deterministic"
+  },
+  {
+    "id": "92e90ae3-ee40-4a2b-841b-e47db79b8c1b",
+    "name": "EVAL-EVID-004",
+    "eval_type": "consistency_check",
+    "metric_name": "evidence_record.no_self_evidencing",
+    "target_artifact_type": "evidence_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "641520aa-8e4f-4d62-a26d-e02219e1774d",
+    "name": "EVAL-CONTR-001",
+    "eval_type": "review_required",
+    "metric_name": "technical_claim.contradiction_review_required",
+    "target_artifact_type": "technical_claim",
+    "required": false,
+    "pass_condition": "warn",
+    "runner": "deterministic"
+  }
+]

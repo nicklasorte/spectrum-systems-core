@@ -1,0 +1,62 @@
+[
+  {
+    "id": "e354f932-d4d2-4867-a73c-f493ee8d090b",
+    "name": "EVAL-CLAIM-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "technical_claim.schema_valid",
+    "target_artifact_type": "technical_claim",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "cdcca610-d231-4bb2-b2aa-b1641e5e678f",
+    "name": "EVAL-CLAIM-002",
+    "eval_type": "grounding_check",
+    "metric_name": "technical_claim.excerpt_grounded_in_text_units",
+    "target_artifact_type": "technical_claim",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "11b30931-73c7-4328-82f3-3dca70107b1f",
+    "name": "EVAL-CLAIM-003",
+    "eval_type": "field_present",
+    "metric_name": "technical_claim.source_unit_id_non_null",
+    "target_artifact_type": "technical_claim",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "0c9b62f2-9d41-4143-95e3-3a5d4b21ee92",
+    "name": "EVAL-CLAIM-004",
+    "eval_type": "determinism_guard",
+    "metric_name": "technical_claim.extraction_temperature_zero",
+    "target_artifact_type": "technical_claim",
+    "required": true,
+    "pass_condition": "equals_0",
+    "runner": "deterministic"
+  },
+  {
+    "id": "c0557d72-8065-4759-bbb2-55389a354e36",
+    "name": "EVAL-ASSUMP-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "assumption_record.schema_valid",
+    "target_artifact_type": "assumption_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "8d9712f3-8e8e-400e-8fd9-721bd16edbf9",
+    "name": "EVAL-ASSUMP-002",
+    "eval_type": "consistency_check",
+    "metric_name": "assumption_record.implicit_implies_null_excerpt",
+    "target_artifact_type": "assumption_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  }
+]

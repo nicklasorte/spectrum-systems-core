@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/paper/revision_diff.schema.json",
+  "title": "revision_diff",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "diff_id",
+    "instruction_id",
+    "source_section",
+    "original_text_hash",
+    "revised_text_hash",
+    "original_char_count",
+    "revised_char_count",
+    "claims_before_count",
+    "claims_after_count",
+    "high_materiality_claims_dropped",
+    "revision_model",
+    "revision_temperature",
+    "status",
+    "failure_reason",
+    "created_at"
+  ],
+  "properties": {
+    "diff_id": { "type": "string", "format": "uuid" },
+    "instruction_id": { "type": "string", "format": "uuid" },
+    "source_section": { "type": "string" },
+    "original_text_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "revised_text_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "original_char_count": { "type": "integer", "minimum": 0 },
+    "revised_char_count": { "type": "integer", "minimum": 0 },
+    "claims_before_count": { "type": "integer", "minimum": 0 },
+    "claims_after_count": { "type": "integer", "minimum": 0 },
+    "high_materiality_claims_dropped": {
+      "type": "array",
+      "default": [],
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "revision_model": { "type": "string", "minLength": 1 },
+    "revision_temperature": { "type": "number", "minimum": 0, "maximum": 0 },
+    "status": { "enum": ["success", "failure", "blocked"] },
+    "failure_reason": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

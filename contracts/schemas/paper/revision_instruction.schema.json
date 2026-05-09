@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/paper/revision_instruction.schema.json",
+  "title": "revision_instruction",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "instruction_id",
+    "issue_id",
+    "claim_id",
+    "target_section",
+    "instruction_text",
+    "expected_outcome",
+    "instruction_type",
+    "priority",
+    "extraction_model",
+    "extraction_temperature",
+    "status",
+    "created_at",
+    "provenance"
+  ],
+  "properties": {
+    "instruction_id": { "type": "string", "format": "uuid" },
+    "issue_id": { "type": "string", "format": "uuid" },
+    "claim_id": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "target_section": { "type": "string", "minLength": 1 },
+    "instruction_text": { "type": "string", "minLength": 20 },
+    "expected_outcome": { "type": "string", "minLength": 10 },
+    "instruction_type": {
+      "enum": [
+        "add_evidence",
+        "revise_claim",
+        "remove_claim",
+        "add_caveat",
+        "restructure_section"
+      ]
+    },
+    "priority": { "enum": ["critical", "high", "medium", "low"] },
+    "extraction_model": { "type": "string", "minLength": 1 },
+    "extraction_temperature": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 0
+    },
+    "status": { "enum": ["pending", "approved", "applied", "rejected", "deferred"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "produced_by",
+        "input_artifact_ids",
+        "execution_fingerprint_hash"
+      ],
+      "properties": {
+        "produced_by": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["component", "version"],
+          "properties": {
+            "component": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "input_artifact_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "execution_fingerprint_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}
