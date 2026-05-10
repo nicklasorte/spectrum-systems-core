@@ -8,6 +8,7 @@ Verifies the two-step Phase A / Phase B boundary (FINDING-B-005):
 from __future__ import annotations
 
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,20 +21,22 @@ from ._pdf_fixtures import MINIMAL_PDF, RICH_PDF, write_book_metadata
 class PreparePdfCliTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self._tmp.name)
+        os.environ["DATA_LAKE_PATH"] = self._tmp.name
+        self.store_root = Path(self._tmp.name) / "store"
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
+        os.environ.pop("DATA_LAKE_PATH", None)
 
     def test_prepare_pdf_succeeds_for_rich_pdf(self) -> None:
         source_id = "books-20260509-rich-cli"
-        write_book_metadata(self.repo_root, source_id=source_id)
-        target = self.repo_root / "raw" / "books" / source_id
+        write_book_metadata(self.store_root, source_id=source_id)
+        target = self.store_root / "raw" / "books" / source_id
         (target / "source.pdf").write_bytes(RICH_PDF)
 
         out = io.StringIO()
         rc = prepare_pdf(
-            source_id=source_id, repo_root=self.repo_root, out_stream=out
+            source_id=source_id, repo_root=self.store_root, out_stream=out
         )
         self.assertEqual(rc, 0, msg=out.getvalue())
 
@@ -44,7 +47,7 @@ class PreparePdfCliTests(unittest.TestCase):
 
         # Markdown projection landed under processed/, not raw/.
         projection = (
-            self.repo_root
+            self.store_root
             / "processed"
             / "books"
             / source_id
@@ -60,7 +63,7 @@ class PreparePdfCliTests(unittest.TestCase):
         # Phase A artifacts (source_record.json, text_units.jsonl) must NOT
         # exist yet.
         processed_dir = (
-            self.repo_root / "processed" / "books" / source_id
+            self.store_root / "processed" / "books" / source_id
         )
         self.assertFalse((processed_dir / "source_record.json").exists())
         self.assertFalse((processed_dir / "text_units.jsonl").exists())
@@ -74,19 +77,19 @@ class PreparePdfCliTests(unittest.TestCase):
         # Runtime red-team check: a failure must NOT produce a Markdown
         # projection (otherwise a failed extraction looks like a success).
         source_id = "books-20260509-scanned-cli"
-        write_book_metadata(self.repo_root, source_id=source_id)
-        target = self.repo_root / "raw" / "books" / source_id
+        write_book_metadata(self.store_root, source_id=source_id)
+        target = self.store_root / "raw" / "books" / source_id
         (target / "source.pdf").write_bytes(MINIMAL_PDF)
 
         out = io.StringIO()
         rc = prepare_pdf(
-            source_id=source_id, repo_root=self.repo_root, out_stream=out
+            source_id=source_id, repo_root=self.store_root, out_stream=out
         )
         self.assertEqual(rc, 1)
         self.assertIn("scanned_pdf_suspected", out.getvalue())
 
         projection = (
-            self.repo_root
+            self.store_root
             / "processed"
             / "books"
             / source_id
@@ -100,20 +103,20 @@ class PreparePdfCliTests(unittest.TestCase):
         # must be blocked by the guard (already_extracted) rather than
         # silently overwriting source.txt.
         source_id = "books-20260509-rerun"
-        write_book_metadata(self.repo_root, source_id=source_id)
-        target = self.repo_root / "raw" / "books" / source_id
+        write_book_metadata(self.store_root, source_id=source_id)
+        target = self.store_root / "raw" / "books" / source_id
         (target / "source.pdf").write_bytes(RICH_PDF)
 
         first = prepare_pdf(
             source_id=source_id,
-            repo_root=self.repo_root,
+            repo_root=self.store_root,
             out_stream=io.StringIO(),
         )
         self.assertEqual(first, 0)
 
         out = io.StringIO()
         second = prepare_pdf(
-            source_id=source_id, repo_root=self.repo_root, out_stream=out
+            source_id=source_id, repo_root=self.store_root, out_stream=out
         )
         self.assertEqual(second, 1)
         self.assertIn("already_extracted", out.getvalue())

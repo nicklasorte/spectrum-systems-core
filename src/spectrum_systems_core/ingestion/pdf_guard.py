@@ -7,6 +7,7 @@ Stops at the first failure. Never raises. Returns
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -22,8 +23,11 @@ class PDFAdmissionGuard:
     """Validate that a book source is ready for PDF extraction."""
 
     def validate(self, source_id: str, repo_root: str) -> Dict[str, str]:
-        repo_root_path = Path(repo_root).resolve()
-        source_dir = repo_root_path / "raw" / "books" / source_id
+        env = os.environ.get("DATA_LAKE_PATH", "")
+        if not env or not Path(env).exists():
+            return _fail("blocked", "DATA_LAKE_PATH not set or does not exist")
+        store_root = Path(env) / "store"
+        source_dir = store_root / "raw" / "books" / source_id
 
         # CHECK-G-001: metadata.json exists and is valid JSON.
         metadata_path = source_dir / "metadata.json"

@@ -30,12 +30,14 @@ def _chdir(path):
         os.chdir(prev)
 
 
-def test_ask_memory_unknown_task_fails_before_api(tmp_path, capsys):
+def test_ask_memory_unknown_task_fails_before_api(tmp_path, capsys, monkeypatch):
     """RT4-003: unknown task -> exit 1, zero API calls, no output written."""
-    setup_phase_h_repo(tmp_path)
-    PromptRegistry().load(str(tmp_path))
+    monkeypatch.setenv("DATA_LAKE_PATH", str(tmp_path))
+    store_root = tmp_path / "store"
+    setup_phase_h_repo(store_root)
+    PromptRegistry().load(str(store_root))
 
-    with _chdir(tmp_path):
+    with _chdir(store_root):
         rc = cli_module.main([
             "ask-memory",
             "--task", "totally_made_up",
@@ -45,17 +47,19 @@ def test_ask_memory_unknown_task_fails_before_api(tmp_path, capsys):
     assert rc == 1
     assert "unregistered_task_type" in (captured.err + captured.out)
     # No outputs or queries should be written for an unknown task.
-    outputs = list((tmp_path / "ai" / "outputs").glob("*.json"))
+    outputs = list((store_root / "ai" / "outputs").glob("*.json"))
     assert outputs == []
 
 
 def test_ask_memory_advisory_banner_bookends(tmp_path, capsys, monkeypatch):
     """RT3-005 / RT5-003: advisory banner bookends the answer."""
-    setup_phase_h_repo(tmp_path)
-    PromptRegistry().load(str(tmp_path))
+    monkeypatch.setenv("DATA_LAKE_PATH", str(tmp_path))
+    store_root = tmp_path / "store"
+    setup_phase_h_repo(store_root)
+    PromptRegistry().load(str(store_root))
     fixture = load_fixture("memory_query")
     primary_id = fixture["expected_citations"][0]
-    seeds = seed_promoted_artifacts(tmp_path, story_id=primary_id)
+    seeds = seed_promoted_artifacts(store_root, story_id=primary_id)
 
     api = CountingAPICaller(fixture["canonical_response"])
     checker = FakeDataLakeChecker(fixture["mock_data_lake_exists"])
@@ -70,7 +74,7 @@ def test_ask_memory_advisory_banner_bookends(tmp_path, capsys, monkeypatch):
 
     monkeypatch.setattr(AIAdapter, "__init__", patched_init)
 
-    with _chdir(tmp_path):
+    with _chdir(store_root):
         rc = cli_module.main([
             "ask-memory",
             "--task", fixture["task_type"],
@@ -89,11 +93,13 @@ def test_ask_memory_advisory_banner_bookends(tmp_path, capsys, monkeypatch):
 
 def test_ask_memory_writes_outputs_and_queries(tmp_path, capsys, monkeypatch):
     """RT4-004: ai/queries and ai/outputs populated for a successful query."""
-    setup_phase_h_repo(tmp_path)
-    PromptRegistry().load(str(tmp_path))
+    monkeypatch.setenv("DATA_LAKE_PATH", str(tmp_path))
+    store_root = tmp_path / "store"
+    setup_phase_h_repo(store_root)
+    PromptRegistry().load(str(store_root))
     fixture = load_fixture("memory_query")
     primary_id = fixture["expected_citations"][0]
-    seeds = seed_promoted_artifacts(tmp_path, story_id=primary_id)
+    seeds = seed_promoted_artifacts(store_root, story_id=primary_id)
 
     api = CountingAPICaller(fixture["canonical_response"])
     checker = FakeDataLakeChecker(fixture["mock_data_lake_exists"])
@@ -109,15 +115,15 @@ def test_ask_memory_writes_outputs_and_queries(tmp_path, capsys, monkeypatch):
         ),
     )
 
-    with _chdir(tmp_path):
+    with _chdir(store_root):
         rc = cli_module.main([
             "ask-memory",
             "--task", fixture["task_type"],
             "--question", fixture["mock_question"],
         ])
     assert rc == 0
-    queries = list((tmp_path / "ai" / "queries").glob("*.json"))
-    outputs = list((tmp_path / "ai" / "outputs").glob("*.json"))
+    queries = list((store_root / "ai" / "queries").glob("*.json"))
+    outputs = list((store_root / "ai" / "outputs").glob("*.json"))
     assert len(queries) == 1
     assert len(outputs) == 1
     out_doc = json.loads(outputs[0].read_text(encoding="utf-8"))
@@ -126,11 +132,13 @@ def test_ask_memory_writes_outputs_and_queries(tmp_path, capsys, monkeypatch):
 
 def test_ask_memory_obsidian_projection_advisory(tmp_path, capsys, monkeypatch):
     """RT3-006: vault projection contains advisory warning in first 5 lines."""
-    setup_phase_h_repo(tmp_path)
-    PromptRegistry().load(str(tmp_path))
+    monkeypatch.setenv("DATA_LAKE_PATH", str(tmp_path))
+    store_root = tmp_path / "store"
+    setup_phase_h_repo(store_root)
+    PromptRegistry().load(str(store_root))
     fixture = load_fixture("memory_query")
     primary_id = fixture["expected_citations"][0]
-    seeds = seed_promoted_artifacts(tmp_path, story_id=primary_id)
+    seeds = seed_promoted_artifacts(store_root, story_id=primary_id)
     vault = tmp_path / "vault"
     vault.mkdir()
 
@@ -148,7 +156,7 @@ def test_ask_memory_obsidian_projection_advisory(tmp_path, capsys, monkeypatch):
         ),
     )
 
-    with _chdir(tmp_path):
+    with _chdir(store_root):
         rc = cli_module.main([
             "ask-memory",
             "--task", fixture["task_type"],

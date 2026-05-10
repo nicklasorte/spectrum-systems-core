@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import tempfile
 import unittest
 import uuid
@@ -21,28 +22,30 @@ from ._fixtures import make_failure, write_synthesis_run
 class CliRecordRunTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self._tmp.name)
+        os.environ["DATA_LAKE_PATH"] = self._tmp.name
+        self.store_root = Path(self._tmp.name) / "store"
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
+        os.environ.pop("DATA_LAKE_PATH", None)
 
     def test_record_run_e2e(self) -> None:
         run_id = write_synthesis_run(
-            self.repo_root, ungrounded_sections=1, grounded_sections=1
+            self.store_root, ungrounded_sections=1, grounded_sections=1
         )
         out = io.StringIO()
         rc = cli.record_run(
-            run_id=run_id, repo_root=self.repo_root, out_stream=out
+            run_id=run_id, repo_root=self.store_root, out_stream=out
         )
         self.assertEqual(rc, 0)
         index = json.loads(
-            (self.repo_root / "harness" / "runs" / "index.json").read_text()
+            (self.store_root / "harness" / "runs" / "index.json").read_text()
         )
         self.assertEqual(len(index["runs"]), 1)
         # eval history written.
         self.assertTrue(
             (
-                self.repo_root / "harness" / "evals" / "report_draft_history.jsonl"
+                self.store_root / "harness" / "evals" / "report_draft_history.jsonl"
             ).is_file()
         )
 
@@ -50,22 +53,24 @@ class CliRecordRunTests(unittest.TestCase):
 class CliCompareRunsTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self._tmp.name)
+        os.environ["DATA_LAKE_PATH"] = self._tmp.name
+        self.store_root = Path(self._tmp.name) / "store"
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
+        os.environ.pop("DATA_LAKE_PATH", None)
 
     def test_compare_runs_cli(self) -> None:
-        a = write_synthesis_run(self.repo_root, cost_usd=0.10)
-        b = write_synthesis_run(self.repo_root, cost_usd=0.05)
+        a = write_synthesis_run(self.store_root, cost_usd=0.10)
+        b = write_synthesis_run(self.store_root, cost_usd=0.05)
         for rid in (a, b):
             manifest = json.loads(
-                (self.repo_root / "synthesis" / rid / "run_manifest.json").read_text()
+                (self.store_root / "synthesis" / rid / "run_manifest.json").read_text()
             )
-            RunHistoryStore().record_run(manifest, str(self.repo_root))
+            RunHistoryStore().record_run(manifest, str(self.store_root))
         out = io.StringIO()
         rc = cli.compare_runs(
-            run_id_a=a, run_id_b=b, repo_root=self.repo_root, out_stream=out
+            run_id_a=a, run_id_b=b, repo_root=self.store_root, out_stream=out
         )
         self.assertEqual(rc, 0)
 
@@ -75,10 +80,12 @@ class CliPromoteEvalCaseTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self._tmp.name)
+        os.environ["DATA_LAKE_PATH"] = self._tmp.name
+        self.store_root = Path(self._tmp.name) / "store"
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
+        os.environ.pop("DATA_LAKE_PATH", None)
 
     def _seed_candidate(self) -> str:
         index = FailurePatternIndex()
@@ -86,18 +93,18 @@ class CliPromoteEvalCaseTests(unittest.TestCase):
             index.ingest_failures(
                 f"run-{i}",
                 [make_failure(detail="section context missing inline citation evidence")],
-                str(self.repo_root),
+                str(self.store_root),
             )
         # Reload pattern from disk so eval_candidate_id is None.
         patterns_path = (
-            self.repo_root / "harness" / "failures" / "patterns.jsonl"
+            self.store_root / "harness" / "failures" / "patterns.jsonl"
         )
         patterns = [
             json.loads(line)
             for line in patterns_path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
-        result = index.propose_eval_candidate(patterns[0], str(self.repo_root))
+        result = index.propose_eval_candidate(patterns[0], str(self.store_root))
         self.assertEqual(result["status"], "success")
         return result["candidate_id"]
 
@@ -109,12 +116,12 @@ class CliPromoteEvalCaseTests(unittest.TestCase):
             reviewer_id="reviewer-1",
             note="approved",
             auto_confirm=True,
-            repo_root=self.repo_root,
+            repo_root=self.store_root,
             out_stream=out,
         )
         self.assertEqual(rc, 0)
         # Was written.
-        contracts_dir = self.repo_root / "contracts" / "evals"
+        contracts_dir = self.store_root / "contracts" / "evals"
         files = list(contracts_dir.glob("*.json"))
         self.assertEqual(len(files), 1)
         registry = json.loads(files[0].read_text())
@@ -123,7 +130,7 @@ class CliPromoteEvalCaseTests(unittest.TestCase):
         self.assertEqual(registry[0]["promoted_by"], "reviewer-1")
         # Candidate status flipped.
         cands_path = (
-            self.repo_root / "harness" / "failures" / "eval_candidates.jsonl"
+            self.store_root / "harness" / "failures" / "eval_candidates.jsonl"
         )
         cand = next(
             json.loads(line)
@@ -142,12 +149,12 @@ class CliPromoteEvalCaseTests(unittest.TestCase):
             note="",
             auto_confirm=False,
             in_stream=io.StringIO("no\n"),
-            repo_root=self.repo_root,
+            repo_root=self.store_root,
             out_stream=out,
         )
         self.assertEqual(rc, 1)
         # contracts/evals/ NOT written.
-        contracts_dir = self.repo_root / "contracts" / "evals"
+        contracts_dir = self.store_root / "contracts" / "evals"
         if contracts_dir.is_dir():
             self.assertEqual(list(contracts_dir.glob("*.json")), [])
 

@@ -11,7 +11,7 @@ import os
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import jsonschema
 
@@ -52,18 +52,41 @@ def _failure(reason: str, detail: str = "") -> Dict[str, Any]:
     }
 
 
+def _blocked(reason: str) -> Dict[str, Any]:
+    return {
+        "status": "blocked",
+        "source_record": None,
+        "text_units": [],
+        "reason": reason,
+    }
+
+
+def _resolve_store_root() -> Optional[Path]:
+    """Return DATA_LAKE_PATH/store if the env var is set and the directory exists."""
+    env = os.environ.get("DATA_LAKE_PATH", "")
+    if not env:
+        return None
+    p = Path(env)
+    if not p.exists():
+        return None
+    return p / "store"
+
+
 class SourceLoader:
     """Ingest a raw source from raw/<family>/<source_id>/ into a source_record."""
 
     def load(self, source_id: str, repo_root: str) -> Dict[str, Any]:
-        repo_root_path = Path(repo_root).resolve()
+        store_root = _resolve_store_root()
+        if store_root is None:
+            return _blocked("DATA_LAKE_PATH not set or does not exist")
+        store_root.mkdir(parents=True, exist_ok=True)
 
         # 1. Locate the source directory under raw/<family>/<source_id>/
-        source_dir, source_family = self._find_source_dir(repo_root_path, source_id)
+        source_dir, source_family = self._find_source_dir(store_root, source_id)
         if source_dir is None:
             return _failure(
                 "source_not_found",
-                f"no raw/<family>/{source_id}/ directory under {repo_root_path}",
+                f"no raw/<family>/{source_id}/ directory under {store_root}",
             )
 
         # 2. Read metadata.json
@@ -163,7 +186,7 @@ class SourceLoader:
         # raw/books/<source_id>/pages.jsonl (Phase B authoritative locator).
         if source_family == "books":
             text_units = self._enrich_book_units_with_pages(
-                text_units, source_id, repo_root_path
+                text_units, source_id, store_root
             )
 
         # 9. execution_fingerprint_hash
@@ -178,11 +201,9 @@ class SourceLoader:
         except (FileNotFoundError, OSError) as exc:
             return _failure("source_record_schema_violation", str(exc))
 
-        raw_path_rel = self._rel(repo_root_path, raw_path)
-        processed_dir = (
-            repo_root_path / "processed" / source_family / source_id
-        )
-        processed_path_rel = self._rel(repo_root_path, processed_dir)
+        raw_path_rel = self._rel(store_root, raw_path)
+        processed_dir = store_root / "processed" / source_family / source_id
+        processed_path_rel = self._rel(store_root, processed_dir)
 
         source_record: Dict[str, Any] = {
             "artifact_kind": "source_record",

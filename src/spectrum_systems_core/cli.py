@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import sys
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 import yaml
 
@@ -97,6 +98,21 @@ _AI_ADVISORY_BANNER = "⚠️ AI output is advisory only. Review before acting."
 _SLUG_RE = re.compile(r"[^a-z0-9_-]+")
 
 
+def _require_data_lake_store(out_stream=None) -> Optional[Path]:
+    """Return DATA_LAKE_PATH/store, or print an error and return None."""
+    out = out_stream if out_stream is not None else sys.stdout
+    env = os.environ.get("DATA_LAKE_PATH", "")
+    if not env or not Path(env).exists():
+        print(
+            "error: DATA_LAKE_PATH not set or does not exist",
+            file=out,
+        )
+        return None
+    store = Path(env) / "store"
+    store.mkdir(parents=True, exist_ok=True)
+    return store
+
+
 def _slugify(name: str) -> str:
     lowered = name.lower().strip()
     lowered = lowered.replace(" ", "-")
@@ -124,7 +140,7 @@ def _ingest_vault_note(
     note_relpath: str,
     repo_root: Path,
 ) -> str:
-    """Copy a vault note into raw/notes/<slug>/ and return the source_id."""
+    """Copy a vault note into DATA_LAKE_PATH/store/raw/notes/<slug>/ and return the source_id."""
     note_path = (vault_root / note_relpath).resolve()
     if not note_path.is_file():
         raise FileNotFoundError(f"vault note not found: {note_path}")
@@ -135,7 +151,11 @@ def _ingest_vault_note(
     explicit_id = frontmatter.get("source_id") if isinstance(frontmatter, dict) else None
     source_id = explicit_id if isinstance(explicit_id, str) and explicit_id.strip() else slug
 
-    target_dir = repo_root / "raw" / "notes" / source_id
+    env = os.environ.get("DATA_LAKE_PATH", "")
+    if not env or not Path(env).exists():
+        raise OSError("DATA_LAKE_PATH not set or does not exist")
+    store_root = Path(env) / "store"
+    target_dir = store_root / "raw" / "notes" / source_id
     target_dir.mkdir(parents=True, exist_ok=True)
     (target_dir / "source.txt").write_text(
         body if frontmatter else raw_text, encoding="utf-8"
@@ -188,15 +208,17 @@ def process_source(
     out_stream=None,
 ) -> int:
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
 
     if note:
         if not vault:
             print("error: --note requires --vault", file=out)
             return 1
         try:
-            source_id = _ingest_vault_note(Path(vault).resolve(), note, repo_root_path)
-        except FileNotFoundError as exc:
+            source_id = _ingest_vault_note(Path(vault).resolve(), note, store_root)
+        except (FileNotFoundError, OSError) as exc:
             print(f"error: {exc}", file=out)
             return 1
 
@@ -204,8 +226,8 @@ def process_source(
         print("error: must provide --source-id or --vault + --note", file=out)
         return 1
 
-    loader_result = SourceLoader().load(source_id, str(repo_root_path))
-    if loader_result["status"] != "success":
+    loader_result = SourceLoader().load(source_id, str(store_root))
+    if loader_result["status"] not in ("success",):
         print(f"error: load failed: {loader_result['reason']}", file=out)
         return 1
 
@@ -213,7 +235,7 @@ def process_source(
     text_units = loader_result["text_units"]
 
     eval_result = SourceEval().run(
-        source_record, text_units, repo_root=str(repo_root_path)
+        source_record, text_units, repo_root=str(store_root)
     )
     if eval_result["decision"] == "block":
         print(
@@ -228,7 +250,7 @@ def process_source(
         return 1
 
     projection_path = ObsidianProjection().write_source_index(
-        source_record, text_units, str(repo_root_path)
+        source_record, text_units, str(store_root)
     )
 
     if vault:
@@ -264,22 +286,22 @@ def prepare_pdf(
     process-source — Phase A and Phase B are deliberately separate steps.
     """
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
 
     if not source_id:
         print("error: must provide --source-id", file=out)
         return 1
 
-    extractor_result = PDFExtractor().extract(source_id, str(repo_root_path))
-    if extractor_result["status"] != "success":
+    extractor_result = PDFExtractor().extract(source_id, str(store_root))
+    if extractor_result["status"] not in ("success",):
         print(f"error: {extractor_result['reason']}", file=out)
         return 1
 
     extraction_report = extractor_result["extraction_report"]
 
-    metadata_path = (
-        repo_root_path / "raw" / "books" / source_id / "metadata.json"
-    )
+    metadata_path = store_root / "raw" / "books" / source_id / "metadata.json"
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -287,7 +309,7 @@ def prepare_pdf(
         return 1
 
     projection_path = ObsidianProjection().write_book_extraction_index(
-        source_id, metadata, extraction_report, str(repo_root_path)
+        source_id, metadata, extraction_report, str(store_root)
     )
 
     print(f"✓ source_id: {source_id}", file=out)
@@ -329,20 +351,22 @@ def extract_stories(
     Emits a review form for each tier_1 admit candidate (no auto-promotion).
     """
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
 
     if not source_id:
         print("error: must provide --source-id", file=out)
         return 1
 
-    chunk_result = Chunker().chunk(source_id, str(repo_root_path))
+    chunk_result = Chunker().chunk(source_id, str(store_root))
     if chunk_result["status"] != "success":
         print(f"error: chunker failed: {chunk_result['reason']}", file=out)
         return 1
     chunks = chunk_result["chunks"]
 
     extractor_result = StoryExtractor().extract_from_source(
-        source_id, str(repo_root_path)
+        source_id, str(store_root)
     )
     if extractor_result["status"] != "success":
         print(
@@ -352,14 +376,14 @@ def extract_stories(
         return 1
     all_records = extractor_result.get("all_records", [])
 
-    StoryEval().run(all_records, source_id, str(repo_root_path))
-    StoryworthyFilter().run_on_source(source_id, str(repo_root_path))
+    StoryEval().run(all_records, source_id, str(store_root))
+    StoryworthyFilter().run_on_source(source_id, str(store_root))
 
     # Reload candidates after filter rewrites.
-    candidates = _load_candidates(repo_root_path, source_id)
+    candidates = _load_candidates(store_root, source_id)
 
     ObsidianProjection().write_story_projection(
-        source_id, candidates, str(repo_root_path), label="post-eval"
+        source_id, candidates, str(store_root), label="post-eval"
     )
 
     sent_for_review = 0
@@ -402,7 +426,10 @@ def promote_knowledge(
     status='promoted'. (FINDING-C-003 fix: no auto-promotion path exists.)
     """
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
+    repo_root_path = store_root
 
     type_to_id_field = {
         "concept": ("concepts.jsonl", "concept_id"),
@@ -492,7 +519,10 @@ def extract_claims(
     paper/contradiction_summary.json. Runs ClaimEval and EvidenceEval.
     """
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
+    repo_root_path = store_root
 
     if not source_id:
         print("error: must provide --source-id", file=out)
@@ -590,7 +620,10 @@ def process_comments(
 ) -> int:
     """Phase D: process agency comments into issues + revision instructions."""
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
+    repo_root_path = store_root
 
     comment_result = CommentProcessor().process_source(
         comment_source_id, paper_source_id, str(repo_root_path)
@@ -681,7 +714,10 @@ def approve_revisions(
     runs RevisionWorkflow.apply_all_approved.
     """
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
+    repo_root_path = store_root
 
     if not source_id:
         print("error: must provide --source-id", file=out)
@@ -882,7 +918,10 @@ def format_paper(
     from .paper import PublicationFormatter
 
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
+    repo_root_path = store_root
 
     if not revised_draft_id:
         print("error: must provide --revised-draft-id", file=out)
@@ -936,7 +975,10 @@ def certify_paper(
     from .governance import GOV10CertificationStep
 
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
+    repo_root_path = store_root
 
     if not paper_id:
         print("error: must provide --paper-id", file=out)
@@ -984,7 +1026,10 @@ def build_agency_profile(
 ) -> int:
     """Phase E: ingest agency_comment issues from a paper into the agency profile."""
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
+    repo_root_path = store_root
 
     if not paper_source_id:
         print("error: must provide --paper-source-id", file=out)
@@ -1044,7 +1089,10 @@ def predict_objections(
 ) -> int:
     """Phase E: predict objections, suggest mitigations, build pattern index."""
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
+    repo_root_path = store_root
 
     if not paper_source_id or not agency_slug:
         print("error: must provide --paper-source-id and --agency-slug", file=out)
@@ -1143,7 +1191,10 @@ def track_outcome(
 ) -> int:
     """Phase E: record the outcome of an applied mitigation (FINDING-E-004)."""
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
+    repo_root_path = store_root
 
     if not mitigation_id or not agency_slug or not paper_source_id or not outcome:
         print(
@@ -1257,7 +1308,9 @@ def synthesize(
         print(f"error: invalid purpose: {purpose}", file=sys.stderr)
         return 2
 
-    repo_root = Path.cwd().resolve()
+    repo_root = _require_data_lake_store(sys.stderr)
+    if repo_root is None:
+        return 1
     run_id = str(uuid.uuid4())
 
     if recipe_id is None:
@@ -1512,7 +1565,10 @@ def record_run(
 ) -> int:
     """Phase G: record a completed synthesis run into harness memory."""
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
+    repo_root_path = store_root
     if not run_id:
         print("error: must provide --run-id", file=out)
         return 1
@@ -1639,7 +1695,10 @@ def record_outcome(
 ) -> int:
     """Phase G: record a revision or mitigation outcome into harness memory."""
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
+    repo_root_path = store_root
     if outcome_type not in ("revision", "mitigation"):
         print("error: --type must be revision|mitigation", file=out)
         return 1
@@ -1712,7 +1771,10 @@ def compare_runs(
 ) -> int:
     """Phase G: compare two synthesis runs across fixed dimensions."""
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
+    repo_root_path = store_root
     result = WorkflowComparator().compare(
         run_id_a, run_id_b, str(repo_root_path), vault_root=vault
     )
@@ -1742,7 +1804,10 @@ def record_override(
 ) -> int:
     """Phase G: record a human override (FINDING-G-006)."""
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
+    repo_root_path = store_root
     result = OverrideStore().record_override(
         decision_context=decision_context,
         overridden_artifact_id=artifact_id,
@@ -1783,7 +1848,10 @@ def promote_eval_case(
     """
     out = out_stream if out_stream is not None else sys.stdout
     inp = in_stream if in_stream is not None else sys.stdin
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
+    repo_root_path = store_root
 
     candidates_path = (
         repo_root_path / "harness" / "failures" / "eval_candidates.jsonl"
@@ -1883,7 +1951,10 @@ def audit_entropy(
 ) -> int:
     """Phase G: scan for entropy and produce a report (FINDING-G-007)."""
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
+    repo_root_path = store_root
     result = EntropyAuditor().run_audit(str(repo_root_path), vault)
     if result["status"] != "success":
         print(f"error: {result.get('reason', '')}", file=out)
@@ -1944,7 +2015,9 @@ def ask_memory(
     advisory output. All AI output is advisory; the banner bookends the
     answer (FINDING-H-005 / RT5-003).
     """
-    repo_root = Path.cwd().resolve()
+    repo_root = _require_data_lake_store(sys.stderr)
+    if repo_root is None:
+        return 1
 
     # Banner BEFORE the work starts.
     print(_AI_ADVISORY_BANNER)
@@ -2042,7 +2115,10 @@ def audit_governance(
     same rule as Phase G harness audits).
     """
     out = out_stream if out_stream is not None else sys.stdout
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
+    repo_root_path = store_root
     try:
         result = GovernanceDashboard().generate(repo_root_path, vault)
     except Exception as exc:  # pragma: no cover — fail-closed
@@ -2106,7 +2182,10 @@ def apply_compression_cli(
     """
     out = out_stream if out_stream is not None else sys.stdout
     inp = in_stream if in_stream is not None else sys.stdin
-    repo_root_path = (repo_root or Path.cwd()).resolve()
+    store_root = _require_data_lake_store(out)
+    if store_root is None:
+        return 1
+    repo_root_path = store_root
 
     print(
         f"This will {action} candidate {candidate_id}. "

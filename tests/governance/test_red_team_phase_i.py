@@ -58,6 +58,9 @@ class RedTeamPhaseITests(unittest.TestCase):
 
     def test_rt5_002_synthesis_pipeline_independence(self) -> None:
         """Governance scanner failure must not raise to caller of audit-governance."""
+        import io
+        import os
+
         from spectrum_systems_core.cli import audit_governance
 
         class BoomDashboard:
@@ -71,18 +74,19 @@ class RedTeamPhaseITests(unittest.TestCase):
         cli_module.GovernanceDashboard = BoomDashboard
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                # Use a class to capture stdout.
-                import io
-
-                buf = io.StringIO()
-                code = audit_governance(
-                    vault=None,
-                    repo_root=Path(tmp),
-                    out_stream=buf,
-                )
-                # Failure is degraded into a warning + exit 0 — never blocks.
-                self.assertEqual(code, 0)
-                self.assertIn("warning", buf.getvalue().lower())
+                os.environ["DATA_LAKE_PATH"] = tmp
+                try:
+                    buf = io.StringIO()
+                    code = audit_governance(
+                        vault=None,
+                        repo_root=Path(tmp),
+                        out_stream=buf,
+                    )
+                    # Failure is degraded into a warning + exit 0 — never blocks.
+                    self.assertEqual(code, 0)
+                    self.assertIn("warning", buf.getvalue().lower())
+                finally:
+                    os.environ.pop("DATA_LAKE_PATH", None)
         finally:
             cli_module.GovernanceDashboard = original
 
