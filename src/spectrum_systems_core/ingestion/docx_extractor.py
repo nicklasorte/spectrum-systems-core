@@ -16,6 +16,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from docx import Document
+from docx.oxml.ns import qn
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 
 
 class DocxExtractor:
@@ -39,6 +42,8 @@ class DocxExtractor:
                 "output_path": str or None,
                 "paragraph_count": int,
                 "character_count": int,
+                "table_count": int,
+                "table_row_count": int,
                 "reason": str  (empty string on success)
             }
 
@@ -52,6 +57,8 @@ class DocxExtractor:
                 "output_path": None,
                 "paragraph_count": 0,
                 "character_count": 0,
+                "table_count": 0,
+                "table_row_count": 0,
                 "reason": f"unexpected_error:{exc}",
             }
 
@@ -70,10 +77,9 @@ class DocxExtractor:
         except Exception as exc:
             return _failure(f"docx_parse_error:{exc}")
 
-        paragraphs = [p.text.strip() for p in doc.paragraphs]
-        non_empty = [p for p in paragraphs if p]
-
-        full_text = "\n\n".join(non_empty)
+        full_text, chunk_count, table_count, table_row_count = (
+            self._extract_body_text(doc)
+        )
 
         if not full_text.strip():
             return _failure(f"empty_document:{docx_path}")
@@ -89,10 +95,61 @@ class DocxExtractor:
         return {
             "status": "success",
             "output_path": str(dest),
-            "paragraph_count": len(non_empty),
+            "paragraph_count": chunk_count,
             "character_count": len(full_text),
+            "table_count": table_count,
+            "table_row_count": table_row_count,
             "reason": "",
         }
+
+    def _extract_body_text(self, document) -> tuple[str, int, int, int]:
+        """Extract text from paragraphs and tables in document order.
+
+        Returns ``(full_text, chunk_count, table_count, table_row_count)``.
+        ``chunk_count`` is the number of non-empty text units (paragraphs +
+        emitted table rows) — what was previously called paragraph_count.
+        """
+        chunks: List[str] = []
+        table_count = 0
+        table_row_count = 0
+
+        try:
+            body = document.element.body
+        except Exception:
+            return "", 0, 0, 0
+
+        para_tag = qn("w:p")
+        tbl_tag = qn("w:tbl")
+
+        for element in body:
+            tag = getattr(element, "tag", None)
+            if tag == para_tag:
+                try:
+                    text = Paragraph(element, document).text.strip()
+                except Exception:
+                    continue
+                if text:
+                    chunks.append(text)
+            elif tag == tbl_tag:
+                table_count += 1
+                try:
+                    table = Table(element, document)
+                except Exception:
+                    continue
+                for row in table.rows:
+                    row_cells: List[str] = []
+                    for cell in row.cells:
+                        try:
+                            cell_text = cell.text.strip()
+                        except Exception:
+                            cell_text = ""
+                        if cell_text:
+                            row_cells.append(cell_text)
+                    if row_cells:
+                        chunks.append(" | ".join(row_cells))
+                        table_row_count += 1
+
+        return "\n\n".join(chunks), len(chunks), table_count, table_row_count
 
     def extract_batch(
         self,
@@ -135,5 +192,7 @@ def _failure(reason: str) -> Dict[str, Any]:
         "output_path": None,
         "paragraph_count": 0,
         "character_count": 0,
+        "table_count": 0,
+        "table_row_count": 0,
         "reason": reason,
     }

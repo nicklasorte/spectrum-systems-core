@@ -25,6 +25,20 @@ def _write_docx(path: Path, paragraphs: list[str]) -> None:
     doc.save(str(path))
 
 
+def _write_docx_with_table(path: Path, table_rows: list[list[str]]) -> None:
+    """Write a .docx with a single table whose contents are ``table_rows``."""
+    doc = Document()
+    if not table_rows:
+        doc.save(str(path))
+        return
+    cols = max(len(r) for r in table_rows)
+    table = doc.add_table(rows=len(table_rows), cols=cols)
+    for r_idx, row in enumerate(table_rows):
+        for c_idx, cell_text in enumerate(row):
+            table.rows[r_idx].cells[c_idx].text = cell_text
+    doc.save(str(path))
+
+
 class TestExtractSingleDocx(unittest.TestCase):
     def setUp(self) -> None:
         import tempfile
@@ -110,6 +124,137 @@ class TestExtractSingleDocx(unittest.TestCase):
         DocxExtractor().extract(str(src))
         txt = self.tmp / "empty2.txt"
         self.assertFalse(txt.exists(), "must not write .txt when extraction fails")
+
+
+class TestExtractTables(unittest.TestCase):
+    """Tables-in-document-order extraction (fix for hollow meeting minutes)."""
+
+    def setUp(self) -> None:
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_table_content_extracted(self) -> None:
+        src = self.tmp / "minutes.docx"
+        _write_docx_with_table(
+            src,
+            [
+                ["Topic", "Owner", "Notes"],
+                ["Kickoff", "Alice", "Reviewed agenda"],
+                ["Action items", "Bob", "Send draft by Friday"],
+            ],
+        )
+        result = DocxExtractor().extract(str(src))
+        self.assertEqual(result["status"], "success")
+        content = Path(result["output_path"]).read_text(encoding="utf-8")
+        # Every cell value must appear in the output.
+        for cell in [
+            "Topic", "Owner", "Notes",
+            "Kickoff", "Alice", "Reviewed agenda",
+            "Action items", "Bob", "Send draft by Friday",
+        ]:
+            self.assertIn(cell, content)
+        # Cells inside a row are joined with ' | '.
+        self.assertIn("Kickoff | Alice | Reviewed agenda", content)
+        self.assertEqual(result["table_count"], 1)
+        self.assertEqual(result["table_row_count"], 3)
+
+    def test_paragraph_and_table_interleaved(self) -> None:
+        src = self.tmp / "interleaved.docx"
+        doc = Document()
+        doc.add_paragraph("Section 1: Intro")
+        t1 = doc.add_table(rows=1, cols=2)
+        t1.rows[0].cells[0].text = "T1-A"
+        t1.rows[0].cells[1].text = "T1-B"
+        doc.add_paragraph("Section 2: Discussion")
+        t2 = doc.add_table(rows=1, cols=2)
+        t2.rows[0].cells[0].text = "T2-A"
+        t2.rows[0].cells[1].text = "T2-B"
+        doc.add_paragraph("Section 3: Conclusion")
+        doc.save(str(src))
+
+        result = DocxExtractor().extract(str(src))
+        self.assertEqual(result["status"], "success")
+        content = Path(result["output_path"]).read_text(encoding="utf-8")
+        # Document order must be preserved.
+        positions = [
+            content.find("Section 1: Intro"),
+            content.find("T1-A | T1-B"),
+            content.find("Section 2: Discussion"),
+            content.find("T2-A | T2-B"),
+            content.find("Section 3: Conclusion"),
+        ]
+        self.assertTrue(all(p >= 0 for p in positions), positions)
+        self.assertEqual(positions, sorted(positions))
+        self.assertEqual(result["table_count"], 2)
+        self.assertEqual(result["table_row_count"], 2)
+
+    def test_empty_table_cells_skipped(self) -> None:
+        src = self.tmp / "sparse_table.docx"
+        _write_docx_with_table(
+            src,
+            [
+                ["A", "", "C"],
+                ["", "", ""],   # entirely empty row — must not emit blank line
+                ["D", "", ""],
+            ],
+        )
+        result = DocxExtractor().extract(str(src))
+        self.assertEqual(result["status"], "success")
+        content = Path(result["output_path"]).read_text(encoding="utf-8")
+        # No empty rows produce blank "  | " artifacts.
+        self.assertNotIn("\n\n\n", content)
+        # Rows are joined with ' | ' and skip empty cells.
+        self.assertIn("A | C", content)
+        self.assertIn("D", content)
+        # Empty row is skipped — only 2 emitted rows.
+        self.assertEqual(result["table_row_count"], 2)
+        self.assertEqual(result["table_count"], 1)
+
+    def test_table_count_in_return_dict(self) -> None:
+        src = self.tmp / "multi_table.docx"
+        doc = Document()
+        doc.add_paragraph("Heading")
+        for _ in range(3):
+            t = doc.add_table(rows=2, cols=2)
+            t.rows[0].cells[0].text = "x"
+            t.rows[0].cells[1].text = "y"
+            t.rows[1].cells[0].text = "z"
+            t.rows[1].cells[1].text = "w"
+        doc.save(str(src))
+
+        result = DocxExtractor().extract(str(src))
+        self.assertEqual(result["status"], "success")
+        self.assertIn("table_count", result)
+        self.assertIn("table_row_count", result)
+        self.assertEqual(result["table_count"], 3)
+        self.assertEqual(result["table_row_count"], 6)
+        # paragraph_count is now total emitted chunks (1 heading + 6 rows).
+        self.assertEqual(result["paragraph_count"], 7)
+
+    def test_pure_table_document_extracted(self) -> None:
+        """A .docx with only tables (no paragraphs) must still produce text.
+
+        Reproduces the production bug: meeting minutes that put discussion
+        log + action items + next steps in tables previously came out as
+        empty_document.
+        """
+        src = self.tmp / "table_only.docx"
+        _write_docx_with_table(
+            src,
+            [
+                ["Decision", "Defer item"],
+                ["Owner", "Carol"],
+            ],
+        )
+        result = DocxExtractor().extract(str(src))
+        self.assertEqual(result["status"], "success")
+        content = Path(result["output_path"]).read_text(encoding="utf-8")
+        self.assertIn("Decision | Defer item", content)
+        self.assertIn("Owner | Carol", content)
 
 
 class TestExtractBatch(unittest.TestCase):

@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/ingestion/source_eval_result.schema.json",
+  "title": "source_eval_result",
+  "description": "Per-transcript ingestion-quality eval result emitted by IngestionEval after each source_record is produced. Written to $SDL_ROOT/evals/<source_artifact_id>_ingestion_eval.json. Failed evals warn but never block the pipeline.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eval_id",
+    "source_artifact_id",
+    "docx_path",
+    "docx_file_size_bytes",
+    "text_unit_count",
+    "character_count",
+    "table_count",
+    "ratio_chars_per_byte",
+    "checks",
+    "status",
+    "eval_passed",
+    "failure_reasons",
+    "content_hash",
+    "created_at",
+    "schema_version",
+    "provenance"
+  ],
+  "properties": {
+    "eval_id": { "type": "string", "format": "uuid" },
+    "source_artifact_id": { "type": "string", "minLength": 1 },
+    "docx_path": { "type": "string", "minLength": 1 },
+    "docx_file_size_bytes": { "type": "integer", "minimum": 0 },
+    "text_unit_count": { "type": "integer", "minimum": 0 },
+    "character_count": { "type": "integer", "minimum": 0 },
+    "table_count": { "type": "integer", "minimum": 0 },
+    "ratio_chars_per_byte": { "type": "number", "minimum": 0 },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "passed", "required", "detail"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "passed": { "type": "boolean" },
+          "required": { "type": "boolean" },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": ["passed", "warning", "failed"]
+    },
+    "eval_passed": { "type": "boolean" },
+    "failure_reasons": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "schema_version": { "const": "1.0.0" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": { "const": "IngestionEval" }
+      }
+    }
+  }
+}
