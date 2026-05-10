@@ -339,3 +339,21 @@ Module-level function `extract_meeting_date(filename, text) -> Optional[str]` ap
 | audit-governance (`DATA_LAKE_PATH=data-lake`) | total_flagged 0; high 0 | 0 |
 | lint / type-check | N/A — no config in repo (per `docs/development/ci.md`) | — |
 
+## Step 7 — Gate B (diff redteam, fresh subagent)
+
+Verdict: **no blocking findings (zero Sev-1, zero Sev-2)**.
+
+The reviewer traced every required case against the diff:
+
+- `2-17-26` → `2026-02-17` ✓ (NUMERIC + 2-digit year pivot)
+- `21Jan26` → `2026-01-21` ✓ (DAY_MONTH_YEAR with 2-digit year)
+- `5Mar2026` → `2026-03-05` ✓
+- All 13 production filenames covered by `test_real_transcript_filenames_all_extract_correctly` (date_utils) and `test_all_13_pairs_match_with_real_filenames` (linker integration).
+- `MinutesProcessor` body-text scan deliberately tightened to prose-only (`extract_prose_date`); not a regression — confirmed `1.2.26` and `20251201` cannot false-match in body text.
+- `metadata.date` fallback removed; `_extract_transcript_date` only reads filename candidates.
+- `None == None` short-circuit confirmed in `_link` (None-dated records routed to unmatched before bucketing).
+- `_filename_candidates` ordering: title → `raw_path` basename → `processed_path` basename.
+- `extract_meeting_name` regex semantics unchanged (alternation order flip in `(\d{4}|\d{2})` produces same matches via greedy/backtracking).
+
+One Sev-3 docstring inaccuracy noted by the reviewer (the `_extract_transcript_date` docstring's "2026.01.22" example) — not reported per rubric, no action taken.
+
