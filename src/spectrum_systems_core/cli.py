@@ -90,6 +90,7 @@ from .harness import (
 from .ai import AIAdapter, PromptRegistry
 from .governance import GovernanceDashboard
 from .governance.apply_compression import apply_compression as _apply_compression
+from .orchestration import PipelineOrchestrator
 
 
 _AI_ADVISORY_BANNER = "⚠️ AI output is advisory only. Review before acting."
@@ -2270,6 +2271,153 @@ def extract_docx(
     return 1
 
 
+def run_pipeline(
+    *,
+    dry_run: bool = False,
+    data_lake: str | None = None,
+    out_stream=None,
+) -> int:
+    """Phase L.1: scan data-lake/store/raw/transcripts/ and run any
+    transcripts that have no on-disk processed evidence.
+
+    Returns:
+        0 on success, partial success, or dry_run completion. 1 only when
+        the scan itself fails (missing DATA_LAKE_PATH, directory not found).
+    """
+    out = out_stream if out_stream is not None else sys.stdout
+
+    resolved = data_lake
+    if not resolved:
+        resolved = os.environ.get("DATA_LAKE_PATH", "")
+    if not resolved:
+        print(
+            "error: DATA_LAKE_PATH not set and --data-lake not provided",
+            file=out,
+        )
+        return 1
+    if not Path(resolved).exists():
+        print(
+            f"error: data lake path does not exist: {resolved}",
+            file=out,
+        )
+        return 1
+
+    transcripts_dir = (
+        Path(resolved) / "store" / "raw" / "transcripts"
+    )
+
+    print("=== Pipeline Orchestrator ===", file=out)
+    print(f"Scanning: {transcripts_dir}/", file=out)
+
+    orchestrator = PipelineOrchestrator()
+    # Always scan first so we have the per-transcript reason annotations
+    # to surface alongside each Running:/Skipping: line.
+    scan_result = orchestrator.scan(resolved)
+    if scan_result["status"] != "success":
+        print(f"error: scan failed: {scan_result.get('reason', '')}", file=out)
+        return 1
+
+    reason_by_filename: dict[str, str] = {
+        e["filename"]: e.get("reason", "")
+        for e in scan_result.get("unprocessed", [])
+    }
+
+    if dry_run:
+        already = scan_result.get("already_processed", [])
+        unproc = scan_result.get("unprocessed", [])
+        print(
+            f"Found {len(already) + len(unproc)} transcripts. "
+            f"Already processed: {len(already)}. To run: {len(unproc)}.",
+            file=out,
+        )
+        print("", file=out)
+        if already:
+            print("Already processed (skipping):", file=out)
+            for entry in already:
+                print(
+                    f"  - {entry['filename']} "
+                    f"(artifact: {entry['artifact_id']})",
+                    file=out,
+                )
+        if unproc:
+            print("Would run:", file=out)
+            for entry in unproc:
+                reason = entry.get("reason") or "no_processed_evidence"
+                print(
+                    f"  - {entry['filename']} ({reason})",
+                    file=out,
+                )
+        else:
+            print("Nothing to run.", file=out)
+        return 0
+
+    result = orchestrator.run(resolved, dry_run=False)
+    if result["status"] == "failure" and "scan_failed" in result.get(
+        "reason", ""
+    ):
+        print(f"error: scan failed: {result['reason']}", file=out)
+        return 1
+
+    found = (
+        len(result["processed_this_run"])
+        + len(result["skipped_already_done"])
+        + len(result["failed_this_run"])
+    )
+    print(
+        f"Found {found} transcripts. "
+        f"Already processed: {len(result['skipped_already_done'])}. "
+        f"To run: {result['total_attempted']}.",
+        file=out,
+    )
+    print("", file=out)
+
+    for entry in result["skipped_already_done"]:
+        print(
+            f"Skipping (already processed): {entry['filename']} "
+            f"(artifact: {entry['artifact_id']})",
+            file=out,
+        )
+
+    for entry in result["processed_this_run"]:
+        scan_reason = reason_by_filename.get(entry["filename"], "")
+        annotation = (
+            f" [{scan_reason}]"
+            if scan_reason and scan_reason != "no_processed_evidence"
+            else ""
+        )
+        print(
+            f"Running: {entry['filename']}{annotation} ... ✓ artifact: "
+            f"{entry['artifact_id']}",
+            file=out,
+        )
+    for entry in result["failed_this_run"]:
+        scan_reason = reason_by_filename.get(entry["filename"], "")
+        annotation = (
+            f" [{scan_reason}]"
+            if scan_reason and scan_reason != "no_processed_evidence"
+            else ""
+        )
+        print(
+            f"Running: {entry['filename']}{annotation} ... ✗ failed: "
+            f"{entry['reason']}",
+            file=out,
+        )
+
+    print("", file=out)
+    print("=== Summary ===", file=out)
+    print(
+        f"Attempted: {result['total_attempted']} | "
+        f"Succeeded: {result['total_succeeded']} | "
+        f"Failed: {result['total_failed']}",
+        file=out,
+    )
+    if result["orchestration_record_path"]:
+        print(f"Record: {result['orchestration_record_path']}", file=out)
+
+    # Partial success is exit 0; only scan failures are exit 1.
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m spectrum_systems_core.cli",
@@ -2736,6 +2884,33 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Directory where .txt files are written. Defaults to alongside the original.",
     )
 
+    rp = sub.add_parser(
+        "run-pipeline",
+        help="Phase L.1: scan transcripts and run pipeline on the unprocessed ones.",
+        description=(
+            "Phase L.1 PipelineOrchestrator. Scans "
+            "<data-lake>/store/raw/transcripts/ for .docx and .txt files, "
+            "compares against on-disk processed evidence, and runs the "
+            "Phase A pipeline only on the transcripts that have no record "
+            "of a previous run. Writes one orchestration_run_record per "
+            "invocation. Idempotent: re-running skips transcripts already "
+            "processed."
+        ),
+    )
+    rp.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Scan and report what would run, without executing or writing.",
+    )
+    rp.add_argument(
+        "--data-lake",
+        default=None,
+        help=(
+            "Path to the data lake root. Overrides the DATA_LAKE_PATH "
+            "environment variable when provided."
+        ),
+    )
+
     return parser
 
 
@@ -2857,6 +3032,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return extract_docx(
             path=args.path,
             output_dir=args.output_dir,
+        )
+    if args.command == "run-pipeline":
+        return run_pipeline(
+            dry_run=args.dry_run,
+            data_lake=args.data_lake,
         )
     if args.command == "apply-compression":
         return apply_compression_cli(
