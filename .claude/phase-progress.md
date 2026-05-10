@@ -261,3 +261,21 @@ After Gate A fixes:
 | audit-governance | exit 0; total_flagged: 0, high: 0 |
 | lint / type-check | N/A (no config) |
 
+
+# Confirm Pairs Workflow — Inventory
+
+## Step 1 findings
+
+- Branch: `claude/confirm-pairs-workflow-GlFYx` (assigned by harness; task spec
+  said `chore/confirm-pairs-workflow` but harness instructions take precedence).
+- Schema: `contracts/schemas/ingestion/ground_truth_pair.schema.json` has
+  `status` enum `["confirmed", "pending_review", "retired"]`,
+  nullable `confirmed_at` (date-time), nullable `confirmed_by` (string),
+  `additionalProperties: false`. **No `content_hash` field — must not add it.**
+- Existing workflow `.github/workflows/run-pipeline.yml` already uses the
+  pattern: checkout core, checkout `${{ secrets.DATA_LAKE_REPO }}` with
+  `${{ secrets.GH_PAT }}` into `data-lake/`, set up Python 3.11, `pip install
+  -e ".[dev]"`, then commit-and-push from inside `data-lake/`.
+- Data-lake artifact path: `store/artifacts/ground_truth/<pair_id>.json`.
+- `jsonschema>=4.0` already in `pyproject.toml` deps.
+
