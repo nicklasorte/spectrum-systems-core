@@ -14,6 +14,11 @@ governance/candidates/archive/*.json
 governance/drift/*.jsonl
 governance/markdown/*.md
 
+# Same governance outputs when DATA_LAKE_PATH points at the in-repo
+# data-lake/. The data-lake tree is runtime data; nothing under
+# data-lake/store/governance/ is part of the repo baseline.
+data-lake/store/governance/
+
 # Pipeline runtime data — must live under DATA_LAKE_PATH, not the repo.
 raw/
 processed/
