@@ -16,6 +16,7 @@
     "attempted_this_run",
     "succeeded_this_run",
     "failed_this_run",
+    "filtered_from_transcripts",
     "results",
     "status",
     "schema_version",
@@ -47,7 +48,8 @@
               "failure",
               "skipped_already_done",
               "would_run",
-              "extraction_quality_warning"
+              "extraction_quality_warning",
+              "filtered"
             ]
           },
           "artifact_id": { "type": "string" },
@@ -59,11 +61,23 @@
         }
       }
     },
+    "filtered_from_transcripts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["filename", "reason"],
+        "properties": {
+          "filename": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
     "status": {
       "type": "string",
       "enum": ["success", "partial", "failure", "dry_run"]
     },
-    "schema_version": { "const": "1.1.0" },
+    "schema_version": { "const": "1.2.0" },
     "provenance": {
       "type": "object",
       "additionalProperties": false,

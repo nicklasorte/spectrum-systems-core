@@ -105,6 +105,11 @@ class MinutesProcessor:
 
         Returns ``[]`` when the directory is missing or empty — that is a
         valid pre-state, not an error.
+
+        The result list mixes ``status="success"`` (newly written),
+        ``status="skipped"`` (idempotent re-run with matching ``raw_hash``),
+        and ``status="failure"`` / ``status="blocked"`` entries. Skipped
+        entries carry ``skipped_reason="already_processed"``.
         """
         try:
             base = Path(data_lake_path) / "store" / "raw" / "minutes"
@@ -145,6 +150,23 @@ class MinutesProcessor:
         meeting_date = extract_meeting_date(src.name, text)
         meeting_name = extract_meeting_name(src.name)
         raw_hash = "sha256:" + _sha256_hex(text.encode("utf-8"))
+
+        # Idempotency: if a minutes_record with this raw_hash already
+        # exists under SDL_ROOT/minutes/ (non-recursive — retired/ subdir
+        # excluded), skip and return the existing artifact's metadata.
+        # Failed runs never write an artifact, so there is no on-disk
+        # "failed" record that could mask a re-run; failed inputs are
+        # naturally reprocessed.
+        sdl_root_lookup = _resolve_sdl_root(data_lake_path)
+        if sdl_root_lookup is not None:
+            existing = _find_existing_minutes_by_hash(sdl_root_lookup, raw_hash)
+            if existing is not None:
+                return _skipped(
+                    docx_path=str(src),
+                    txt_path=str(txt_path),
+                    existing=existing,
+                )
+
         minutes_id = str(uuid.uuid4())
 
         record: Dict[str, Any] = {
@@ -297,3 +319,66 @@ def _blocked(**kwargs: Any) -> Dict[str, Any]:
     result = _failure(**kwargs)
     result["status"] = "blocked"
     return result
+
+
+def _find_existing_minutes_by_hash(
+    sdl_root: Path, raw_hash: str
+) -> Optional[Dict[str, Any]]:
+    """Return summary of an existing minutes_record whose raw_hash matches.
+
+    Reads ``<sdl_root>/minutes/*.json`` non-recursively (so files under
+    ``minutes/retired/`` are excluded). Returns ``None`` if no match. A
+    corrupt or unparseable JSON file is silently skipped (treated as not
+    matching, which routes the caller to re-process — the safe direction).
+    """
+    minutes_dir = sdl_root / "minutes"
+    if not minutes_dir.is_dir():
+        return None
+    for path in sorted(minutes_dir.glob("*.json")):
+        if not path.is_file():
+            continue
+        try:
+            rec = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(rec, dict):
+            continue
+        if rec.get("raw_hash") != raw_hash:
+            continue
+        return {
+            "minutes_id": rec.get("minutes_id", "") or "",
+            "artifact_path": str(path),
+            "meeting_date": rec.get("meeting_date"),
+            "meeting_name": rec.get("meeting_name") or "",
+            "text_unit_count": int(rec.get("text_unit_count", 0) or 0),
+            "character_count": int(rec.get("character_count", 0) or 0),
+            "table_count": int(rec.get("table_count", 0) or 0),
+        }
+    return None
+
+
+def _skipped(
+    *,
+    docx_path: str,
+    txt_path: str,
+    existing: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Result dict for an idempotent skip (already_processed).
+
+    Carries the existing record's identifiers so callers can tell which
+    artifact was matched without re-reading the file.
+    """
+    return {
+        "status": "skipped",
+        "minutes_id": existing["minutes_id"],
+        "artifact_path": existing["artifact_path"],
+        "docx_path": docx_path,
+        "txt_path": txt_path,
+        "meeting_date": existing["meeting_date"],
+        "meeting_name": existing["meeting_name"],
+        "text_unit_count": existing["text_unit_count"],
+        "character_count": existing["character_count"],
+        "table_count": existing["table_count"],
+        "skipped_reason": "already_processed",
+        "reason": "",
+    }

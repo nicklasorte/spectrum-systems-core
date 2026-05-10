@@ -60,8 +60,13 @@ TRANSCRIPTS_SUBDIR = ("raw", "transcripts")
 DEFAULT_SOURCE_FAMILY = "meetings"
 DEFAULT_SOURCE_TYPE = "meeting_transcript"
 DEFAULT_DATE = "1970-01-01"
-SCHEMA_VERSION = "1.1.0"
+SCHEMA_VERSION = "1.2.0"
 PRODUCED_BY = "PipelineOrchestrator"
+
+_MINUTES_FILTER_REASON = (
+    "filename_contains_minutes_keyword — "
+    "file may belong in store/raw/minutes/ instead"
+)
 
 _SLUG_RE = re.compile(r"[^a-z0-9_-]+")
 
@@ -169,6 +174,7 @@ class PipelineOrchestrator:
                 "status": "failure",
                 "unprocessed": [],
                 "already_processed": [],
+                "filtered_from_transcripts": [],
                 "total_raw": 0,
                 "total_processed": 0,
                 "total_unprocessed": 0,
@@ -191,6 +197,7 @@ class PipelineOrchestrator:
                 "processed_this_run": [],
                 "skipped_already_done": [],
                 "failed_this_run": [],
+                "filtered_from_transcripts": [],
                 "total_attempted": 0,
                 "total_succeeded": 0,
                 "total_failed": 0,
@@ -221,6 +228,7 @@ class PipelineOrchestrator:
                 "status": "success",
                 "unprocessed": [],
                 "already_processed": [],
+                "filtered_from_transcripts": [],
                 "total_raw": 0,
                 "total_processed": 0,
                 "total_unprocessed": 0,
@@ -233,10 +241,33 @@ class PipelineOrchestrator:
         # Deterministic order: sorted by filename. .docx are paired with their
         # extracted .txt sibling (if present) so we don't double-count one
         # transcript under two extensions.
-        files = sorted(
+        all_files = sorted(
             [p for p in transcripts_dir.iterdir() if p.is_file()],
             key=lambda p: p.name,
         )
+
+        # Filter out .docx/.txt files whose name contains "minutes"
+        # (case-insensitive). These almost certainly belong in
+        # store/raw/minutes/ — processing them as transcripts would
+        # produce wrong artifacts. The filter is advisory only: filtered
+        # files are NOT moved or deleted, and never counted as failures.
+        files: List[Path] = []
+        filtered_from_transcripts: List[Dict[str, Any]] = []
+        for p in all_files:
+            ext = p.suffix.lower()
+            if ext in (".docx", ".txt") and "minutes" in p.name.lower():
+                filtered_from_transcripts.append(
+                    {
+                        "filename": p.name,
+                        "reason": _MINUTES_FILTER_REASON,
+                    }
+                )
+                print(
+                    f"⚠ Filtered from transcripts (contains 'minutes'): "
+                    f"{p.name}"
+                )
+                continue
+            files.append(p)
         seen_stems: set[str] = set()
         ordered: List[Path] = []
         # First pass: prefer .docx (they'll trigger extraction); skip .txt
@@ -336,6 +367,7 @@ class PipelineOrchestrator:
             "status": "success",
             "unprocessed": unprocessed,
             "already_processed": already_processed,
+            "filtered_from_transcripts": filtered_from_transcripts,
             "total_raw": len(unprocessed) + len(already_processed),
             "total_processed": len(already_processed),
             "total_unprocessed": len(unprocessed),
@@ -362,6 +394,7 @@ class PipelineOrchestrator:
                 "processed_this_run": [],
                 "skipped_already_done": [],
                 "failed_this_run": [],
+                "filtered_from_transcripts": [],
                 "total_attempted": 0,
                 "total_succeeded": 0,
                 "total_failed": 0,
@@ -372,6 +405,9 @@ class PipelineOrchestrator:
         store_root = Path(data_lake_path) / "store"
         unprocessed = scan_result["unprocessed"]
         already = scan_result["already_processed"]
+        filtered_from_transcripts = scan_result.get(
+            "filtered_from_transcripts", []
+        )
 
         skipped_already_done = [
             {"filename": e["filename"], "artifact_id": e["artifact_id"]}
@@ -381,6 +417,21 @@ class PipelineOrchestrator:
         processed_this_run: List[Dict[str, Any]] = []
         failed_this_run: List[Dict[str, Any]] = []
         results_for_record: List[Dict[str, Any]] = []
+
+        # Emit one results-row per filtered file so the run record has a
+        # per-file trail (filtered files are also surfaced as the
+        # aggregate `filtered_from_transcripts` array). They are NEVER
+        # processed and NEVER counted as failures.
+        for f in filtered_from_transcripts:
+            results_for_record.append(
+                {
+                    "filename": f["filename"],
+                    "status": "filtered",
+                    "artifact_id": "",
+                    "reason": f["reason"],
+                    "eval_status": "not_run",
+                }
+            )
 
         for entry in unprocessed:
             filename = entry["filename"]
@@ -501,6 +552,7 @@ class PipelineOrchestrator:
                 succeeded_this_run=len(processed_this_run),
                 failed_this_run=len(failed_this_run),
                 results=results_for_record,
+                filtered_from_transcripts=filtered_from_transcripts,
                 status=overall_status,
             )
 
@@ -511,6 +563,7 @@ class PipelineOrchestrator:
             "processed_this_run": processed_this_run,
             "skipped_already_done": skipped_already_done,
             "failed_this_run": failed_this_run,
+            "filtered_from_transcripts": filtered_from_transcripts,
             "total_attempted": len(unprocessed),
             "total_succeeded": len(processed_this_run),
             "total_failed": len(failed_this_run),
@@ -685,6 +738,7 @@ class PipelineOrchestrator:
         succeeded_this_run: int,
         failed_this_run: int,
         results: List[Dict[str, Any]],
+        filtered_from_transcripts: List[Dict[str, Any]],
         status: str,
     ) -> str:
         record = {
@@ -698,6 +752,7 @@ class PipelineOrchestrator:
             "attempted_this_run": attempted_this_run,
             "succeeded_this_run": succeeded_this_run,
             "failed_this_run": failed_this_run,
+            "filtered_from_transcripts": filtered_from_transcripts,
             "results": results,
             "status": status,
             "schema_version": SCHEMA_VERSION,
@@ -729,6 +784,7 @@ class PipelineOrchestrator:
                 "attempted_this_run": int(attempted_this_run),
                 "succeeded_this_run": int(succeeded_this_run),
                 "failed_this_run": int(failed_this_run),
+                "filtered_from_transcripts": filtered_from_transcripts,
                 "results": [],
                 "status": "failure",
                 "schema_version": SCHEMA_VERSION,
@@ -794,6 +850,7 @@ def _scan_failure(reason: str) -> Dict[str, Any]:
         "status": "failure",
         "unprocessed": [],
         "already_processed": [],
+        "filtered_from_transcripts": [],
         "total_raw": 0,
         "total_processed": 0,
         "total_unprocessed": 0,

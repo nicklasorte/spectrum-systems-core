@@ -664,3 +664,255 @@ def test_all_13_pairs_match_with_real_filenames(data_lake: Path) -> None:
     assert set(produced_dates).issubset(expected_dates), produced_dates
     # 2026-01-21 must NOT appear in any produced pair (it's collided).
     assert "2026-01-21" not in produced_dates
+
+
+# ---------------------------------------------------------------------------
+# Fix C: --deduplicate flag (CLI) + deduplicate_minutes module
+# ---------------------------------------------------------------------------
+
+
+def _write_minutes_with(
+    data_lake: Path,
+    *,
+    meeting_date: str | None,
+    meeting_name: str,
+    raw_hash: str,
+    created_at: str,
+) -> tuple[str, Path]:
+    """Variant of _write_minutes that lets the test pin raw_hash and
+    created_at — the dedup unit needs collisions on raw_hash and a
+    determined oldest-by-created_at order."""
+    minutes_id = str(uuid.uuid4())
+    rec: Dict[str, Any] = {
+        "minutes_id": minutes_id,
+        "docx_path": "/fake/path.docx",
+        "txt_path": "/fake/path.txt",
+        "meeting_date": meeting_date,
+        "meeting_name": meeting_name,
+        "text_unit_count": 10,
+        "character_count": 500,
+        "table_count": 0,
+        "raw_hash": raw_hash,
+        "created_at": created_at,
+        "schema_version": "1.0.0",
+        "provenance": {"produced_by": "MinutesProcessor"},
+    }
+    minutes_dir = data_lake / "store" / "artifacts" / "minutes"
+    minutes_dir.mkdir(parents=True, exist_ok=True)
+    target = minutes_dir / f"{minutes_id}.json"
+    target.write_text(
+        json.dumps(rec, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return minutes_id, target
+
+
+def test_deduplicate_flag_retires_duplicate_minutes_records(
+    data_lake: Path,
+) -> None:
+    """Two minutes_records with the same raw_hash → one kept (oldest),
+    one moved to retired/. Linking sees only the kept one."""
+    from spectrum_systems_core.ingestion.minutes_deduplicator import (
+        deduplicate_minutes,
+    )
+
+    rh = "sha256:" + ("b" * 64)
+    keep_id, keep_path = _write_minutes_with(
+        data_lake,
+        meeting_date="2026-02-19",
+        meeting_name="TIG Meeting",
+        raw_hash=rh,
+        created_at="2026-02-20T00:00:00+00:00",
+    )
+    dup_id, dup_path = _write_minutes_with(
+        data_lake,
+        meeting_date="2026-02-19",
+        meeting_name="TIG Meeting",
+        raw_hash=rh,
+        created_at="2026-02-21T00:00:00+00:00",
+    )
+
+    result = deduplicate_minutes(str(data_lake))
+
+    assert result["status"] == "success"
+    assert result["groups_found"] == 1
+    assert result["records_kept"] == 1
+    assert result["records_retired"] == 1
+
+    # Keeper is still in place.
+    assert keep_path.is_file()
+    # Duplicate moved to retired/.
+    retired_dir = data_lake / "store" / "artifacts" / "minutes" / "retired"
+    assert (retired_dir / dup_path.name).is_file()
+    assert not dup_path.exists()
+    # Sidecar reason file.
+    sidecar = retired_dir / (dup_path.stem + ".retired_reason.json")
+    assert sidecar.is_file()
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert payload["retired_reason"] == "duplicate"
+    assert payload["minutes_id"] == dup_id
+    assert payload["kept_minutes_id"] == keep_id
+
+
+def test_deduplicate_keeps_oldest_by_created_at(data_lake: Path) -> None:
+    """Tie-breaker: oldest created_at wins regardless of file order."""
+    from spectrum_systems_core.ingestion.minutes_deduplicator import (
+        deduplicate_minutes,
+    )
+
+    rh = "sha256:" + ("c" * 64)
+    older_id, older_path = _write_minutes_with(
+        data_lake,
+        meeting_date="2026-02-19",
+        meeting_name="A",
+        raw_hash=rh,
+        created_at="2025-01-01T00:00:00+00:00",
+    )
+    newer_id, newer_path = _write_minutes_with(
+        data_lake,
+        meeting_date="2026-02-19",
+        meeting_name="A",
+        raw_hash=rh,
+        created_at="2026-12-31T23:59:59+00:00",
+    )
+
+    result = deduplicate_minutes(str(data_lake))
+    assert result["records_retired"] == 1
+    # Older kept, newer retired.
+    assert older_path.is_file()
+    assert not newer_path.exists()
+    retired_dir = data_lake / "store" / "artifacts" / "minutes" / "retired"
+    assert (retired_dir / newer_path.name).is_file()
+
+
+def test_deduplicate_noop_when_no_duplicates(data_lake: Path) -> None:
+    """Single record per raw_hash → nothing retired, nothing moved."""
+    from spectrum_systems_core.ingestion.minutes_deduplicator import (
+        deduplicate_minutes,
+    )
+
+    _write_minutes_with(
+        data_lake,
+        meeting_date="2026-02-19",
+        meeting_name="X",
+        raw_hash="sha256:" + ("d" * 64),
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    _write_minutes_with(
+        data_lake,
+        meeting_date="2026-03-19",
+        meeting_name="Y",
+        raw_hash="sha256:" + ("e" * 64),
+        created_at="2026-01-02T00:00:00+00:00",
+    )
+
+    result = deduplicate_minutes(str(data_lake))
+    assert result["status"] == "success"
+    assert result["groups_found"] == 0
+    assert result["records_retired"] == 0
+    retired_dir = data_lake / "store" / "artifacts" / "minutes" / "retired"
+    assert not retired_dir.exists() or list(retired_dir.iterdir()) == []
+
+
+def test_linking_after_deduplication_produces_correct_pairs(
+    data_lake: Path,
+) -> None:
+    """End-to-end: two duplicate minutes_records on the same date used to
+    fail the linker (`duplicate_date_collision` for both). After dedup,
+    the surviving single record matches the lone transcript and produces
+    one high-confidence pair."""
+    from spectrum_systems_core.ingestion.minutes_deduplicator import (
+        deduplicate_minutes,
+    )
+
+    _write_transcript(
+        data_lake,
+        source_id="tig-meeting",
+        title="TIG Meeting",
+        date="2026-02-19",
+    )
+    rh = "sha256:" + ("f" * 64)
+    _write_minutes_with(
+        data_lake,
+        meeting_date="2026-02-19",
+        meeting_name="TIG Meeting",
+        raw_hash=rh,
+        created_at="2026-02-20T00:00:00+00:00",
+    )
+    _write_minutes_with(
+        data_lake,
+        meeting_date="2026-02-19",
+        meeting_name="TIG Meeting",
+        raw_hash=rh,
+        created_at="2026-02-21T00:00:00+00:00",
+    )
+
+    # Pre-dedup: linker sees a duplicate_date_collision and produces
+    # zero pairs.
+    pre = GroundTruthLinker().link(str(data_lake))
+    assert pre["pairs_produced"] == 0
+    assert any(
+        e["reason"] == "duplicate_date_collision"
+        for e in pre["unmatched_minutes"]
+    )
+
+    # Wipe stale linking_report between runs (linker rewrites pairs).
+    pairs_dir = data_lake / "store" / "artifacts" / "ground_truth"
+    for p in pairs_dir.glob("*.json"):
+        p.unlink()
+
+    # Run dedup, then link again.
+    dedup = deduplicate_minutes(str(data_lake))
+    assert dedup["records_retired"] == 1
+
+    post = GroundTruthLinker().link(str(data_lake))
+    assert post["pairs_produced"] == 1
+    assert post["pairs_pending_review"] == 0
+    # The kept minutes_record is still on disk; the retired one is in
+    # retired/ and was excluded from linking.
+    minutes_dir = data_lake / "store" / "artifacts" / "minutes"
+    assert len(list(minutes_dir.glob("*.json"))) == 1
+
+
+def test_cli_deduplicate_flag_invokes_dedup_before_linking(
+    data_lake: Path, capsys
+) -> None:
+    """Verify the CLI wiring: --deduplicate moves the duplicate before
+    the linker runs and prints the summary line."""
+    from spectrum_systems_core.cli import main as cli_main
+
+    _write_transcript(
+        data_lake,
+        source_id="tig-meeting",
+        title="TIG Meeting",
+        date="2026-02-19",
+    )
+    rh = "sha256:" + ("9" * 64)
+    _write_minutes_with(
+        data_lake,
+        meeting_date="2026-02-19",
+        meeting_name="TIG Meeting",
+        raw_hash=rh,
+        created_at="2026-02-20T00:00:00+00:00",
+    )
+    _write_minutes_with(
+        data_lake,
+        meeting_date="2026-02-19",
+        meeting_name="TIG Meeting",
+        raw_hash=rh,
+        created_at="2026-02-21T00:00:00+00:00",
+    )
+
+    rc = cli_main(
+        [
+            "link-ground-truth",
+            "--deduplicate",
+            "--data-lake",
+            str(data_lake),
+        ]
+    )
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "Found 1 duplicate groups" in captured.out
+    assert "Retired 1 duplicate records" in captured.out
+    assert "Pairs produced (high confidence): 1" in captured.out

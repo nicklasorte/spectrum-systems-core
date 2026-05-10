@@ -357,3 +357,90 @@ The reviewer traced every required case against the diff:
 
 One Sev-3 docstring inaccuracy noted by the reviewer (the `_extract_transcript_date` docstring's "2026.01.22" example) — not reported per rubric, no action taken.
 
+
+# fix/duplicate-minutes-and-directory-filtering — Progress
+
+## Step 1 — Inventory
+
+| Item | Result |
+|---|---|
+| Branch (harness-assigned) | `claude/fix-duplicate-minutes-Gu6XK` |
+| pytest collect (pre-edit) | 795 |
+| Workflow updated | `.github/workflows/run-pipeline.yml` (already wires `link-ground-truth --process-minutes`) |
+| `data-lake/store/raw/minutes/` in repo | absent (production-only path; tests use tmp_path) |
+| `data-lake/store/raw/transcripts/` in repo | absent (production-only path) |
+| Existing minutes_record artifacts in this checkout | none |
+
+### Schema constraint surfaced as a stop condition
+`contracts/schemas/ingestion/minutes_record.schema.json` has
+`additionalProperties: false` and **no `status` field**. The task spec
+asks for `status: "retired"` + `retired_reason: "duplicate"` on retired
+duplicates, which would require a schema bump.
+
+User selected **Move to retired/ subdir**: duplicate `minutes_record`
+JSONs are moved to `<sdl_root>/minutes/retired/<id>.json` with a sidecar
+`<sdl_root>/minutes/retired/<id>.retired_reason.json` for audit. The
+existing linker (`_load_minutes`) uses `minutes_dir.glob("*.json")`
+(non-recursive) so files under `retired/` are excluded automatically. No
+schema change required for `minutes_record`.
+
+### Schema change for Fix B
+`orchestration_run_record` (current `1.1.0`) gains a top-level
+`filtered_from_transcripts` array; bumped to `1.2.0`. The `results`
+array gains a new `status` enum value `"filtered"` so per-file rows can
+be emitted alongside the aggregate field.
+
+## Step 2 — Plan
+1. Fix A: `_process()` extracts the .docx, computes `raw_hash` (existing
+   formula = `sha256(extracted_text.utf-8)`), then scans
+   `<SDL_ROOT>/minutes/*.json` (non-recursive) for an existing record
+   with the same `raw_hash`. Match → return `status="skipped"` with
+   `skipped_reason="already_processed"`. No artifact write.
+2. Fix B: `_scan()` filters `*.docx`/`*.txt` files in
+   `store/raw/transcripts/` whose name contains `"minutes"`
+   (case-insensitive) into a new `filtered_from_transcripts` list;
+   filtered files NEVER reach the runner and are NEVER counted as
+   failures. Print each filtered file with the warning line. `_run()`
+   includes the list in the orchestration_run_record.
+3. Fix C: new `--deduplicate` flag on `link-ground-truth` runs a
+   raw_hash-based dedup *before* linking. Per group of 2+: keep the
+   oldest by `created_at` and move the rest to
+   `<sdl_root>/minutes/retired/`. Schema-validate the kept record
+   before treating it as authoritative.
+
+
+## Step 3-6 — Implementation complete
+
+| File | Change |
+|---|---|
+| `src/spectrum_systems_core/ingestion/minutes_processor.py` | `_process()` now does an idempotency check via `_find_existing_minutes_by_hash` before writing. New `_skipped()` result helper. `process_directory()` docstring documents skipped status. |
+| `src/spectrum_systems_core/ingestion/minutes_deduplicator.py` | NEW. `deduplicate_minutes(data_lake_path) -> dict`. Groups by `raw_hash`, validates keeper, moves dups to `retired/` with sidecar. Never deletes; never raises. |
+| `src/spectrum_systems_core/ingestion/__init__.py` | re-exports `deduplicate_minutes`. |
+| `src/spectrum_systems_core/orchestration/pipeline_orchestrator.py` | `_scan()` filters `.docx`/`.txt` files containing "minutes" → new `filtered_from_transcripts` array; prints per-file warning. `_run()` threads the list into the orchestration record. SCHEMA_VERSION bumped 1.1.0 → 1.2.0. |
+| `contracts/schemas/orchestration/orchestration_run_record.schema.json` | `schema_version` const → "1.2.0". New top-level required `filtered_from_transcripts` array. New `results.items.status` enum value `"filtered"`. |
+| `src/spectrum_systems_core/cli.py` | new `--deduplicate` flag on `link-ground-truth`; runs dedup BEFORE linking; surfaces `(failures: N, skipped: N)` from minutes pass. |
+| `.github/workflows/run-pipeline.yml` | `link-ground-truth` step now passes `--deduplicate`. YAML validated. |
+
+## Step 7 — Pre-Gate-A test status
+
+| Check | Result |
+|---|---|
+| pytest collect | 809 (795 baseline + 14 new) |
+| pytest run | 798 passed, 11 failed (same 11 pre-existing PDF/cffi failures, zero regressions) |
+| audit-governance | exit 0; total_flagged: 0, high: 0 (with DATA_LAKE_PATH set) |
+| lint / type-check | N/A (no config) |
+
+## Step 7 — Gate A (design redteam, fresh subagent)
+
+**Verdict: no blocking findings (zero Sev-1, zero Sev-2).**
+
+Reviewer walked through every Sev-1/2 hazard called out in the rubric plus several adjacent ones; none rose above Sev-3. Spot-checks resolved every explicit question:
+
+- Hash formula consistency: same `sha256:` prefix on both write and idempotency-scan sides.
+- Idempotency scan is non-recursive, so `retired/` is excluded from glob.
+- Hash collision: SHA-256 collision is computationally infeasible; same-hash treated as same-content is the only sane choice.
+- Filter applies to `.docx` and `.txt` (extracted minutes siblings filtered too).
+- Filter never adds to `failed_this_run`; aggregated as top-level `filtered_from_transcripts` AND per-file rows with `status: "filtered"` in `results`.
+- Failed processing run does not write any artifact, so a re-run naturally retries.
+- Schema bump 1.1.0 → 1.2.0 is forward-write only; no reader re-validates old records.
+

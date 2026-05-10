@@ -39,6 +39,7 @@ from .ingestion import (
     Promoter,
     SourceEval,
     SourceLoader,
+    deduplicate_minutes,
 )
 from .agency import (
     AgencyEval,
@@ -2424,6 +2425,7 @@ def link_ground_truth(
     *,
     data_lake: str | None = None,
     process_minutes: bool = False,
+    deduplicate: bool = False,
     out_stream=None,
 ) -> int:
     """Phase L.2: pair transcripts with meeting-minutes by date.
@@ -2431,6 +2433,12 @@ def link_ground_truth(
     With --process-minutes, runs MinutesProcessor over
     ``store/raw/minutes/`` first, then GroundTruthLinker. Without it,
     only the linker runs (assumes minutes_record artifacts already exist).
+
+    With --deduplicate, retires duplicate minutes_record artifacts
+    (grouped by raw_hash, oldest kept, rest moved to
+    ``$SDL_ROOT/minutes/retired/``) BEFORE linking. Use after a run
+    where MinutesProcessor produced duplicate artifacts; subsequent
+    runs are idempotent so dedup becomes a no-op.
 
     Returns 0 on success or partial success. Returns 1 only when the
     DATA_LAKE_PATH cannot be resolved or a fatal linker failure occurs.
@@ -2458,15 +2466,45 @@ def link_ground_truth(
     if process_minutes:
         minutes_results = MinutesProcessor().process_directory(resolved)
         successes = [r for r in minutes_results if r.get("status") == "success"]
-        failures = [r for r in minutes_results if r.get("status") != "success"]
+        skipped = [r for r in minutes_results if r.get("status") == "skipped"]
+        failures = [
+            r
+            for r in minutes_results
+            if r.get("status") not in ("success", "skipped")
+        ]
         print(
             f"Minutes files processed: {len(successes)} "
-            f"(failures: {len(failures)})",
+            f"(failures: {len(failures)}, skipped: {len(skipped)})",
             file=out,
         )
         for r in failures:
             print(
                 f"  ✗ {r.get('docx_path', '')}: {r.get('reason', '')}",
+                file=out,
+            )
+
+    # Optional dedup pass — runs BEFORE linking so the linker sees
+    # exactly one minutes_record per raw_hash.
+    if deduplicate:
+        dedup = deduplicate_minutes(resolved)
+        if dedup["status"] != "success":
+            print(
+                f"warn: deduplicate failed: {dedup.get('reason', '')}",
+                file=out,
+            )
+        groups = dedup.get("groups_found", 0)
+        retired = dedup.get("records_retired", 0)
+        kept = dedup.get("records_kept", 0)
+        print(
+            f"Found {groups} duplicate groups. "
+            f"Retired {retired} duplicate records. Kept {kept} records.",
+            file=out,
+        )
+        for inv in dedup.get("invalid_kept", []):
+            print(
+                f"  ! group kept intact (invalid leader): "
+                f"raw_hash={inv.get('raw_hash', '')[:18]}... "
+                f"reason={inv.get('reason', '')}",
                 file=out,
             )
 
@@ -3033,6 +3071,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "Default: skip if minutes_records already exist."
         ),
     )
+    lg.add_argument(
+        "--deduplicate",
+        action="store_true",
+        help=(
+            "Before linking, retire duplicate minutes_records grouped by "
+            "raw_hash. Oldest is kept; the rest are moved to "
+            "$SDL_ROOT/minutes/retired/ (never deleted). Use after a run "
+            "that produced duplicates; subsequent idempotent runs make it "
+            "a no-op."
+        ),
+    )
 
     return parser
 
@@ -3165,6 +3214,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return link_ground_truth(
             data_lake=args.data_lake,
             process_minutes=args.process_minutes,
+            deduplicate=args.deduplicate,
         )
     if args.command == "apply-compression":
         return apply_compression_cli(

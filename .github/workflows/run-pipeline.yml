@@ -60,6 +60,7 @@ jobs:
         run: |
           python -m spectrum_systems_core.cli link-ground-truth \
             --process-minutes \
+            --deduplicate \
             --data-lake "${{ github.workspace }}/data-lake" || echo "link-ground-truth completed with warnings"
 
       - name: Commit and push artifacts to data-lake
