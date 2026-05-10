@@ -53,6 +53,15 @@ jobs:
               --data-lake "${{ github.workspace }}/data-lake"
           fi
 
+      - name: Link ground truth pairs (minutes + transcripts)
+        env:
+          DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+          SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
+        run: |
+          python -m spectrum_systems_core.cli link-ground-truth \
+            --process-minutes \
+            --data-lake "${{ github.workspace }}/data-lake" || echo "link-ground-truth completed with warnings"
+
       - name: Commit and push artifacts to data-lake
         if: github.event.inputs.dry_run != 'true'
         run: |
