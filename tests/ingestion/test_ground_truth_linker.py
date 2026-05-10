@@ -8,7 +8,7 @@ import io
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
 
 import jsonschema
 import pytest
@@ -597,19 +597,20 @@ _REAL_MINUTES: List[Tuple[str, str]] = [
 ]
 
 
-def test_all_13_pairs_match_with_real_filenames(data_lake: Path) -> None:
-    """End-to-end: real production filenames must produce 11 high-confidence
-    pairs.
+def test_all_13_pairs_match_end_to_end(data_lake: Path) -> None:
+    """End-to-end: real production filenames must produce 13 high-confidence
+    pairs, including the 2026-01-21 same-day pair disambiguated via
+    family-token matching.
 
     The 2026-01-21 calendar day has two real meetings (Uplink TIG and
     the comment-adjudication WG) — two transcripts and two minutes
-    share that date. The linker's ``duplicate_date_collision`` rule
-    refuses to silently guess: all four records are routed to
-    unmatched. The remaining eleven transcripts pair cleanly with
-    their eleven same-date minutes, which is what proves the
-    filename-derived date extraction works for every other format in
-    production (YYYYMMDD, DDMonYYYY, DDMonYY, M-DD-YY, single-digit-day
-    DDMonYYYY).
+    share that date. The greedy family-token matcher resolves the
+    collision deterministically:
+
+      - Adjudication transcript ↔ Adjudication minutes (overlap 4)
+      - Uplink transcript ↔ Uplink minutes (overlap 1)
+
+    Every other date has a clean 1T+1M, so they pair on date alone.
     """
     for source_id, title, _expected_date in _REAL_TRANSCRIPT_FILENAMES:
         _write_transcript_with_payload(
@@ -625,31 +626,10 @@ def test_all_13_pairs_match_with_real_filenames(data_lake: Path) -> None:
         )
     result = GroundTruthLinker().link(str(data_lake))
 
-    # 11 dates have a clean 1T+1M → 11 pairs. 2026-01-21 has 2T+2M →
-    # all four records routed to ``duplicate_date_collision``.
-    assert result["pairs_produced"] == 11, result
+    assert result["pairs_produced"] == 13, result
     assert result["pairs_pending_review"] == 0
-    collisions_t = [
-        e for e in result["unmatched_transcripts"]
-        if e["reason"] == "duplicate_date_collision"
-    ]
-    collisions_m = [
-        e for e in result["unmatched_minutes"]
-        if e["reason"] == "duplicate_date_collision"
-    ]
-    assert len(collisions_t) == 2, result["unmatched_transcripts"]
-    assert len(collisions_m) == 2, result["unmatched_minutes"]
-    assert all(e["meeting_date"] == "2026-01-21" for e in collisions_t)
-    assert all(e["meeting_date"] == "2026-01-21" for e in collisions_m)
-
-    # No transcript should be tagged ``no_date_extractable`` — every
-    # production filename in ``_REAL_TRANSCRIPT_FILENAMES`` carries an
-    # extractable date.
-    no_date = [
-        e for e in result["unmatched_transcripts"]
-        if e["reason"] == "no_date_extractable"
-    ]
-    assert no_date == [], no_date
+    assert result["unmatched_transcripts"] == [], result["unmatched_transcripts"]
+    assert result["unmatched_minutes"] == [], result["unmatched_minutes"]
 
     # Every produced pair must carry a meeting_date that is exactly one
     # of the expected dates in the fixture set.
@@ -661,9 +641,360 @@ def test_all_13_pairs_match_with_real_filenames(data_lake: Path) -> None:
         produced_dates.append(pair["meeting_date"])
         assert pair["match_confidence"] == "high"
         assert pair["status"] == "confirmed"
-    assert set(produced_dates).issubset(expected_dates), produced_dates
-    # 2026-01-21 must NOT appear in any produced pair (it's collided).
-    assert "2026-01-21" not in produced_dates
+    assert set(produced_dates) == expected_dates, produced_dates
+    # 2026-01-21 must appear EXACTLY twice (Adjudication + Uplink pairs).
+    assert produced_dates.count("2026-01-21") == 2
+
+    # Specifically verify the Jan 21 pairs route the right way: tokens
+    # ``adjudication``/``study`` go together, ``uplink`` goes with
+    # ``uplink``.
+    jan_21_pairs = []
+    for path in pairs_dir.glob("*.json"):
+        pair = json.loads(path.read_text())
+        if pair["meeting_date"] != "2026-01-21":
+            continue
+        jan_21_pairs.append(pair)
+    assert len(jan_21_pairs) == 2
+    by_t_aid = {
+        p["source_artifact_id"]: p["minutes_artifact_id"] for p in jan_21_pairs
+    }
+    # Confirm by cross-referencing the on-disk minutes meeting_name.
+    minutes_dir = data_lake / "store" / "artifacts" / "minutes"
+    name_by_mid = {}
+    for path in minutes_dir.glob("*.json"):
+        m = json.loads(path.read_text())
+        name_by_mid[m["minutes_id"]] = m["meeting_name"]
+    transcripts_root = data_lake / "store" / "processed" / "meetings"
+    title_by_taid = {}
+    for sid_dir in transcripts_root.iterdir():
+        rec = json.loads((sid_dir / "source_record.json").read_text())
+        title_by_taid[rec["artifact_id"]] = rec["payload"]["title"]
+    for t_aid, m_aid in by_t_aid.items():
+        t_title = title_by_taid[t_aid].lower()
+        m_name = name_by_mid[m_aid].lower()
+        assert (
+            ("adjudication" in t_title and "adjudication" in m_name)
+            or ("uplink" in t_title and "uplink" in m_name)
+        ), f"wrong jan-21 pairing: {t_title!r} ↔ {m_name!r}"
+
+
+# ---------------------------------------------------------------------------
+# Fix A: filter source_records whose title/raw_path contain "minutes" from
+# the transcript candidate pool — catches artifacts written before the
+# PipelineOrchestrator filename filter shipped.
+# ---------------------------------------------------------------------------
+
+
+def test_minutes_source_records_filtered_from_transcript_list(
+    data_lake: Path,
+) -> None:
+    """A source_record whose title contains "minutes" must NOT be paired
+    as a transcript even if it carries an extractable date."""
+    bad_aid = _write_transcript_with_payload(
+        data_lake,
+        source_id="m_bad_minutes_record",
+        payload_overrides={
+            "title": "7 GHz Downlink TIG Kickoff Meeting Minutes 20251218 FINAL",
+        },
+    )
+    good_aid = _write_transcript_with_payload(
+        data_lake,
+        source_id="m_good_transcript",
+        payload_overrides={
+            "title": "7 GHz Downlink TIG Meeting Kickoff - transcript 20251218",
+        },
+    )
+    _write_minutes(
+        data_lake,
+        meeting_date="2025-12-18",
+        meeting_name="7 GHz Downlink TIG Kickoff Meeting Minutes 20251218 FINAL",
+    )
+
+    result = GroundTruthLinker().link(str(data_lake))
+
+    # Without Fix A: 2 transcripts on the same date → collision, zero
+    # pairs. With Fix A: 1 transcript (the good one) ↔ 1 minutes → pair.
+    assert result["pairs_produced"] == 1, result
+    assert result["pairs_pending_review"] == 0
+    assert result["unmatched_transcripts"] == []
+    assert result["unmatched_minutes"] == []
+
+    filtered = result["filtered_from_transcript_source_records"]
+    assert len(filtered) == 1, filtered
+    assert filtered[0]["source_artifact_id"] == bad_aid
+    assert "minutes" in filtered[0]["title"].lower()
+    assert filtered[0]["reason"] == "filename_contains_minutes_keyword"
+
+    pairs_dir = data_lake / "store" / "artifacts" / "ground_truth"
+    pair = json.loads(next(pairs_dir.glob("*.json")).read_text())
+    assert pair["source_artifact_id"] == good_aid
+
+
+def test_filter_checks_raw_path_too(data_lake: Path) -> None:
+    """A source_record with a clean title but raw_path containing 'minutes'
+    is also filtered (defensive: the orchestrator may store the original
+    filename in raw_path even when title has been normalised)."""
+    _write_transcript_with_payload(
+        data_lake,
+        source_id="m_raw_path_minutes",
+        payload_overrides={
+            "title": "untitled drop 20260301",
+            "raw_path": "raw/meetings/m_raw_path_minutes/Some Minutes 20260301.txt",
+        },
+    )
+    result = GroundTruthLinker().link(str(data_lake))
+    assert result["pairs_produced"] == 0
+    filtered = result["filtered_from_transcript_source_records"]
+    assert len(filtered) == 1, filtered
+    assert "minutes" in filtered[0]["raw_path"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Fix B: family_tokens + greedy same-day collision resolution.
+# ---------------------------------------------------------------------------
+
+
+def test_family_tokens_extracts_significant_tokens() -> None:
+    """family_tokens drops domain stopwords and date tokens, keeps the
+    discriminating tokens that distinguish two same-day meetings."""
+    from spectrum_systems_core.ingestion.date_utils import family_tokens
+
+    result = family_tokens(
+        "7 GHz Study Plan Comment Adjudication Meeting "
+        "with Working Group - Transcript 20260121"
+    )
+    assert result == {"study", "plan", "comment", "adjudication", "working"}, result
+
+
+def test_family_tokens_p2p_survives() -> None:
+    """``p2p`` is a significant token in the 7 GHz domain; the stopword
+    filter must not swallow it. The numeric ``2-17-26`` is a date and
+    must NOT pollute the token set."""
+    from spectrum_systems_core.ingestion.date_utils import family_tokens
+
+    assert family_tokens("7 GHz P2P TIG - Transcript 2-17-26") == {"p2p"}
+
+
+def test_family_tokens_kickoff_survives() -> None:
+    """``kickoff`` is a significant token: it disambiguates a kickoff
+    transcript from later meetings of the same family."""
+    from spectrum_systems_core.ingestion.date_utils import family_tokens
+
+    tokens = family_tokens(
+        "7 GHz Downlink TIG Meeting Kickoff - transcript 20251218"
+    )
+    assert tokens == {"downlink", "kickoff"}, tokens
+
+
+def test_family_tokens_drops_study_only_when_paired_with_group() -> None:
+    """``study`` is dropped only when immediately followed by ``group``
+    (the phrase "Study Group" is generic). Standalone "Study Plan" keeps
+    ``study``."""
+    from spectrum_systems_core.ingestion.date_utils import family_tokens
+
+    assert "study" not in family_tokens("Study Group Meeting")
+    assert "study" in family_tokens("Study Plan Comment Meeting")
+
+
+def test_same_day_collision_resolved_by_family_tokens(data_lake: Path) -> None:
+    """The 4 confirmed same-day cases from production must produce 4
+    pairs (2 for Jan 21, 1 for Dec 18, 1 for Jan 22)."""
+    cases: List[Tuple[str, str, str, str]] = [
+        # (transcript source_id, transcript title, minutes name, date)
+        (
+            "m_dec18",
+            "7 GHz Downlink TIG Meeting Kickoff - transcript 20251218",
+            "7 GHz Downlink TIG Kickoff Meeting Minutes 20251218 FINAL",
+            "2025-12-18",
+        ),
+        (
+            "m_jan21_adj",
+            "7 GHz Study Plan Comment Adjudication Meeting "
+            "with Working Group - Transcript 20260121",
+            "7 GHz Study Plan Comment Adjudication Meeting Minutes "
+            "- 20260121 - Final",
+            "2026-01-21",
+        ),
+        (
+            "m_jan21_uplink",
+            "7 GHz Uplink TIG Meeting Transcript 21Jan26",
+            "7 GHz Uplink TIG Meeting Minutes 20260121 Final",
+            "2026-01-21",
+        ),
+        (
+            "m_jan22",
+            "7 GHz Downlink TIG Meeting Transcript - 22Jan2026",
+            "7 GHz Downlink TIG Meeting Minutes 20260122 Final",
+            "2026-01-22",
+        ),
+    ]
+    for sid, title, _mname, _date in cases:
+        _write_transcript_with_payload(
+            data_lake,
+            source_id=sid,
+            payload_overrides={"title": title},
+        )
+    for _sid, _title, mname, date in cases:
+        _write_minutes(data_lake, meeting_date=date, meeting_name=mname)
+
+    result = GroundTruthLinker().link(str(data_lake))
+    assert result["pairs_produced"] == 4, result
+    assert result["pairs_pending_review"] == 0
+    assert result["unmatched_transcripts"] == []
+    assert result["unmatched_minutes"] == []
+
+
+def test_greedy_match_assigns_highest_overlap_first(data_lake: Path) -> None:
+    """Greedy must pick the highest-overlap pair first.
+
+    Two transcripts (TA, TB) and two minutes (MA, MB) on the same date.
+    Token construction:
+      TA = {downlink, kickoff, working}   (overlap with MA = 3)
+      MA = {downlink, kickoff, working}
+      TB = {uplink, downlink}             (overlap with MA = 1, with MB = 2)
+      MB = {uplink, downlink}
+
+    Pure date matching collides. Greedy must produce TA↔MA (overlap 3)
+    and TB↔MB (overlap 2), not a swap.
+    """
+    _write_transcript_with_payload(
+        data_lake,
+        source_id="t_a",
+        payload_overrides={
+            "title": "Downlink Kickoff Working transcript 20260301",
+        },
+    )
+    _write_transcript_with_payload(
+        data_lake,
+        source_id="t_b",
+        payload_overrides={
+            "title": "Uplink Downlink transcript 20260301",
+        },
+    )
+    a_mid = _write_minutes(
+        data_lake,
+        meeting_date="2026-03-01",
+        meeting_name="Downlink Kickoff Working Minutes",
+    )
+    b_mid = _write_minutes(
+        data_lake,
+        meeting_date="2026-03-01",
+        meeting_name="Uplink Downlink Minutes",
+    )
+
+    result = GroundTruthLinker().link(str(data_lake))
+    assert result["pairs_produced"] == 2, result
+    pairs_dir = data_lake / "store" / "artifacts" / "ground_truth"
+    pairs = [json.loads(p.read_text()) for p in pairs_dir.glob("*.json")]
+
+    # Resolve which transcript artifact_id is t_a vs t_b.
+    transcripts_root = data_lake / "store" / "processed" / "meetings"
+    aid_by_sid = {}
+    for sid_dir in transcripts_root.iterdir():
+        rec = json.loads((sid_dir / "source_record.json").read_text())
+        aid_by_sid[rec["payload"]["source_id"]] = rec["artifact_id"]
+    t_a_aid = aid_by_sid["t_a"]
+    t_b_aid = aid_by_sid["t_b"]
+
+    pair_for = {p["source_artifact_id"]: p["minutes_artifact_id"] for p in pairs}
+    assert pair_for[t_a_aid] == a_mid, pair_for
+    assert pair_for[t_b_aid] == b_mid, pair_for
+
+
+def test_same_day_collision_medium_pair_when_sole_leftover(
+    data_lake: Path,
+) -> None:
+    """When the high-confidence pass leaves exactly 1T and 1M unmatched
+    (zero overlap), pair them as medium-confidence (process of
+    elimination — the date is a known collision and no other candidates
+    remain). Regression for the pairs_medium init bug."""
+    # 2T/2M on the same date. (TA, MA) overlap 2 → high. After greedy:
+    # leftover (TB, MB) with overlap 0 → medium.
+    _write_transcript_with_payload(
+        data_lake,
+        source_id="t_high",
+        payload_overrides={"title": "Downlink Kickoff transcript 20260601"},
+    )
+    _write_transcript_with_payload(
+        data_lake,
+        source_id="t_low",
+        payload_overrides={"title": "transcript 20260601"},  # only date+stop
+    )
+    _write_minutes(
+        data_lake,
+        meeting_date="2026-06-01",
+        meeting_name="Downlink Kickoff Minutes",
+    )
+    _write_minutes(
+        data_lake,
+        meeting_date="2026-06-01",
+        meeting_name="UnrelatedTokenA UnrelatedTokenB Minutes",
+    )
+    result = GroundTruthLinker().link(str(data_lake))
+    assert result["status"] in ("success", "partial"), result
+    assert result["pairs_produced"] == 2, result
+    assert result["pairs_pending_review"] == 1, result
+    pairs_dir = data_lake / "store" / "artifacts" / "ground_truth"
+    confidences = sorted(
+        json.loads(p.read_text())["match_confidence"]
+        for p in pairs_dir.glob("*.json")
+    )
+    assert confidences == ["high", "medium"], confidences
+
+
+def test_greedy_match_deterministic_under_equal_overlap(
+    data_lake: Path,
+) -> None:
+    """When two pairs have identical overlap, the tie-break must be
+    deterministic (alphabetical on artifact_id). Re-running the linker
+    on the same input must always pick the same pairing."""
+    # Two transcripts and two minutes, all sharing the same meaningful
+    # token. Every (t, m) pair has overlap 1.
+    _write_transcript_with_payload(
+        data_lake,
+        source_id="tx_alpha",
+        payload_overrides={"title": "Downlink transcript 20260401"},
+    )
+    _write_transcript_with_payload(
+        data_lake,
+        source_id="tx_beta",
+        payload_overrides={"title": "Downlink transcript 20260401"},
+    )
+    _write_minutes(
+        data_lake,
+        meeting_date="2026-04-01",
+        meeting_name="Downlink Minutes A",
+    )
+    _write_minutes(
+        data_lake,
+        meeting_date="2026-04-01",
+        meeting_name="Downlink Minutes B",
+    )
+
+    first = GroundTruthLinker().link(str(data_lake))
+    pairs_dir = data_lake / "store" / "artifacts" / "ground_truth"
+    first_pairs = sorted(
+        (
+            json.loads(p.read_text())["source_artifact_id"]
+            + "→"
+            + json.loads(p.read_text())["minutes_artifact_id"]
+        )
+        for p in pairs_dir.glob("*.json")
+    )
+    # Wipe and re-run.
+    for p in pairs_dir.glob("*.json"):
+        p.unlink()
+    second = GroundTruthLinker().link(str(data_lake))
+    second_pairs = sorted(
+        (
+            json.loads(p.read_text())["source_artifact_id"]
+            + "→"
+            + json.loads(p.read_text())["minutes_artifact_id"]
+        )
+        for p in pairs_dir.glob("*.json")
+    )
+    assert first["pairs_produced"] == second["pairs_produced"]
+    assert first_pairs == second_pairs, (first_pairs, second_pairs)
 
 
 # ---------------------------------------------------------------------------

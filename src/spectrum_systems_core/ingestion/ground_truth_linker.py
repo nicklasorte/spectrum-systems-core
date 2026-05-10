@@ -40,7 +40,10 @@ from typing import Any, Dict, List, Optional, Tuple
 import jsonschema
 
 from ._paths import contracts_root
-from .date_utils import extract_meeting_date as _extract_meeting_date
+from .date_utils import (
+    extract_meeting_date as _extract_meeting_date,
+    family_tokens as _family_tokens,
+)
 
 PAIR_SCHEMA_VERSION = "1.0.0"
 REPORT_SCHEMA_VERSION = "1.0.0"
@@ -90,7 +93,14 @@ class GroundTruthLinker:
                 "sdl_root_unresolved:set SDL_ROOT or pass a valid data_lake_path"
             )
 
-        transcripts = _load_transcripts(data_lake_path, sdl_root)
+        transcripts, filtered_records = _load_transcripts(
+            data_lake_path, sdl_root
+        )
+        for f in filtered_records:
+            print(
+                "[ground_truth_linker] Filtered from transcript candidates "
+                f"(contains 'minutes'): {f['title'] or f['raw_path']}"
+            )
         minutes = _load_minutes(sdl_root)
 
         unmatched_t: List[Dict[str, Any]] = []
@@ -126,6 +136,7 @@ class GroundTruthLinker:
         paired_t_ids: set = set()
         paired_m_ids: set = set()
         pairs_high: List[Dict[str, Any]] = []
+        pairs_medium: List[Dict[str, Any]] = []
 
         all_dates_with_either = set(t_by_date.keys()) | set(m_by_date.keys())
         leftover_t: List[Dict[str, Any]] = []
@@ -133,15 +144,34 @@ class GroundTruthLinker:
         for d in sorted(all_dates_with_either):
             ts = t_by_date.get(d, [])
             ms = m_by_date.get(d, [])
-            # Collision on either side: refuse to pair, route ALL involved
-            # to unmatched with the explicit reason. Never silently choose.
+            # Same-day collision: use family-token greedy matching to
+            # disambiguate. This is the only place we attempt to choose
+            # between candidates; outside collisions we still rely on
+            # 1T/1M cardinality alone.
             if len(ts) > 1 or len(ms) > 1:
-                for t in ts:
+                resolved_high, resolved_medium, leftover = (
+                    _resolve_same_day_collision(ts, ms)
+                )
+                for t, m in resolved_high:
+                    pair = _build_pair(t, m, confidence="high")
+                    pairs_high.append(pair)
+                    paired_t_ids.add(t["source_artifact_id"])
+                    paired_m_ids.add(m["minutes_artifact_id"])
+                for t, m in resolved_medium:
+                    pair = _build_pair(t, m, confidence="medium")
+                    pairs_medium.append(pair)
+                    paired_t_ids.add(t["source_artifact_id"])
+                    paired_m_ids.add(m["minutes_artifact_id"])
+                # Anything still unmatched after the collision pass is
+                # routed to ``duplicate_date_collision`` — preserving the
+                # contract's existing reason code so consumers (and the
+                # report schema enum) keep working.
+                for t in leftover["transcripts"]:
                     unmatched_t.append(
                         _unmatched_t(t, "duplicate_date_collision")
                     )
                     paired_t_ids.add(t["source_artifact_id"])
-                for m in ms:
+                for m in leftover["minutes"]:
                     unmatched_m.append(
                         _unmatched_m(m, "duplicate_date_collision")
                     )
@@ -161,7 +191,6 @@ class GroundTruthLinker:
         # 3. Fuzzy ±1-day pass on the leftovers. Each record may match
         #    multiple peers within ±1 day; if so, route to unmatched
         #    (``ambiguous_fuzzy_match``) — never pair arbitrarily.
-        pairs_medium: List[Dict[str, Any]] = []
         # Sort leftovers deterministically for stable test outcomes.
         leftover_t_sorted = sorted(
             leftover_t, key=lambda x: (x["meeting_date"], x["source_artifact_id"])
@@ -324,6 +353,7 @@ class GroundTruthLinker:
             "pairs_pending_review": len(pairs_medium),
             "unmatched_transcripts": report["unmatched_transcripts"],
             "unmatched_minutes": report["unmatched_minutes"],
+            "filtered_from_transcript_source_records": filtered_records,
             "linking_report_path": str(report_path),
             "reason": "",
         }
@@ -334,7 +364,7 @@ class GroundTruthLinker:
 
 def _load_transcripts(
     data_lake_path: str, sdl_root: Path
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Collect transcripts (source_family == 'meetings') from disk.
 
     Reads BOTH ``store/processed/meetings/<sid>/source_record.json`` and
@@ -342,6 +372,14 @@ def _load_transcripts(
     ``payload.source_id``; the ``processed/`` location wins (it is the
     canonical written form by SourceLoader and is more likely to carry
     the up-to-date metadata).
+
+    Returns ``(transcripts, filtered)``. ``filtered`` carries any
+    source_record whose ``payload.title`` or ``payload.raw_path``
+    contains the substring "minutes" (case-insensitive). These are
+    almost certainly minutes documents that were promoted as
+    transcripts before PipelineOrchestrator's filename filter shipped;
+    pairing them as transcripts would silently produce a wrong pair.
+    They are NEVER candidates for transcript matching.
     """
     by_source_id: Dict[str, Dict[str, Any]] = {}
 
@@ -377,10 +415,27 @@ def _load_transcripts(
                 continue
             by_source_id.setdefault(source_id, rec)
 
-    out: List[Dict[str, Any]] = []
+    transcripts: List[Dict[str, Any]] = []
+    filtered: List[Dict[str, Any]] = []
     for source_id, rec in sorted(by_source_id.items()):
-        out.append(_normalize_transcript(rec, source_id))
-    return out
+        title = _payload_get(rec, "title") or ""
+        raw_path = _payload_get(rec, "raw_path") or ""
+        if "minutes" in title.lower() or "minutes" in raw_path.lower():
+            artifact_id = rec.get("artifact_id", "")
+            filtered.append(
+                {
+                    "source_artifact_id": (
+                        artifact_id if isinstance(artifact_id, str) else ""
+                    ),
+                    "source_id": source_id,
+                    "title": title,
+                    "raw_path": raw_path,
+                    "reason": "filename_contains_minutes_keyword",
+                }
+            )
+            continue
+        transcripts.append(_normalize_transcript(rec, source_id))
+    return transcripts, filtered
 
 
 def _read_source_record(path: Path) -> Optional[Dict[str, Any]]:
@@ -617,6 +672,96 @@ def _failure_result(reason: str) -> Dict[str, Any]:
         "pairs_pending_review": 0,
         "unmatched_transcripts": [],
         "unmatched_minutes": [],
+        "filtered_from_transcript_source_records": [],
         "linking_report_path": "",
         "reason": reason,
     }
+
+
+def _resolve_same_day_collision(
+    transcripts: List[Dict[str, Any]],
+    minutes: List[Dict[str, Any]],
+) -> Tuple[
+    List[Tuple[Dict[str, Any], Dict[str, Any]]],
+    List[Tuple[Dict[str, Any], Dict[str, Any]]],
+    Dict[str, List[Dict[str, Any]]],
+]:
+    """Greedy family-token best-match for same-day collisions.
+
+    Returns ``(high, medium, leftover)`` where ``leftover['transcripts']``
+    and ``leftover['minutes']`` are the records the linker could not
+    safely pair. Behaviour:
+
+    * For every ``(transcript, minutes)`` candidate, compute the
+      family-token overlap ``len(t_tokens & m_tokens)``.
+    * Sort candidates by ``(-overlap, source_artifact_id,
+      minutes_artifact_id)`` — overlap descending, then alphabetical on
+      artifact ids for a deterministic tie-break.
+    * Greedy: walk the sorted list and assign each pair whose endpoints
+      are both still free. ``overlap >= 1`` becomes a high-confidence
+      pair.
+    * After the high-confidence pass, if exactly one transcript and one
+      minutes remain unmatched (overlap was zero), pair them as
+      medium-confidence (process of elimination — a known collision
+      with no other candidates left).
+    * Anything still unmatched is returned in ``leftover`` and routed to
+      ``duplicate_date_collision`` by the caller. "Wrong pair is worse
+      than unmatched."
+    """
+    if not transcripts or not minutes:
+        return [], [], {"transcripts": list(transcripts), "minutes": list(minutes)}
+
+    # Pre-compute family tokens once per record.
+    t_tokens = [
+        _family_tokens(t.get("meeting_name") or "") for t in transcripts
+    ]
+    m_tokens = [
+        _family_tokens(m.get("meeting_name") or "") for m in minutes
+    ]
+
+    candidates: List[Tuple[int, str, str, int, int]] = []
+    for ti, t in enumerate(transcripts):
+        for mi, m in enumerate(minutes):
+            overlap = len(t_tokens[ti] & m_tokens[mi])
+            candidates.append(
+                (
+                    overlap,
+                    t.get("source_artifact_id", "") or "",
+                    m.get("minutes_artifact_id", "") or "",
+                    ti,
+                    mi,
+                )
+            )
+    # Sort: overlap DESC, then artifact_id ASC for deterministic tie-break.
+    candidates.sort(key=lambda x: (-x[0], x[1], x[2]))
+
+    matched_t: set = set()
+    matched_m: set = set()
+    high: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+    for overlap, _t_aid, _m_aid, ti, mi in candidates:
+        if overlap < 1:
+            break
+        if ti in matched_t or mi in matched_m:
+            continue
+        high.append((transcripts[ti], minutes[mi]))
+        matched_t.add(ti)
+        matched_m.add(mi)
+
+    leftover_t_idx = [i for i in range(len(transcripts)) if i not in matched_t]
+    leftover_m_idx = [i for i in range(len(minutes)) if i not in matched_m]
+
+    medium: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+    if len(leftover_t_idx) == 1 and len(leftover_m_idx) == 1:
+        ti = leftover_t_idx[0]
+        mi = leftover_m_idx[0]
+        medium.append((transcripts[ti], minutes[mi]))
+        matched_t.add(ti)
+        matched_m.add(mi)
+        leftover_t_idx = []
+        leftover_m_idx = []
+
+    leftover = {
+        "transcripts": [transcripts[i] for i in leftover_t_idx],
+        "minutes": [minutes[i] for i in leftover_m_idx],
+    }
+    return high, medium, leftover

@@ -127,6 +127,94 @@ def extract_meeting_date(text: Optional[str]) -> Optional[str]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Family-token extraction for same-day collision disambiguation.
+# ---------------------------------------------------------------------------
+
+# Domain stopwords for 7 GHz TIG proceedings. Removed before computing
+# pairwise overlap. Kept lower-case; comparison is case-insensitive.
+_FAMILY_STOPWORDS: frozenset[str] = frozenset(
+    {
+        # English particles.
+        "the", "a", "an", "of", "with", "and", "for", "in", "to", "at",
+        "by", "on",
+        # Document-type tokens (every transcript and every minutes carries
+        # one of these; they cannot disambiguate two same-day records).
+        "meeting", "transcript", "minutes", "final", "draft",
+        # Domain-wide tokens that appear in EVERY 7 GHz TIG filename.
+        "7", "ghz", "tig", "group",
+    }
+)
+
+# Significant tokens are everything else that survives the stopword and
+# date filters. The tokens explicitly called out in the design — kept as
+# a comment for grep-ability and to anchor reviewer intent:
+#   downlink, uplink, p2p, point, fixed, transportable, adjudication,
+#   kickoff, working, study, plan, comment, wg, ul, dl, satellite,
+#   fss, mss
+# These are NOT a closed allow-list (a new significant token in a
+# future filename should pass through automatically); they're documented
+# so the stopword set never silently swallows one.
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_PURE_DIGITS_RE = re.compile(r"^\d+$")
+
+
+def _is_date_token(token: str) -> bool:
+    """True if ``token`` looks like a meeting date in any recognised form.
+
+    Catches: pure-digit dates (``20251218``), day-month-year run-together
+    forms (``21jan26``, ``5feb2026``, ``22jan2026``), and any other token
+    that ``extract_meeting_date`` resolves. Pure-numeric tokens are also
+    discarded — they are either dates (``20260121``), domain noise
+    (``"7"`` from "7 GHz"), or single-digit days (``"5"`` from
+    "5Feb2026") with no disambiguation value.
+    """
+    if _PURE_DIGITS_RE.match(token):
+        return True
+    if extract_meeting_date(token) is not None:
+        return True
+    return False
+
+
+def family_tokens(text: Optional[str]) -> set[str]:
+    """Extract significant lowercase tokens from a meeting filename / title.
+
+    Used by GroundTruthLinker to disambiguate same-day collisions. The
+    function:
+
+    1. Lowercases ``text`` and splits on every non-alphanumeric character.
+    2. Drops any token that looks like a date (pure digits or matching a
+       date regex) — meeting dates are the COLLISION key, never the
+       disambiguator.
+    3. Drops domain stopwords (``meeting``, ``transcript``, ``minutes``,
+       ``ghz``, ``tig``, ``group``, …). These appear in every record on
+       both sides and contribute zero discriminating signal.
+    4. Drops the literal token ``study`` when it is immediately followed
+       by ``group`` (the phrase "Study Group" is generic; "Study Plan
+       Comment" is meaningful and ``study`` survives).
+
+    Returns an empty set for ``None``, empty string, or a title made
+    entirely of stopwords / dates. Never raises.
+    """
+    if not isinstance(text, str) or not text:
+        return set()
+    raw_tokens = _TOKEN_RE.findall(text.lower())
+    out: set[str] = set()
+    for i, tok in enumerate(raw_tokens):
+        if _is_date_token(tok):
+            continue
+        if tok in _FAMILY_STOPWORDS:
+            continue
+        # "Study Group" is generic boilerplate; drop "study" only when
+        # immediately followed by "group". Standalone "study" (e.g.
+        # "Study Plan Comment") survives.
+        if tok == "study" and i + 1 < len(raw_tokens) and raw_tokens[i + 1] == "group":
+            continue
+        out.add(tok)
+    return out
+
+
 def extract_prose_date(text: Optional[str]) -> Optional[str]:
     """Conservative date scan for free-form body text.
 

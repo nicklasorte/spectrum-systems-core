@@ -444,3 +444,78 @@ Reviewer walked through every Sev-1/2 hazard called out in the rubric plus sever
 - Failed processing run does not write any artifact, so a re-run naturally retries.
 - Schema bump 1.1.0 → 1.2.0 is forward-write only; no reader re-validates old records.
 
+
+---
+
+# Phase L.3 — Same-day collision resolution via family token matching
+
+## Step 1 — Inventory
+
+### Test baseline
+**809 tests collected** (`python -m pytest --collect-only -q`).
+
+### Root cause confirmed
+
+Read `src/spectrum_systems_core/ingestion/ground_truth_linker.py` (623 lines).
+
+**Root cause A confirmed**: `_load_transcripts()` (lines 335-383) does NOT
+filter on filename keywords. It loads source_records from
+`processed/meetings/<sid>/source_record.json` and from flat
+`$SDL_ROOT/<artifact_id>.json` files. The SDL_ROOT loop only checks
+`payload.source_family == "meetings"`. PipelineOrchestrator's "minutes"
+filter applies only at scan time for files in `raw/transcripts/` —
+artifacts already promoted to SDL_ROOT before that filter shipped remain
+in the lake and are still pulled in as transcript candidates.
+
+**Root cause B confirmed**: `_link()` (lines 133-149) routes ALL records
+on a date with N>1 or M>1 to `duplicate_date_collision`. No
+disambiguation — the linker refuses to pick.
+
+### Files to change
+- `src/spectrum_systems_core/ingestion/date_utils.py` — add `family_tokens()`.
+- `src/spectrum_systems_core/ingestion/ground_truth_linker.py` — Fix A
+  (filter "minutes" titles from transcript candidate pool) + Fix B
+  (greedy family-token matching when N>1 or M>1 on a date).
+- `tests/ingestion/test_ground_truth_linker.py` — update existing
+  `test_all_13_pairs_match_with_real_filenames` to expect 13 pairs;
+  add new tests for filter, family_tokens, greedy match, end-to-end
+  with bad-record fixtures.
+
+
+## Step 5 — Gate A (design redteam, fresh subagent)
+
+**Verdict: 1 Sev-1 found and fixed in iteration 1, then re-verified clean.**
+
+Iteration 1 finding: `pairs_medium` was referenced inside the date-bucket
+loop at the new collision-resolution branch but the existing code only
+initialized it AFTER the loop (line 193). Any same-day collision that
+exercised the medium-confidence sole-leftover branch would `UnboundLocalError`
+and the outer `link()` would swallow it as a generic failure, dropping
+EVERY pair from the run. Fix: initialise `pairs_medium` alongside
+`pairs_high` before the loop. Added regression test
+`test_same_day_collision_medium_pair_when_sole_leftover`.
+
+Iteration 2 verdict: no blocking findings.
+
+## Step 6 — Test status post-fix
+
+| Check | Result |
+|---|---|
+| pytest collect | 819 (809 baseline + 10 new) |
+| pytest run | 808 passed, 11 failed (same 11 pre-existing PDF failures) |
+| audit-governance | exit 0; total_flagged: 0, high: 0 |
+| family_tokens fixture-spec verification | ✓ all 10 spot-checks pass |
+
+## Step 7 — Gate B (diff redteam, fresh subagent)
+
+**Verdict: no blocking findings (zero Sev-1, zero Sev-2).**
+
+Reviewer walked the four required spot-checks:
+1. Tie-break is deterministic — sort key `(-overlap, source_artifact_id, minutes_artifact_id)`.
+2. ``adjudication`` is NOT in the stopword set.
+3. Filter checks both ``title`` AND ``raw_path``.
+4. ``test_all_13_pairs_match_end_to_end`` exists and asserts exactly 13 pairs.
+
+Plus walked through ``family_tokens``, the greedy collision resolver, the
+``pairs_medium`` initialization fix, and confirmed no valid transcript is
+removed by the substring filter under the production fixture set.
