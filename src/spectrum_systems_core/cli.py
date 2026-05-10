@@ -2527,6 +2527,26 @@ def link_ground_truth(
         f"{result['pairs_pending_review']}",
         file=out,
     )
+    # Idempotency breakdown — surfaced so re-runs make it visible when
+    # existing pairs were skipped instead of re-written.
+    print(
+        f"Pairs produced (new): {result.get('pairs_new', 0)}",
+        file=out,
+    )
+    print(
+        f"Pairs already confirmed (skipped): "
+        f"{result.get('pairs_already_confirmed', 0)}",
+        file=out,
+    )
+    print(
+        f"Pairs pending review (new): {result['pairs_pending_review']}",
+        file=out,
+    )
+    print(
+        f"Pairs already pending review (skipped): "
+        f"{result.get('pairs_already_pending', 0)}",
+        file=out,
+    )
 
     unmatched_t = result.get("unmatched_transcripts", []) or []
     unmatched_m = result.get("unmatched_minutes", []) or []

@@ -93,6 +93,11 @@ class GroundTruthLinker:
                 "sdl_root_unresolved:set SDL_ROOT or pass a valid data_lake_path"
             )
 
+        # Build the existing-pairs index BEFORE any matching or writing so a
+        # mid-run write cannot make a freshly-written pair look pre-existing
+        # to itself. Non-recursive: retired/ and reports/ subdirs are excluded.
+        existing_pairs = _load_existing_pairs(sdl_root)
+
         transcripts, filtered_records = _load_transcripts(
             data_lake_path, sdl_root
         )
@@ -285,7 +290,21 @@ class GroundTruthLinker:
             unmatched_m.append(_unmatched_m(m, "no_candidate"))
             paired_m_ids.add(m["minutes_artifact_id"])
 
-        # 4. Validate every pair, then write everything atomically-ish.
+        # 4. Partition every identified pair into "new" vs "already exists".
+        #    An existing pair (keyed by (source_artifact_id,
+        #    minutes_artifact_id)) is never overwritten — the prior artifact
+        #    stays on disk untouched and we tally it under the relevant
+        #    already_* bucket.
+        pairs_high_new, already_confirmed_h, already_pending_h = (
+            _partition_against_existing(pairs_high, existing_pairs)
+        )
+        pairs_medium_new, already_confirmed_m, already_pending_m = (
+            _partition_against_existing(pairs_medium, existing_pairs)
+        )
+        pairs_already_confirmed = already_confirmed_h + already_confirmed_m
+        pairs_already_pending = already_pending_h + already_pending_m
+
+        # 5. Validate every NEW pair, then write everything atomically-ish.
         try:
             pair_schema = _load_schema("ground_truth_pair")
             report_schema = _load_schema("linking_report")
@@ -293,7 +312,7 @@ class GroundTruthLinker:
             return _failure_result(f"schema_unreadable:{exc}")
 
         pair_validator = jsonschema.Draft202012Validator(pair_schema)
-        for pair in (*pairs_high, *pairs_medium):
+        for pair in (*pairs_high_new, *pairs_medium_new):
             try:
                 pair_validator.validate(pair)
             except jsonschema.ValidationError as exc:
@@ -301,16 +320,22 @@ class GroundTruthLinker:
                     f"pair_schema_violation:{exc.message}"
                 )
 
-        # 5. Build the linking_report.
+        # 6. Build the linking_report. Pair counts in the report reflect the
+        #    NEW pairs written this run; the idempotency breakdown fields
+        #    carry the already-existing counts.
         run_id = str(uuid.uuid4())
+        pairs_new_total = len(pairs_high_new) + len(pairs_medium_new)
         report = {
             "run_id": run_id,
             "created_at": _now_iso(),
             "data_lake_path": str(data_lake_path) if data_lake_path else "",
             "total_transcripts": len(transcripts),
             "total_minutes": len(minutes),
-            "high_confidence_pairs": len(pairs_high),
-            "medium_confidence_pairs": len(pairs_medium),
+            "high_confidence_pairs": len(pairs_high_new),
+            "medium_confidence_pairs": len(pairs_medium_new),
+            "pairs_new": pairs_new_total,
+            "pairs_already_confirmed": pairs_already_confirmed,
+            "pairs_already_pending": pairs_already_pending,
             "unmatched_transcripts": _stable_sorted_unmatched_t(unmatched_t),
             "unmatched_minutes": _stable_sorted_unmatched_m(unmatched_m),
             "schema_version": REPORT_SCHEMA_VERSION,
@@ -320,15 +345,16 @@ class GroundTruthLinker:
         except jsonschema.ValidationError as exc:
             return _failure_result(f"report_schema_violation:{exc.message}")
 
-        # 6. Write pairs and report. All-or-nothing: any write error
-        #    short-circuits to a failure result without leaving partial
+        # 7. Write NEW pairs and report. Existing pairs are never overwritten:
+        #    we already filtered them out in step 4. All-or-nothing: any write
+        #    error short-circuits to a failure result without leaving partial
         #    pair writes silently un-reported.
         try:
             pairs_dir = sdl_root / "ground_truth"
             reports_dir = pairs_dir / "reports"
             pairs_dir.mkdir(parents=True, exist_ok=True)
             reports_dir.mkdir(parents=True, exist_ok=True)
-            for pair in (*pairs_high, *pairs_medium):
+            for pair in (*pairs_high_new, *pairs_medium_new):
                 target = pairs_dir / f"{pair['pair_id']}.json"
                 target.write_text(
                     json.dumps(pair, indent=2, sort_keys=True) + "\n",
@@ -344,13 +370,16 @@ class GroundTruthLinker:
 
         partial = bool(unmatched_t or unmatched_m)
         status = "partial" if partial else "success"
-        if not pairs_high and not pairs_medium and partial:
+        if not pairs_high_new and not pairs_medium_new and partial:
             status = "partial"
 
         return {
             "status": status,
-            "pairs_produced": len(pairs_high) + len(pairs_medium),
-            "pairs_pending_review": len(pairs_medium),
+            "pairs_produced": pairs_new_total,
+            "pairs_pending_review": len(pairs_medium_new),
+            "pairs_new": pairs_new_total,
+            "pairs_already_confirmed": pairs_already_confirmed,
+            "pairs_already_pending": pairs_already_pending,
             "unmatched_transcripts": report["unmatched_transcripts"],
             "unmatched_minutes": report["unmatched_minutes"],
             "filtered_from_transcript_source_records": filtered_records,
@@ -658,6 +687,87 @@ def _stable_sorted_unmatched_m(items: List[Dict[str, Any]]) -> List[Dict[str, An
     )
 
 
+def _load_existing_pairs(
+    sdl_root: Path,
+) -> Dict[Tuple[str, str], Dict[str, Any]]:
+    """Index existing ground_truth_pair artifacts by (source, minutes) ids.
+
+    Reads only ``$SDL_ROOT/ground_truth/*.json`` — non-recursive, so the
+    ``retired/`` and ``reports/`` subdirectories are excluded. A retired
+    pair must therefore NOT block a new pair for the same
+    ``(source_artifact_id, minutes_artifact_id)``.
+
+    Malformed files (unreadable / not JSON / missing the required
+    identifying fields) are silently skipped so a single bad file cannot
+    cause the linker to fail closed and refuse to write any pairs.
+    """
+    out: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    pairs_dir = sdl_root / "ground_truth"
+    if not pairs_dir.is_dir():
+        return out
+    for path in sorted(pairs_dir.glob("*.json")):
+        if not path.is_file():
+            continue
+        try:
+            rec = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(rec, dict):
+            continue
+        produced_by = (
+            rec.get("provenance", {}).get("produced_by")
+            if isinstance(rec.get("provenance"), dict)
+            else None
+        )
+        if produced_by != PRODUCED_BY:
+            continue
+        src = rec.get("source_artifact_id")
+        mid = rec.get("minutes_artifact_id")
+        if not isinstance(src, str) or not src:
+            continue
+        if not isinstance(mid, str) or not mid:
+            continue
+        # First write wins on duplicate keys (sorted iteration ensures
+        # this is deterministic). With idempotency in place going forward
+        # there should never be duplicates here for new data, but the
+        # bug we are fixing left some on disk.
+        out.setdefault((src, mid), rec)
+    return out
+
+
+def _partition_against_existing(
+    pairs: List[Dict[str, Any]],
+    existing: Dict[Tuple[str, str], Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], int, int]:
+    """Split ``pairs`` into (new, already_confirmed_count, already_pending_count).
+
+    A pair whose (source_artifact_id, minutes_artifact_id) key is already
+    in ``existing`` is dropped from the new-write list. Its prior status
+    determines the bucket it's counted in. The existing artifact on disk
+    is left untouched.
+    """
+    new_pairs: List[Dict[str, Any]] = []
+    already_confirmed = 0
+    already_pending = 0
+    for pair in pairs:
+        key = (pair["source_artifact_id"], pair["minutes_artifact_id"])
+        prior = existing.get(key)
+        if prior is None:
+            new_pairs.append(pair)
+            continue
+        status = prior.get("status")
+        if status == "confirmed":
+            already_confirmed += 1
+        elif status == "pending_review":
+            already_pending += 1
+        else:
+            # Unknown / unexpected status on an existing pair — count it
+            # under pending so we still report it as "skipped", but never
+            # overwrite it.
+            already_pending += 1
+    return new_pairs, already_confirmed, already_pending
+
+
 def _load_schema(name: str) -> Dict[str, Any]:
     schema_file = (
         contracts_root() / "schemas" / "ingestion" / f"{name}.schema.json"
@@ -670,6 +780,9 @@ def _failure_result(reason: str) -> Dict[str, Any]:
         "status": "failure",
         "pairs_produced": 0,
         "pairs_pending_review": 0,
+        "pairs_new": 0,
+        "pairs_already_confirmed": 0,
+        "pairs_already_pending": 0,
         "unmatched_transcripts": [],
         "unmatched_minutes": [],
         "filtered_from_transcript_source_records": [],
