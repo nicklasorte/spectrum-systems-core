@@ -24,6 +24,10 @@ from .markdown_authority_scanner import MarkdownAuthorityScanner
 from .cost_trend_reporter import CostTrendReporter
 from .compression_scanner import CompressionScanner
 from .dashboard import GovernanceDashboard
+from .gov10_certification import (
+    CERTIFICATION_COST_CEILING_USD,
+    GOV10CertificationStep,
+)
 
 __all__ = [
     "COST_TREND_WINDOW_DAYS",
@@ -40,4 +44,6 @@ __all__ = [
     "CostTrendReporter",
     "CompressionScanner",
     "GovernanceDashboard",
+    "CERTIFICATION_COST_CEILING_USD",
+    "GOV10CertificationStep",
 ]

@@ -1,0 +1,67 @@
+[
+  {
+    "id": "afc6d3f1-5dab-4880-bd23-2b23765249d4",
+    "name": "EVAL-CERT-001",
+    "eval_type": "schema_conformance",
+    "metric_name": "done_certification_record.schema_validates",
+    "target_artifact_type": "done_certification_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic"
+  },
+  {
+    "id": "dfa40e0b-dbc7-41a4-b51a-4bc1844398fa",
+    "name": "EVAL-CERT-002",
+    "eval_type": "binary_terminal_status",
+    "metric_name": "done_certification_record.no_partial_status",
+    "target_artifact_type": "done_certification_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic",
+    "detail": "status must be exactly 'PASSED' or 'FAILED' — no null, no other values."
+  },
+  {
+    "id": "5a282681-5580-40ba-8c9d-dba1d5cc0c26",
+    "name": "EVAL-CERT-003",
+    "eval_type": "consistency_invariant",
+    "metric_name": "done_certification_record.failed_cert_has_reasons",
+    "target_artifact_type": "done_certification_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic",
+    "detail": "If status == 'FAILED', failure_reasons must be non-empty."
+  },
+  {
+    "id": "1370f229-2f2b-49a5-9a52-f2f2cb1448f0",
+    "name": "EVAL-CERT-004",
+    "eval_type": "referential_integrity",
+    "metric_name": "done_certification_record.passed_cert_has_release_artifact",
+    "target_artifact_type": "done_certification_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic",
+    "detail": "If status == 'PASSED', the release artifact file referenced by release_path must exist on disk."
+  },
+  {
+    "id": "fe2c818d-277f-4b75-97c8-c4db79497fd3",
+    "name": "EVAL-CERT-005",
+    "eval_type": "policy_alignment",
+    "metric_name": "done_certification_record.cost_records_present",
+    "target_artifact_type": "done_certification_record",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic",
+    "detail": "total_pipeline_cost_usd must be > 0 for any real pipeline run; zero is unknown state and a bug."
+  },
+  {
+    "id": "fd592d53-f433-46d3-b353-d640d0c13c32",
+    "name": "EVAL-CERT-006",
+    "eval_type": "schema_conformance",
+    "metric_name": "release_artifact.schema_validates",
+    "target_artifact_type": "release_artifact",
+    "required": true,
+    "pass_condition": "boolean",
+    "runner": "deterministic",
+    "detail": "release_artifact (only emitted on PASSED certification) must validate against its schema; covers EvalCoverageScanner's chain-completeness gate."
+  }
+]
