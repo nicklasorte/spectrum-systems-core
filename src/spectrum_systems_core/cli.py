@@ -29,6 +29,7 @@ from .extraction import (
     StoryworthyFilter,
 )
 from .ingestion import (
+    DocxExtractor,
     GroundingHelper,
     ObsidianProjection,
     PDFExtractor,
@@ -2145,6 +2146,51 @@ def apply_compression_cli(
     return 0
 
 
+def extract_docx(
+    *,
+    path: str,
+    output_dir: str | None = None,
+    out_stream=None,
+) -> int:
+    """Phase L.0: extract .docx transcript(s) to .txt for process-source.
+
+    If --path is a file: extract that single file and print the result.
+    If --path is a directory: extract all .docx files in the directory.
+    On any failure: print reason and exit 1.
+    On success: print "Extracted: <output_path>" for each file. Exit 0.
+    """
+    out = out_stream if out_stream is not None else sys.stdout
+    p = Path(path)
+    extractor = DocxExtractor()
+
+    if p.is_file():
+        dest = str(Path(output_dir) / (p.stem + ".txt")) if output_dir else None
+        result = extractor.extract(str(p), output_path=dest)
+        if result["status"] != "success":
+            print(f"error: {result['reason']}", file=out)
+            return 1
+        print(f"Extracted: {result['output_path']}", file=out)
+        return 0
+
+    if p.is_dir():
+        results = extractor.extract_batch(str(p), output_dir=output_dir)
+        if not results:
+            print("No .docx files found.", file=out)
+            return 0
+        failed = [r for r in results if r["status"] != "success"]
+        for r in results:
+            if r["status"] == "success":
+                print(f"Extracted: {r['output_path']}", file=out)
+            else:
+                print(f"error: {r['reason']}", file=out)
+        if failed:
+            return 1
+        return 0
+
+    print(f"error: path does not exist or is not a file/directory: {path}", file=out)
+    return 1
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m spectrum_systems_core.cli",
@@ -2589,6 +2635,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip the interactive confirmation prompt.",
     )
 
+    ed = sub.add_parser(
+        "extract-docx",
+        help="Phase L.0: extract .docx transcript(s) to .txt for process-source.",
+        description=(
+            "Phase L.0 pre-processing step. Reads a .docx file (or all .docx "
+            "files in a directory) and writes .txt files with paragraphs joined "
+            "by double newlines. The .txt output is ready for process-source / "
+            "TranscriptIngestor. Does not write any pipeline artifact. Does not "
+            "call any LLM. Does not modify SourceLoader or TranscriptIngestor."
+        ),
+    )
+    ed.add_argument(
+        "--path",
+        required=True,
+        help="Path to a single .docx file OR a directory of .docx files.",
+    )
+    ed.add_argument(
+        "--output-dir",
+        default=None,
+        help="Directory where .txt files are written. Defaults to alongside the original.",
+    )
+
     return parser
 
 
@@ -2706,6 +2774,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if args.command == "audit-governance":
         return audit_governance(vault=args.vault)
+    if args.command == "extract-docx":
+        return extract_docx(
+            path=args.path,
+            output_dir=args.output_dir,
+        )
     if args.command == "apply-compression":
         return apply_compression_cli(
             candidate_id=args.candidate_id,
