@@ -202,3 +202,62 @@ After Gate A fixes:
 | audit-governance | exit 0; total_flagged: 0, high: 0 |
 | lint / type-check | N/A (no config) |
 
+---
+
+# Phase L.2 — MinutesProcessor + GroundTruthLinker
+
+## Step 1 — Inventory
+
+| Item | Result |
+|---|---|
+| Branch | `claude/phase-l2-ground-truth-MKbJd` (off main) |
+| pytest collect (pre-edit) | 752 (baseline) |
+| pytest run (pre-edit) | 741 passed, 11 failed (same pre-existing PDF/cffi failures) |
+| `DocxExtractor.extract(docx_path, output_path=None) -> dict` | reusable; returns `paragraph_count` (== text-unit count, paragraphs+table-rows), `character_count`, `table_count`, `table_row_count` |
+| `SourceLoader.load(source_id, repo_root) -> dict` | produces `source_record` envelope at `processed/<family>/<source_id>/source_record.json` and SDL_ROOT `<artifact_id>.json` |
+| SDL_ROOT layout | flat `<artifact_id>.json` files; resolved via `SDL_ROOT` env var or falls back to `<store_root>/artifacts` |
+| `store/raw/minutes/` | does NOT yet exist under `data-lake/store/raw/`; MinutesProcessor must handle missing dir gracefully (return `[]`, not error) |
+| Existing ingestion schemas dir | `contracts/schemas/ingestion/` (only `source_eval_result.schema.json`) |
+| Source-record meeting-date for transcripts | only `payload.metadata.date` (free-form string) — same regex-based normalization will be applied to it on the linker side so transcript and minutes meet on a shared `YYYY-MM-DD` |
+
+## Step 9 — Gate A (design redteam, fresh subagent)
+
+| # | Sev | Finding | Disposition |
+|---|---|---|---|
+| 1 | 1 | Reading source_records from BOTH `processed/<family>/<sid>/source_record.json` and `$SDL_ROOT/*.json` could double-count or contradict | FIXED — `_load_transcripts` de-duplicates by `payload.source_id`; `processed/` wins (canonical write). Test `test_dedup_when_processed_and_sdl_root_carry_same_source_id`. |
+| 2 | 1 | Pair cardinality undefined when N transcripts share a date with N minutes (N≥2 each) | FIXED — explicit rule: any date with >1 record on either side routes ALL involved to `unmatched_*` with `duplicate_date_collision`. Test `test_duplicate_date_collision_routes_all_to_unmatched`. |
+| 3 | 1 | ±1-day window can produce ambiguous medium pairs when a record has multiple ±1-day candidates | FIXED — fuzzy pass routes any record with >1 candidate (or whose sole candidate is itself ambiguous) to unmatched with `ambiguous_fuzzy_match`. Test `test_ambiguous_fuzzy_match_routes_to_unmatched`. |
+| 4 | 2 | `linking_report` lacks run-scoping fields | FIXED — added `data_lake_path` to schema and emitted dict. |
+| 5 | 2 | `unmatched_*` array element shape under-specified | FIXED — schema requires `source_id`/`minutes_id`, `meeting_date` (nullable), `meeting_name`, `reason` enum. |
+| 6 | 2 | `±1 day` boundary undefined | FIXED — explicit `abs((d1 - d2).days) <= 1 and d1 != d2` after `date.fromisoformat`. Test `test_two_day_difference_does_not_match`. |
+| 7 | 2 | `status: retired` enum value with no transition rule | NOT BLOCKING — kept in schema for future hand-edits to retire pairs without migration; documented that linker only emits `confirmed`/`pending_review`. |
+| 8 | 2 | Filename regex `Jan2026` (month-only) could fabricate a day-of-month | FIXED — month-only-with-year is intentionally NOT matched. Test `test_meeting_date_none_when_not_found` covers `Jan2026`. |
+
+**Verdict:** three Sev-1 findings addressed; six Sev-2 findings (five addressed, one accepted with rationale).
+
+## Step 10 — Pre-Gate-B test status
+
+| Check | Result |
+|---|---|
+| pytest collect | 782 (752 baseline + 12 minutes + 18 linker = 30 new) |
+| pytest run | 771 passed, 11 failed (same 11 pre-existing PDF/cffi failures, zero regressions) |
+| audit-governance | exit 0; total_flagged: 0, high: 0 |
+| lint / type-check | N/A (no config) |
+
+## Step 11 — Gate B (diff redteam, fresh subagent)
+
+| # | Sev | Finding | Disposition |
+|---|---|---|---|
+| 1 | 2 | When transcript T has ≥2 fuzzy candidates (M1, M2) and each Mₙ lists only T as their candidate, T is correctly tagged `ambiguous_fuzzy_match` but M1/M2 fall through to `no_candidate` — wrong reason | FIXED — t-loop ambiguous branch now propagates `ambiguous_fuzzy_match` to every cand-M that is not already in `ambiguous_m_ids`/`paired_m_ids`. `test_ambiguous_fuzzy_match_routes_to_unmatched` extended to assert the same reason on both transcripts and minutes. |
+
+**Verdict:** one Sev-2 finding addressed; zero Sev-1.
+
+## Final test status (Phase L.2)
+
+| Check | Result |
+|---|---|
+| pytest collect | 782 (752 baseline + 30 new) |
+| pytest run | 771 passed, 11 failed (same 11 pre-existing PDF/cffi failures, zero regressions) |
+| audit-governance | exit 0; total_flagged: 0, high: 0 |
+| lint / type-check | N/A (no config) |
+
