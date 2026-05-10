@@ -279,3 +279,63 @@ After Gate A fixes:
 - Data-lake artifact path: `store/artifacts/ground_truth/<pair_id>.json`.
 - `jsonschema>=4.0` already in `pyproject.toml` deps.
 
+
+# fix/ground-truth-linker-date-extraction — Progress
+
+## Step 1 — Inventory
+
+| Item | Result |
+|---|---|
+| Branch (harness-assigned) | `claude/fix-ground-truth-linker-dates-IS5ZM` |
+| pytest collect (pre-edit) | 782 |
+| pytest run (pre-edit) | 771 passed, 11 failed (pre-existing PDF/cffi failures unrelated) |
+| audit-governance (pre-edit) | exit 0; total_flagged 0; high 0 (DATA_LAKE_PATH set) |
+
+### `source_record` envelope shape (from `contracts/schemas/source_record.schema.json`)
+- `payload.title` — string, minLength 1. Set by `SourceLoader` to `metadata["title"]`. The pipeline orchestrator (`pipeline_orchestrator.py:960`) seeds metadata `title` to `txt_path.stem` for raw .txt drops, i.e. the original transcript filename without extension. **This is where the date lives for transcripts staged from the raw .txt drop directory.**
+- `payload.raw_path` — string, minLength 1. Slugified path under `raw/<family>/<source_id>/source.txt`; does NOT include the original filename's date.
+- `payload.processed_path` — string, minLength 1. `processed/<family>/<source_id>` directory; also does not contain the date.
+- `payload.metadata.date` — present only when staged metadata explicitly carried a date (rare in production; the orchestrator currently writes `DEFAULT_DATE` for raw drops).
+
+### Current linker behavior (`ingestion/ground_truth_linker.py:402`)
+`_normalize_transcript` reads `payload.metadata.date` only. For real transcripts staged with `DEFAULT_DATE` or no date, this returns None → all transcripts become `no_meeting_date` OR (when `DEFAULT_DATE` is `"1970-01-01"`) every transcript collides on Unix-epoch → `duplicate_date_collision`. This matches the production bug description.
+
+### Current MinutesProcessor date-extraction logic (`ingestion/minutes_processor.py:30-150`)
+Module-level regexes:
+- `_NUMERIC_DATE_RE` — `M-D-YY[YY]` with separators `[-_./]`. 2-digit years pivoted via `_two_digit_to_full_year` (00-79→20xx, 80-99→19xx).
+- `_COMPACT_DATE_RE` — `YYYYMMDD` (8 contiguous digits, not surrounded by digits).
+- `_DAY_MONTH_YEAR_RE` — `D[D][-_.\s]?Mon[-_.\s]?YYYY` (4-digit year only — does NOT cover `21Jan26`).
+- `_MONTH_DAY_YEAR_RE` — `Month D[D], YYYY` (used on body text only).
+
+Module-level function `extract_meeting_date(filename, text) -> Optional[str]` applies these in priority: filename-COMPACT → filename-DAY_MONTH_YEAR → filename-NUMERIC → text-MONTH_DAY_YEAR → text-DAY_MONTH_YEAR. Already imported by `tests/ingestion/test_minutes_processor.py`.
+
+### Plan
+1. Create `spectrum_systems_core/ingestion/date_utils.py` with `extract_meeting_date(text: str) -> Optional[str]` that scans a single string and applies all four regex families in deterministic priority order (COMPACT → DAY_MONTH_YEAR → NUMERIC → MONTH_DAY_YEAR). Move the regex constants and helpers (`_MONTHS`, `_two_digit_to_full_year`, `_safe_iso_date`) into this module.
+2. Extend `_DAY_MONTH_YEAR_RE` year part to `(\d{4}|\d{2})` so it also captures `21Jan26`. The lookahead `(?![A-Za-z\d])` already prevents partial matches like `5Feb20` inside `5Feb2026`.
+3. In `minutes_processor.py`, keep the existing two-arg `extract_meeting_date(filename, text)` as a thin wrapper: try `extract_meeting_date(Path(filename).stem)` first, then fall back to the first 500 chars of body text. Re-export the symbol so existing test imports keep working with no behavior change.
+4. In `ground_truth_linker.py::_normalize_transcript`, build a candidate filename string from `payload.title` → `os.path.basename(payload.raw_path)` → `os.path.basename(payload.processed_path)` (first non-empty wins), strip the file extension, then call `date_utils.extract_meeting_date`. If that returns None, fall back to `payload.metadata.date` (preserves existing test_sdl_root_only_transcripts_also_picked_up etc. fixtures that pass an explicit date). If still None, the transcript is recorded as `no_date_extractable`.
+5. Add a new unmatched-reason `no_date_extractable` to the `linking_report.schema.json` enum if it constrains values, and to the linker logic.
+
+### Schema check
+`linking_report.schema.json` `reason` enum gains `no_date_extractable` (additive; schema_version stays at 1.0.0).
+
+## Step 5 — Gate A (design redteam, fresh subagent)
+
+| # | Sev | Finding | Disposition |
+|---|---|---|---|
+| 1 | 2 | Body-text scan in MinutesProcessor now applies NUMERIC + COMPACT regexes that were previously filename-only — could silently match section ids / version strings (`1.2.26` → `2026-01-02`) | FIXED — added `date_utils.extract_prose_date(text)` that restricts to MONTH_DAY_YEAR + DAY_MONTH_YEAR only. `MinutesProcessor.extract_meeting_date` calls the prose variant on body text. Filename path still uses the full unified function. |
+| 2 | 2 | Latent ambiguity in `NUMERIC_DATE_RE` for European-format filenames (`7/8/26` — Jul 8 vs Aug 7) | NOT BLOCKING — production filenames in `_REAL_TRANSCRIPT_FILENAMES` are uniformly US M-D-Y. Documented preference in `date_utils.py` docstring. Latent risk only. |
+| 3 | 2 | `metadata.date == "1970-01-01"` epoch fallback could still cause silent collisions when `payload.title` is generic (e.g. "untitled") and `raw_path`/`processed_path` are empty/missing | FIXED — `_extract_transcript_date` no longer falls back to `metadata.date` at all. Updated test helper `_write_transcript` to inject the `date` argument into the title (mirroring production where the orchestrator stores the original filename in `payload.title`). Updated `test_sdl_root_only_transcripts_also_picked_up` to put the date in the title rather than `metadata.date`. |
+| 4 | 2 | `extract_meeting_name` strip behaviour change due to regex sharing | NOT BLOCKING — semantics of `_NUMERIC_DATE_RE` are unchanged; only the alternation ordering inside `(\d{4}\|\d{2})` flipped, which produces the same matches via backtracking. Verified by tracing `2-19-2026` (matches `2026`) and `2-19-26` (matches `26`). |
+
+**Verdict:** zero Sev-1; four Sev-2 findings (two addressed, two accepted with rationale).
+
+## Step 6 — Run tests and audit (post Gate A)
+
+| Check | Result | Exit code |
+|---|---|---|
+| pytest collect | 795 (782 baseline + 13 new) | — |
+| pytest run | 784 passed, 11 failed (same 11 pre-existing PDF/cffi failures, zero new regressions) | 1 (pre-existing) |
+| audit-governance (`DATA_LAKE_PATH=data-lake`) | total_flagged 0; high 0 | 0 |
+| lint / type-check | N/A — no config in repo (per `docs/development/ci.md`) | — |
+

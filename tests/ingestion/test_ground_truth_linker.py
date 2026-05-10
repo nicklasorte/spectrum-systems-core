@@ -46,11 +46,22 @@ def _write_transcript(
     title: str,
     date: str | None,
 ) -> str:
-    """Write a source_record to processed/meetings/<source_id>/source_record.json."""
+    """Write a source_record to processed/meetings/<source_id>/source_record.json.
+
+    Mirrors production: the orchestrator stores the original transcript
+    filename in ``payload.title``. When the test passes a ``date``, we
+    inject it into the title in YYYYMMDD form so the linker can extract
+    it via ``date_utils.extract_meeting_date`` — exactly the path real
+    records take. ``payload.metadata.date`` is intentionally NOT
+    consulted by the linker (the orchestrator seeds it to an epoch
+    sentinel for raw drops, which would silently collide).
+    """
     artifact_id = str(uuid.uuid4())
-    metadata: Dict[str, Any] = {"source_id": source_id, "source_family": "meetings"}
+    full_title = title
     if date is not None:
-        metadata["date"] = date
+        # YYYYMMDD form is the most common production filename pattern.
+        full_title = f"{title} {date.replace('-', '')}"
+    metadata: Dict[str, Any] = {"source_id": source_id, "source_family": "meetings"}
     rec = {
         "artifact_kind": "source_record",
         "artifact_id": artifact_id,
@@ -58,7 +69,7 @@ def _write_transcript(
             "source_id": source_id,
             "source_family": "meetings",
             "source_type": "transcript",
-            "title": title,
+            "title": full_title,
             "metadata": metadata,
         },
     }
@@ -239,7 +250,13 @@ def test_link_never_raises(tmp_path: Path) -> None:
 
 
 def test_none_meeting_date_never_matches(data_lake: Path) -> None:
-    """meeting_date None on either side never produces a pair (sev-1 guard)."""
+    """meeting_date None on either side never produces a pair (sev-1 guard).
+
+    The transcript's title carries no date, so the linker records
+    ``no_date_extractable`` (regex looked at a candidate string and found
+    nothing). The minutes side has meeting_date explicitly None and
+    records ``no_meeting_date``.
+    """
     _write_transcript(
         data_lake, source_id="m_no_date", title="undated transcript", date=None
     )
@@ -248,7 +265,9 @@ def test_none_meeting_date_never_matches(data_lake: Path) -> None:
     assert result["pairs_produced"] == 0
     assert len(result["unmatched_transcripts"]) == 1
     assert len(result["unmatched_minutes"]) == 1
-    assert result["unmatched_transcripts"][0]["reason"] == "no_meeting_date"
+    assert (
+        result["unmatched_transcripts"][0]["reason"] == "no_date_extractable"
+    )
     assert result["unmatched_minutes"][0]["reason"] == "no_meeting_date"
 
 
@@ -355,8 +374,10 @@ def test_sdl_root_only_transcripts_also_picked_up(data_lake: Path) -> None:
             "source_id": "sdl_only_meeting",
             "source_family": "meetings",
             "source_type": "transcript",
-            "title": "Sdl Only",
-            "metadata": {"date": "2026-04-01"},
+            # Mirror production: the orchestrator stores the original
+            # filename in ``title``; the date is extracted from there.
+            "title": "Sdl Only Meeting 20260401",
+            "metadata": {"source_id": "sdl_only_meeting"},
         },
     }
     sdl = data_lake / "store" / "artifacts"
@@ -391,3 +412,255 @@ def test_dedup_when_processed_and_sdl_root_carry_same_source_id(
     assert result["pairs_produced"] == 1
     report = json.loads(Path(result["linking_report_path"]).read_text())
     assert report["total_transcripts"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Filename-derived meeting_date (the production-bug fix).
+# ---------------------------------------------------------------------------
+
+
+def _write_transcript_with_payload(
+    data_lake: Path,
+    *,
+    source_id: str,
+    payload_overrides: Dict[str, Any],
+) -> str:
+    """Write a source_record where the payload can be customised explicitly.
+
+    Used by the filename-extraction tests below: real production records
+    carry the original transcript filename in ``payload.title`` (and/or
+    ``raw_path`` / ``processed_path``) but generally have no
+    ``payload.metadata.date``.
+    """
+    artifact_id = str(uuid.uuid4())
+    payload: Dict[str, Any] = {
+        "source_id": source_id,
+        "source_family": "meetings",
+        "source_type": "transcript",
+        "title": payload_overrides.get("title", source_id),
+        "metadata": payload_overrides.get(
+            "metadata", {"source_id": source_id, "source_family": "meetings"}
+        ),
+    }
+    for k in ("raw_path", "processed_path"):
+        if k in payload_overrides:
+            payload[k] = payload_overrides[k]
+    rec = {
+        "artifact_kind": "source_record",
+        "artifact_id": artifact_id,
+        "payload": payload,
+    }
+    sid_dir = data_lake / "store" / "processed" / "meetings" / source_id
+    sid_dir.mkdir(parents=True, exist_ok=True)
+    (sid_dir / "source_record.json").write_text(
+        json.dumps(rec, sort_keys=True, indent=2) + "\n"
+    )
+    return artifact_id
+
+
+def test_date_extracted_from_transcript_title(data_lake: Path) -> None:
+    """Title carries the full original filename with a date — extract it."""
+    _write_transcript_with_payload(
+        data_lake,
+        source_id="m_22jan2026",
+        payload_overrides={
+            "title": "7 GHz Downlink TIG Meeting Transcript 22Jan2026",
+        },
+    )
+    _write_minutes(data_lake, meeting_date="2026-01-22", meeting_name="DL TIG")
+    result = GroundTruthLinker().link(str(data_lake))
+    assert result["pairs_produced"] == 1, result
+    pair_files = list(
+        (data_lake / "store" / "artifacts" / "ground_truth").glob("*.json")
+    )
+    assert len(pair_files) == 1
+    pair = json.loads(pair_files[0].read_text())
+    assert pair["meeting_date"] == "2026-01-22"
+    assert pair["match_confidence"] == "high"
+
+
+def test_date_extracted_from_raw_path(data_lake: Path) -> None:
+    """Title is generic; raw_path filename carries the date."""
+    _write_transcript_with_payload(
+        data_lake,
+        source_id="m_20260115",
+        payload_overrides={
+            "title": "untitled",
+            "raw_path": "raw/meetings/m_20260115/transcript 20260115.txt",
+        },
+    )
+    _write_minutes(data_lake, meeting_date="2026-01-15", meeting_name="WG")
+    result = GroundTruthLinker().link(str(data_lake))
+    assert result["pairs_produced"] == 1, result
+    pair = json.loads(
+        next(
+            (data_lake / "store" / "artifacts" / "ground_truth").glob("*.json")
+        ).read_text()
+    )
+    assert pair["meeting_date"] == "2026-01-15"
+
+
+def test_no_date_extractable_records_as_unmatched_not_collision(
+    data_lake: Path,
+) -> None:
+    """Two transcripts with no extractable date must NOT collide on epoch."""
+    _write_transcript_with_payload(
+        data_lake,
+        source_id="m_undated_a",
+        payload_overrides={"title": "untitled meeting notes"},
+    )
+    _write_transcript_with_payload(
+        data_lake,
+        source_id="m_undated_b",
+        payload_overrides={"title": "another file with no date"},
+    )
+    result = GroundTruthLinker().link(str(data_lake))
+    assert result["pairs_produced"] == 0
+    assert len(result["unmatched_transcripts"]) == 2
+    reasons = {e["reason"] for e in result["unmatched_transcripts"]}
+    assert reasons == {"no_date_extractable"}, result["unmatched_transcripts"]
+
+
+# Real transcript filenames from production. Pairs the linker must produce
+# when given source_records carrying the original filename in ``title``.
+_REAL_TRANSCRIPT_FILENAMES: List[Tuple[str, str, str]] = [
+    # (source_id, transcript filename, expected meeting_date)
+    ("m_t01", "20251216 - P2P TIG Meeting 16Dec2025 - Transcript", "2025-12-16"),
+    ("m_t02", "7 GHz UL Kickoff transcript 20251217", "2025-12-17"),
+    (
+        "m_t03",
+        "7 GHz Downlink TIG Meeting Kickoff - transcript 20251218",
+        "2025-12-18",
+    ),
+    (
+        "m_t04",
+        "7 GHz Study Working Group Meeting - transcript 20260115",
+        "2026-01-15",
+    ),
+    (
+        "m_t05",
+        "7 GHz Fixed_Transportable Point to Point (P2P) TIG Meeting Transcript 20260120",
+        "2026-01-20",
+    ),
+    (
+        "m_t06",
+        "7 GHz Study Plan Comment Adjudication Meeting with Working Group - Transcript 20260121",
+        "2026-01-21",
+    ),
+    ("m_t07", "7 GHz Uplink TIG Meeting Transcript 21Jan26", "2026-01-21"),
+    (
+        "m_t08",
+        "7 GHz Downlink TIG Meeting Transcript - 22Jan2026",
+        "2026-01-22",
+    ),
+    (
+        "m_t09",
+        "7 GHz Study Working Group Meeting 5Feb2026 - Transcript",
+        "2026-02-05",
+    ),
+    ("m_t10", "7 GHz P2P TIG - Transcript 2-17-26", "2026-02-17"),
+    ("m_t11", "7 GHz Uplink TIG - Transcript 2-18-26", "2026-02-18"),
+    (
+        "m_t12",
+        "7 GHz Downlink TIG Meeting - transcript 2-19-26",
+        "2026-02-19",
+    ),
+    (
+        "m_t13",
+        "7 GHz Study Working Group Meeting - 5Mar2026 - Transcript",
+        "2026-03-05",
+    ),
+]
+
+# Real minutes filenames from production. Each maps to one transcript date,
+# except 2026-01-21 which has two minutes (UL TIG Kickoff + adjudication) on
+# the same calendar date as one transcript — the linker rule routes the
+# whole date to ``duplicate_date_collision`` rather than guessing.
+_REAL_MINUTES: List[Tuple[str, str]] = [
+    # (meeting_name, expected meeting_date)
+    ("P2P TIG Kickoff Meeting Minutes 20251216 FINAL", "2025-12-16"),
+    ("7 GHz Uplink TIG Kickoff Meeting Minutes 20251217 FINAL", "2025-12-17"),
+    ("7 GHz Downlink TIG Kickoff Meeting Minutes 20251218 FINAL", "2025-12-18"),
+    ("7 GHz WG Meeting Minutes 20260115 - Final", "2026-01-15"),
+    ("P2P TIG Meeting Minutes 20260120 Final", "2026-01-20"),
+    (
+        "7 GHz Study Plan Comment Adjudication Meeting Minutes - 20260121 - Final",
+        "2026-01-21",
+    ),
+    ("7 GHz Uplink TIG Meeting Minutes 20260121 Final", "2026-01-21"),
+    ("7 GHz Downlink TIG Meeting Minutes 20260122 Final", "2026-01-22"),
+    ("7 GHz WG Meeting Minutes 20260205 Final", "2026-02-05"),
+    ("7 GHz P2P TIG Meeting Minutes 20260217 Final", "2026-02-17"),
+    ("7 GHz Uplink TIG Meeting Minutes 20260218 Final", "2026-02-18"),
+    ("7 GHz Downlink TIG Meeting Minutes 20260219 Final", "2026-02-19"),
+    ("7 GHz WG Meeting Minutes 20260305 Final", "2026-03-05"),
+]
+
+
+def test_all_13_pairs_match_with_real_filenames(data_lake: Path) -> None:
+    """End-to-end: real production filenames must produce 11 high-confidence
+    pairs.
+
+    The 2026-01-21 calendar day has two real meetings (Uplink TIG and
+    the comment-adjudication WG) — two transcripts and two minutes
+    share that date. The linker's ``duplicate_date_collision`` rule
+    refuses to silently guess: all four records are routed to
+    unmatched. The remaining eleven transcripts pair cleanly with
+    their eleven same-date minutes, which is what proves the
+    filename-derived date extraction works for every other format in
+    production (YYYYMMDD, DDMonYYYY, DDMonYY, M-DD-YY, single-digit-day
+    DDMonYYYY).
+    """
+    for source_id, title, _expected_date in _REAL_TRANSCRIPT_FILENAMES:
+        _write_transcript_with_payload(
+            data_lake,
+            source_id=source_id,
+            payload_overrides={"title": title},
+        )
+    for meeting_name, meeting_date in _REAL_MINUTES:
+        _write_minutes(
+            data_lake,
+            meeting_date=meeting_date,
+            meeting_name=meeting_name,
+        )
+    result = GroundTruthLinker().link(str(data_lake))
+
+    # 11 dates have a clean 1T+1M → 11 pairs. 2026-01-21 has 2T+2M →
+    # all four records routed to ``duplicate_date_collision``.
+    assert result["pairs_produced"] == 11, result
+    assert result["pairs_pending_review"] == 0
+    collisions_t = [
+        e for e in result["unmatched_transcripts"]
+        if e["reason"] == "duplicate_date_collision"
+    ]
+    collisions_m = [
+        e for e in result["unmatched_minutes"]
+        if e["reason"] == "duplicate_date_collision"
+    ]
+    assert len(collisions_t) == 2, result["unmatched_transcripts"]
+    assert len(collisions_m) == 2, result["unmatched_minutes"]
+    assert all(e["meeting_date"] == "2026-01-21" for e in collisions_t)
+    assert all(e["meeting_date"] == "2026-01-21" for e in collisions_m)
+
+    # No transcript should be tagged ``no_date_extractable`` — every
+    # production filename in ``_REAL_TRANSCRIPT_FILENAMES`` carries an
+    # extractable date.
+    no_date = [
+        e for e in result["unmatched_transcripts"]
+        if e["reason"] == "no_date_extractable"
+    ]
+    assert no_date == [], no_date
+
+    # Every produced pair must carry a meeting_date that is exactly one
+    # of the expected dates in the fixture set.
+    expected_dates = {d for _, _, d in _REAL_TRANSCRIPT_FILENAMES}
+    pairs_dir = data_lake / "store" / "artifacts" / "ground_truth"
+    produced_dates = []
+    for path in pairs_dir.glob("*.json"):
+        pair = json.loads(path.read_text())
+        produced_dates.append(pair["meeting_date"])
+        assert pair["match_confidence"] == "high"
+        assert pair["status"] == "confirmed"
+    assert set(produced_dates).issubset(expected_dates), produced_dates
+    # 2026-01-21 must NOT appear in any produced pair (it's collided).
+    assert "2026-01-21" not in produced_dates

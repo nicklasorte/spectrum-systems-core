@@ -22,41 +22,18 @@ from typing import Any, Dict, List, Optional, Tuple
 import jsonschema
 
 from ._paths import contracts_root
+from .date_utils import (
+    COMPACT_DATE_RE as _COMPACT_DATE_RE,
+    DAY_MONTH_YEAR_RE as _DAY_MONTH_YEAR_RE,
+    MONTH_DAY_YEAR_RE as _MONTH_DAY_YEAR_RE,
+    NUMERIC_DATE_RE as _NUMERIC_DATE_RE,
+    extract_meeting_date as _extract_date_from_string,
+    extract_prose_date as _extract_prose_date,
+)
 from .docx_extractor import DocxExtractor
 
 SCHEMA_VERSION = "1.0.0"
 PRODUCED_BY = "MinutesProcessor"
-
-_MONTHS = {
-    "jan": 1, "january": 1,
-    "feb": 2, "february": 2,
-    "mar": 3, "march": 3,
-    "apr": 4, "april": 4,
-    "may": 5,
-    "jun": 6, "june": 6,
-    "jul": 7, "july": 7,
-    "aug": 8, "august": 8,
-    "sep": 9, "sept": 9, "september": 9,
-    "oct": 10, "october": 10,
-    "nov": 11, "november": 11,
-    "dec": 12, "december": 12,
-}
-
-# Numeric date in filenames: M-D-YY, M-D-YYYY, M_D_YY, M.D.YYYY, etc.
-# Captures: month, day, year. Year may be 2-digit (treated 20xx) or 4-digit.
-_NUMERIC_DATE_RE = re.compile(
-    r"(?<!\d)(\d{1,2})[-_./](\d{1,2})[-_./](\d{2}|\d{4})(?!\d)"
-)
-# Compact ISO-ish: YYYYMMDD.
-_COMPACT_DATE_RE = re.compile(r"(?<!\d)(\d{4})(\d{2})(\d{2})(?!\d)")
-# Day + month + year:  22Jan2026 / 22-Jan-2026 / 22 Jan 2026
-_DAY_MONTH_YEAR_RE = re.compile(
-    r"(?<![A-Za-z\d])(\d{1,2})[-_.\s]?([A-Za-z]{3,9})[-_.\s]?(\d{4})(?![A-Za-z\d])"
-)
-# Month + day + year in text: "January 22, 2026" / "January 22 2026"
-_MONTH_DAY_YEAR_RE = re.compile(
-    r"(?<![A-Za-z])([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})(?!\d)"
-)
 
 # Patterns to strip from the filename when deriving the meeting_name.
 # Order matters: strip the most specific suffixes first.
@@ -77,77 +54,20 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _two_digit_to_full_year(y: int) -> int:
-    # 00-79 -> 2000-2079, 80-99 -> 1980-1999. Conservative pivot for
-    # working-paper history; 2026-era minutes always land in the 20xx half.
-    if y < 100:
-        return 2000 + y if y < 80 else 1900 + y
-    return y
-
-
-def _safe_iso_date(year: int, month: int, day: int) -> Optional[str]:
-    try:
-        return datetime.date(year, month, day).isoformat()
-    except (ValueError, TypeError):
-        return None
-
-
 def extract_meeting_date(filename: str, text: str) -> Optional[str]:
-    """Extract a meeting_date as YYYY-MM-DD from filename, then text.
+    """Extract a meeting_date as ``YYYY-MM-DD`` from filename, then body text.
 
-    Priority:
-      1. Filename: numeric (M-D-YY[YY]), compact (YYYYMMDD), day-month-year.
-      2. First 500 chars of text: "Month D, YYYY" / "D Month YYYY".
-      3. Otherwise None — caller treats as unmatched.
-
-    Month-only patterns (e.g. ``Jan2026``) are intentionally NOT matched:
-    fabricating a day-of-month would risk false matches in the linker.
+    Filename is tried first via the shared ``date_utils.extract_meeting_date``
+    (all four regex families). If no filename pattern matches, the first
+    500 chars of ``text`` are scanned via ``date_utils.extract_prose_date``,
+    which restricts itself to prose-style ``Month D, YYYY`` / ``D Mon YYYY``
+    patterns to avoid mis-reading numeric references in minutes bodies.
     """
     fname = Path(filename).stem if filename else ""
-
-    # Strict: compact YYYYMMDD wins on filenames.
-    m = _COMPACT_DATE_RE.search(fname)
-    if m:
-        d = _safe_iso_date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-        if d is not None:
-            return d
-
-    # Day-month-year style on filename.
-    m = _DAY_MONTH_YEAR_RE.search(fname)
-    if m:
-        month_name = m.group(2).lower()
-        if month_name in _MONTHS:
-            d = _safe_iso_date(int(m.group(3)), _MONTHS[month_name], int(m.group(1)))
-            if d is not None:
-                return d
-
-    # Numeric M-D-YY[YY] on filename.
-    m = _NUMERIC_DATE_RE.search(fname)
-    if m:
-        month, day, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        year = _two_digit_to_full_year(year)
-        d = _safe_iso_date(year, month, day)
-        if d is not None:
-            return d
-
-    # Fallback: first 500 chars of body text.
-    head = (text or "")[:500]
-    m = _MONTH_DAY_YEAR_RE.search(head)
-    if m:
-        month_name = m.group(1).lower()
-        if month_name in _MONTHS:
-            d = _safe_iso_date(int(m.group(3)), _MONTHS[month_name], int(m.group(2)))
-            if d is not None:
-                return d
-    m = _DAY_MONTH_YEAR_RE.search(head)
-    if m:
-        month_name = m.group(2).lower()
-        if month_name in _MONTHS:
-            d = _safe_iso_date(int(m.group(3)), _MONTHS[month_name], int(m.group(1)))
-            if d is not None:
-                return d
-
-    return None
+    found = _extract_date_from_string(fname)
+    if found is not None:
+        return found
+    return _extract_prose_date((text or "")[:500])
 
 
 def extract_meeting_name(filename: str) -> str:
