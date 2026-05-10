@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/orchestration/orchestration_run_record.schema.json",
+  "title": "orchestration_run_record",
+  "description": "Per-invocation record of a PipelineOrchestrator run. Written to $SDL_ROOT/orchestration/<run_id>.json after every run() call (including dry runs and partial failures).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "started_at",
+    "completed_at",
+    "dry_run",
+    "data_lake_path",
+    "transcripts_found",
+    "already_processed",
+    "attempted_this_run",
+    "succeeded_this_run",
+    "failed_this_run",
+    "results",
+    "status",
+    "schema_version",
+    "provenance"
+  ],
+  "properties": {
+    "run_id": { "type": "string", "format": "uuid" },
+    "started_at": { "type": "string", "format": "date-time" },
+    "completed_at": { "type": "string", "format": "date-time" },
+    "dry_run": { "type": "boolean" },
+    "data_lake_path": { "type": "string", "minLength": 1 },
+    "transcripts_found": { "type": "integer", "minimum": 0 },
+    "already_processed": { "type": "integer", "minimum": 0 },
+    "attempted_this_run": { "type": "integer", "minimum": 0 },
+    "succeeded_this_run": { "type": "integer", "minimum": 0 },
+    "failed_this_run": { "type": "integer", "minimum": 0 },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["filename", "status", "artifact_id", "reason"],
+        "properties": {
+          "filename": { "type": "string", "minLength": 1 },
+          "status": {
+            "type": "string",
+            "enum": ["success", "failure", "skipped_already_done", "would_run"]
+          },
+          "artifact_id": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": ["success", "partial", "failure", "dry_run"]
+    },
+    "schema_version": { "const": "1.0.0" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": { "const": "PipelineOrchestrator" }
+      }
+    }
+  }
+}
