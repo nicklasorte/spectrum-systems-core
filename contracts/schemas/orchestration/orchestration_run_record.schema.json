@@ -37,15 +37,25 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["filename", "status", "artifact_id", "reason"],
+        "required": ["filename", "status", "artifact_id", "reason", "eval_status"],
         "properties": {
           "filename": { "type": "string", "minLength": 1 },
           "status": {
             "type": "string",
-            "enum": ["success", "failure", "skipped_already_done", "would_run"]
+            "enum": [
+              "success",
+              "failure",
+              "skipped_already_done",
+              "would_run",
+              "extraction_quality_warning"
+            ]
           },
           "artifact_id": { "type": "string" },
-          "reason": { "type": "string" }
+          "reason": { "type": "string" },
+          "eval_status": {
+            "type": "string",
+            "enum": ["passed", "warning", "failed", "not_run"]
+          }
         }
       }
     },
@@ -53,7 +63,7 @@
       "type": "string",
       "enum": ["success", "partial", "failure", "dry_run"]
     },
-    "schema_version": { "const": "1.0.0" },
+    "schema_version": { "const": "1.1.0" },
     "provenance": {
       "type": "object",
       "additionalProperties": false,

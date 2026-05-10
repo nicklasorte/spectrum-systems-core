@@ -49,6 +49,7 @@ import jsonschema
 
 from ..ingestion import (
     DocxExtractor,
+    IngestionEval,
     ObsidianProjection,
     Promoter,
     SourceEval,
@@ -59,7 +60,7 @@ TRANSCRIPTS_SUBDIR = ("raw", "transcripts")
 DEFAULT_SOURCE_FAMILY = "meetings"
 DEFAULT_SOURCE_TYPE = "meeting_transcript"
 DEFAULT_DATE = "1970-01-01"
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 PRODUCED_BY = "PipelineOrchestrator"
 
 _SLUG_RE = re.compile(r"[^a-z0-9_-]+")
@@ -89,23 +90,19 @@ def _hash_text_file(path: Path) -> str:
 def _hash_docx_extracted(path: Path) -> str:
     """Return ``sha256:<hex>`` over the DocxExtractor's would-be output.
 
-    The orchestrator runs DocxExtractor on .docx inputs, which produces a
-    .txt with non-empty paragraphs joined by ``\\n\\n``. To compare a .docx
-    file against an existing source_record's raw_hash, recompute that
-    deterministic projection here. Returns "" on any error so callers can
-    treat as unknown evidence.
+    Mirrors :class:`DocxExtractor`'s projection (paragraphs + table rows in
+    document order, joined by ``\\n\\n``), so we can compare a .docx
+    against an existing source_record's raw_hash without performing any
+    file writes. Returns "" on any error so callers can treat as unknown
+    evidence.
     """
     try:
-        # Lazy import: docx is already a project dep but keeping helpers
-        # narrow makes them cheaper to mock.
         from docx import Document
 
         doc = Document(str(path))
+        text, _chunks, _tables, _rows = DocxExtractor()._extract_body_text(doc)
     except Exception:
         return ""
-    paragraphs = [p.text.strip() for p in doc.paragraphs]
-    non_empty = [p for p in paragraphs if p]
-    text = "\n\n".join(non_empty)
     if not text.strip():
         return ""
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -156,9 +153,11 @@ class PipelineOrchestrator:
         *,
         transcript_runner: Optional[TranscriptRunner] = None,
         docx_extractor: Optional[DocxExtractor] = None,
+        ingestion_eval: Optional[IngestionEval] = None,
     ) -> None:
         self._transcript_runner = transcript_runner or self._default_runner
         self._docx_extractor = docx_extractor or DocxExtractor()
+        self._ingestion_eval = ingestion_eval or IngestionEval()
 
     # -- public API --------------------------------------------------------
 
@@ -396,6 +395,7 @@ class PipelineOrchestrator:
                         "status": "would_run",
                         "artifact_id": "",
                         "reason": scan_reason or "dry_run",
+                        "eval_status": "not_run",
                     }
                 )
                 continue
@@ -412,25 +412,49 @@ class PipelineOrchestrator:
                         "status": "failure",
                         "artifact_id": "",
                         "reason": scan_reason,
+                        "eval_status": "not_run",
                     }
                 )
                 continue
 
             run_result = self._run_one(path, source_id, store_root)
             if run_result["status"] == "success":
+                eval_status = self._maybe_run_ingestion_eval(
+                    docx_path=path if path.suffix.lower() == ".docx" else None,
+                    source_record=run_result.get("source_record"),
+                    text_units=run_result.get("text_units"),
+                    store_root=store_root,
+                )
+                entry_status = "success"
+                if eval_status == "failed":
+                    entry_status = "extraction_quality_warning"
+                    print(
+                        f"[orchestrator] extraction_quality_warning: {filename}"
+                    )
+                elif eval_status == "warning":
+                    # Advisory check failed (e.g., raw_hash drift). Still
+                    # success — but the operator should see it.
+                    print(
+                        f"[orchestrator] ingestion_eval_warning: {filename}"
+                    )
                 processed_this_run.append(
                     {
                         "filename": filename,
-                        "status": "success",
+                        "status": entry_status,
                         "artifact_id": run_result["artifact_id"],
                     }
                 )
                 results_for_record.append(
                     {
                         "filename": filename,
-                        "status": "success",
+                        "status": entry_status,
                         "artifact_id": run_result["artifact_id"],
-                        "reason": "",
+                        "reason": (
+                            ""
+                            if entry_status == "success"
+                            else "ingestion_eval_failed"
+                        ),
+                        "eval_status": eval_status,
                     }
                 )
             else:
@@ -446,6 +470,7 @@ class PipelineOrchestrator:
                         "status": "failure",
                         "artifact_id": run_result.get("artifact_id", ""),
                         "reason": run_result["reason"],
+                        "eval_status": "not_run",
                     }
                 )
 
@@ -599,6 +624,8 @@ class PipelineOrchestrator:
                 "status": "success",
                 "artifact_id": source_record["artifact_id"],
                 "reason": "",
+                "source_record": source_record,
+                "text_units": text_units,
             }
         except Exception as exc:  # defensive: never raise
             return {
@@ -606,6 +633,41 @@ class PipelineOrchestrator:
                 "artifact_id": "",
                 "reason": f"unexpected_error:{exc}",
             }
+
+    # -- ingestion eval ----------------------------------------------------
+
+    def _maybe_run_ingestion_eval(
+        self,
+        *,
+        docx_path: Optional[Path],
+        source_record: Optional[Dict[str, Any]],
+        text_units: Optional[List[Dict[str, Any]]],
+        store_root: Path,
+    ) -> str:
+        """Run IngestionEval and write its result, returning the eval status.
+
+        Returns one of "passed", "warning", "failed", or "not_run".
+        Never raises and never blocks.
+        """
+        if docx_path is None or not isinstance(source_record, dict):
+            return "not_run"
+        try:
+            result = self._ingestion_eval.evaluate(
+                str(docx_path),
+                source_record,
+                text_units=text_units,
+                repo_root=str(store_root),
+            )
+            sdl_root = _resolve_sdl_root(store_root)
+            self._ingestion_eval.write_eval_result(
+                result, sdl_root=str(sdl_root)
+            )
+            status = result.get("status", "not_run")
+            if status not in ("passed", "warning", "failed"):
+                return "not_run"
+            return status
+        except Exception:  # defensive: never raise
+            return "not_run"
 
     # -- run-record write --------------------------------------------------
 

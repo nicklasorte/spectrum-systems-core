@@ -13,6 +13,7 @@ from .promoter import Promoter
 from .pdf_guard import PDFAdmissionGuard
 from .pdf_extractor import PDFExtractor
 from .docx_extractor import DocxExtractor
+from .ingestion_eval import IngestionEval
 
 __all__ = [
     "SourceLoader",
@@ -23,4 +24,5 @@ __all__ = [
     "PDFAdmissionGuard",
     "PDFExtractor",
     "DocxExtractor",
+    "IngestionEval",
 ]
