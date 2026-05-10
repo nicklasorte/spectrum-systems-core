@@ -519,3 +519,51 @@ Reviewer walked the four required spot-checks:
 Plus walked through ``family_tokens``, the greedy collision resolver, the
 ``pairs_medium`` initialization fix, and confirmed no valid transcript is
 removed by the substring filter under the production fixture set.
+
+# Cleanup duplicate ground_truth_pair artifacts
+
+## Step 1 — Inventory
+
+- `scripts/confirm_pairs.py` is the reference. It scans
+  `$SDL_ROOT/store/artifacts/ground_truth/*.json` (top level only),
+  loads each artifact as JSON, mutates `status`/`confirmed_at`/`confirmed_by`,
+  validates against `contracts/schemas/ingestion/ground_truth_pair.schema.json`,
+  and writes back with `json.dump(..., indent=2, sort_keys=True)` plus
+  trailing newline. CLI args: `--data-lake`, `--schema-dir`, `--dry-run`.
+- `.github/workflows/confirm-pairs.yml` is the workflow template — checkout
+  spectrum-systems-core, checkout `${{ secrets.DATA_LAKE_REPO }}` into
+  `data-lake/` with `${{ secrets.GH_PAT }}`, set up Python 3.11, install
+  via `pip install -e ".[dev]"`, run dry-run unconditionally, then run the
+  real action conditionally on the input flag, then commit/push from the
+  `data-lake/` checkout as `spectrum-pipeline[bot]`.
+- Pair schema enums: `status ∈ {confirmed, pending_review, retired}`.
+  `retired` is valid for an in-place status update too, but the task spec
+  asks to MOVE the file to `ground_truth/retired/<pair_id>.json` and
+  preserve the original artifact unchanged. Sidecar
+  `<pair_id>.retired_reason.json` carries `original_pair_id`,
+  `retired_at`, `retired_reason="duplicate_of:<kept_pair_id>"`,
+  `kept_pair_id`.
+
+## Step 2 — Plan
+
+Cleanup script mirrors `confirm_pairs.py` structure:
+1. Scan `$SDL_ROOT/store/artifacts/ground_truth/*.json` top level only
+   (subdirectories like `retired/` are skipped because `iterdir()` returns
+   the dir entry with `suffix == ""`).
+2. Load JSON, skip files that aren't ground_truth_pair artifacts
+   (no `pair_id` / wrong `provenance.produced_by`).
+3. Group by `(source_artifact_id, minutes_artifact_id)`. Singletons: no-op.
+4. Per duplicate group: sort by `created_at` ascending; pick the oldest
+   `confirmed` artifact as keep, falling back to the oldest overall.
+   Validate the kept artifact against schema — on failure, skip group.
+5. Move every non-kept artifact to `retired/<pair_id>.json` (`shutil.move`)
+   and write the sidecar JSON next to it.
+6. Print a row per kept group plus a summary line.
+7. `--dry-run` short-circuits the move/sidecar write.
+8. Wrap each group in `try/except` so one bad group doesn't abort the
+   rest. Never raise.
+
+Workflow file mirrors `confirm-pairs.yml`: same checkout/setup steps, same
+commit/push tail. Input is `dry_run` (default `'true'`), choice of
+`'true'`/`'false'`. Dry-run preview step always runs; real run + commit
+step gated by `dry_run == 'false'`.
