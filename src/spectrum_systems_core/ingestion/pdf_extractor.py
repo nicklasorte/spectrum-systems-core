@@ -15,6 +15,7 @@ import datetime
 import hashlib
 import importlib.metadata
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -82,8 +83,15 @@ class PDFExtractor:
     MIN_CHAR_THRESHOLD = 500  # FINDING-B-002: blocks scanned PDFs
 
     def extract(self, source_id: str, repo_root: str) -> Dict[str, Any]:
-        repo_root_path = Path(repo_root).resolve()
-        source_dir = repo_root_path / "raw" / "books" / source_id
+        env = os.environ.get("DATA_LAKE_PATH", "")
+        if not env or not Path(env).exists():
+            return {
+                "status": "blocked",
+                "extraction_report": None,
+                "reason": "DATA_LAKE_PATH not set or does not exist",
+            }
+        store_root = Path(env) / "store"
+        source_dir = store_root / "raw" / "books" / source_id
         report_path = source_dir / "extraction_report.json"
         try:
             library_version = importlib.metadata.version(_LIBRARY_NAME)
@@ -91,7 +99,7 @@ class PDFExtractor:
             library_version = "unknown"
 
         # 1. Run the admission guard. Fail-closed.
-        guard_result = PDFAdmissionGuard().validate(source_id, str(repo_root_path))
+        guard_result = PDFAdmissionGuard().validate(source_id, str(store_root))
         if guard_result["status"] != "pass":
             report = _failure_report(
                 source_id=source_id,

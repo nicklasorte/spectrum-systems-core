@@ -6,8 +6,16 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+
+def _get_store_root() -> Optional[Path]:
+    env = os.environ.get("DATA_LAKE_PATH", "")
+    if not env or not Path(env).exists():
+        return None
+    return Path(env) / "store"
 
 
 def _now_iso() -> str:
@@ -43,9 +51,11 @@ class ObsidianProjection:
         text_units: List[Dict[str, Any]],
         repo_root: str | Path,
     ) -> str:
-        repo_root_path = Path(repo_root).resolve()
+        store_root = _get_store_root()
+        if store_root is None:
+            raise OSError("DATA_LAKE_PATH not set or does not exist")
         payload = source_record["payload"]
-        processed_dir = _resolve_processed_path(payload, repo_root_path)
+        processed_dir = _resolve_processed_path(payload, store_root)
         markdown_dir = processed_dir / "markdown"
         markdown_dir.mkdir(parents=True, exist_ok=True)
 
@@ -136,14 +146,14 @@ class ObsidianProjection:
 
         Returns absolute path to the written file.
         """
-        repo_root_path = Path(repo_root).resolve()
-        target_dir = (
-            repo_root_path / "processed" / "books" / source_id / "markdown"
-        )
+        store_root = _get_store_root()
+        if store_root is None:
+            raise OSError("DATA_LAKE_PATH not set or does not exist")
+        target_dir = store_root / "processed" / "books" / source_id / "markdown"
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / "index.md"
         pages: List[Dict[str, Any]] = _load_pages(
-            repo_root_path / "raw" / "books" / source_id / "pages.jsonl"
+            store_root / "raw" / "books" / source_id / "pages.jsonl"
         )
         target_path.write_text(
             self._render_book_extraction(
@@ -1985,12 +1995,14 @@ def _resolve_phase_c_dir(repo_root: Path, source_id: str) -> Path:
     """Locate processed/<family>/<source_id>/ for Phase C projections."""
     from ..ingestion.source_loader import SOURCE_FAMILIES
 
+    store_root = _get_store_root()
+    base = store_root if store_root is not None else repo_root
     for family in SOURCE_FAMILIES:
-        candidate = repo_root / "processed" / family / source_id
+        candidate = base / "processed" / family / source_id
         if candidate.is_dir():
             return candidate
     # Fall back to notes/ if the directory hasn't been created yet (test setups).
-    fallback = repo_root / "processed" / "notes" / source_id
+    fallback = base / "processed" / "notes" / source_id
     fallback.mkdir(parents=True, exist_ok=True)
     return fallback
 

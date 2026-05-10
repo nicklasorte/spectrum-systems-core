@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,18 +17,20 @@ class PDFExtractorSuccessTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self._tmp.name)
+        os.environ["DATA_LAKE_PATH"] = self._tmp.name
+        self.store_root = Path(self._tmp.name) / "store"
         self.source_id = "books-20260509-rich"
-        write_book_metadata(self.repo_root, source_id=self.source_id)
-        target = self.repo_root / "raw" / "books" / self.source_id
+        write_book_metadata(self.store_root, source_id=self.source_id)
+        target = self.store_root / "raw" / "books" / self.source_id
         (target / "source.pdf").write_bytes(RICH_PDF)
         self.target = target
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
+        os.environ.pop("DATA_LAKE_PATH", None)
 
     def _run(self) -> dict:
-        return PDFExtractor().extract(self.source_id, str(self.repo_root))
+        return PDFExtractor().extract(self.source_id, str(self.store_root))
 
     def test_extraction_produces_source_txt(self) -> None:
         result = self._run()
@@ -112,19 +115,21 @@ class PDFExtractorFailureTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self._tmp.name)
+        os.environ["DATA_LAKE_PATH"] = self._tmp.name
+        self.store_root = Path(self._tmp.name) / "store"
         self.source_id = "books-20260509-minimal"
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
+        os.environ.pop("DATA_LAKE_PATH", None)
 
     def test_scanned_pdf_blocked(self) -> None:
         # FINDING-B-002 regression.
-        write_book_metadata(self.repo_root, source_id=self.source_id)
-        target = self.repo_root / "raw" / "books" / self.source_id
+        write_book_metadata(self.store_root, source_id=self.source_id)
+        target = self.store_root / "raw" / "books" / self.source_id
         (target / "source.pdf").write_bytes(MINIMAL_PDF)
 
-        result = PDFExtractor().extract(self.source_id, str(self.repo_root))
+        result = PDFExtractor().extract(self.source_id, str(self.store_root))
         self.assertEqual(result["status"], "failure")
         self.assertEqual(result["reason"], "scanned_pdf_suspected")
         report = result["extraction_report"]
@@ -139,10 +144,10 @@ class PDFExtractorFailureTests(unittest.TestCase):
     def test_guard_failure_propagates_through_extractor(self) -> None:
         # No metadata.json, no source.pdf — guard rejects, extractor returns
         # failure cleanly without creating outputs.
-        target = self.repo_root / "raw" / "books" / self.source_id
+        target = self.store_root / "raw" / "books" / self.source_id
         target.mkdir(parents=True, exist_ok=True)
 
-        result = PDFExtractor().extract(self.source_id, str(self.repo_root))
+        result = PDFExtractor().extract(self.source_id, str(self.store_root))
         self.assertEqual(result["status"], "failure")
         self.assertIn("metadata_missing", result["reason"])
         self.assertFalse((target / "source.txt").exists())
@@ -153,14 +158,14 @@ class PDFExtractorFailureTests(unittest.TestCase):
         # processed/books/<id>/markdown/index.md projection. The extractor
         # itself only writes to raw/; projection is the CLI's job. This test
         # verifies that the extractor stays out of processed/.
-        write_book_metadata(self.repo_root, source_id=self.source_id)
-        target = self.repo_root / "raw" / "books" / self.source_id
+        write_book_metadata(self.store_root, source_id=self.source_id)
+        target = self.store_root / "raw" / "books" / self.source_id
         (target / "source.pdf").write_bytes(MINIMAL_PDF)
 
-        PDFExtractor().extract(self.source_id, str(self.repo_root))
+        PDFExtractor().extract(self.source_id, str(self.store_root))
 
         processed_md = (
-            self.repo_root
+            self.store_root
             / "processed"
             / "books"
             / self.source_id

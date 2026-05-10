@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import tempfile
 import unittest
 import uuid
@@ -34,26 +35,28 @@ def _write_concept(repo_root: Path, source_id: str, concept_id: str) -> None:
 class PromoteKnowledgeCliTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self._tmp.name)
+        os.environ["DATA_LAKE_PATH"] = self._tmp.name
+        self.store_root = Path(self._tmp.name) / "store"
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
+        os.environ.pop("DATA_LAKE_PATH", None)
 
     def test_promotes_concept_writes_promoted_file(self) -> None:
         sid = "src-promote-001"
         cid = str(uuid.uuid4())
-        _write_concept(self.repo_root, sid, cid)
+        _write_concept(self.store_root, sid, cid)
         out = io.StringIO()
         rc = promote_knowledge(
             artifact_id=cid,
             source_id=sid,
             artifact_type="concept",
-            repo_root=self.repo_root,
+            repo_root=self.store_root,
             out_stream=out,
         )
         self.assertEqual(rc, 0)
         promoted = (
-            self.repo_root / "processed" / "notes" / sid
+            self.store_root / "processed" / "notes" / sid
             / "knowledge" / "promoted" / f"{cid}.json"
         )
         self.assertTrue(promoted.is_file())
@@ -64,20 +67,16 @@ class PromoteKnowledgeCliTests(unittest.TestCase):
         """RT4-004: promote-knowledge twice must fail with already_promoted."""
         sid = "src-promote-002"
         cid = str(uuid.uuid4())
-        _write_concept(self.repo_root, sid, cid)
+        _write_concept(self.store_root, sid, cid)
         rc1 = promote_knowledge(
             artifact_id=cid, source_id=sid, artifact_type="concept",
-            repo_root=self.repo_root, out_stream=io.StringIO(),
+            repo_root=self.store_root, out_stream=io.StringIO(),
         )
         self.assertEqual(rc1, 0)
         out = io.StringIO()
         rc2 = promote_knowledge(
             artifact_id=cid, source_id=sid, artifact_type="concept",
-            repo_root=self.repo_root, out_stream=out,
+            repo_root=self.store_root, out_stream=out,
         )
         self.assertEqual(rc2, 1)
         self.assertIn("already_promoted", out.getvalue())
-
-
-if __name__ == "__main__":
-    unittest.main()

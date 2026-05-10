@@ -1,6 +1,7 @@
 """Tests for the Obsidian projection writer."""
 from __future__ import annotations
 
+import os
 import re
 import tempfile
 import unittest
@@ -24,20 +25,22 @@ def _stable(text: str) -> str:
 class ObsidianProjectionTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self._tmp.name)
+        os.environ["DATA_LAKE_PATH"] = self._tmp.name
+        self.store_root = Path(self._tmp.name) / "store"
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
+        os.environ.pop("DATA_LAKE_PATH", None)
 
     def _ingest(self):
         sid = "meetings-20260509-projection"
         write_source(
-            self.repo_root,
+            self.store_root,
             family="meetings",
             source_id=sid,
             content=MEETING_TRANSCRIPT,
         )
-        result = SourceLoader().load(sid, str(self.repo_root))
+        result = SourceLoader().load(sid, str(self.store_root))
         self.assertEqual(result["status"], "success", msg=result.get("reason"))
         return result
 
@@ -46,7 +49,7 @@ class ObsidianProjectionTests(unittest.TestCase):
         path = ObsidianProjection().write_source_index(
             result["source_record"],
             result["text_units"],
-            str(self.repo_root),
+            str(self.store_root),
         )
         index = Path(path)
         self.assertTrue(index.is_file())
@@ -61,13 +64,13 @@ class ObsidianProjectionTests(unittest.TestCase):
         first = ObsidianProjection().write_source_index(
             result["source_record"],
             result["text_units"],
-            str(self.repo_root),
+            str(self.store_root),
         )
         first_text = Path(first).read_text(encoding="utf-8")
         second = ObsidianProjection().write_source_index(
             result["source_record"],
             result["text_units"],
-            str(self.repo_root),
+            str(self.store_root),
         )
         second_text = Path(second).read_text(encoding="utf-8")
         # Same input → identical Markdown (excluding the timestamp line which

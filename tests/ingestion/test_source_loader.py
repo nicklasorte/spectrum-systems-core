@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,20 +15,22 @@ from ._fixtures import BOOK_PARAGRAPHS, MEETING_TRANSCRIPT, write_source
 class SourceLoaderTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self.repo_root = Path(self._tmp.name)
+        os.environ["DATA_LAKE_PATH"] = self._tmp.name
+        self.store_root = Path(self._tmp.name) / "store"
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
+        os.environ.pop("DATA_LAKE_PATH", None)
 
     def test_valid_meeting_produces_source_record(self) -> None:
         write_source(
-            self.repo_root,
+            self.store_root,
             family="meetings",
             source_id="meetings-20260509-q3-planning",
             content=MEETING_TRANSCRIPT,
         )
         result = SourceLoader().load(
-            "meetings-20260509-q3-planning", str(self.repo_root)
+            "meetings-20260509-q3-planning", str(self.store_root)
         )
         self.assertEqual(result["status"], "success", msg=result.get("reason"))
         record = result["source_record"]
@@ -40,7 +43,7 @@ class SourceLoaderTests(unittest.TestCase):
 
     def test_valid_book_produces_paragraphs(self) -> None:
         write_source(
-            self.repo_root,
+            self.store_root,
             family="books",
             source_id="books-20260509-quiet-room",
             content=BOOK_PARAGRAPHS,
@@ -50,7 +53,7 @@ class SourceLoaderTests(unittest.TestCase):
             },
         )
         result = SourceLoader().load(
-            "books-20260509-quiet-room", str(self.repo_root)
+            "books-20260509-quiet-room", str(self.store_root)
         )
         self.assertEqual(result["status"], "success", msg=result.get("reason"))
         unit_types = {u["unit_type"] for u in result["text_units"]}
@@ -59,27 +62,27 @@ class SourceLoaderTests(unittest.TestCase):
 
     def test_missing_source_fails(self) -> None:
         result = SourceLoader().load(
-            "comments-20260509-nonexistent", str(self.repo_root)
+            "comments-20260509-nonexistent", str(self.store_root)
         )
         self.assertEqual(result["status"], "failure")
         self.assertIn("source_not_found", result["reason"])
 
     def test_empty_source_fails(self) -> None:
         write_source(
-            self.repo_root,
+            self.store_root,
             family="comments",
             source_id="comments-20260509-empty",
             content="   \n\n   \n",
         )
         result = SourceLoader().load(
-            "comments-20260509-empty", str(self.repo_root)
+            "comments-20260509-empty", str(self.store_root)
         )
         self.assertEqual(result["status"], "failure")
         self.assertIn("source_empty", result["reason"])
 
     def test_pdf_rejected(self) -> None:
         # Build the dir, but force raw_format=pdf in metadata.
-        target = self.repo_root / "raw" / "books" / "books-20260509-pdf"
+        target = self.store_root / "raw" / "books" / "books-20260509-pdf"
         target.mkdir(parents=True, exist_ok=True)
         (target / "source.txt").write_text("hello", encoding="utf-8")
         metadata = {
@@ -98,7 +101,7 @@ class SourceLoaderTests(unittest.TestCase):
             json.dumps(metadata, sort_keys=True) + "\n", encoding="utf-8"
         )
         result = SourceLoader().load(
-            "books-20260509-pdf", str(self.repo_root)
+            "books-20260509-pdf", str(self.store_root)
         )
         self.assertEqual(result["status"], "failure")
         self.assertIn("pdf_not_supported", result["reason"])
@@ -107,7 +110,7 @@ class SourceLoaderTests(unittest.TestCase):
         """Red-team regression: copyrighted material cannot ingest with
         private_use_only=False; the schema's conditional check must block."""
         write_source(
-            self.repo_root,
+            self.store_root,
             family="books",
             source_id="books-20260509-must-be-private",
             content=BOOK_PARAGRAPHS,
@@ -117,13 +120,13 @@ class SourceLoaderTests(unittest.TestCase):
             },
         )
         result = SourceLoader().load(
-            "books-20260509-must-be-private", str(self.repo_root)
+            "books-20260509-must-be-private", str(self.store_root)
         )
         self.assertEqual(result["status"], "failure")
         self.assertIn("metadata_schema_violation", result["reason"])
 
     def test_invalid_metadata_fails(self) -> None:
-        target = self.repo_root / "raw" / "notes" / "notes-20260509-bad"
+        target = self.store_root / "raw" / "notes" / "notes-20260509-bad"
         target.mkdir(parents=True, exist_ok=True)
         (target / "source.txt").write_text("Some content.\n", encoding="utf-8")
         # Missing 'title' and 'raw_format' required fields.
@@ -141,7 +144,7 @@ class SourceLoaderTests(unittest.TestCase):
             json.dumps(bad_metadata) + "\n", encoding="utf-8"
         )
         result = SourceLoader().load(
-            "notes-20260509-bad", str(self.repo_root)
+            "notes-20260509-bad", str(self.store_root)
         )
         self.assertEqual(result["status"], "failure")
         self.assertIn("metadata_schema_violation", result["reason"])
@@ -150,15 +153,15 @@ class SourceLoaderTests(unittest.TestCase):
         sid = "working_papers-20260509-thread"
         content = "First section.\n\nSecond section line one.\nSecond section line two.\n"
         write_source(
-            self.repo_root,
+            self.store_root,
             family="working_papers",
             source_id=sid,
             content=content,
             metadata_overrides={"source_type": "draft_paper"},
         )
 
-        result_a = SourceLoader().load(sid, str(self.repo_root))
-        result_b = SourceLoader().load(sid, str(self.repo_root))
+        result_a = SourceLoader().load(sid, str(self.store_root))
+        result_b = SourceLoader().load(sid, str(self.store_root))
         self.assertEqual(result_a["status"], "success")
         self.assertEqual(result_b["status"], "success")
 
@@ -186,7 +189,7 @@ class SourceLoaderTests(unittest.TestCase):
         produce non-empty page_numbers arrays for book sources.
         """
         sid = "books-20260509-paginated"
-        target = self.repo_root / "raw" / "books" / sid
+        target = self.store_root / "raw" / "books" / sid
         target.mkdir(parents=True, exist_ok=True)
 
         # Two pages: page 1 contains paragraph 1, page 2 contains paragraphs 2-3.
@@ -243,11 +246,11 @@ class SourceLoaderTests(unittest.TestCase):
             json.dumps(metadata, sort_keys=True) + "\n", encoding="utf-8"
         )
 
-        result = SourceLoader().load(sid, str(self.repo_root))
+        result = SourceLoader().load(sid, str(self.store_root))
         self.assertEqual(result["status"], "success", msg=result.get("reason"))
 
         units_path = (
-            self.repo_root / "processed" / "books" / sid / "text_units.jsonl"
+            self.store_root / "processed" / "books" / sid / "text_units.jsonl"
         )
         units = []
         with units_path.open("r", encoding="utf-8") as fh:
@@ -273,7 +276,7 @@ class SourceLoaderTests(unittest.TestCase):
 
     def test_source_md_file_supported(self) -> None:
         sid = "notes-20260509-md-only"
-        target = self.repo_root / "raw" / "notes" / sid
+        target = self.store_root / "raw" / "notes" / sid
         target.mkdir(parents=True, exist_ok=True)
         (target / "source.md").write_text(
             "# A heading\n\nA paragraph follows.\n", encoding="utf-8"
@@ -293,7 +296,7 @@ class SourceLoaderTests(unittest.TestCase):
         (target / "metadata.json").write_text(
             json.dumps(metadata, sort_keys=True) + "\n", encoding="utf-8"
         )
-        result = SourceLoader().load(sid, str(self.repo_root))
+        result = SourceLoader().load(sid, str(self.store_root))
         self.assertEqual(result["status"], "success", msg=result.get("reason"))
         self.assertGreater(result["source_record"]["payload"]["text_unit_count"], 0)
 
