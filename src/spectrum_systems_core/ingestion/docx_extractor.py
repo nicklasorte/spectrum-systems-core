@@ -81,7 +81,10 @@ class DocxExtractor:
         dest = Path(output_path) if output_path is not None else src.with_suffix(".txt")
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        dest.write_text(full_text, encoding="utf-8")
+        try:
+            dest.write_text(full_text, encoding="utf-8")
+        except OSError as exc:
+            return _failure(f"write_error:{exc}")
 
         return {
             "status": "success",
@@ -112,7 +115,7 @@ class DocxExtractor:
         """
         src_dir = Path(docx_dir)
         if not src_dir.is_dir():
-            return []
+            return [_failure(f"directory_not_found:{docx_dir}")]
         docx_files = sorted(src_dir.glob("*.docx"))
 
         results: List[Dict[str, Any]] = []

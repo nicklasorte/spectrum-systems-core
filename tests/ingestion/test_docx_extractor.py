@@ -149,9 +149,32 @@ class TestExtractBatch(unittest.TestCase):
         results = DocxExtractor().extract_batch(str(self.tmp))
         self.assertEqual(len(results), 1)
 
-    def test_batch_nonexistent_dir_returns_empty_list(self) -> None:
+    def test_batch_nonexistent_dir_returns_failure_dict(self) -> None:
         results = DocxExtractor().extract_batch(str(self.tmp / "no_such_dir"))
-        self.assertEqual(results, [])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["status"], "failure")
+        self.assertIn("directory_not_found", results[0]["reason"])
+
+
+class TestWriteError(unittest.TestCase):
+    def setUp(self) -> None:
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_write_error_returns_failure_not_exception(self) -> None:
+        src = self.tmp / "doc.docx"
+        _write_docx(src, ["Content"])
+        dest = self.tmp / "out.txt"
+        with patch("spectrum_systems_core.ingestion.docx_extractor.Path.write_text") as mock_write:
+            mock_write.side_effect = OSError("disk full")
+            result = DocxExtractor().extract(str(src), output_path=str(dest))
+        self.assertEqual(result["status"], "failure")
+        self.assertIn("write_error", result["reason"])
+        self.assertIsNone(result["output_path"])
 
 
 class TestExtractNeverRaises(unittest.TestCase):
