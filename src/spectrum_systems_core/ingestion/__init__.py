@@ -14,6 +14,8 @@ from .pdf_guard import PDFAdmissionGuard
 from .pdf_extractor import PDFExtractor
 from .docx_extractor import DocxExtractor
 from .ingestion_eval import IngestionEval
+from .minutes_processor import MinutesProcessor
+from .ground_truth_linker import GroundTruthLinker
 
 __all__ = [
     "SourceLoader",
@@ -25,4 +27,6 @@ __all__ = [
     "PDFExtractor",
     "DocxExtractor",
     "IngestionEval",
+    "MinutesProcessor",
+    "GroundTruthLinker",
 ]

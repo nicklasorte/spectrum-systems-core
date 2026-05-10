@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/ingestion/minutes_record.schema.json",
+  "title": "minutes_record",
+  "description": "Phase L.2 artifact emitted by MinutesProcessor for each meeting-minutes .docx. Written to $SDL_ROOT/minutes/<minutes_id>.json. The text extracted alongside lives next to the source .docx; this artifact is the durable record of the extraction.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "minutes_id",
+    "docx_path",
+    "txt_path",
+    "meeting_date",
+    "meeting_name",
+    "text_unit_count",
+    "character_count",
+    "table_count",
+    "raw_hash",
+    "created_at",
+    "schema_version",
+    "provenance"
+  ],
+  "properties": {
+    "minutes_id": { "type": "string", "format": "uuid" },
+    "docx_path": { "type": "string", "minLength": 1 },
+    "txt_path": { "type": "string", "minLength": 1 },
+    "meeting_date": {
+      "type": ["string", "null"],
+      "format": "date"
+    },
+    "meeting_name": { "type": "string", "minLength": 1 },
+    "text_unit_count": { "type": "integer", "minimum": 0 },
+    "character_count": { "type": "integer", "minimum": 0 },
+    "table_count": { "type": "integer", "minimum": 0 },
+    "raw_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "schema_version": { "const": "1.0.0" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": { "const": "MinutesProcessor" }
+      }
+    }
+  }
+}

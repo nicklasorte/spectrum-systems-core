@@ -32,6 +32,8 @@ from .extraction import (
 from .ingestion import (
     DocxExtractor,
     GroundingHelper,
+    GroundTruthLinker,
+    MinutesProcessor,
     ObsidianProjection,
     PDFExtractor,
     Promoter,
@@ -2418,6 +2420,96 @@ def run_pipeline(
     return 0
 
 
+def link_ground_truth(
+    *,
+    data_lake: str | None = None,
+    process_minutes: bool = False,
+    out_stream=None,
+) -> int:
+    """Phase L.2: pair transcripts with meeting-minutes by date.
+
+    With --process-minutes, runs MinutesProcessor over
+    ``store/raw/minutes/`` first, then GroundTruthLinker. Without it,
+    only the linker runs (assumes minutes_record artifacts already exist).
+
+    Returns 0 on success or partial success. Returns 1 only when the
+    DATA_LAKE_PATH cannot be resolved or a fatal linker failure occurs.
+    """
+    out = out_stream if out_stream is not None else sys.stdout
+
+    resolved = data_lake or os.environ.get("DATA_LAKE_PATH", "")
+    if not resolved:
+        print(
+            "error: DATA_LAKE_PATH not set and --data-lake not provided",
+            file=out,
+        )
+        return 1
+    if not Path(resolved).exists():
+        print(
+            f"error: data lake path does not exist: {resolved}",
+            file=out,
+        )
+        return 1
+
+    print("=== Ground Truth Linker ===", file=out)
+
+    # Optional MinutesProcessor pass.
+    minutes_results: list[Dict[str, Any]] = []
+    if process_minutes:
+        minutes_results = MinutesProcessor().process_directory(resolved)
+        successes = [r for r in minutes_results if r.get("status") == "success"]
+        failures = [r for r in minutes_results if r.get("status") != "success"]
+        print(
+            f"Minutes files processed: {len(successes)} "
+            f"(failures: {len(failures)})",
+            file=out,
+        )
+        for r in failures:
+            print(
+                f"  ✗ {r.get('docx_path', '')}: {r.get('reason', '')}",
+                file=out,
+            )
+
+    # Linker run.
+    linker = GroundTruthLinker()
+    result = linker.link(resolved)
+    if result["status"] == "failure":
+        print(f"error: link failed: {result.get('reason', '')}", file=out)
+        return 1
+
+    pairs_high = (
+        result["pairs_produced"] - result["pairs_pending_review"]
+    )
+    print(
+        f"Pairs produced (high confidence): {pairs_high}",
+        file=out,
+    )
+    print(
+        f"Pairs pending review (medium confidence): "
+        f"{result['pairs_pending_review']}",
+        file=out,
+    )
+
+    unmatched_t = result.get("unmatched_transcripts", []) or []
+    unmatched_m = result.get("unmatched_minutes", []) or []
+    print(f"Unmatched transcripts: {len(unmatched_t)}", file=out)
+    for entry in unmatched_t:
+        date = entry.get("meeting_date") or "no-date"
+        name = entry.get("meeting_name") or entry.get("source_id", "")
+        reason = entry.get("reason", "")
+        print(f"  - {name} ({date}) [{reason}]", file=out)
+    print(f"Unmatched minutes: {len(unmatched_m)}", file=out)
+    for entry in unmatched_m:
+        date = entry.get("meeting_date") or "no-date"
+        name = entry.get("meeting_name") or entry.get("minutes_id", "")
+        reason = entry.get("reason", "")
+        print(f"  - {name} ({date}) [{reason}]", file=out)
+
+    print("", file=out)
+    print(f"Linking report: {result['linking_report_path']}", file=out)
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m spectrum_systems_core.cli",
@@ -2911,6 +3003,37 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    lg = sub.add_parser(
+        "link-ground-truth",
+        help="Phase L.2: pair transcripts with meeting-minutes by date.",
+        description=(
+            "Phase L.2 GroundTruthLinker. Reads transcript source_records "
+            "from store/processed/meetings/ and SDL_ROOT, and minutes_record "
+            "artifacts from SDL_ROOT/minutes/. Pairs them by meeting_date: "
+            "exact dates produce auto-confirmed pairs; ±1-day matches "
+            "produce pending_review pairs requiring human confirmation. "
+            "Unmatched transcripts and minutes are recorded explicitly in "
+            "the linking_report. With --process-minutes, runs "
+            "MinutesProcessor over store/raw/minutes/ first."
+        ),
+    )
+    lg.add_argument(
+        "--data-lake",
+        default=None,
+        help=(
+            "Path to the data lake root. Overrides the DATA_LAKE_PATH "
+            "environment variable when provided."
+        ),
+    )
+    lg.add_argument(
+        "--process-minutes",
+        action="store_true",
+        help=(
+            "Run MinutesProcessor over store/raw/minutes/ before linking. "
+            "Default: skip if minutes_records already exist."
+        ),
+    )
+
     return parser
 
 
@@ -3037,6 +3160,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_pipeline(
             dry_run=args.dry_run,
             data_lake=args.data_lake,
+        )
+    if args.command == "link-ground-truth":
+        return link_ground_truth(
+            data_lake=args.data_lake,
+            process_minutes=args.process_minutes,
         )
     if args.command == "apply-compression":
         return apply_compression_cli(

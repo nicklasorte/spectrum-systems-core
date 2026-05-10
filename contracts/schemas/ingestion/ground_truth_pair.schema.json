@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/ingestion/ground_truth_pair.schema.json",
+  "title": "ground_truth_pair",
+  "description": "Phase L.2 artifact emitted by GroundTruthLinker. Pairs a transcript source_record with a meeting-minutes minutes_record by meeting date. High-confidence (exact date) pairs are auto-confirmed; medium-confidence (±1 day) pairs require human confirmation before they may be used as eval ground truth. Written to $SDL_ROOT/ground_truth/<pair_id>.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "pair_id",
+    "source_artifact_id",
+    "minutes_artifact_id",
+    "meeting_date",
+    "meeting_name",
+    "match_confidence",
+    "status",
+    "created_at",
+    "confirmed_at",
+    "confirmed_by",
+    "schema_version",
+    "provenance"
+  ],
+  "properties": {
+    "pair_id": { "type": "string", "format": "uuid" },
+    "source_artifact_id": { "type": "string", "minLength": 1 },
+    "minutes_artifact_id": { "type": "string", "minLength": 1 },
+    "meeting_date": { "type": "string", "format": "date" },
+    "meeting_name": { "type": "string", "minLength": 1 },
+    "match_confidence": {
+      "type": "string",
+      "enum": ["high", "medium"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["confirmed", "pending_review", "retired"]
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "confirmed_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "confirmed_by": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "schema_version": { "const": "1.0.0" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": { "const": "GroundTruthLinker" }
+      }
+    }
+  }
+}

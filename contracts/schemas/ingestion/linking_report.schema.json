@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/ingestion/linking_report.schema.json",
+  "title": "linking_report",
+  "description": "Phase L.2 artifact emitted by GroundTruthLinker once per run. Records totals, per-confidence pair counts, and the explicit list of unmatched transcripts and minutes. Written to $SDL_ROOT/ground_truth/reports/<run_id>_linking_report.json. Always written, even when zero pairs are produced.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "created_at",
+    "data_lake_path",
+    "total_transcripts",
+    "total_minutes",
+    "high_confidence_pairs",
+    "medium_confidence_pairs",
+    "unmatched_transcripts",
+    "unmatched_minutes",
+    "schema_version"
+  ],
+  "properties": {
+    "run_id": { "type": "string", "format": "uuid" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "data_lake_path": { "type": "string", "minLength": 1 },
+    "total_transcripts": { "type": "integer", "minimum": 0 },
+    "total_minutes": { "type": "integer", "minimum": 0 },
+    "high_confidence_pairs": { "type": "integer", "minimum": 0 },
+    "medium_confidence_pairs": { "type": "integer", "minimum": 0 },
+    "unmatched_transcripts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source_id", "source_artifact_id", "meeting_date", "meeting_name", "reason"],
+        "properties": {
+          "source_id": { "type": "string", "minLength": 1 },
+          "source_artifact_id": { "type": "string", "minLength": 1 },
+          "meeting_date": { "type": ["string", "null"], "format": "date" },
+          "meeting_name": { "type": ["string", "null"] },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "no_meeting_date",
+              "no_candidate",
+              "duplicate_date_collision",
+              "ambiguous_fuzzy_match"
+            ]
+          }
+        }
+      }
+    },
+    "unmatched_minutes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["minutes_id", "minutes_artifact_id", "meeting_date", "meeting_name", "reason"],
+        "properties": {
+          "minutes_id": { "type": "string", "minLength": 1 },
+          "minutes_artifact_id": { "type": "string", "minLength": 1 },
+          "meeting_date": { "type": ["string", "null"], "format": "date" },
+          "meeting_name": { "type": ["string", "null"] },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "no_meeting_date",
+              "no_candidate",
+              "duplicate_date_collision",
+              "ambiguous_fuzzy_match"
+            ]
+          }
+        }
+      }
+    },
+    "schema_version": { "const": "1.0.0" }
+  }
+}
