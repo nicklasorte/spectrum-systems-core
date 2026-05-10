@@ -1,0 +1,70 @@
+name: Cleanup duplicate ground truth pairs
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run only (show what would be retired without moving files)'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup-duplicate-pairs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Checkout data-lake
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.DATA_LAKE_REPO }}
+          token: ${{ secrets.GH_PAT }}
+          path: data-lake
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Show duplicates (dry run)
+        run: |
+          python scripts/cleanup_duplicate_pairs.py \
+            --data-lake ${{ github.workspace }}/data-lake \
+            --schema-dir ${{ github.workspace }}/contracts/schemas \
+            --dry-run
+
+      - name: Run cleanup
+        if: ${{ github.event.inputs.dry_run == 'false' }}
+        run: |
+          python scripts/cleanup_duplicate_pairs.py \
+            --data-lake ${{ github.workspace }}/data-lake \
+            --schema-dir ${{ github.workspace }}/contracts/schemas
+
+      - name: Commit retired pairs back to data-lake
+        if: ${{ github.event.inputs.dry_run == 'false' }}
+        run: |
+          cd data-lake
+          git config user.name "spectrum-pipeline[bot]"
+          git config user.email "spectrum-pipeline[bot]@users.noreply.github.com"
+          git add store/artifacts/ground_truth/
+          if git diff --staged --quiet; then
+            echo "No duplicates found to retire."
+          else
+            git commit -m "chore: retire duplicate ground_truth_pair artifacts
+
+          Retired duplicates created before idempotency fix (PR #36).
+          Kept oldest confirmed pair per (source_artifact_id, minutes_artifact_id).
+          Workflow run: ${{ github.run_id }}"
+            git push
+          fi
