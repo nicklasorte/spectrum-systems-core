@@ -1247,3 +1247,222 @@ def test_cli_deduplicate_flag_invokes_dedup_before_linking(
     assert "Found 1 duplicate groups" in captured.out
     assert "Retired 1 duplicate records" in captured.out
     assert "Pairs produced (high confidence): 1" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Idempotency: re-running the linker over the same data must NOT produce
+# duplicate ground_truth_pair artifacts. Pairs are keyed by
+# (source_artifact_id, minutes_artifact_id) — the canonical pair identity.
+# Confirmed pairs are never overwritten. Retired pairs (under
+# ground_truth/retired/) are excluded from the existing-pairs scan so a
+# retired pair never blocks a legitimate new pair.
+# ---------------------------------------------------------------------------
+
+
+def test_idempotent_second_run_skips_existing_pairs(data_lake: Path) -> None:
+    """Two consecutive link() runs over the same inputs → second run
+    writes zero new pairs and reports the prior pair as already_confirmed."""
+    _write_transcript(
+        data_lake, source_id="m_a", title="TIG", date="2026-02-19"
+    )
+    _write_minutes(data_lake, meeting_date="2026-02-19", meeting_name="TIG")
+
+    first = GroundTruthLinker().link(str(data_lake))
+    assert first["pairs_produced"] == 1
+    assert first["pairs_new"] == 1
+    assert first["pairs_already_confirmed"] == 0
+
+    pairs_dir = data_lake / "store" / "artifacts" / "ground_truth"
+    after_first = list(pairs_dir.glob("*.json"))
+    assert len(after_first) == 1
+    first_pair = json.loads(after_first[0].read_text())
+    assert first_pair["status"] == "confirmed"
+
+    second = GroundTruthLinker().link(str(data_lake))
+    # No new pair artifacts. The existing confirmed pair is reported.
+    assert second["pairs_produced"] == 0
+    assert second["pairs_new"] == 0
+    assert second["pairs_already_confirmed"] == 1
+    assert second["pairs_already_pending"] == 0
+    after_second = list(pairs_dir.glob("*.json"))
+    assert len(after_second) == 1
+    # And it's the same file with the same content — never overwritten.
+    assert after_second[0] == after_first[0]
+    assert json.loads(after_second[0].read_text()) == first_pair
+
+
+def test_confirmed_pair_never_overwritten(data_lake: Path) -> None:
+    """An existing confirmed pair stays byte-identical across a re-run."""
+    _write_transcript(
+        data_lake, source_id="m_a", title="TIG", date="2026-02-19"
+    )
+    _write_minutes(data_lake, meeting_date="2026-02-19", meeting_name="TIG")
+    GroundTruthLinker().link(str(data_lake))
+
+    pairs_dir = data_lake / "store" / "artifacts" / "ground_truth"
+    pair_path = next(pairs_dir.glob("*.json"))
+    pair_before = pair_path.read_text()
+
+    # Re-run.
+    result = GroundTruthLinker().link(str(data_lake))
+    assert result["pairs_new"] == 0
+    assert result["pairs_already_confirmed"] == 1
+
+    assert list(pairs_dir.glob("*.json")) == [pair_path]
+    assert pair_path.read_text() == pair_before
+
+
+def test_pending_pair_not_overwritten(data_lake: Path) -> None:
+    """An existing pending_review pair is preserved across a re-run."""
+    # ±1 day → medium confidence → status pending_review.
+    _write_transcript(
+        data_lake, source_id="m_a", title="TIG", date="2026-02-19"
+    )
+    _write_minutes(data_lake, meeting_date="2026-02-20", meeting_name="TIG")
+
+    first = GroundTruthLinker().link(str(data_lake))
+    assert first["pairs_pending_review"] == 1
+    pairs_dir = data_lake / "store" / "artifacts" / "ground_truth"
+    pair_path = next(pairs_dir.glob("*.json"))
+    pair_before = pair_path.read_text()
+
+    second = GroundTruthLinker().link(str(data_lake))
+    assert second["pairs_new"] == 0
+    assert second["pairs_already_pending"] == 1
+    assert second["pairs_already_confirmed"] == 0
+    assert list(pairs_dir.glob("*.json")) == [pair_path]
+    assert pair_path.read_text() == pair_before
+
+
+def test_new_pair_written_when_no_existing_match(data_lake: Path) -> None:
+    """A meeting with no prior pair on disk → new pair is written."""
+    _write_transcript(
+        data_lake, source_id="m_a", title="TIG", date="2026-02-19"
+    )
+    _write_minutes(data_lake, meeting_date="2026-02-19", meeting_name="TIG")
+
+    result = GroundTruthLinker().link(str(data_lake))
+    assert result["pairs_new"] == 1
+    assert result["pairs_already_confirmed"] == 0
+    assert result["pairs_already_pending"] == 0
+    pairs_dir = data_lake / "store" / "artifacts" / "ground_truth"
+    assert len(list(pairs_dir.glob("*.json"))) == 1
+
+
+def test_retired_subdir_excluded_from_existing_scan(data_lake: Path) -> None:
+    """A pair artifact in ground_truth/retired/ must NOT block a new pair
+    for the same (source_artifact_id, minutes_artifact_id)."""
+    src_aid = _write_transcript(
+        data_lake, source_id="m_a", title="TIG", date="2026-02-19"
+    )
+    minutes_id = _write_minutes(
+        data_lake, meeting_date="2026-02-19", meeting_name="TIG"
+    )
+
+    # Hand-place a retired pair under ground_truth/retired/ with the same
+    # canonical (source, minutes) identity.
+    pairs_dir = data_lake / "store" / "artifacts" / "ground_truth"
+    retired_dir = pairs_dir / "retired"
+    retired_dir.mkdir(parents=True, exist_ok=True)
+    retired_pair = {
+        "pair_id": str(uuid.uuid4()),
+        "source_artifact_id": src_aid,
+        "minutes_artifact_id": minutes_id,
+        "meeting_date": "2026-02-19",
+        "meeting_name": "TIG",
+        "match_confidence": "high",
+        "status": "retired",
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "confirmed_at": None,
+        "confirmed_by": None,
+        "schema_version": "1.0.0",
+        "provenance": {"produced_by": "GroundTruthLinker"},
+    }
+    (retired_dir / f"{retired_pair['pair_id']}.json").write_text(
+        json.dumps(retired_pair, sort_keys=True, indent=2) + "\n"
+    )
+
+    result = GroundTruthLinker().link(str(data_lake))
+    # The retired pair was excluded from the scan, so a new pair is
+    # written and the retired one is left untouched.
+    assert result["pairs_new"] == 1
+    assert result["pairs_already_confirmed"] == 0
+    assert result["pairs_already_pending"] == 0
+    # The retired artifact is still on disk.
+    assert (retired_dir / f"{retired_pair['pair_id']}.json").is_file()
+    # A new pair at the top level exists too.
+    top_level = list(pairs_dir.glob("*.json"))
+    assert len(top_level) == 1
+    new_pair = json.loads(top_level[0].read_text())
+    assert new_pair["status"] == "confirmed"
+    assert new_pair["pair_id"] != retired_pair["pair_id"]
+
+
+def test_link_return_dict_includes_breakdown(data_lake: Path) -> None:
+    """The link() return dict carries pairs_already_confirmed,
+    pairs_already_pending, and pairs_new."""
+    _write_transcript(
+        data_lake, source_id="m_a", title="TIG", date="2026-02-19"
+    )
+    _write_minutes(data_lake, meeting_date="2026-02-19", meeting_name="TIG")
+    result = GroundTruthLinker().link(str(data_lake))
+    assert "pairs_already_confirmed" in result
+    assert "pairs_already_pending" in result
+    assert "pairs_new" in result
+    assert isinstance(result["pairs_already_confirmed"], int)
+    assert isinstance(result["pairs_already_pending"], int)
+    assert isinstance(result["pairs_new"], int)
+
+
+def test_idempotent_run_preserves_existing_pair_id(data_lake: Path) -> None:
+    """Across re-runs, the on-disk pair_id (a UUID) for an existing pair
+    is unchanged — proving we did not write a fresh pair on top of it."""
+    _write_transcript(
+        data_lake, source_id="m_a", title="TIG", date="2026-02-19"
+    )
+    _write_minutes(data_lake, meeting_date="2026-02-19", meeting_name="TIG")
+    GroundTruthLinker().link(str(data_lake))
+
+    pairs_dir = data_lake / "store" / "artifacts" / "ground_truth"
+    pair_ids_before = sorted(p.name for p in pairs_dir.glob("*.json"))
+
+    GroundTruthLinker().link(str(data_lake))
+    GroundTruthLinker().link(str(data_lake))
+
+    pair_ids_after = sorted(p.name for p in pairs_dir.glob("*.json"))
+    assert pair_ids_before == pair_ids_after
+
+
+def test_idempotent_does_not_count_freshly_written_pair_in_same_run(
+    data_lake: Path,
+) -> None:
+    """In a single run, a pair we just wrote must not be reported as
+    already_confirmed. The existing-pairs index is built BEFORE any
+    write, so a newly-produced pair never shows up in its own bucket."""
+    _write_transcript(
+        data_lake, source_id="m_a", title="TIG", date="2026-02-19"
+    )
+    _write_minutes(data_lake, meeting_date="2026-02-19", meeting_name="TIG")
+    result = GroundTruthLinker().link(str(data_lake))
+    assert result["pairs_new"] == 1
+    assert result["pairs_already_confirmed"] == 0
+
+
+def test_cli_idempotency_lines_present(data_lake: Path) -> None:
+    """The CLI surface includes the idempotency breakdown so re-runs are
+    self-explanatory."""
+    _write_transcript(
+        data_lake, source_id="m_a", title="TIG", date="2026-02-19"
+    )
+    _write_minutes(data_lake, meeting_date="2026-02-19", meeting_name="TIG")
+    GroundTruthLinker().link(str(data_lake))
+
+    out = io.StringIO()
+    rc = link_ground_truth(
+        data_lake=str(data_lake), process_minutes=False, out_stream=out
+    )
+    assert rc == 0
+    text = out.getvalue()
+    assert "Pairs produced (new): 0" in text
+    assert "Pairs already confirmed (skipped): 1" in text
+    assert "Pairs pending review (new): 0" in text

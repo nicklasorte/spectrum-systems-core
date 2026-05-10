@@ -13,6 +13,9 @@
     "total_minutes",
     "high_confidence_pairs",
     "medium_confidence_pairs",
+    "pairs_new",
+    "pairs_already_confirmed",
+    "pairs_already_pending",
     "unmatched_transcripts",
     "unmatched_minutes",
     "schema_version"
@@ -25,6 +28,9 @@
     "total_minutes": { "type": "integer", "minimum": 0 },
     "high_confidence_pairs": { "type": "integer", "minimum": 0 },
     "medium_confidence_pairs": { "type": "integer", "minimum": 0 },
+    "pairs_new": { "type": "integer", "minimum": 0 },
+    "pairs_already_confirmed": { "type": "integer", "minimum": 0 },
+    "pairs_already_pending": { "type": "integer", "minimum": 0 },
     "unmatched_transcripts": {
       "type": "array",
       "items": {
