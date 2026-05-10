@@ -12,6 +12,7 @@ from .obsidian_projection import ObsidianProjection
 from .promoter import Promoter
 from .pdf_guard import PDFAdmissionGuard
 from .pdf_extractor import PDFExtractor
+from .docx_extractor import DocxExtractor
 
 __all__ = [
     "SourceLoader",
@@ -21,4 +22,5 @@ __all__ = [
     "Promoter",
     "PDFAdmissionGuard",
     "PDFExtractor",
+    "DocxExtractor",
 ]
