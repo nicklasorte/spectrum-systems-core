@@ -40,6 +40,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import jsonschema
 
 from ._paths import contracts_root
+from .date_utils import extract_meeting_date as _extract_meeting_date
 
 PAIR_SCHEMA_VERSION = "1.0.0"
 REPORT_SCHEMA_VERSION = "1.0.0"
@@ -99,7 +100,12 @@ class GroundTruthLinker:
         t_with_date: List[Dict[str, Any]] = []
         for t in transcripts:
             if t["meeting_date"] is None:
-                unmatched_t.append(_unmatched_t(t, "no_meeting_date"))
+                # _normalize_transcript distinguishes "no candidate strings
+                # to extract from" (no_meeting_date) from "candidate strings
+                # were present but matched no date pattern"
+                # (no_date_extractable). Default safely to no_meeting_date.
+                reason = t.get("no_date_reason") or "no_meeting_date"
+                unmatched_t.append(_unmatched_t(t, reason))
             else:
                 t_with_date.append(t)
         m_with_date: List[Dict[str, Any]] = []
@@ -401,17 +407,71 @@ def _payload_get(rec: Dict[str, Any], key: str) -> Optional[str]:
 
 def _normalize_transcript(rec: Dict[str, Any], source_id: str) -> Dict[str, Any]:
     payload = rec.get("payload", {}) or {}
-    metadata = payload.get("metadata", {}) or {}
-    raw_date = metadata.get("date") if isinstance(metadata, dict) else None
-    meeting_date = _normalize_date(raw_date if isinstance(raw_date, str) else None)
     title = payload.get("title") if isinstance(payload.get("title"), str) else None
     artifact_id = rec.get("artifact_id", "")
+    meeting_date = _extract_transcript_date(payload)
+    no_date_reason: Optional[str] = None
+    if meeting_date is None:
+        # Distinguish "regex never matched any of the candidate strings"
+        # (no_date_extractable) from "no candidate strings present at all"
+        # (no_meeting_date) so the linker can pick the right unmatched
+        # reason later.
+        if any(_filename_candidates(payload)):
+            no_date_reason = "no_date_extractable"
+        else:
+            no_date_reason = "no_meeting_date"
     return {
         "source_id": source_id,
         "source_artifact_id": artifact_id if isinstance(artifact_id, str) else "",
         "meeting_date": meeting_date,
         "meeting_name": title,
+        "no_date_reason": no_date_reason,
     }
+
+
+def _filename_candidates(payload: Dict[str, Any]) -> List[str]:
+    """Return the ordered candidate strings that may carry the meeting date.
+
+    Order: ``payload.title`` → basename of ``payload.raw_path`` → basename
+    of ``payload.processed_path``. Empty / non-string values are dropped.
+    """
+    out: List[str] = []
+    title = payload.get("title")
+    if isinstance(title, str) and title.strip():
+        out.append(title)
+    for key in ("raw_path", "processed_path"):
+        v = payload.get(key)
+        if isinstance(v, str) and v.strip():
+            base = os.path.basename(v.rstrip("/\\"))
+            if base:
+                out.append(base)
+    return out
+
+
+def _extract_transcript_date(payload: Dict[str, Any]) -> Optional[str]:
+    """Extract YYYY-MM-DD from the transcript source_record payload.
+
+    Tries each of ``title``, basename(``raw_path``), basename(``processed_path``)
+    in turn (after stripping the file extension) using the shared
+    ``date_utils.extract_meeting_date``. Returns ``None`` if no candidate
+    yields a date — does NOT fall back to ``payload.metadata.date``,
+    which the orchestrator seeds to a Unix-epoch sentinel
+    (``"1970-01-01"``) for raw drops without explicit metadata. Falling
+    back to that sentinel would make every dateless transcript collide
+    on the epoch.
+    """
+    for candidate in _filename_candidates(payload):
+        stem = Path(candidate).stem or candidate
+        d = _extract_meeting_date(stem)
+        if d is not None:
+            return d
+        # Some titles include the extension or no extension at all; try
+        # the raw candidate too in case ``Path.stem`` over-trims (e.g.
+        # the title "Meeting 2026.01.22" would lose ".22" via stem).
+        d = _extract_meeting_date(candidate)
+        if d is not None:
+            return d
+    return None
 
 
 def _load_minutes(sdl_root: Path) -> List[Dict[str, Any]]:

@@ -40,6 +40,7 @@
             "type": "string",
             "enum": [
               "no_meeting_date",
+              "no_date_extractable",
               "no_candidate",
               "duplicate_date_collision",
               "ambiguous_fuzzy_match"
@@ -63,6 +64,7 @@
             "type": "string",
             "enum": [
               "no_meeting_date",
+              "no_date_extractable",
               "no_candidate",
               "duplicate_date_collision",
               "ambiguous_fuzzy_match"
