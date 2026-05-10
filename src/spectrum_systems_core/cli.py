@@ -923,6 +923,57 @@ def format_paper(
     return 0
 
 
+def certify_paper(
+    *,
+    paper_id: str,
+    run_id: str,
+    vault: str | None = None,
+    repo_root: Path | None = None,
+    out_stream=None,
+) -> int:
+    """Phase K (GOV-10): run the 7-check certification on a formatted paper."""
+    from .governance import GOV10CertificationStep
+
+    out = out_stream if out_stream is not None else sys.stdout
+    repo_root_path = (repo_root or Path.cwd()).resolve()
+
+    if not paper_id:
+        print("error: must provide --paper-id", file=out)
+        return 1
+    if not run_id:
+        print("error: must provide --run-id", file=out)
+        return 1
+
+    result = GOV10CertificationStep().certify(
+        paper_id=paper_id,
+        run_id=run_id,
+        repo_root=str(repo_root_path),
+        vault_root=vault,
+    )
+
+    record = result.get("record") or {}
+    certification_id = result.get("certification_id", "")
+    total_cost = float(record.get("total_pipeline_cost_usd") or 0.0)
+    release_artifact = result.get("release_artifact")
+
+    if result.get("status") == "PASSED":
+        release_path = ""
+        if isinstance(release_artifact, dict):
+            release_path = release_artifact.get("release_path", "")
+        print(f"certification_id: {certification_id}", file=out)
+        print(f"status: PASSED", file=out)
+        print(f"release: {release_path}", file=out)
+        print(f"total_pipeline_cost_usd: {total_cost:.4f}", file=out)
+        return 0
+
+    print(f"certification_id: {certification_id}", file=out)
+    print("status: FAILED", file=out)
+    for reason in record.get("failure_reasons") or [result.get("reason", "")]:
+        if reason:
+            print(f"  - {reason}", file=out)
+    return 1
+
+
 def build_agency_profile(
     *,
     paper_source_id: str,
@@ -2269,6 +2320,28 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    cp = sub.add_parser(
+        "certify-paper",
+        help="Phase K (GOV-10): run terminal certification on a formatted paper.",
+        description=(
+            "Phase K certification gate. Runs 7 deterministic checks over "
+            "the artifact chain for the given paper_id and emits a "
+            "done_certification_record under "
+            "governance/certifications/<certification_id>.json. On PASSED, "
+            "also writes a release_artifact at "
+            "paper/released/<paper_id>.json. Fail-closed; never raises."
+        ),
+    )
+    cp.add_argument("--paper-id", required=True)
+    cp.add_argument("--run-id", required=True)
+    cp.add_argument(
+        "--vault",
+        help=(
+            "If provided, also write a view-only Markdown projection at "
+            "vault/Certifications/<certification_id>.md."
+        ),
+    )
+
     bap = sub.add_parser(
         "build-agency-profile",
         help="Phase E: ingest agency_comment issues into an agency profile.",
@@ -2558,6 +2631,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "format-paper":
         return format_paper(
             revised_draft_id=args.revised_draft_id,
+            vault=args.vault,
+        )
+    if args.command == "certify-paper":
+        return certify_paper(
+            paper_id=args.paper_id,
+            run_id=args.run_id,
             vault=args.vault,
         )
     if args.command == "build-agency-profile":

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/certification/done_certification_record.schema.json",
+  "title": "done_certification_record",
+  "description": "Phase K (GOV-10) terminal certification record. PASSED or FAILED only — never partial. Emitted by GOV10CertificationStep over the full artifact chain for one paper_id.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "certification_id",
+    "paper_id",
+    "certified_at",
+    "certifier_version",
+    "check_results",
+    "status",
+    "failure_reasons",
+    "total_checks",
+    "passed_checks",
+    "failed_checks",
+    "skipped_checks",
+    "total_pipeline_cost_usd",
+    "schema_version",
+    "provenance"
+  ],
+  "properties": {
+    "certification_id": { "type": "string", "format": "uuid" },
+    "paper_id": { "type": "string", "format": "uuid" },
+    "certified_at": { "type": "string", "format": "date-time" },
+    "certifier_version": { "const": "1.0.0" },
+    "check_results": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["check_name", "status", "detail"],
+        "properties": {
+          "check_name": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["PASSED", "FAILED", "SKIPPED"] },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "status": { "enum": ["PASSED", "FAILED"] },
+    "failure_reasons": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "total_checks": { "const": 7 },
+    "passed_checks": { "type": "integer", "minimum": 0, "maximum": 7 },
+    "failed_checks": { "type": "integer", "minimum": 0, "maximum": 7 },
+    "skipped_checks": { "type": "integer", "minimum": 0, "maximum": 7 },
+    "total_pipeline_cost_usd": { "type": "number", "minimum": 0.0 },
+    "schema_version": { "const": "1.0.0" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "produced_by",
+        "input_artifact_ids",
+        "certification_logic_version"
+      ],
+      "properties": {
+        "produced_by": { "const": "GOV10CertificationStep" },
+        "input_artifact_ids": {
+          "type": "array",
+          "items": { "type": "string", "format": "uuid" }
+        },
+        "certification_logic_version": { "const": "1.0.0" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "PASSED" } } },
+      "then": {
+        "properties": {
+          "failure_reasons": { "maxItems": 0 },
+          "failed_checks": { "const": 0 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "FAILED" } } },
+      "then": {
+        "properties": {
+          "failure_reasons": { "minItems": 1 },
+          "failed_checks": { "minimum": 1 }
+        }
+      }
+    }
+  ]
+}

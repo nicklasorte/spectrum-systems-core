@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/certification/release_artifact.schema.json",
+  "title": "release_artifact",
+  "description": "Phase K (GOV-10) terminal release artifact, written only when done_certification_record.status = PASSED. Lives at paper/released/<paper_id>.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "release_id",
+    "paper_id",
+    "certification_id",
+    "released_at",
+    "formatted_paper_artifact_id",
+    "release_path",
+    "schema_version",
+    "provenance"
+  ],
+  "properties": {
+    "release_id": { "type": "string", "format": "uuid" },
+    "paper_id": { "type": "string", "format": "uuid" },
+    "certification_id": { "type": "string", "format": "uuid" },
+    "released_at": { "type": "string", "format": "date-time" },
+    "formatted_paper_artifact_id": { "type": "string", "format": "uuid" },
+    "release_path": { "type": "string", "minLength": 1 },
+    "schema_version": { "const": "1.0.0" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by", "input_artifact_ids"],
+      "properties": {
+        "produced_by": { "const": "GOV10CertificationStep" },
+        "input_artifact_ids": {
+          "type": "array",
+          "items": { "type": "string", "format": "uuid" }
+        }
+      }
+    }
+  }
+}
