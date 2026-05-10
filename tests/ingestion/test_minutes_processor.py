@@ -179,3 +179,126 @@ def test_uses_docx_extractor_does_not_reimplement(
     )
     assert result["status"] == "success"
     assert calls["count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Idempotency (Fix A)
+# ---------------------------------------------------------------------------
+
+
+def test_idempotent_second_run_skips_already_processed(data_lake: Path) -> None:
+    """Second call on the same .docx must not write a duplicate
+    minutes_record. It returns status='skipped' with skipped_reason
+    'already_processed' and points at the existing artifact."""
+    docx = data_lake / "store" / "raw" / "minutes" / "Meeting 2-19-26.docx"
+    _write_docx(docx, ["First", "Second"])
+
+    first = MinutesProcessor().process(str(docx), str(data_lake))
+    assert first["status"] == "success"
+    first_artifact = Path(first["artifact_path"])
+    assert first_artifact.is_file()
+
+    second = MinutesProcessor().process(str(docx), str(data_lake))
+    assert second["status"] == "skipped"
+    assert second["skipped_reason"] == "already_processed"
+    assert second["artifact_path"] == str(first_artifact)
+    assert second["minutes_id"] == first["minutes_id"]
+
+    # No duplicate JSONs were written under SDL_ROOT/minutes/.
+    minutes_dir = data_lake / "store" / "artifacts" / "minutes"
+    json_files = list(minutes_dir.glob("*.json"))
+    assert len(json_files) == 1
+
+
+def test_idempotent_match_on_hash_not_filename(data_lake: Path) -> None:
+    """Renaming the .docx must NOT cause reprocessing — match is on
+    raw_hash (content), not filename."""
+    base = data_lake / "store" / "raw" / "minutes"
+    docx_a = base / "Meeting 2-19-26.docx"
+    _write_docx(docx_a, ["IDENTICAL CONTENT"])
+    first = MinutesProcessor().process(str(docx_a), str(data_lake))
+    assert first["status"] == "success"
+
+    # Rename: write same content under a different filename.
+    docx_b = base / "Different Name 2-19-26.docx"
+    _write_docx(docx_b, ["IDENTICAL CONTENT"])
+
+    second = MinutesProcessor().process(str(docx_b), str(data_lake))
+    assert second["status"] == "skipped"
+    assert second["skipped_reason"] == "already_processed"
+    assert second["minutes_id"] == first["minutes_id"]
+
+    # Still only one minutes_record on disk.
+    minutes_dir = data_lake / "store" / "artifacts" / "minutes"
+    assert len(list(minutes_dir.glob("*.json"))) == 1
+
+
+def test_failed_run_is_reprocessed_on_next_run(data_lake: Path) -> None:
+    """A failed processing attempt writes no artifact, so the next
+    attempt sees no matching record and proceeds normally (not skipped)."""
+    docx = data_lake / "store" / "raw" / "minutes" / "Meeting 2-19-26.docx"
+    _write_docx(docx, ["Body"])
+
+    # Simulate first-run failure by passing a path that doesn't exist.
+    bad = MinutesProcessor().process(
+        "/does/not/exist.docx", str(data_lake)
+    )
+    assert bad["status"] == "failure"
+    minutes_dir = data_lake / "store" / "artifacts" / "minutes"
+    assert not minutes_dir.exists() or list(minutes_dir.glob("*.json")) == []
+
+    # Now process the real file: must succeed (NOT skipped) since no
+    # prior on-disk record existed.
+    real = MinutesProcessor().process(str(docx), str(data_lake))
+    assert real["status"] == "success"
+    assert real["skipped_reason"] != "already_processed" if "skipped_reason" in real else True
+    assert Path(real["artifact_path"]).is_file()
+
+
+def test_process_directory_reports_skipped_count(data_lake: Path) -> None:
+    """Re-running process_directory yields status='skipped' for every
+    file already on disk."""
+    base = data_lake / "store" / "raw" / "minutes"
+    _write_docx(base / "Meeting 2-19-26.docx", ["A"])
+    _write_docx(base / "Meeting 3-19-26.docx", ["B"])
+
+    first = MinutesProcessor().process_directory(str(data_lake))
+    assert all(r["status"] == "success" for r in first)
+    assert len(first) == 2
+
+    second = MinutesProcessor().process_directory(str(data_lake))
+    assert len(second) == 2
+    assert all(r["status"] == "skipped" for r in second)
+    assert all(r.get("skipped_reason") == "already_processed" for r in second)
+
+    # No duplicate JSON files under SDL_ROOT/minutes/.
+    minutes_dir = data_lake / "store" / "artifacts" / "minutes"
+    assert len(list(minutes_dir.glob("*.json"))) == 2
+
+
+def test_retired_minutes_subdir_is_excluded_from_idempotency_check(
+    data_lake: Path,
+) -> None:
+    """A record under minutes/retired/ (deduplicated) must NOT count as
+    'already_processed' — the file may legitimately need to be
+    reprocessed if all live copies were retired."""
+    docx = data_lake / "store" / "raw" / "minutes" / "Meeting 2-19-26.docx"
+    _write_docx(docx, ["Body"])
+
+    first = MinutesProcessor().process(str(docx), str(data_lake))
+    assert first["status"] == "success"
+    artifact_path = Path(first["artifact_path"])
+
+    # Move the lone artifact to retired/ — simulating a dedup that
+    # retired all live copies.
+    retired_dir = artifact_path.parent / "retired"
+    retired_dir.mkdir(parents=True, exist_ok=True)
+    retired_target = retired_dir / artifact_path.name
+    artifact_path.rename(retired_target)
+
+    # Reprocess: must not skip (no live record matching this raw_hash).
+    second = MinutesProcessor().process(str(docx), str(data_lake))
+    assert second["status"] == "success"
+    # New live copy alongside the retired one.
+    minutes_dir = data_lake / "store" / "artifacts" / "minutes"
+    assert len(list(minutes_dir.glob("*.json"))) == 1

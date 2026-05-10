@@ -15,6 +15,7 @@ from .pdf_extractor import PDFExtractor
 from .docx_extractor import DocxExtractor
 from .ingestion_eval import IngestionEval
 from .minutes_processor import MinutesProcessor
+from .minutes_deduplicator import deduplicate_minutes
 from .ground_truth_linker import GroundTruthLinker
 
 __all__ = [
@@ -28,5 +29,6 @@ __all__ = [
     "DocxExtractor",
     "IngestionEval",
     "MinutesProcessor",
+    "deduplicate_minutes",
     "GroundTruthLinker",
 ]

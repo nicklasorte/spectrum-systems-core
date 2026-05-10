@@ -359,7 +359,7 @@ def test_orchestration_record_schema_validates(tmp_path):
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     jsonschema.Draft202012Validator(schema).validate(record)
 
-    assert record["schema_version"] == "1.1.0"
+    assert record["schema_version"] == "1.2.0"
     assert record["provenance"]["produced_by"] == "PipelineOrchestrator"
     assert record["status"] in {"success", "partial", "failure", "dry_run"}
 
@@ -517,3 +517,129 @@ def test_run_collision_files_become_failures_no_run(tmp_path):
     assert calls == []
     for entry in result["failed_this_run"]:
         assert entry["reason"].startswith("source_id_collision_with:")
+
+
+# ---------------------------------------------------------------------------
+# Fix B: filter "minutes" filenames out of transcript scan
+# ---------------------------------------------------------------------------
+
+
+def test_minutes_files_filtered_from_transcript_scan(tmp_path):
+    """A .docx whose name contains 'minutes' (case-insensitive) must be
+    routed to filtered_from_transcripts — never appear in unprocessed
+    or already_processed."""
+    root = _make_data_lake(tmp_path)
+    _drop_txt(root, "regular-meeting.txt")
+    _drop_docx(
+        root, "Meeting Minutes 20260115.docx", ["Body"]
+    )
+    _drop_txt(root, "Meeting MINUTES 20260116.txt")
+
+    result = PipelineOrchestrator().scan(str(root))
+
+    assert result["status"] == "success"
+    filtered = result.get("filtered_from_transcripts", [])
+    filtered_names = sorted(f["filename"] for f in filtered)
+    assert filtered_names == [
+        "Meeting MINUTES 20260116.txt",
+        "Meeting Minutes 20260115.docx",
+    ]
+    for f in filtered:
+        assert "minutes" in f["reason"].lower()
+    # The non-minutes transcript is still picked up.
+    assert result["total_unprocessed"] == 1
+    assert result["unprocessed"][0]["filename"] == "regular-meeting.txt"
+    # Filtered files do NOT appear in unprocessed or already_processed.
+    all_seen = [
+        e["filename"]
+        for e in result["unprocessed"] + result["already_processed"]
+    ]
+    assert "Meeting Minutes 20260115.docx" not in all_seen
+    assert "Meeting MINUTES 20260116.txt" not in all_seen
+
+
+def test_filtered_files_not_counted_as_failures(tmp_path):
+    """run() must NEVER turn a filtered file into a failure. The
+    orchestration record exposes them via filtered_from_transcripts and
+    failed_this_run stays empty when only filtered files exist."""
+    root = _make_data_lake(tmp_path)
+    _drop_docx(
+        root, "Working Group MINUTES 5Mar2026.docx", ["Body"]
+    )
+
+    calls: List[Dict[str, Any]] = []
+    orchestrator = PipelineOrchestrator(
+        transcript_runner=_success_runner_factory(calls)
+    )
+    result = orchestrator.run(str(root), dry_run=False)
+
+    assert calls == []  # runner never invoked on filtered files
+    assert result["total_failed"] == 0
+    assert result["failed_this_run"] == []
+    assert result["total_attempted"] == 0
+    assert len(result["filtered_from_transcripts"]) == 1
+    assert (
+        result["filtered_from_transcripts"][0]["filename"]
+        == "Working Group MINUTES 5Mar2026.docx"
+    )
+
+    # The on-disk run record carries filtered_from_transcripts and
+    # has a `filtered` results-row.
+    record = json.loads(
+        Path(result["orchestration_record_path"]).read_text(encoding="utf-8")
+    )
+    assert len(record["filtered_from_transcripts"]) == 1
+    filtered_rows = [r for r in record["results"] if r["status"] == "filtered"]
+    assert len(filtered_rows) == 1
+    assert filtered_rows[0]["eval_status"] == "not_run"
+
+
+def test_transcript_files_not_filtered(tmp_path):
+    """Files without 'minutes' in the filename are NOT filtered, even
+    if they contain other meeting-related words."""
+    root = _make_data_lake(tmp_path)
+    _drop_docx(
+        root, "Meeting Transcript 20260115.docx", ["Body"]
+    )
+    _drop_txt(root, "weekly-sync-2026-02-01.txt")
+
+    result = PipelineOrchestrator().scan(str(root))
+
+    assert result["filtered_from_transcripts"] == []
+    assert result["total_unprocessed"] == 2
+    assert result["total_raw"] == 2
+
+
+def test_orchestration_record_with_filtered_validates_against_schema(tmp_path):
+    """Verifies the schema bump (1.2.0) accepts filtered_from_transcripts
+    plus a results-row with status='filtered'."""
+    root = _make_data_lake(tmp_path)
+    _drop_txt(root, "ok.txt")
+    _drop_docx(root, "Project MINUTES 20260101.docx", ["Body"])
+
+    calls: List[Dict[str, Any]] = []
+    orchestrator = PipelineOrchestrator(
+        transcript_runner=_success_runner_factory(calls)
+    )
+    result = orchestrator.run(str(root), dry_run=False)
+    record = json.loads(
+        Path(result["orchestration_record_path"]).read_text(encoding="utf-8")
+    )
+
+    here = Path(__file__).resolve()
+    schema_path = None
+    for parent in here.parents:
+        candidate = (
+            parent
+            / "contracts"
+            / "schemas"
+            / "orchestration"
+            / "orchestration_run_record.schema.json"
+        )
+        if candidate.is_file():
+            schema_path = candidate
+            break
+    assert schema_path is not None
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(schema).validate(record)
+    assert record["schema_version"] == "1.2.0"
