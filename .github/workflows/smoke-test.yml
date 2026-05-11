@@ -33,117 +33,48 @@ jobs:
           DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
           SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
         run: |
-          set -o pipefail
-          SOURCE_ID=7-ghz-downlink-tig-meeting---transcript-2-19-26
-          python -m spectrum_systems_core.cli extract-typed \
-            --source-id "$SOURCE_ID" \
-            --data-lake "${{ github.workspace }}/data-lake" \
-            --force 2>&1 | tee /tmp/extract.log
-          # The CLI exits 0 even when a specific source FAILs (only exits 1
-          # when no chunks.jsonl exists anywhere). Force-fail this step when
-          # the target source did not produce an OK line so the real reason
-          # (chunks_jsonl_not_found, write_error, etc.) is the surfaced error
-          # instead of a downstream "artifact missing" message.
-          if ! grep -q "extract-typed \[$SOURCE_ID\] OK" /tmp/extract.log; then
-            echo ""
-            echo "SMOKE TEST FAILED: extract-typed did not report OK for $SOURCE_ID"
-            echo "Most likely causes:"
-            echo "  - chunks.jsonl missing under data-lake/store/processed/*/$SOURCE_ID/stories/"
-            echo "  - ANTHROPIC_API_KEY missing or invalid"
-            echo "  - source_record.json missing for the source_id"
-            echo "Inspect the extract-typed output above for the exact reason."
-            exit 1
-          fi
-
-      - name: Assert extractions produced
-        env:
-          DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
-          SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
-        run: |
           python - <<'EOF'
           import json, sys, pathlib, os
+          from spectrum_systems_core.extraction.typed_extraction_runner import (
+              run_typed_extraction,
+          )
 
-          data_lake = pathlib.Path(os.environ["DATA_LAKE_PATH"])
-          sdl_root = pathlib.Path(os.environ["SDL_ROOT"])
           source_id = "7-ghz-downlink-tig-meeting---transcript-2-19-26"
+          data_lake = os.environ["DATA_LAKE_PATH"]
 
-          # The typed-extraction runner writes to:
-          #   <SDL_ROOT>/extractions/<source_artifact_id>_meeting_extraction.json
-          # where source_artifact_id is a UUID resolved from the source_record.
-          # Mirror the orchestrator's _meeting_extraction_exists lookup.
-          extractions_dir = sdl_root / "extractions"
-          processed_dir = data_lake / "store" / "processed"
+          result = run_typed_extraction(
+              source_id, data_lake=data_lake, force=True,
+          )
+          status = result.get("status", "")
+          print(f"extract-typed result: {json.dumps(result, indent=2, default=str)}")
 
-          if not extractions_dir.is_dir():
-              print(f"SMOKE TEST FAILED: extractions dir missing: {extractions_dir}")
-              sys.exit(1)
-
-          source_artifact_id = ""
-          for record_path in processed_dir.glob(f"*/{source_id}/source_record.json"):
-              try:
-                  rec = json.loads(record_path.read_text(encoding="utf-8"))
-              except (OSError, json.JSONDecodeError):
-                  continue
-              aid = rec.get("artifact_id", "") if isinstance(rec, dict) else ""
-              if isinstance(aid, str) and aid:
-                  source_artifact_id = aid
-                  break
-
-          artifact_path = None
-          if source_artifact_id:
-              candidate = extractions_dir / f"{source_artifact_id}_meeting_extraction.json"
-              if candidate.is_file():
-                  artifact_path = candidate
-
-          if artifact_path is None:
-              direct = extractions_dir / f"{source_id}_meeting_extraction.json"
-              if direct.is_file():
-                  artifact_path = direct
-
-          if artifact_path is None:
-              for path in extractions_dir.glob("*_meeting_extraction.json"):
-                  try:
-                      obj = json.loads(path.read_text(encoding="utf-8"))
-                  except (OSError, json.JSONDecodeError):
-                      continue
-                  if not isinstance(obj, dict):
-                      continue
-                  if obj.get("source_id") == source_id:
-                      artifact_path = path
-                      break
-                  if (
-                      source_artifact_id
-                      and obj.get("source_artifact_id") == source_artifact_id
-                  ):
-                      artifact_path = path
-                      break
-
-          if artifact_path is None:
-              print("SMOKE TEST FAILED: No meeting_extraction artifact found")
-              print(f"Searched: {extractions_dir}")
-              print(f"source_id={source_id}")
-              print(f"source_artifact_id={source_artifact_id or '<unresolved>'}")
-              chunks_matches = list(processed_dir.glob(
+          if status != "success":
+              print("")
+              print(f"SMOKE TEST FAILED: extract-typed status={status!r}")
+              print(f"reason: {result.get('reason', '<no reason>')}")
+              processed_dir = pathlib.Path(data_lake) / "store" / "processed"
+              chunks = list(processed_dir.glob(
                   f"*/{source_id}/stories/chunks.jsonl"
               ))
-              record_matches = list(processed_dir.glob(
+              record = list(processed_dir.glob(
                   f"*/{source_id}/source_record.json"
               ))
-              print(f"chunks.jsonl found at: {chunks_matches or '<none>'}")
-              print(f"source_record.json found at: {record_matches or '<none>'}")
-              print("extractions/ contents:")
-              for p in sorted(extractions_dir.iterdir()):
-                  print(f"  {p.name}")
+              print(f"chunks.jsonl found at: {[str(p) for p in chunks] or '<none>'}")
+              print(f"source_record.json found at: {[str(p) for p in record] or '<none>'}")
+              sys.exit(1)
+
+          artifact_path = pathlib.Path(result["path"])
+          if not artifact_path.is_file():
+              print(f"SMOKE TEST FAILED: runner reported success but artifact missing at {artifact_path}")
               sys.exit(1)
 
           artifact = json.loads(artifact_path.read_text())
-          print(f"Found artifact: {artifact_path.name}")
-
           decisions = len(artifact.get("decisions", []))
           claims = len(artifact.get("claims", []))
           action_items = len(artifact.get("action_items", []))
           total = decisions + claims + action_items
 
+          print(f"")
           print(f"Smoke test results for {source_id}:")
           print(f"  decisions={decisions} claims={claims} action_items={action_items}")
 
@@ -152,10 +83,8 @@ jobs:
               print("SMOKE TEST FAILED: Zero extractions produced.")
               print("The ChunkClassifier may be classifying all chunks as off_topic.")
               print("The extraction prompts may not be reaching the LLM.")
-              print("Debug: check extract-typed logs above for warnings.")
               sys.exit(1)
 
-          # Warn if routing quality warning fired
           off_topic = artifact.get("off_topic_count", 0)
           total_chunks = artifact.get("total_chunks_classified", 1)
           off_topic_rate = off_topic / total_chunks if total_chunks > 0 else 0
