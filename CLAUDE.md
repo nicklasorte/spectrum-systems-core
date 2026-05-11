@@ -104,6 +104,24 @@ conversation as the seed for STEP 1 inventory. If the briefing's
 `valid_until` is in the past, re-run `verify-pipeline-state` first, then
 re-run `next-phase-handoff`.
 
+## PR Smoke Test
+
+Every PR triggers an automatic extraction smoke test on the
+Feb 19 Downlink transcript via GitHub Actions.
+
+The smoke test:
+- Runs extract-typed on source-id 7-ghz-downlink-tig-meeting---transcript-2-19-26
+- Asserts decisions >= 1 OR claims >= 1 OR action_items >= 1
+- Fails the PR if zero extractions produced
+- Fails the PR if off_topic_rate > 0.80
+
+If the smoke test fails on your PR:
+1. Check the "Run extraction smoke test" step logs
+2. Look for: "off_topic=N/N" — means classifier broken
+3. Look for: "No meeting_extraction artifact" — means extractor crashed
+4. Fix the root cause before requesting review
+5. Push a new commit — smoke test re-runs automatically
+
 ## Files worth reading before non-trivial changes
 
 - `docs/architecture/system_constitution.md` — binding; precedence over everything else.
