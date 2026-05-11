@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -17,12 +18,15 @@ from typing import Any, Callable, Dict, List, Optional
 
 import jsonschema
 
+_LOG = logging.getLogger(__name__)
+
 from ..ingestion._paths import schema_path
 from ._paths import find_processed_dir
 
 
 _COMPONENT_NAME = "story_extractor"
-_COMPONENT_VERSION = "1.0.0"
+_COMPONENT_VERSION = "1.1.0"
+_SCHEMA_VERSION = "1.1.0"
 EXTRACTION_MODEL = "claude-haiku-4-5-20251001"
 EXTRACTION_TEMPERATURE = 0
 MAX_TOKENS = 1000
@@ -35,6 +39,7 @@ Analyze the following text chunk and extract ONE story candidate if a strong
 candidate exists. If no strong candidate exists, return null for story_found.
 
 Source ID: {source_id}
+Chunk ID: {chunk_id}
 Chunk index: {chunk_index}
 Page numbers: {page_numbers}
 
@@ -50,7 +55,8 @@ Return ONLY valid JSON matching this exact structure. No preamble, no markdown.
   "possible_theme": "one phrase theme label, or null",
   "tier_guess": "tier_1 or tier_2 or tier_3, or null",
   "why_it_might_work": "one sentence on why this story resonates, or null",
-  "risk_flags": ["list of risk strings, can be empty array"]
+  "risk_flags": ["list of risk strings, can be empty array"],
+  "source_turn_ids": ["array containing the Chunk ID above; required if story_found is true"]
 }}
 
 Rules:
@@ -59,6 +65,21 @@ Rules:
 - tier_1 = has a clear human moment, stakes, and narrative tension.
 - tier_2 = interesting but needs development.
 - tier_3 = background/context only.
+
+SOURCE CITATION REQUIREMENT (mandatory):
+
+For every item you extract, you MUST include the IDs of the specific
+speaker-turn chunks from which you extracted it.
+
+The chunk provided to you has a "Chunk ID" field above. Use that exact
+ID in the source_turn_ids array of the extracted item.
+
+Rules:
+- If you cannot identify which chunks support an item: DO NOT include
+  that item. Omit it entirely (set story_found: false).
+- Never invent or guess chunk IDs.
+- A single item may cite multiple chunk_ids if it spans multiple turns.
+- source_turn_ids must contain at least one valid chunk_id.
 """
 
 
@@ -165,9 +186,12 @@ class StoryExtractor:
         all_records: List[Dict[str, Any]] = []
         ok_candidates: List[Dict[str, Any]] = []
 
+        valid_chunk_ids = {c["chunk_id"] for c in chunks if "chunk_id" in c}
+
         for chunk in chunks:
             prompt = PROMPT_TEMPLATE.format(
                 source_id=source_id,
+                chunk_id=chunk.get("chunk_id"),
                 chunk_index=chunk.get("chunk_index"),
                 page_numbers=chunk.get("page_numbers", []),
                 chunk_text=chunk.get("text", ""),
@@ -213,8 +237,39 @@ class StoryExtractor:
                 # No story in this chunk — skip silently. Not an error.
                 continue
 
+            raw_turn_ids = parsed.get("source_turn_ids")
+            if not isinstance(raw_turn_ids, list) or not raw_turn_ids:
+                _LOG.warning(
+                    "extraction_missing_source_turns: story_candidate omitted "
+                    "(chunk_id=%s)",
+                    chunk.get("chunk_id"),
+                )
+                continue
+            turn_ids = [str(t) for t in raw_turn_ids if isinstance(t, str)]
+            if not turn_ids:
+                _LOG.warning(
+                    "extraction_missing_source_turns: story_candidate omitted "
+                    "(chunk_id=%s)",
+                    chunk.get("chunk_id"),
+                )
+                continue
+            invalid_turn_ids = [t for t in turn_ids if t not in valid_chunk_ids]
+            if invalid_turn_ids:
+                for bad in invalid_turn_ids:
+                    _LOG.warning(
+                        "extraction_invalid_source_turns: %s not in chunks", bad
+                    )
+                source_turn_validation = "invalid"
+            else:
+                source_turn_validation = "verified"
+
             candidate = self._assemble_candidate(
-                parsed, chunk, source_id=source_id, source_family=source_family
+                parsed,
+                chunk,
+                source_id=source_id,
+                source_family=source_family,
+                source_turn_ids=turn_ids,
+                source_turn_validation=source_turn_validation,
             )
 
             try:
@@ -261,13 +316,18 @@ class StoryExtractor:
         *,
         source_id: str,
         source_family: str,
+        source_turn_ids: List[str],
+        source_turn_validation: str,
     ) -> Dict[str, Any]:
         source_excerpt = parsed.get("source_excerpt") or ""
         return {
+            "schema_version": _SCHEMA_VERSION,
             "story_id": str(uuid.uuid4()),
             "source_id": source_id,
             "source_family": source_family,
             "chunk_id": chunk["chunk_id"],
+            "source_turn_ids": list(source_turn_ids),
+            "source_turn_validation": source_turn_validation,
             "unit_ids": list(chunk.get("unit_ids", [])),
             "page_numbers": list(chunk.get("page_numbers", [])),
             "source_excerpt": source_excerpt,

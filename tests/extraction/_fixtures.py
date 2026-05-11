@@ -2,9 +2,18 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List
+
+
+def id_from_prompt(prompt: str, label: str) -> str:
+    """Parse a UUID following '<label>:' in the prompt (Phase M.1 mocks)."""
+    match = re.search(rf"{re.escape(label)}:\s*([0-9a-f-]{{36}})", prompt)
+    if match is None:
+        raise AssertionError(f"{label} not found in prompt")
+    return match.group(1)
 
 
 def write_text_units(

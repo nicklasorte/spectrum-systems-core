@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -20,8 +21,11 @@ import jsonschema
 from ..extraction._paths import find_processed_dir
 from ._paths import paper_schema_path
 
+_LOG = logging.getLogger(__name__)
+
 _COMPONENT_NAME = "assumption_extractor"
-_COMPONENT_VERSION = "1.0.0"
+_COMPONENT_VERSION = "1.1.0"
+_SCHEMA_VERSION = "1.1.0"
 EXTRACTION_MODEL = "claude-haiku-4-5-20251001"
 EXTRACTION_TEMPERATURE = 0
 MAX_TOKENS = 2000
@@ -46,7 +50,8 @@ Return ONLY valid JSON. No preamble. No markdown.
       "assumption_type": "methodological|scope|data_quality|policy",
       "risk_if_wrong": "high|medium|low",
       "explicit": true or false,
-      "source_excerpt": "verbatim text showing the assumption, min 10 chars or null if implied"
+      "source_excerpt": "verbatim text showing the assumption, min 10 chars or null if implied",
+      "source_turn_ids": ["array containing the Unit ID above; required for every assumption"]
     }}
   ]
 }}
@@ -56,6 +61,21 @@ Rules:
 - explicit: false if you are inferring an implied assumption.
 - source_excerpt: null is allowed ONLY for implicit assumptions.
 - Do not invent assumptions with no textual basis.
+
+SOURCE CITATION REQUIREMENT (mandatory):
+
+For every item you extract, you MUST include the IDs of the specific
+speaker-turn chunks (here, unit_ids) from which you extracted it.
+
+The unit provided to you has a "Unit ID" field above. Use that exact
+ID in the source_turn_ids array of every extracted assumption.
+
+Rules:
+- If you cannot identify which chunks support an item: DO NOT include
+  that item. Omit it entirely from the assumptions array.
+- Never invent or guess chunk IDs.
+- A single item may cite multiple chunk_ids if it spans multiple turns.
+- source_turn_ids must contain at least one valid chunk_id.
 """
 
 
@@ -134,6 +154,9 @@ class AssumptionExtractor:
         validator = jsonschema.Draft202012Validator(schema)
 
         all_assumptions: List[Dict[str, Any]] = []
+        valid_unit_ids = {
+            u["unit_id"] for u in text_units if isinstance(u.get("unit_id"), str)
+        }
 
         for unit in text_units:
             text = unit.get("text", "") or ""
@@ -167,8 +190,44 @@ class AssumptionExtractor:
             for raw in raw_items:
                 if not isinstance(raw, dict):
                     continue
+
+                raw_turn_ids = raw.get("source_turn_ids")
+                if not isinstance(raw_turn_ids, list) or not raw_turn_ids:
+                    _LOG.warning(
+                        "extraction_missing_source_turns: assumption_record "
+                        "omitted (unit_id=%s)",
+                        unit_id,
+                    )
+                    continue
+                turn_ids = [
+                    str(t) for t in raw_turn_ids if isinstance(t, str)
+                ]
+                if not turn_ids:
+                    _LOG.warning(
+                        "extraction_missing_source_turns: assumption_record "
+                        "omitted (unit_id=%s)",
+                        unit_id,
+                    )
+                    continue
+                invalid_turn_ids = [
+                    t for t in turn_ids if t not in valid_unit_ids
+                ]
+                if invalid_turn_ids:
+                    for bad in invalid_turn_ids:
+                        _LOG.warning(
+                            "extraction_invalid_source_turns: %s not in chunks",
+                            bad,
+                        )
+                    source_turn_validation = "invalid"
+                else:
+                    source_turn_validation = "verified"
+
                 record = self._assemble_assumption(
-                    raw, source_id=source_id, unit_id=unit_id
+                    raw,
+                    source_id=source_id,
+                    unit_id=unit_id,
+                    source_turn_ids=turn_ids,
+                    source_turn_validation=source_turn_validation,
                 )
                 try:
                     validator.validate(record)
@@ -201,6 +260,8 @@ class AssumptionExtractor:
         *,
         source_id: str,
         unit_id: str,
+        source_turn_ids: List[str],
+        source_turn_validation: str,
     ) -> Dict[str, Any]:
         explicit = bool(raw.get("explicit", False))
         excerpt_raw = raw.get("source_excerpt")
@@ -212,9 +273,12 @@ class AssumptionExtractor:
             source_excerpt = None
         assumption_text = str(raw.get("assumption_text") or "")
         return {
+            "schema_version": _SCHEMA_VERSION,
             "assumption_id": str(uuid.uuid4()),
             "source_id": source_id,
             "source_unit_id": unit_id,
+            "source_turn_ids": list(source_turn_ids),
+            "source_turn_validation": source_turn_validation,
             "source_excerpt": source_excerpt,
             "assumption_text": assumption_text,
             "assumption_type": str(raw.get("assumption_type") or "scope"),

@@ -8,55 +8,46 @@ from pathlib import Path
 
 from spectrum_systems_core.paper import AssumptionExtractor, ClaimEval
 
-from ._fixtures import read_jsonl, write_text_units
+from ._fixtures import id_from_prompt, read_jsonl, write_text_units
 
 
-def _explicit_response(excerpt: str) -> str:
-    return json.dumps(
-        {
-            "assumptions": [
-                {
-                    "assumption_text": "Reviewers have access to the full record.",
-                    "assumption_type": "scope",
-                    "risk_if_wrong": "high",
-                    "explicit": True,
-                    "source_excerpt": excerpt,
-                }
-            ]
-        }
-    )
+def _explicit_response(excerpt: str, prompt: str = "") -> str:
+    item = {
+        "assumption_text": "Reviewers have access to the full record.",
+        "assumption_type": "scope",
+        "risk_if_wrong": "high",
+        "explicit": True,
+        "source_excerpt": excerpt,
+    }
+    if prompt:
+        item["source_turn_ids"] = [id_from_prompt(prompt, "Unit ID")]
+    return json.dumps({"assumptions": [item]})
 
 
-def _implicit_null_response() -> str:
-    return json.dumps(
-        {
-            "assumptions": [
-                {
-                    "assumption_text": "Stakeholders share a common evidentiary baseline.",
-                    "assumption_type": "policy",
-                    "risk_if_wrong": "medium",
-                    "explicit": False,
-                    "source_excerpt": None,
-                }
-            ]
-        }
-    )
+def _implicit_null_response(prompt: str = "") -> str:
+    item = {
+        "assumption_text": "Stakeholders share a common evidentiary baseline.",
+        "assumption_type": "policy",
+        "risk_if_wrong": "medium",
+        "explicit": False,
+        "source_excerpt": None,
+    }
+    if prompt:
+        item["source_turn_ids"] = [id_from_prompt(prompt, "Unit ID")]
+    return json.dumps({"assumptions": [item]})
 
 
-def _implicit_with_excerpt_response(excerpt: str) -> str:
-    return json.dumps(
-        {
-            "assumptions": [
-                {
-                    "assumption_text": "Stakeholders share a common evidentiary baseline.",
-                    "assumption_type": "policy",
-                    "risk_if_wrong": "medium",
-                    "explicit": False,
-                    "source_excerpt": excerpt,
-                }
-            ]
-        }
-    )
+def _implicit_with_excerpt_response(excerpt: str, prompt: str = "") -> str:
+    item = {
+        "assumption_text": "Stakeholders share a common evidentiary baseline.",
+        "assumption_type": "policy",
+        "risk_if_wrong": "medium",
+        "explicit": False,
+        "source_excerpt": excerpt,
+    }
+    if prompt:
+        item["source_turn_ids"] = [id_from_prompt(prompt, "Unit ID")]
+    return json.dumps({"assumptions": [item]})
 
 
 class AssumptionExtractorTests(unittest.TestCase):
@@ -87,7 +78,7 @@ class AssumptionExtractorTests(unittest.TestCase):
     def test_explicit_assumption_with_excerpt(self) -> None:
         excerpt = "Reviewers have access to the full record"
         ext = AssumptionExtractor(
-            api_caller=lambda _p: _explicit_response(excerpt)
+            api_caller=lambda p: _explicit_response(excerpt, p)
         )
         result = ext.extract_from_source(
             self.source_id, str(self.repo_root)
@@ -100,7 +91,7 @@ class AssumptionExtractorTests(unittest.TestCase):
 
     def test_implicit_assumption_with_null_excerpt(self) -> None:
         ext = AssumptionExtractor(
-            api_caller=lambda _p: _implicit_null_response()
+            api_caller=lambda p: _implicit_null_response(p)
         )
         result = ext.extract_from_source(
             self.source_id, str(self.repo_root)
@@ -115,7 +106,7 @@ class AssumptionExtractorTests(unittest.TestCase):
     def test_implicit_assumption_with_excerpt_blocked(self) -> None:
         excerpt = "The methodology follows standard"
         ext = AssumptionExtractor(
-            api_caller=lambda _p: _implicit_with_excerpt_response(excerpt)
+            api_caller=lambda p: _implicit_with_excerpt_response(excerpt, p)
         )
         result = ext.extract_from_source(
             self.source_id, str(self.repo_root)
@@ -136,7 +127,9 @@ class AssumptionExtractorTests(unittest.TestCase):
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RuntimeError("boom")
-            return _explicit_response("Reviewers have access to the full record")
+            return _explicit_response(
+                "Reviewers have access to the full record", _p
+            )
 
         ext = AssumptionExtractor(api_caller=caller)
         result = ext.extract_from_source(

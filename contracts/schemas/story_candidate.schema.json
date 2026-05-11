@@ -5,10 +5,13 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "schema_version",
     "story_id",
     "source_id",
     "source_family",
     "chunk_id",
+    "source_turn_ids",
+    "source_turn_validation",
     "unit_ids",
     "page_numbers",
     "source_excerpt",
@@ -29,10 +32,21 @@
     "provenance"
   ],
   "properties": {
+    "schema_version": { "const": "1.1.0" },
     "story_id": { "type": "string", "format": "uuid" },
     "source_id": { "type": "string", "minLength": 1 },
     "source_family": { "type": "string", "minLength": 1 },
     "chunk_id": { "type": "string", "format": "uuid" },
+    "source_turn_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "format": "uuid" },
+      "description": "IDs of speaker-turn chunks this story was extracted from. Required. Every extracted item must cite its source. Array form of chunk_id; supports future multi-turn extraction. Phase M.1."
+    },
+    "source_turn_validation": {
+      "enum": ["verified", "invalid", "missing"],
+      "description": "Post-extraction validation status of source_turn_ids. verified=all IDs were in the input chunks; invalid=at least one ID was not in the input chunks (item kept for human review); missing=item had no source_turn_ids (such items are omitted from the artifact, so this value should never appear in a written artifact but is enumerated for completeness). Phase M.1."
+    },
     "unit_ids": {
       "type": "array",
       "minItems": 1,

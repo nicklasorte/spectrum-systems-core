@@ -8,21 +8,22 @@ from pathlib import Path
 
 from spectrum_systems_core.extraction import Chunker, StoryExtractor
 
-from ._fixtures import read_jsonl, write_text_units
+from ._fixtures import id_from_prompt, read_jsonl, write_text_units
 
 
-def _ok_response(excerpt: str) -> str:
-    return json.dumps(
-        {
-            "story_found": True,
-            "source_excerpt": excerpt,
-            "story_summary": "A short summary of the moment that mattered most.",
-            "possible_theme": "agency comments",
-            "tier_guess": "tier_1",
-            "why_it_might_work": "Because there is a clear human moment at stake.",
-            "risk_flags": [],
-        }
-    )
+def _ok_response(excerpt: str, prompt: str = "") -> str:
+    payload = {
+        "story_found": True,
+        "source_excerpt": excerpt,
+        "story_summary": "A short summary of the moment that mattered most.",
+        "possible_theme": "agency comments",
+        "tier_guess": "tier_1",
+        "why_it_might_work": "Because there is a clear human moment at stake.",
+        "risk_flags": [],
+    }
+    if prompt:
+        payload["source_turn_ids"] = [id_from_prompt(prompt, "Chunk ID")]
+    return json.dumps(payload)
 
 
 def _no_story_response() -> str:
@@ -83,7 +84,7 @@ class StoryExtractorTests(unittest.TestCase):
         first_excerpt = chunks[0]["text"].split("\n", 1)[0]
 
         def caller(prompt: str) -> str:
-            return _ok_response(first_excerpt)
+            return _ok_response(first_excerpt, prompt)
 
         result = StoryExtractor(api_caller=caller).extract_from_source(
             self.source_id, str(self.repo_root)
@@ -127,7 +128,7 @@ class StoryExtractorTests(unittest.TestCase):
         first_excerpt = chunks[0]["text"].split("\n", 1)[0]
 
         def caller(prompt: str) -> str:
-            return _ok_response(first_excerpt)
+            return _ok_response(first_excerpt, prompt)
 
         StoryExtractor(api_caller=caller).extract_from_source(
             self.source_id, str(self.repo_root)
@@ -145,7 +146,7 @@ class StoryExtractorTests(unittest.TestCase):
         first_excerpt = chunks[0]["text"].split("\n", 1)[0]
 
         def caller(prompt: str) -> str:
-            return _ok_response(first_excerpt)
+            return _ok_response(first_excerpt, prompt)
 
         result = StoryExtractor(api_caller=caller).extract_from_source(
             self.source_id, str(self.repo_root)
