@@ -116,10 +116,14 @@ def make_position_entry(
 def make_claim(*, claim_text: str, materiality: str = "high") -> Dict[str, Any]:
     cid = str(uuid.uuid4())
     fp = "sha256:" + hashlib.sha256(cid.encode()).hexdigest()
+    unit_id = str(uuid.uuid4())
     return {
+        "schema_version": "1.1.0",
         "claim_id": cid,
         "source_id": "paper-A",
-        "source_unit_id": str(uuid.uuid4()),
+        "source_unit_id": unit_id,
+        "source_turn_ids": [unit_id],
+        "source_turn_validation": "verified",
         "source_excerpt": claim_text[:80] or "excerpt",
         "claim_text": claim_text,
         "claim_type": "factual",
@@ -131,7 +135,7 @@ def make_claim(*, claim_text: str, materiality: str = "high") -> Dict[str, Any]:
         "status": "candidate",
         "created_at": "2026-05-09T00:00:00+00:00",
         "provenance": {
-            "produced_by": {"component": "claim_extractor", "version": "1.0.0"},
+            "produced_by": {"component": "claim_extractor", "version": "1.1.0"},
             "input_artifact_ids": [cid],
             "execution_fingerprint_hash": fp,
         },

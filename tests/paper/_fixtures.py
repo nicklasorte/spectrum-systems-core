@@ -3,9 +3,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List
+
+
+def id_from_prompt(prompt: str, label: str) -> str:
+    """Parse a UUID following '<label>:' in the prompt (Phase M.1 mocks)."""
+    match = re.search(rf"{re.escape(label)}:\s*([0-9a-f-]{{36}})", prompt)
+    if match is None:
+        raise AssertionError(f"{label} not found in prompt")
+    return match.group(1)
 
 
 def write_text_units(
@@ -100,9 +109,12 @@ def make_claim(
         (source_unit_id + claim_text).encode()
     ).hexdigest()
     return {
+        "schema_version": "1.1.0",
         "claim_id": str(uuid.uuid4()),
         "source_id": source_id,
         "source_unit_id": source_unit_id,
+        "source_turn_ids": [source_unit_id],
+        "source_turn_validation": "verified",
         "source_excerpt": source_excerpt,
         "claim_text": claim_text,
         "claim_type": claim_type,
@@ -114,7 +126,7 @@ def make_claim(
         "status": "candidate",
         "created_at": "2026-05-09T00:00:00+00:00",
         "provenance": {
-            "produced_by": {"component": "claim_extractor", "version": "1.0.0"},
+            "produced_by": {"component": "claim_extractor", "version": "1.1.0"},
             "input_artifact_ids": [source_unit_id],
             "execution_fingerprint_hash": fp,
         },

@@ -5,25 +5,23 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Dict
 
 from spectrum_systems_core.paper import ClaimEval, ClaimExtractor
 
-from ._fixtures import read_jsonl, write_text_units
+from ._fixtures import id_from_prompt, read_jsonl, write_text_units
 
 
-def _ok_response(excerpt: str) -> str:
-    return json.dumps(
-        {
-            "claims": [
-                {
-                    "claim_text": "The agency requires comments by Friday.",
-                    "claim_type": "factual",
-                    "materiality": "high",
-                    "source_excerpt": excerpt,
-                }
-            ]
-        }
-    )
+def _ok_response(excerpt: str, prompt: str = "") -> str:
+    claim: Dict[str, object] = {
+        "claim_text": "The agency requires comments by Friday.",
+        "claim_type": "factual",
+        "materiality": "high",
+        "source_excerpt": excerpt,
+    }
+    if prompt:
+        claim["source_turn_ids"] = [id_from_prompt(prompt, "Unit ID")]
+    return json.dumps({"claims": [claim]})
 
 
 def _empty_response() -> str:
@@ -58,7 +56,7 @@ class ClaimExtractorTests(unittest.TestCase):
 
     def test_valid_extraction_produces_claims(self) -> None:
         excerpt = "The agency requires comments by Friday"
-        ext = ClaimExtractor(api_caller=lambda _p: _ok_response(excerpt))
+        ext = ClaimExtractor(api_caller=lambda p: _ok_response(excerpt, p))
         result = ext.extract_from_source(self.source_id, str(self.repo_root))
         self.assertEqual(result["status"], "success")
         self.assertGreaterEqual(len(result["claims"]), 1)
@@ -69,7 +67,7 @@ class ClaimExtractorTests(unittest.TestCase):
     def test_hallucinated_excerpt_blocked_by_eval(self) -> None:
         # Mock returns an excerpt not in any text unit.
         ext = ClaimExtractor(
-            api_caller=lambda _p: _ok_response("This excerpt is fabricated.")
+            api_caller=lambda p: _ok_response("This excerpt is fabricated.", p)
         )
         result = ext.extract_from_source(self.source_id, str(self.repo_root))
         self.assertEqual(result["status"], "success")
@@ -97,10 +95,10 @@ class ClaimExtractorTests(unittest.TestCase):
 
     def test_claims_jsonl_overwritten_not_appended(self) -> None:
         excerpt = "The agency requires comments by Friday"
-        ext1 = ClaimExtractor(api_caller=lambda _p: _ok_response(excerpt))
+        ext1 = ClaimExtractor(api_caller=lambda p: _ok_response(excerpt, p))
         first = ext1.extract_from_source(self.source_id, str(self.repo_root))
         first_count = len(read_jsonl(self._claims_path()))
-        ext2 = ClaimExtractor(api_caller=lambda _p: _ok_response(excerpt))
+        ext2 = ClaimExtractor(api_caller=lambda p: _ok_response(excerpt, p))
         ext2.extract_from_source(self.source_id, str(self.repo_root))
         second_count = len(read_jsonl(self._claims_path()))
         self.assertEqual(first_count, second_count)
@@ -109,7 +107,7 @@ class ClaimExtractorTests(unittest.TestCase):
 
     def test_temperature_zero_recorded(self) -> None:
         excerpt = "The agency requires comments by Friday"
-        ext = ClaimExtractor(api_caller=lambda _p: _ok_response(excerpt))
+        ext = ClaimExtractor(api_caller=lambda p: _ok_response(excerpt, p))
         ext.extract_from_source(self.source_id, str(self.repo_root))
         for claim in read_jsonl(self._claims_path()):
             self.assertEqual(claim["extraction_temperature"], 0)
@@ -119,14 +117,14 @@ class ClaimExtractorTests(unittest.TestCase):
 
     def test_unit_id_present_on_all_claims(self) -> None:
         excerpt = "The agency requires comments by Friday"
-        ext = ClaimExtractor(api_caller=lambda _p: _ok_response(excerpt))
+        ext = ClaimExtractor(api_caller=lambda p: _ok_response(excerpt, p))
         ext.extract_from_source(self.source_id, str(self.repo_root))
         for claim in read_jsonl(self._claims_path()):
             self.assertTrue(claim["source_unit_id"])
 
     def test_claims_md_written_as_view_only(self) -> None:
         excerpt = "The agency requires comments by Friday"
-        ext = ClaimExtractor(api_caller=lambda _p: _ok_response(excerpt))
+        ext = ClaimExtractor(api_caller=lambda p: _ok_response(excerpt, p))
         ext.extract_from_source(self.source_id, str(self.repo_root))
         md_path = (
             self.repo_root / "processed" / "working_papers" / self.source_id

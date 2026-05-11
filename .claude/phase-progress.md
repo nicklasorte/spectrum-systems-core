@@ -1006,3 +1006,116 @@ Zero Sev-1.
 | lint / type-check | N/A — no config |
 | orchestrator tests | 39 passed (no regression from Part 1) |
 
+---
+
+# Phase M.1 — Source Turn Pointers in Extraction Schema
+
+## Step 1 — Inventory
+
+### Test baseline
+**857 tests collected** (`python -m pytest --collect-only -q`).
+Phase M.1 must not regress this count and must not break any green tests.
+
+### LLM-extraction artifact schemas (in scope)
+
+These are the artifact types produced by an LLM-driven extractor reading
+chunks/text-units and returning structured items. Each is updated by this
+phase.
+
+| Schema file | Title | Existing source pointer | Extractor |
+|---|---|---|---|
+| `contracts/schemas/story_candidate.schema.json` | `story_candidate` | `chunk_id` (single uuid, required) | `extraction/story_extractor.py` (`StoryExtractor`) |
+| `contracts/schemas/paper/technical_claim.schema.json` | `technical_claim` | `source_unit_id` (single uuid, required) | `paper/claim_extractor.py` (`ClaimExtractor`) |
+| `contracts/schemas/paper/assumption_record.schema.json` | `assumption_record` | `source_unit_id` (single uuid, required) | `paper/assumption_extractor.py` (`AssumptionExtractor`) |
+
+### Not in scope — and why
+
+- **`issue_record`** (`contracts/schemas/paper/issue_record.schema.json`).
+  Issues are produced by deterministic detection logic over already-extracted
+  claims/assumptions, not by an LLM. There is no extraction prompt to amend.
+  Source pointers belong on the upstream LLM-extracted artifacts (which
+  *are* in scope above); issues inherit traceability through `claim_id` /
+  `assumption_id` references.
+- **`decision` / `action_item` artifacts**. The phase brief refers to these
+  by name, but neither schema nor extractor exists in this repo. The
+  closest analogs are stories (narrative) and claims/assumptions
+  (assertions). Surfacing here for the record — no work blocked, since the
+  brief's stop condition for "extraction not yet implemented" doesn't
+  apply: extraction *is* implemented, just under different names.
+- **`ai/registry/prompts.json`** task types (`memory_query`, `claim_check`,
+  `objection_check`, `story_fit`). These are query/analysis prompts that
+  cite already-promoted artifacts, not extraction prompts that mint new
+  items from raw transcript chunks. Out of scope.
+
+### Existing source-pointer fields — decision
+
+Per the brief: "If a schema already has a source reference field with a
+different name: keep the existing field, add `source_turn_ids` as an
+alias or replacement."
+
+**Decision: keep existing single-pointer fields, add `source_turn_ids` as
+an array-form alias.** Rationale:
+
+- Backwards compatibility with downstream consumers (`ClaimEval`,
+  `AssumptionEval`, `ObsidianProjection`, `data_lake/extract.py`) that
+  read `chunk_id` / `source_unit_id`.
+- The current architecture extracts one item per chunk/unit, so the array
+  always contains exactly one ID equal to the singular field. Future
+  multi-turn extraction can populate the array with multiple IDs without
+  another schema rev.
+- For speaker-turn-chunked transcripts (post Phase L/M chunking fix),
+  one chunk = one speaker turn, so `source_turn_ids = [chunk_id]` is
+  literal-truth for stories. For claims/assumptions over text_units of
+  `unit_type == "speaker_turn"`, `source_turn_ids = [source_unit_id]`
+  carries the same meaning.
+
+### `schema_version` field
+
+None of the three target schemas currently has a `schema_version` field
+(other schemas in this repo do — `vault_index_note`, `minutes_record`,
+etc., all use `"schema_version": { "const": "1.0.0" }`).
+
+**Decision: add `schema_version` as a new required const, at `"1.1.0"`,
+on each updated schema** — the brief mandates a version bump, the
+repo-wide convention is a const field, and this is the natural place
+to introduce it on schemas that didn't have one. Extractors will emit
+the field. No persisted artifacts exist on disk (`processed/` contains
+only `.gitkeep`), so this is not a breaking change for any existing
+data.
+
+### Extractor architecture (current vs. new)
+
+Current: extractor receives one chunk/unit, formats a prompt **without
+the chunk_id**, calls the LLM, and injects `chunk_id` (or
+`source_unit_id`) from the chunk being processed. The LLM cannot
+fabricate the ID because it never sees one to fabricate from.
+
+New: prompt explicitly exposes the chunk's `chunk_id`, requires the
+model to echo it back as `source_turn_ids: ["<chunk_id>"]`, and the
+extractor validates:
+
+- Missing / empty `source_turn_ids` → item omitted, warning logged.
+- All IDs valid (∈ input chunk_ids) → `source_turn_validation: "verified"`.
+- Any ID not in input chunk_ids → `source_turn_validation: "invalid"`, item
+  still included for human review, warning logged.
+
+This satisfies the Gladia-2026 structural-pass-through guidance: the
+extractor never *infers* an ID and the LLM never gets to invent one
+unobserved. The validation step is the gate.
+
+### Prompt files
+
+Prompts are inline string constants inside the extractor modules
+(`PROMPT_TEMPLATE`, `CLAIM_EXTRACTION_PROMPT`,
+`ASSUMPTION_EXTRACTION_PROMPT`). There is no separate prompt registry
+file used by these three extractors — `ai/registry/prompts.json`
+governs only the query-side task types listed above.
+
+### Validation entry point
+
+The three extractors each call
+`jsonschema.Draft202012Validator(schema).validate(candidate)` before
+writing. Adding `source_turn_ids` as required will make missing-field
+artifacts fail validation here. No separate GOV-10 gate exists in this
+repo — schema validation in the extractor is the gate.
+

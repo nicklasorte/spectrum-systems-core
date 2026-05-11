@@ -10,10 +10,10 @@ from typing import Any, Dict, List
 
 from spectrum_systems_core.extraction import Chunker, StoryEval, StoryExtractor
 
-from ._fixtures import read_jsonl, write_text_units
+from ._fixtures import id_from_prompt, read_jsonl, write_text_units
 
 
-def _make_response(excerpt: str) -> str:
+def _make_response(excerpt: str, prompt: str) -> str:
     return json.dumps(
         {
             "story_found": True,
@@ -23,6 +23,7 @@ def _make_response(excerpt: str) -> str:
             "tier_guess": "tier_1",
             "why_it_might_work": "It captures stakes and a five-second moment.",
             "risk_flags": [],
+            "source_turn_ids": [id_from_prompt(prompt, "Chunk ID")],
         }
     )
 
@@ -61,7 +62,7 @@ class StoryEvalTests(unittest.TestCase):
 
     def _run_extractor(self, excerpt: str) -> List[Dict[str, Any]]:
         result = StoryExtractor(
-            api_caller=lambda _p: _make_response(excerpt)
+            api_caller=lambda p: _make_response(excerpt, p)
         ).extract_from_source(self.source_id, str(self.repo_root))
         return result["all_records"]
 

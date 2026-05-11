@@ -19,7 +19,7 @@ from spectrum_systems_core.extraction import (
 )
 from spectrum_systems_core.ingestion import ObsidianProjection
 
-from ._fixtures import write_text_units
+from ._fixtures import id_from_prompt, write_text_units
 
 
 class ExtractStoriesIntegrationTests(unittest.TestCase):
@@ -53,7 +53,7 @@ class ExtractStoriesIntegrationTests(unittest.TestCase):
         # 2) Extractor (mocked) — return a verbatim excerpt that exists.
         verbatim = self.texts[1]
 
-        def caller(_prompt: str) -> str:
+        def caller(prompt: str) -> str:
             return json.dumps(
                 {
                     "story_found": True,
@@ -69,6 +69,7 @@ class ExtractStoriesIntegrationTests(unittest.TestCase):
                         "central question of whether to proceed."
                     ),
                     "risk_flags": [],
+                    "source_turn_ids": [id_from_prompt(prompt, "Chunk ID")],
                 }
             )
 
