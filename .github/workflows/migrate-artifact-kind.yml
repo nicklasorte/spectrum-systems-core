@@ -32,7 +32,7 @@ jobs:
           repository: nicklasorte/data-lake
           ref: ${{ github.event.inputs.data_lake_ref }}
           path: data-lake
-          token: ${{ secrets.DATA_LAKE_TOKEN }}
+token: ${{ secrets.GH_PAT }}
         continue-on-error: true
 
       - name: Set up Python 3.11
