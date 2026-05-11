@@ -2515,6 +2515,7 @@ def extract_typed(
     all_sources: bool = False,
     data_lake: str | None = None,
     force: bool = False,
+    max_chunks: int | None = None,
     out_stream=None,
 ) -> int:
     """Phase M3 CLI command: run typed extraction.
@@ -2567,7 +2568,9 @@ def extract_typed(
     skipped = 0
     failed = 0
     for sid in targets:
-        result = run_typed_extraction(sid, data_lake=data_lake, force=force)
+        result = run_typed_extraction(
+            sid, data_lake=data_lake, force=force, max_chunks=max_chunks,
+        )
         status = result.get("status")
         if status == "success":
             succeeded += 1
@@ -4065,6 +4068,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "exists for the source."
         ),
     )
+    et.add_argument(
+        "--max-chunks",
+        default=None,
+        type=int,
+        help=(
+            "Limit classification to the first N chunks only. Used by the "
+            "PR smoke test to keep API calls bounded."
+        ),
+    )
 
     lg = sub.add_parser(
         "link-ground-truth",
@@ -4393,6 +4405,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             all_sources=args.all,
             data_lake=args.data_lake,
             force=args.force,
+            max_chunks=args.max_chunks,
         )
     if args.command == "link-ground-truth":
         return link_ground_truth(
