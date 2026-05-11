@@ -20,6 +20,10 @@ from .findings_compiler import (
     write_verification_findings,
     format_findings_markdown,
 )
+from .next_phase_handoff import (
+    build_next_phase_briefing,
+    write_next_phase_briefing,
+)
 
 __all__ = [
     "scan_pipeline_state",
@@ -28,4 +32,6 @@ __all__ = [
     "compile_findings",
     "write_verification_findings",
     "format_findings_markdown",
+    "build_next_phase_briefing",
+    "write_next_phase_briefing",
 ]

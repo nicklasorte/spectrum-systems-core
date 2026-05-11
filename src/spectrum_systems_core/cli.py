@@ -19,7 +19,7 @@ import shutil
 import sys
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 import yaml
 
@@ -2874,7 +2874,39 @@ def eval_ground_truth(
         is_dry_run=is_dry_run,
     )
     print(format_cli_report(result), file=out, end="")
+
+    # Phase P: after a successful --set-baseline, remind the operator to
+    # generate the next-phase handoff briefing. Only fires when the gate
+    # actually installed a new baseline (set_baseline + completed + no
+    # partial_run_warning).
+    if (
+        set_baseline
+        and result.get("status") == "completed"
+        and isinstance(result.get("summary"), dict)
+        and bool(result["summary"].get("is_baseline"))
+    ):
+        print(_set_baseline_handoff_reminder(), file=out, end="")
+
     return int(result.get("exit_code", 0))
+
+
+def _set_baseline_handoff_reminder() -> str:
+    """Phase P — copy-pasteable reminder printed after --set-baseline."""
+    return (
+        "\n"
+        "╔════════════════════════════════════════════════════════════════════╗\n"
+        "║ BASELINE SET                                                       ║\n"
+        "╠════════════════════════════════════════════════════════════════════╣\n"
+        "║ Regression gate is now active for run 3 onwards.                   ║\n"
+        "║                                                                    ║\n"
+        "║ NEXT STEP — generate the briefing for the next planning phase:     ║\n"
+        "║                                                                    ║\n"
+        "║   python -m spectrum_systems_core.cli next-phase-handoff           ║\n"
+        "║                                                                    ║\n"
+        "║ Copy the printed prompt opening into a new Claude conversation     ║\n"
+        "║ when planning the next phase.                                      ║\n"
+        "╚════════════════════════════════════════════════════════════════════╝\n"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2918,6 +2950,7 @@ def verify_pipeline_state(
     data_lake: Optional[str] = None,
     validate_schemas: bool = True,
     emit_actions_summary: bool = False,
+    no_write_artifact: bool = False,
     out_stream=None,
 ) -> int:
     """Phase O.0 — scan SDL_ROOT, classify artifacts, write pipeline_state_record.
@@ -2925,6 +2958,12 @@ def verify_pipeline_state(
     Exit 0 on completion (including empty SDL_ROOT — that's a finding,
     not a failure). Exit 1 only when SDL_ROOT can't be resolved or the
     record fails to write.
+
+    Phase P: when ``no_write_artifact`` is True the record is computed
+    and the summary printed, but nothing is persisted under
+    ``$SDL_ROOT/verifications/``. Pre-flight checks use this so a force-run
+    does not pollute the data-lake with an intermediate verification record
+    on every trigger.
     """
     from .verification import (
         scan_pipeline_state as _scan,
@@ -2943,16 +2982,24 @@ def verify_pipeline_state(
         sdl_root=str(sdl_root),
     )
 
-    target = _write(record, sdl_root=sdl_root)
-    if target is None:
+    if no_write_artifact:
+        target = None
         print(
-            "error: failed to write pipeline_state_record (see "
-            f"{sdl_root}/verifications/*.invalid.json)",
+            "skip-write: --no-write-artifact set; pipeline_state_record "
+            "computed but not persisted.",
             file=out,
         )
-        # Still surface the summary so the operator sees the findings.
     else:
-        print(f"wrote: {target}", file=out)
+        target = _write(record, sdl_root=sdl_root)
+        if target is None:
+            print(
+                "error: failed to write pipeline_state_record (see "
+                f"{sdl_root}/verifications/*.invalid.json)",
+                file=out,
+            )
+            # Still surface the summary so the operator sees the findings.
+        else:
+            print(f"wrote: {target}", file=out)
 
     summary = _emit(record)
     print(summary, file=out, end="")
@@ -2965,6 +3012,8 @@ def verify_pipeline_state(
                     fh.write(summary)
             except OSError as exc:
                 print(f"warning: GITHUB_STEP_SUMMARY append failed: {exc}", file=out)
+    if no_write_artifact:
+        return 0
     return 0 if target is not None else 1
 
 
@@ -3018,6 +3067,14 @@ def review_baseline_candidate(
     extractions = _load_meeting_extractions_from_sdl(sdl_root)
     rates = compute_extraction_rates(extractions)
 
+    # Phase P — absolute-minimum sanity floor on total extracted items.
+    # 13 meetings × ~4 items per meeting (mix of decisions/claims/actions)
+    # = ~52. Less than 50 across all meetings means either extraction is
+    # broken or every meeting is extraordinarily sparse. Either case
+    # warrants human review before --set-baseline.
+    total_extracted_items = _count_total_extracted_items(extractions)
+    ABSOLUTE_MINIMUM_ITEMS_FOR_13_MEETINGS = 50
+
     partial = bool(summary.get("partial_run_warning", False))
 
     print("=== review-baseline-candidate ===", file=out)
@@ -3052,6 +3109,27 @@ def review_baseline_candidate(
             display = f"{value:.3f}"
             any_review = True
         print(f"  - [{label}] {key} = {display}  (< {bound:.2f})", file=out)
+
+    # Phase P floor: total_extracted_items >= 50.
+    if total_extracted_items < ABSOLUTE_MINIMUM_ITEMS_FOR_13_MEETINGS:
+        any_review = True
+        print(
+            f"  - [REVIEW] total_extracted_items = {total_extracted_items} "
+            f"(>= {ABSOLUTE_MINIMUM_ITEMS_FOR_13_MEETINGS})  -- "
+            f"Extraction may be under-producing items: "
+            f"{total_extracted_items} items across all meetings. "
+            f"Expected at least {ABSOLUTE_MINIMUM_ITEMS_FOR_13_MEETINGS} "
+            "(~4 per meeting × 13 meetings). Investigate before setting "
+            "baseline. See docs/runbooks/verification-cycle-recovery.md "
+            "section 6 for recovery.",
+            file=out,
+        )
+    else:
+        print(
+            f"  - [PASS] total_extracted_items = {total_extracted_items} "
+            f"(>= {ABSOLUTE_MINIMUM_ITEMS_FOR_13_MEETINGS})",
+            file=out,
+        )
     print("", file=out)
 
     if partial:
@@ -3078,6 +3156,242 @@ def review_baseline_candidate(
             file=out,
         )
 
+    return 0
+
+
+def _count_total_extracted_items(
+    meeting_extractions: List[Dict[str, Any]],
+) -> int:
+    """Sum decisions + claims + action_items across meeting_extractions.
+
+    Used by ``review-baseline-candidate``'s absolute-minimum floor
+    (Phase P). Total below 50 across all meetings is flagged for review.
+    """
+    total = 0
+    for me in meeting_extractions:
+        if not isinstance(me, dict):
+            continue
+        for key in ("decisions", "claims", "action_items"):
+            seq = me.get(key)
+            if isinstance(seq, list):
+                total += len(seq)
+    return total
+
+
+def _list_source_ids_missing_chunks(
+    data_lake_path: Optional[str],
+) -> List[str]:
+    """Return sorted source_ids that have a source_record but no chunks.jsonl.
+
+    Walks ``<data_lake>/store/processed/<family>/<source_id>/`` and reports
+    every directory whose ``source_record.json`` exists but whose
+    ``chunks.jsonl`` does not. Empty when the processed tree is missing or
+    when nothing is mismatched.
+    """
+    if not data_lake_path:
+        return []
+    processed = Path(data_lake_path) / "store" / "processed"
+    if not processed.is_dir():
+        return []
+    missing: List[str] = []
+    for family_dir in sorted(processed.iterdir()):
+        if not family_dir.is_dir():
+            continue
+        for sid_dir in sorted(family_dir.iterdir()):
+            if not sid_dir.is_dir():
+                continue
+            if not (sid_dir / "source_record.json").is_file():
+                continue
+            if not (sid_dir / "chunks.jsonl").is_file():
+                missing.append(sid_dir.name)
+    return missing
+
+
+# Phase P pre-flight: link CLI errors back to the recovery runbook.
+_RUNBOOK_REL_PATH = "docs/runbooks/verification-cycle-recovery.md"
+
+
+def check_preflight(
+    *,
+    data_lake: Optional[str] = None,
+    allow_mixed_migration: bool = False,
+    out_stream=None,
+) -> int:
+    """Phase P pre-flight — refuse force-run when the pipeline is in a bad state.
+
+    Always runs a fresh ``verify-pipeline-state`` scan (never reads a
+    cached pipeline_state_record), then enforces three guards:
+
+    1. ``artifacts_with_artifact_kind_only > 0`` → exit 1 unless
+       ``--allow-mixed-migration`` is set (which logs the bypass loudly).
+    2. No ``source_record`` artifacts on disk → exit 1.
+    3. ``chunks.jsonl`` missing for any source_record → exit 0 with a
+       warning, listing the source_ids. force_only_missing may be the
+       deliberate way to regenerate these, so this is warn-only.
+
+    Never raises. Exit 0 means safe-to-proceed; exit 1 means blocked.
+    """
+    from .verification import scan_pipeline_state as _scan
+
+    out = out_stream if out_stream is not None else sys.stdout
+    sdl_root, resolved_lake = _resolve_verification_sdl(data_lake, out)
+    if sdl_root is None:
+        return 1
+
+    # ALWAYS fresh — pre-flight must not trust a cached record that
+    # could have been written before a migration regression.
+    record = _scan(
+        data_lake_path=resolved_lake,
+        validate_schemas=False,
+        sdl_root=str(sdl_root),
+    )
+
+    expected = record.get("expected_artifacts") or {}
+    source_record_count = int(expected.get("source_record_count", 0) or 0)
+    kind_only = int(record.get("artifacts_with_artifact_kind_only", 0) or 0)
+
+    print("=== check-preflight ===", file=out)
+    print(f"source_record_count: {source_record_count}", file=out)
+    print(
+        f"artifacts_with_artifact_kind_only: {kind_only}",
+        file=out,
+    )
+
+    # Guard 1: migration completeness.
+    if kind_only > 0:
+        if allow_mixed_migration:
+            # Loud bypass: stderr + step summary + return 0 with a clear marker.
+            print(
+                "WARNING: --allow-mixed-migration BYPASS ACTIVE. "
+                f"{kind_only} artifact(s) still carry only 'artifact_kind' "
+                "(legacy). This bypass is for EMERGENCY runs only.",
+                file=out,
+            )
+            print(
+                "WARNING: --allow-mixed-migration BYPASS ACTIVE. "
+                f"{kind_only} artifact(s) still carry only 'artifact_kind' "
+                "(legacy). This bypass is for EMERGENCY runs only.",
+                file=sys.stderr,
+            )
+            gh_path = os.environ.get("GITHUB_STEP_SUMMARY", "").strip()
+            if gh_path:
+                try:
+                    with open(gh_path, "a", encoding="utf-8") as fh:
+                        fh.write(
+                            "## check-preflight\n\n"
+                            "**EMERGENCY BYPASS ACTIVE** — "
+                            f"`--allow-mixed-migration` was set while "
+                            f"{kind_only} artifact(s) still carry only "
+                            "`artifact_kind`. Run migrate-artifact-kind "
+                            "after this run completes.\n"
+                        )
+                except OSError:
+                    pass
+        else:
+            print(
+                f"error: {kind_only} artifact(s) still carry only "
+                "'artifact_kind' (legacy). Migration incomplete. "
+                "Run migrate-artifact-kind workflow with confirm=true "
+                "before running pipeline. To bypass (emergency only), "
+                "add --allow-mixed-migration.",
+                file=out,
+            )
+            print(
+                f"See {_RUNBOOK_REL_PATH} section 1 for recovery.",
+                file=out,
+            )
+            return 1
+
+    # Guard 2: no source records means ingestion has not been run.
+    if source_record_count == 0:
+        print(
+            "error: No source_records in data-lake. Run ingestion first.",
+            file=out,
+        )
+        print(
+            f"See {_RUNBOOK_REL_PATH} section 4 for recovery.",
+            file=out,
+        )
+        return 1
+
+    # Guard 3: chunks.jsonl missing for some source_records → warn, never block.
+    missing = _list_source_ids_missing_chunks(resolved_lake)
+    if missing:
+        listing = ", ".join(missing)
+        print(
+            "warning: chunks.jsonl missing for "
+            f"{len(missing)} source_id(s): {listing}. "
+            "force_only_missing=true may be the intended way to regenerate "
+            "these; this is a warning only.",
+            file=sys.stderr,
+        )
+        print(
+            "warning: chunks.jsonl missing for "
+            f"{len(missing)} source_id(s): {listing}.",
+            file=out,
+        )
+
+    print("OK: pre-flight passed.", file=out)
+    return 0
+
+
+def next_phase_handoff_cli(
+    *,
+    data_lake: Optional[str] = None,
+    cycle_id: Optional[str] = None,
+    freshness_hours: int = 24,
+    out_stream=None,
+) -> int:
+    """Phase P — write a next_phase_briefing artifact and print prompt_opening.
+
+    The command always discovers the latest pipeline_state_record,
+    eval_summary, and verification_findings on disk (under $SDL_ROOT). If
+    an eval_summary is missing, ``metrics_snapshot`` is null — the command
+    must NOT crash in that case (red-team scenario 3).
+    """
+    from .verification.next_phase_handoff import (
+        build_next_phase_briefing,
+        write_next_phase_briefing,
+    )
+
+    out = out_stream if out_stream is not None else sys.stdout
+    sdl_root, _resolved_lake = _resolve_verification_sdl(data_lake, out)
+    if sdl_root is None:
+        return 1
+
+    cycle = cycle_id or (
+        "phase-P-cycle-"
+        + datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    )
+    record = build_next_phase_briefing(
+        cycle_id=cycle,
+        freshness_window_hours=int(freshness_hours),
+        sdl_root=sdl_root,
+    )
+    target = write_next_phase_briefing(record, sdl_root=sdl_root)
+    if target is None:
+        print(
+            "error: failed to write next_phase_briefing (see "
+            f"{sdl_root}/verifications/briefings/*.invalid.json)",
+            file=out,
+        )
+        return 1
+    print(f"wrote: {target}", file=out)
+
+    prompt_opening = record.get("prompt_opening", "")
+    print("", file=out)
+    print(prompt_opening, file=out, end="")
+
+    gh_path = os.environ.get("GITHUB_STEP_SUMMARY", "").strip()
+    if gh_path:
+        try:
+            with open(gh_path, "a", encoding="utf-8") as fh:
+                fh.write(prompt_opening)
+        except OSError as exc:
+            print(
+                f"warning: GITHUB_STEP_SUMMARY append failed: {exc}",
+                file=out,
+            )
     return 0
 
 
@@ -3820,6 +4134,16 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Append a Markdown summary to $GITHUB_STEP_SUMMARY if set.",
     )
+    vps.add_argument(
+        "--no-write-artifact",
+        action="store_true",
+        help=(
+            "Compute the pipeline_state_record but do NOT persist it under "
+            "$SDL_ROOT/verifications/. Used by pre-flight checks "
+            "(check-preflight) so they do not pollute the data-lake with "
+            "intermediate verification records on every pipeline trigger."
+        ),
+    )
 
     rbc = sub.add_parser(
         "review-baseline-candidate",
@@ -3842,6 +4166,69 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Optional eval_summary pipeline_run_id to review. Defaults to "
             "the most recent eval_summary on disk."
+        ),
+    )
+
+    nph = sub.add_parser(
+        "next-phase-handoff",
+        help=(
+            "Phase P: snapshot current verification state into a "
+            "next_phase_briefing artifact and print a copy-paste-ready "
+            "prompt opening for the next planning conversation."
+        ),
+        description=(
+            "Phase P briefing generator. Loads the latest "
+            "pipeline_state_record, eval_summary (if any), and "
+            "verification_findings under $SDL_ROOT. Builds an inventory + "
+            "metrics snapshot, computes a freshness window (valid_until = "
+            "created_at + freshness_window_hours, default 24h), and writes "
+            "a next_phase_briefing artifact to "
+            "$SDL_ROOT/verifications/briefings/. Prints the prompt opening "
+            "to stdout (and $GITHUB_STEP_SUMMARY when set). Null-safe when "
+            "eval_summary is missing."
+        ),
+    )
+    nph.add_argument("--data-lake", default=None)
+    nph.add_argument(
+        "--cycle-id",
+        default=None,
+        help=(
+            "Optional cycle id (e.g. 'phase-P-cycle-2026-05-11'). "
+            "Defaults to phase-P-cycle-<today>."
+        ),
+    )
+    nph.add_argument(
+        "--freshness-hours",
+        type=int,
+        default=24,
+        help="Freshness window in hours; valid_until = created_at + this.",
+    )
+
+    cp = sub.add_parser(
+        "check-preflight",
+        help=(
+            "Phase P: refuse pipeline force-run when migration is incomplete "
+            "or ingestion is empty."
+        ),
+        description=(
+            "Phase P pre-flight check. Runs a fresh verify-pipeline-state "
+            "scan (never reads cached records) and blocks the pipeline with "
+            "exit code 1 when: (a) artifacts_with_artifact_kind_only > 0 and "
+            "--allow-mixed-migration is not set, or (b) no source_records "
+            "exist in the data lake. Missing chunks.jsonl files are reported "
+            "as warnings (exit 0). The --allow-mixed-migration flag bypasses "
+            "guard (a) for emergency runs and logs the bypass loudly to "
+            "stdout, stderr, and $GITHUB_STEP_SUMMARY."
+        ),
+    )
+    cp.add_argument("--data-lake", default=None)
+    cp.add_argument(
+        "--allow-mixed-migration",
+        action="store_true",
+        help=(
+            "Emergency bypass: allow the pipeline to run even when the "
+            "artifact_kind → artifact_type migration is incomplete. "
+            "Logs the bypass loudly to stdout/stderr/step-summary."
         ),
     )
 
@@ -4035,6 +4422,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             data_lake=args.data_lake,
             validate_schemas=not args.no_validate_schemas,
             emit_actions_summary=args.emit_actions_summary,
+            no_write_artifact=args.no_write_artifact,
         )
     if args.command == "review-baseline-candidate":
         return review_baseline_candidate(
@@ -4045,6 +4433,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return compile_findings_cli(
             data_lake=args.data_lake,
             cycle_id=args.cycle_id,
+        )
+    if args.command == "check-preflight":
+        return check_preflight(
+            data_lake=args.data_lake,
+            allow_mixed_migration=args.allow_mixed_migration,
+        )
+    if args.command == "next-phase-handoff":
+        return next_phase_handoff_cli(
+            data_lake=args.data_lake,
+            cycle_id=args.cycle_id,
+            freshness_hours=args.freshness_hours,
         )
     parser.error(f"unknown command: {args.command}")
     return 2
