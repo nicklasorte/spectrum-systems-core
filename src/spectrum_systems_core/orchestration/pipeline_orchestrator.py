@@ -507,9 +507,12 @@ class PipelineOrchestrator:
         failed_this_run: List[Dict[str, Any]] = []
         results_for_record: List[Dict[str, Any]] = []
 
-        # Track which transcripts reached Stage 4 success this run; Stage 5
-        # only fires if at least one did, OR if force=True (per task spec).
-        any_stage4_success_this_run = False
+        # Track which transcripts reached Stage 2 success this run; Stage 5
+        # fires iff at least one did (per task spec — "synthesize runs if
+        # any stage 2 artifacts exist", verified via the artifact-existence
+        # check in _run_one_stage so stale leftovers do NOT count).
+        any_stage2_success_this_run = False
+        any_stage4_success_this_run = False  # retained for record-keeping
         # Tally across all transcripts for the new aggregate fields.
         total_stages_completed = 0
         total_stages_failed = 0
@@ -607,6 +610,8 @@ class PipelineOrchestrator:
                 pipeline_stages.update(stages_2_4["pipeline_stages"])
                 total_stages_completed += stages_2_4["completed"]
                 total_stages_failed += stages_2_4["failed"]
+                if stages_2_4["stage2_success"]:
+                    any_stage2_success_this_run = True
                 if stages_2_4["stage4_success"]:
                     any_stage4_success_this_run = True
 
@@ -670,6 +675,8 @@ class PipelineOrchestrator:
             pipeline_stages.update(stages_2_4["pipeline_stages"])
             total_stages_completed += stages_2_4["completed"]
             total_stages_failed += stages_2_4["failed"]
+            if stages_2_4["stage2_success"]:
+                any_stage2_success_this_run = True
             if stages_2_4["stage4_success"]:
                 any_stage4_success_this_run = True
 
@@ -686,12 +693,15 @@ class PipelineOrchestrator:
 
         # Stage 5 (synthesize) — runs once per invocation.
         # Sev-1 hazard guard: force alone does NOT trigger synthesize.
-        # Synthesize runs iff at least one transcript reached Stage 4
-        # success this invocation (per Phase L.3 spec). With zero Stage 4
-        # successes, there is nothing new to synthesize regardless of force.
+        # Synthesize runs iff at least one transcript reached Stage 2
+        # success this invocation (per task spec: "synthesize runs if
+        # any stage 2 artifacts exist"). The artifact-existence check
+        # already filters out stale leftovers, so stage2_success_this_run
+        # implies the chunks.jsonl was produced or freshly verified
+        # during this run.
         synthesize_status = SYNTHESIZE_STATUS_NOT_RUN
         if not dry_run:
-            if any_stage4_success_this_run:
+            if any_stage2_success_this_run:
                 synth_result = self._run_synthesize(store_root)
                 if synth_result["status"] == "success":
                     synthesize_status = SYNTHESIZE_STATUS_SUCCESS
@@ -788,6 +798,7 @@ class PipelineOrchestrator:
             "pipeline_stages": {extract_stories, promote_knowledge, extract_claims},
             "completed": int (stages with success or skipped),
             "failed": int,
+            "stage2_success": bool,  # used to gate synthesize
             "stage4_success": bool,
           }
         """
@@ -798,6 +809,7 @@ class PipelineOrchestrator:
         }
         completed = 0
         failed = 0
+        stage2_success = False
         stage4_success = False
 
         # Stage 2: extract-stories
@@ -807,11 +819,15 @@ class PipelineOrchestrator:
             source_id=source_id,
             store_root=store_root,
             force=force,
-            done_check=_stage2_done,
+            idempotency_check=_stage2_done,
+            artifact_check=_stage2_artifact_exists,
             filename=filename,
         )
         result_stages[STAGE_EXTRACT_STORIES] = stage2["status"]
-        if stage2["status"] in (STAGE_STATUS_SUCCESS, STAGE_STATUS_FORCED, STAGE_STATUS_SKIPPED):
+        if stage2["status"] in (STAGE_STATUS_SUCCESS, STAGE_STATUS_FORCED):
+            completed += 1
+            stage2_success = True
+        elif stage2["status"] == STAGE_STATUS_SKIPPED:
             completed += 1
         elif stage2["status"] == STAGE_STATUS_FAILURE:
             failed += 1
@@ -822,6 +838,7 @@ class PipelineOrchestrator:
                 "pipeline_stages": result_stages,
                 "completed": completed,
                 "failed": failed,
+                "stage2_success": stage2_success,
                 "stage4_success": stage4_success,
             }
 
@@ -832,7 +849,8 @@ class PipelineOrchestrator:
             source_id=source_id,
             store_root=store_root,
             force=force,
-            done_check=_stage3_done,
+            idempotency_check=_stage3_done,
+            artifact_check=_stage3_done,
             filename=filename,
         )
         result_stages[STAGE_PROMOTE_KNOWLEDGE] = stage3["status"]
@@ -849,7 +867,8 @@ class PipelineOrchestrator:
             source_id=source_id,
             store_root=store_root,
             force=force,
-            done_check=_stage4_done,
+            idempotency_check=_stage4_done,
+            artifact_check=_stage4_done,
             filename=filename,
         )
         result_stages[STAGE_EXTRACT_CLAIMS] = stage4["status"]
@@ -865,6 +884,7 @@ class PipelineOrchestrator:
             "pipeline_stages": result_stages,
             "completed": completed,
             "failed": failed,
+            "stage2_success": stage2_success,
             "stage4_success": stage4_success,
         }
 
@@ -876,39 +896,109 @@ class PipelineOrchestrator:
         source_id: str,
         store_root: Path,
         force: bool,
-        done_check: Callable[[Path, str], bool],
+        idempotency_check: Callable[[Path, str], bool],
+        artifact_check: Callable[[Path, str], bool],
         filename: str,
     ) -> Dict[str, Any]:
-        """Run one stage with idempotency + force handling. Never raises."""
-        already_done = done_check(store_root, source_id)
+        """Run one stage with idempotency + post-run artifact verification.
+
+        Artifact-as-evidence contract:
+
+        - The on-disk artifact (e.g., ``stories/chunks.jsonl`` for Stage 2)
+          is the PRIMARY success signal.
+        - The runner's return ``status`` is the SECONDARY signal.
+        - When they disagree, log a discrepancy and resolve as follows:
+
+          * runner=success + artifact present → success (normal)
+          * runner=success + artifact missing → FAILURE
+              (warn: ``cli_success_artifact_missing``)
+          * runner=failure + artifact newly produced this run → SUCCESS
+              (warn: ``cli_failure_artifact_produced``)
+          * runner=failure + artifact stale (pre-existed, no new output)
+              → FAILURE (Sev-1 guard: a leftover artifact from a prior
+              run is NOT evidence that THIS run succeeded)
+          * runner=failure + artifact missing → FAILURE (normal)
+
+        ``idempotency_check`` is the marker used to decide whether to
+        skip the stage entirely on a re-run (no runner call, no
+        artifact recheck). ``artifact_check`` is what we look for after
+        the runner returns. They may differ — Stage 2 uses
+        ``candidates.jsonl`` for idempotency (a fully-completed run
+        wrote it) but ``chunks.jsonl`` for artifact evidence (deterministic
+        Chunker output proves partial success even if StoryExtractor
+        fails).
+
+        Never raises.
+        """
+        already_done = idempotency_check(store_root, source_id)
         if already_done and not force:
             return {"status": STAGE_STATUS_SKIPPED, "reason": "already_done"}
-        prefix = "[force] " if (force and already_done) else ""
+
+        artifact_pre_existed = artifact_check(store_root, source_id)
+        forced_run = force and already_done
+        prefix = "[force] " if forced_run else ""
         print(f"  {prefix}{stage_name}: {filename} ...", flush=True)
+
+        runner_ok = False
+        runner_reason = ""
         try:
             result = runner(source_id, store_root)
-        except Exception as exc:  # defensive
+            if not isinstance(result, dict):
+                runner_reason = "runner_returned_non_dict"
+            else:
+                runner_ok = result.get("status") == "success"
+                runner_reason = result.get(
+                    "reason", "" if runner_ok else "stage_failed"
+                )
+        except Exception as exc:  # defensive: never raise
+            runner_reason = f"unexpected_error:{exc}"
+
+        artifact_post_exists = artifact_check(store_root, source_id)
+        artifact_produced_this_run = (
+            artifact_post_exists and not artifact_pre_existed
+        )
+
+        success_status = STAGE_STATUS_FORCED if forced_run else STAGE_STATUS_SUCCESS
+
+        if runner_ok:
+            if artifact_post_exists:
+                return {"status": success_status, "reason": runner_reason}
+            # CLI success but no artifact — log the discrepancy and fail.
+            print(
+                f"[orchestrator] {stage_name}_artifact_missing_despite_cli_success: "
+                f"filename={filename} source_id={source_id}",
+                flush=True,
+            )
             return {
                 "status": STAGE_STATUS_FAILURE,
-                "reason": f"unexpected_error:{exc}",
+                "reason": f"cli_success_artifact_missing:{runner_reason}",
             }
-        if not isinstance(result, dict):
+
+        # Runner failed.
+        if artifact_produced_this_run:
+            print(
+                f"[orchestrator] {stage_name}_artifact_present_despite_cli_failure: "
+                f"filename={filename} source_id={source_id} "
+                f"runner_reason={runner_reason}",
+                flush=True,
+            )
             return {
-                "status": STAGE_STATUS_FAILURE,
-                "reason": "runner_returned_non_dict",
+                "status": success_status,
+                "reason": f"cli_failure_artifact_produced:{runner_reason}",
             }
-        if result.get("status") == "success":
-            return {
-                "status": (
-                    STAGE_STATUS_FORCED
-                    if (force and already_done)
-                    else STAGE_STATUS_SUCCESS
-                ),
-                "reason": result.get("reason", ""),
-            }
+
+        if artifact_pre_existed and artifact_post_exists:
+            # Sev-1 guard: a stale artifact from a prior run does NOT
+            # count as new evidence. Surface the discrepancy.
+            print(
+                f"[orchestrator] {stage_name}_stale_artifact_not_treated_as_success: "
+                f"filename={filename} source_id={source_id} "
+                f"runner_reason={runner_reason}",
+                flush=True,
+            )
         return {
             "status": STAGE_STATUS_FAILURE,
-            "reason": result.get("reason", "stage_failed"),
+            "reason": runner_reason or "stage_failed",
         }
 
     def _run_synthesize(self, store_root: Path) -> Dict[str, Any]:
@@ -1242,15 +1332,44 @@ def _processed_dir(store_root: Path, source_id: str) -> Optional[Path]:
 
 
 def _stage2_done(store_root: Path, source_id: str) -> bool:
-    """Stage 2 (extract-stories) marker: candidates.jsonl exists."""
+    """Stage 2 (extract-stories) idempotency marker: candidates.jsonl exists.
+
+    Used to decide whether to SKIP the stage on a re-run. A run that
+    only produced ``chunks.jsonl`` (StoryExtractor failed before writing
+    candidates) is still incomplete and must be retried, so the
+    idempotency marker stays at ``candidates.jsonl``. The separate
+    artifact-existence check (``_stage2_artifact_exists``) uses
+    ``chunks.jsonl`` per the post-run verification contract.
+    """
     pd = _processed_dir(store_root, source_id)
     if pd is None:
         return False
     return (pd / "stories" / "candidates.jsonl").is_file()
 
 
+def _stage2_artifact_exists(store_root: Path, source_id: str) -> bool:
+    """Stage 2 post-run artifact-evidence: stories/chunks.jsonl.
+
+    Per the artifact-as-evidence contract: ``chunks.jsonl`` is the
+    deterministic Chunker output that proves Stage 2 produced usable
+    output even when downstream StoryExtractor / StoryEval steps fail
+    (e.g., transient API errors). It is intentionally a weaker signal
+    than the idempotency marker.
+    """
+    pd = _processed_dir(store_root, source_id)
+    if pd is None:
+        return False
+    return (pd / "stories" / "chunks.jsonl").is_file()
+
+
 def _stage3_done(store_root: Path, source_id: str) -> bool:
-    """Stage 3 (knowledge) marker: any of concepts/themes/analogies.jsonl."""
+    """Stage 3 (knowledge) marker: any of concepts/themes/analogies.jsonl.
+
+    Used as BOTH the idempotency marker and the post-run artifact-evidence
+    check — KnowledgeSynthesizer writes all three on a successful run,
+    and any one of them is sufficient evidence that the stage produced
+    output.
+    """
     pd = _processed_dir(store_root, source_id)
     if pd is None:
         return False
@@ -1262,7 +1381,11 @@ def _stage3_done(store_root: Path, source_id: str) -> bool:
 
 
 def _stage4_done(store_root: Path, source_id: str) -> bool:
-    """Stage 4 (extract-claims) marker: paper/claims.jsonl exists."""
+    """Stage 4 (extract-claims) marker: paper/claims.jsonl exists.
+
+    Used as BOTH the idempotency marker and the post-run artifact-evidence
+    check — ClaimExtractor writes ``claims.jsonl`` on a successful run.
+    """
     pd = _processed_dir(store_root, source_id)
     if pd is None:
         return False

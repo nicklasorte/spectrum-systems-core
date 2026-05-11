@@ -719,3 +719,133 @@ expecting end-to-end re-synthesize over already-processed data must use
 `--force` to get one. This matches the documented "at least one
 transcript reached Stage 4 success this run" rule.
 
+---
+
+# fix/orchestrator-stage-status — Progress
+
+## Step 1 — Inventory
+
+| Item | Result |
+|---|---|
+| Branch (harness-assigned) | `claude/fix-orchestrator-status-cfO3m` (PR vs `main`) |
+| pytest collect (baseline) | 840 |
+| pytest run (baseline) | 829 passed, 11 failed (pre-existing PDF/cffi) |
+
+### Where the bug lives
+
+`src/spectrum_systems_core/orchestration/pipeline_orchestrator.py` —
+
+1. `_default_extract_stories_runner` runs `Chunker → StoryExtractor →
+   StoryEval → StoryworthyFilter` directly (in-process, not subprocess).
+   `Chunker` is deterministic and writes `stories/chunks.jsonl` with no
+   external dependencies. `StoryExtractor` is the one that calls the
+   Anthropic API to produce `stories/candidates.jsonl`. **In production
+   the API call failed** → runner returned `status="failure"` →
+   orchestrator reported `sty✗` for all 13 transcripts. But `chunks.jsonl`
+   was successfully written before the failure.
+2. `_run_one_stage` (line 871) reads the runner's return dict and only
+   checks `result.get("status") == "success"`. There is no artifact-
+   existence cross-check. A runner that returns `failure` is always
+   recorded as stage failure even when the on-disk artifact proves
+   partial success.
+3. `_stage2_done` (line 1244) checks `stories/candidates.jsonl` for
+   idempotency. Since the StoryExtractor never wrote it, the next run
+   re-attempts Stage 2 — which is correct, but it does mean the
+   orchestrator never gives credit for the chunks.jsonl that was written.
+4. Synthesize gates on `any_stage4_success_this_run`. Stage 2 failure
+   short-circuits Stages 3+4, so synthesize was always skipped in this
+   scenario.
+
+### CLI vs in-process
+
+`_default_extract_stories_runner` does NOT shell out to the `extract-
+stories` CLI command. It imports `Chunker`/`StoryExtractor` directly
+and reads their `dict` return values. So the "wrong exit-code parsing"
+hypothesis from the task description doesn't apply: the orchestrator
+reads dicts already, the question is *which* signal is authoritative.
+
+### Decision: apply Fix C (artifact-existence as primary)
+
+Per task spec, treat the on-disk artifact as the primary success
+signal:
+
+- Stage 2 artifact-evidence: `processed/<family>/<sid>/stories/chunks.jsonl`
+  (Chunker output — deterministic, no API)
+- Stage 3 artifact-evidence: any of
+  `processed/<family>/<sid>/knowledge/{concepts,themes,analogies}.jsonl`
+  (already what `_stage3_done` checks)
+- Stage 4 artifact-evidence: `processed/<family>/<sid>/paper/claims.jsonl`
+  (already what `_stage4_done` checks)
+
+Snapshot artifact existence BEFORE the runner runs, then re-check after.
+Discrepancies between runner result and artifact change get a printed
+warning. Sev-1 guard: a runner failure with the artifact *already*
+present (pre-existed, no new output) is still a failure — we cannot
+treat a stale artifact as new evidence.
+
+Synthesize gating changes from `any_stage4_success_this_run` to
+`any_stage2_success_this_run` (per task: "Synthesize now runs if any
+stage 2 artifacts exist"). Existing test `test_force_synthesize_not_run_
+when_zero_stage4_success` still passes because zero Stage 2 success
+=> zero Stage 4 success.
+
+## Step 2-4 — Fix applied
+
+| File | Change |
+|---|---|
+| `src/spectrum_systems_core/orchestration/pipeline_orchestrator.py` | New helper `_stage2_artifact_exists` (chunks.jsonl); rewrote `_run_one_stage` to snapshot pre/post artifact existence and apply the decision matrix; `_run_stages_2_to_4` now returns `stage2_success`; `_run` gates synthesize on `any_stage2_success_this_run`. |
+| `tests/orchestration/test_pipeline_orchestrator.py` | `_stage_runner_factory` Stage 2 now writes both `chunks.jsonl` and `candidates.jsonl`; added 5 new tests for artifact-existence behavior. |
+
+Applied Likely Fix C (artifact-existence as primary success signal).
+Fix A (subprocess) and Fix B (exit-code parsing) did not apply because
+the runner is already invoked as an in-process function and reads its
+return dict directly. Fix D (direct function call) was already in place.
+
+## Step 5 — Tests added (5 new)
+
+1. `test_story_extraction_success_detected_by_artifact_existence`
+2. `test_story_extraction_failure_when_no_artifact`
+3. `test_synthesize_runs_when_stories_exist`
+4. `test_summary_shows_correct_success_count`
+5. `test_stale_artifact_does_not_mask_runner_failure` (Sev-1 guard)
+
+## Step 6 — Gate A (design redteam, fresh subagent)
+
+**Verdict: no blocking findings (zero Sev-1, zero Sev-2).**
+
+Reviewer walked the four required spot-checks and confirmed:
+1. Stale artifact + runner failure does NOT mask as success
+   (`artifact_pre_existed` snapshot + `artifact_produced_this_run`
+   flag; covered by `test_stale_artifact_does_not_mask_runner_failure`).
+2. Stage 2 idempotency marker is `candidates.jsonl` (full-completion);
+   artifact-evidence marker is `chunks.jsonl` (partial-completion).
+   A "chunks-without-candidates" state correctly retries next run.
+3. Synthesize on data without claims is the task spec's stated
+   requirement and is enforced by `test_synthesize_runs_when_stories_exist`.
+4. `_stage_runner_factory` writes both `chunks.jsonl` and
+   `candidates.jsonl` on Stage 2 success.
+
+## Step 7 — Test status post-fix
+
+| Check | Result |
+|---|---|
+| pytest collect | 845 (840 baseline + 5 new) |
+| pytest run | 834 passed, 11 failed (same 11 pre-existing PDF/cffi failures) |
+| audit-governance (`DATA_LAKE_PATH=data-lake`) | exit 0; total_flagged 0; high 0 |
+| lint / type-check | N/A — no config |
+
+## Step 8 — Gate B (diff redteam, fresh subagent)
+
+**Verdict: no blocking findings (zero Sev-1, zero Sev-2).**
+
+Reviewer confirmed:
+- Sev-1 stale-artifact guard present (`artifact_pre_existed` /
+  `artifact_post_exists` pair).
+- All three discrepancy warnings printed (cli_success_artifact_missing,
+  cli_failure_artifact_produced, stale_artifact_not_treated_as_success).
+- Test factory writes both chunks.jsonl AND candidates.jsonl.
+- All four required tests present plus the additional stale-artifact
+  Sev-1 test.
+- Existing `test_force_synthesize_not_run_when_zero_stage4_success`
+  semantics preserved (verified by full-suite pass).
+

@@ -658,6 +658,11 @@ def _stage_runner_factory(calls: List[Dict[str, Any]], stage: str):
         processed_dir = store_root / "processed" / "meetings" / source_id
         if stage == "extract_stories":
             (processed_dir / "stories").mkdir(parents=True, exist_ok=True)
+            # chunks.jsonl is the artifact-evidence file (Chunker output);
+            # candidates.jsonl is the idempotency marker (full-run output).
+            (processed_dir / "stories" / "chunks.jsonl").write_text(
+                "", encoding="utf-8"
+            )
             (processed_dir / "stories" / "candidates.jsonl").write_text(
                 "", encoding="utf-8"
             )
@@ -1111,3 +1116,213 @@ def test_cli_force_flag_emits_force_prefix(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert rc == 0
     assert "FORCE RE-PROCESS" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Artifact-existence verification (fix/orchestrator-stage-status)
+# ---------------------------------------------------------------------------
+
+
+def test_story_extraction_success_detected_by_artifact_existence(tmp_path, capsys):
+    """CLI runner returns failure but chunks.jsonl exists → stage = success.
+
+    Mirrors the production bug: Chunker writes chunks.jsonl, StoryExtractor
+    fails (API error). The artifact is the evidence, so the stage is
+    recorded as success and a `cli_failure_artifact_produced` warning is
+    printed.
+    """
+    root = _make_data_lake(tmp_path)
+    _drop_txt(root, "alpha.txt")
+
+    def chunks_then_fail_runner(source_id, store_root):
+        # Chunker wrote chunks.jsonl before StoryExtractor failed.
+        pd = store_root / "processed" / "meetings" / source_id / "stories"
+        pd.mkdir(parents=True, exist_ok=True)
+        (pd / "chunks.jsonl").write_text(
+            '{"chunk_id": "c1"}\n', encoding="utf-8"
+        )
+        return {"status": "failure", "reason": "extractor_failed:api_error"}
+
+    s1_calls: List[Dict[str, Any]] = []
+    stage_calls: List[Dict[str, Any]] = []
+    synth_calls: List[str] = []
+    orch = _full_pipeline_orchestrator(
+        transcript_runner=_success_runner_with_processed(s1_calls),
+        stage_calls=stage_calls,
+        synth_calls=synth_calls,
+        extract_stories_runner=chunks_then_fail_runner,
+    )
+
+    res = orch.run(str(root), force=False)
+
+    sid = _slugify("alpha")
+    pr = [r for r in res["results"] if r["filename"] == "alpha.txt"][0]
+    assert pr["pipeline_stages"]["extract_stories"] == "success"
+
+    out = capsys.readouterr().out
+    assert "extract_stories_artifact_present_despite_cli_failure" in out
+    assert sid in out
+
+    # Stage 2 success this run → synthesize was attempted.
+    assert len(synth_calls) == 1
+
+
+def test_story_extraction_failure_when_no_artifact(tmp_path, capsys):
+    """CLI runner returns success but chunks.jsonl missing → stage = failure
+    with `cli_success_artifact_missing` warning."""
+    root = _make_data_lake(tmp_path)
+    _drop_txt(root, "alpha.txt")
+
+    def lying_success_runner(source_id, store_root):
+        # Runner claims success but writes nothing.
+        return {"status": "success", "reason": ""}
+
+    s1_calls: List[Dict[str, Any]] = []
+    stage_calls: List[Dict[str, Any]] = []
+    synth_calls: List[str] = []
+    orch = _full_pipeline_orchestrator(
+        transcript_runner=_success_runner_with_processed(s1_calls),
+        stage_calls=stage_calls,
+        synth_calls=synth_calls,
+        extract_stories_runner=lying_success_runner,
+    )
+
+    res = orch.run(str(root), force=False)
+
+    sid = _slugify("alpha")
+    pr = [r for r in res["results"] if r["filename"] == "alpha.txt"][0]
+    assert pr["pipeline_stages"]["extract_stories"] == "failure"
+    # Sev-1 guard: Stages 3+4 not attempted because Stage 2 reported failure.
+    assert pr["pipeline_stages"]["promote_knowledge"] == "not_run"
+    assert pr["pipeline_stages"]["extract_claims"] == "not_run"
+
+    out = capsys.readouterr().out
+    assert "extract_stories_artifact_missing_despite_cli_success" in out
+    assert sid in out
+
+    # No Stage 2 success this run → synthesize skipped.
+    assert synth_calls == []
+    assert res["synthesize_status"] == "skipped"
+
+
+def test_synthesize_runs_when_stories_exist(tmp_path):
+    """Stories produced (chunks.jsonl present after Stage 2) → synthesize
+    is attempted, even if every downstream stage (3, 4) fails — because
+    Stage 2 is the gating signal for synthesize per the new design."""
+    root = _make_data_lake(tmp_path)
+    _drop_txt(root, "alpha.txt")
+
+    def chunks_only_runner(source_id, store_root):
+        pd = store_root / "processed" / "meetings" / source_id / "stories"
+        pd.mkdir(parents=True, exist_ok=True)
+        (pd / "chunks.jsonl").write_text(
+            '{"chunk_id": "c1"}\n', encoding="utf-8"
+        )
+        return {"status": "success", "reason": ""}
+
+    s1_calls: List[Dict[str, Any]] = []
+    stage_calls: List[Dict[str, Any]] = []
+    synth_calls: List[str] = []
+    orch = _full_pipeline_orchestrator(
+        transcript_runner=_success_runner_with_processed(s1_calls),
+        stage_calls=stage_calls,
+        synth_calls=synth_calls,
+        extract_stories_runner=chunks_only_runner,
+        promote_knowledge_runner=_stage_failure_runner("knowledge_boom"),
+        extract_claims_runner=_stage_failure_runner("claims_boom"),
+    )
+
+    res = orch.run(str(root), force=False)
+
+    pr = [r for r in res["results"] if r["filename"] == "alpha.txt"][0]
+    assert pr["pipeline_stages"]["extract_stories"] == "success"
+    # Synthesize ran on the strength of Stage 2 evidence, even with
+    # Stages 3+4 failing.
+    assert len(synth_calls) == 1
+    assert res["synthesize_status"] == "success"
+
+
+def test_summary_shows_correct_success_count(tmp_path):
+    """13 transcripts each producing chunks.jsonl → succeeded-this-run = 13
+    and synthesize fires once. Mirrors the production scenario the fix
+    targets."""
+    root = _make_data_lake(tmp_path)
+    for i in range(13):
+        _drop_txt(root, f"transcript-{i:02d}.txt")
+
+    def chunks_then_fail_runner(source_id, store_root):
+        # Realistic production failure: chunks written, candidates not.
+        pd = store_root / "processed" / "meetings" / source_id / "stories"
+        pd.mkdir(parents=True, exist_ok=True)
+        (pd / "chunks.jsonl").write_text(
+            '{"chunk_id": "c1"}\n', encoding="utf-8"
+        )
+        return {"status": "failure", "reason": "extractor_failed:api_error"}
+
+    s1_calls: List[Dict[str, Any]] = []
+    stage_calls: List[Dict[str, Any]] = []
+    synth_calls: List[str] = []
+    orch = _full_pipeline_orchestrator(
+        transcript_runner=_success_runner_with_processed(s1_calls),
+        stage_calls=stage_calls,
+        synth_calls=synth_calls,
+        extract_stories_runner=chunks_then_fail_runner,
+    )
+
+    res = orch.run(str(root), force=False)
+
+    # All 13 attempted, all reach Stage 2 success via artifact-existence.
+    assert res["total_attempted"] == 13
+    assert res["total_succeeded"] == 13
+    assert res["total_failed"] == 0
+    stage2_results = [
+        r["pipeline_stages"]["extract_stories"] for r in res["results"]
+    ]
+    assert stage2_results.count("success") == 13
+    # Synthesize ran exactly once for the whole batch.
+    assert len(synth_calls) == 1
+    assert res["synthesize_status"] == "success"
+
+
+def test_stale_artifact_does_not_mask_runner_failure(tmp_path, capsys):
+    """Sev-1 guard: a pre-existing artifact from a prior run does NOT
+    count as new evidence when the current run's runner fails."""
+    root = _make_data_lake(tmp_path)
+    _drop_txt(root, "alpha.txt")
+    sid = _slugify("alpha")
+    # Seed Stage 1 evidence but NOT the candidates.jsonl idempotency
+    # marker — so the orchestrator will re-attempt Stage 2.
+    _seed_processed_record(root, sid)
+    pd = root / "store" / "processed" / "meetings" / sid / "stories"
+    pd.mkdir(parents=True, exist_ok=True)
+    # Pre-existing chunks.jsonl from an earlier (incomplete) run.
+    (pd / "chunks.jsonl").write_text(
+        '{"chunk_id": "stale"}\n', encoding="utf-8"
+    )
+
+    def failing_runner_no_write(source_id, store_root):
+        # Runner fails without touching chunks.jsonl.
+        return {"status": "failure", "reason": "extractor_failed:api_error"}
+
+    s1_calls: List[Dict[str, Any]] = []
+    stage_calls: List[Dict[str, Any]] = []
+    synth_calls: List[str] = []
+    orch = _full_pipeline_orchestrator(
+        transcript_runner=_success_runner_with_processed(s1_calls),
+        stage_calls=stage_calls,
+        synth_calls=synth_calls,
+        extract_stories_runner=failing_runner_no_write,
+    )
+
+    res = orch.run(str(root), force=False)
+
+    pr = [r for r in res["results"] if r["filename"] == "alpha.txt"][0]
+    # Stale chunks.jsonl is NOT enough — Stage 2 still reports failure.
+    assert pr["pipeline_stages"]["extract_stories"] == "failure"
+
+    out = capsys.readouterr().out
+    assert "extract_stories_stale_artifact_not_treated_as_success" in out
+
+    # No Stage 2 success this run → synthesize skipped.
+    assert synth_calls == []
+    assert res["synthesize_status"] == "skipped"
