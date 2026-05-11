@@ -33,10 +33,27 @@ jobs:
           DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
           SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
         run: |
+          set -o pipefail
+          SOURCE_ID=7-ghz-downlink-tig-meeting---transcript-2-19-26
           python -m spectrum_systems_core.cli extract-typed \
-            --source-id 7-ghz-downlink-tig-meeting---transcript-2-19-26 \
+            --source-id "$SOURCE_ID" \
             --data-lake "${{ github.workspace }}/data-lake" \
-            --force
+            --force 2>&1 | tee /tmp/extract.log
+          # The CLI exits 0 even when a specific source FAILs (only exits 1
+          # when no chunks.jsonl exists anywhere). Force-fail this step when
+          # the target source did not produce an OK line so the real reason
+          # (chunks_jsonl_not_found, write_error, etc.) is the surfaced error
+          # instead of a downstream "artifact missing" message.
+          if ! grep -q "extract-typed \[$SOURCE_ID\] OK" /tmp/extract.log; then
+            echo ""
+            echo "SMOKE TEST FAILED: extract-typed did not report OK for $SOURCE_ID"
+            echo "Most likely causes:"
+            echo "  - chunks.jsonl missing under data-lake/store/processed/*/$SOURCE_ID/stories/"
+            echo "  - ANTHROPIC_API_KEY missing or invalid"
+            echo "  - source_record.json missing for the source_id"
+            echo "Inspect the extract-typed output above for the exact reason."
+            exit 1
+          fi
 
       - name: Assert extractions produced
         env:
@@ -106,8 +123,16 @@ jobs:
               print(f"Searched: {extractions_dir}")
               print(f"source_id={source_id}")
               print(f"source_artifact_id={source_artifact_id or '<unresolved>'}")
-              print("Directory contents:")
-              for p in sorted(extractions_dir.iterdir()) if extractions_dir.is_dir() else []:
+              chunks_matches = list(processed_dir.glob(
+                  f"*/{source_id}/stories/chunks.jsonl"
+              ))
+              record_matches = list(processed_dir.glob(
+                  f"*/{source_id}/source_record.json"
+              ))
+              print(f"chunks.jsonl found at: {chunks_matches or '<none>'}")
+              print(f"source_record.json found at: {record_matches or '<none>'}")
+              print("extractions/ contents:")
+              for p in sorted(extractions_dir.iterdir()):
                   print(f"  {p.name}")
               sys.exit(1)
 
