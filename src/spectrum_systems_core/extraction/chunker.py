@@ -71,6 +71,46 @@ def _is_transcript(source_family: str, source_id: str) -> bool:
     return "transcript" in source_id.lower()
 
 
+def _update_source_record_chunking_strategy(
+    source_record_path: Path, chunking_strategy: str
+) -> None:
+    """Write ``payload.chunking_strategy`` into the on-disk source_record.
+
+    Phase M.4. Read-modify-write the source_record JSON to record which
+    chunking strategy this run produced. Non-fatal on every failure: the
+    chunker's primary output (chunks.jsonl) has already been written by the
+    caller, so any IO error here is logged and swallowed rather than
+    failing the whole chunking step.
+    """
+    if not source_record_path.is_file():
+        return
+    try:
+        rec = json.loads(source_record_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(
+            f"[chunker] could not update chunking_strategy on "
+            f"{source_record_path}: {exc}"
+        )
+        return
+    if not isinstance(rec, dict):
+        return
+    payload = rec.get("payload")
+    if not isinstance(payload, dict):
+        return
+    if payload.get("chunking_strategy") == chunking_strategy:
+        return
+    payload["chunking_strategy"] = chunking_strategy
+    try:
+        source_record_path.write_text(
+            json.dumps(rec, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    except OSError as exc:
+        print(
+            f"[chunker] could not write chunking_strategy update to "
+            f"{source_record_path}: {exc}"
+        )
+
+
 class Chunker:
     """Split text_units.jsonl into chunks for story extraction."""
 
@@ -122,6 +162,7 @@ class Chunker:
         validator = jsonschema.Draft202012Validator(chunk_schema)
 
         chunks: Optional[List[Dict[str, Any]]] = None
+        chunking_strategy: str = "character_count_fallback"
         if _is_transcript(source_family, source_id):
             chunks, fallback_reason = self._chunk_by_speaker_turns(
                 units, source_id, source_family
@@ -131,6 +172,8 @@ class Chunker:
                     f"[chunker] {fallback_reason}: falling back to "
                     f"character chunking for {source_id}"
                 )
+            else:
+                chunking_strategy = "speaker_turn"
         if chunks is None:
             chunks = self._chunk_by_character_count(
                 units, source_id, source_family
@@ -155,7 +198,21 @@ class Chunker:
         except OSError as exc:
             return _failure(f"write_error: {exc}")
 
-        return {"status": "success", "chunks": chunks, "reason": ""}
+        # Phase M.4: persist the chunking_strategy back into the
+        # source_record so downstream readers (EvalAligner, eval_summary
+        # grouping) can attribute coverage/precision to the strategy used.
+        # Failure to update the source_record is non-fatal: chunks.jsonl is
+        # the canonical output of this step.
+        _update_source_record_chunking_strategy(
+            processed_dir / "source_record.json", chunking_strategy
+        )
+
+        return {
+            "status": "success",
+            "chunks": chunks,
+            "chunking_strategy": chunking_strategy,
+            "reason": "",
+        }
 
     # -- character-count mode --------------------------------------------
 

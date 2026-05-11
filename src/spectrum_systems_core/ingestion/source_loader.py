@@ -211,7 +211,7 @@ class SourceLoader:
             "created_at": _now_iso(),
             "schema_ref": {
                 "name": "source_record",
-                "version": "1.0.0",
+                "version": "1.1.0",
                 "digest": schema_d,
             },
             "trace": {

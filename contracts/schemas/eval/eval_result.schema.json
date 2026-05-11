@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/eval/eval_result.schema.json",
+  "title": "eval_result",
+  "description": "Phase M.4 artifact produced by EvalMetrics. Coverage (minutes->pipeline), precision (pipeline->minutes) and items_requiring_review computed from a single alignment_result. items_requiring_review is the HITL review queue rate -- NOT a hallucination verdict.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eval_result_id",
+    "alignment_result_id",
+    "source_artifact_id",
+    "minutes_artifact_id",
+    "pair_id",
+    "pipeline_run_id",
+    "prompt_version",
+    "artifact_type",
+    "schema_version",
+    "created_at",
+    "chunking_strategy",
+    "coverage",
+    "precision",
+    "items_requiring_review",
+    "items_requiring_review_rate",
+    "total_extracted_items",
+    "total_minutes_items",
+    "provenance"
+  ],
+  "properties": {
+    "eval_result_id": { "type": "string", "format": "uuid" },
+    "alignment_result_id": { "type": "string", "format": "uuid" },
+    "source_artifact_id": { "type": "string", "minLength": 1 },
+    "minutes_artifact_id": { "type": "string", "minLength": 1 },
+    "pair_id": { "type": "string", "format": "uuid" },
+    "pipeline_run_id": { "type": "string", "minLength": 1 },
+    "prompt_version": { "type": "string", "minLength": 1 },
+    "artifact_type": { "const": "eval_result" },
+    "schema_version": { "const": "1.0.0" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "chunking_strategy": {
+      "type": "string",
+      "enum": ["speaker_turn", "character_count_fallback", "unknown"]
+    },
+    "coverage": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "precision": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "items_requiring_review": { "type": "integer", "minimum": 0 },
+    "items_requiring_review_rate": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "total_extracted_items": { "type": "integer", "minimum": 0 },
+    "total_minutes_items": { "type": "integer", "minimum": 0 },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": { "const": "EvalMetrics" }
+      }
+    }
+  }
+}

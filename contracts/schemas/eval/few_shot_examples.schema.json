@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/eval/few_shot_examples.schema.json",
+  "title": "few_shot_examples",
+  "description": "Phase M.4 hand-authored few-shot seed for extraction prompts. Loaded by FewShotLoader at extraction time. Version-gated: extraction skips injection when prompt_schema_version does not match the current extraction schema version, logging few_shot_version_mismatch. Hand-authored, never derived from eval output (avoiding the closed loop where the framework grades itself).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "few_shot_id",
+    "artifact_type",
+    "schema_version",
+    "prompt_schema_version",
+    "source_meeting",
+    "created_at",
+    "examples"
+  ],
+  "properties": {
+    "few_shot_id": { "type": "string", "format": "uuid" },
+    "artifact_type": { "const": "few_shot_examples" },
+    "schema_version": { "const": "1.0.0" },
+    "prompt_schema_version": { "type": "string", "minLength": 1 },
+    "source_meeting": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "examples": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "example_type",
+          "input_chunk_text",
+          "speaker",
+          "expected_output",
+          "rationale"
+        ],
+        "properties": {
+          "example_type": {
+            "enum": ["decision", "claim", "action_item"]
+          },
+          "input_chunk_text": { "type": "string", "minLength": 1 },
+          "speaker": { "type": "string" },
+          "expected_output": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "rationale": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

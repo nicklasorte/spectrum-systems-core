@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/eval/alignment_result.schema.json",
+  "title": "alignment_result",
+  "description": "Phase M.4 artifact produced by EvalAligner. Maps extracted items to a paired minutes document in two directions: coverage (minutes -> pipeline) and review (pipeline -> minutes). One artifact per ground_truth_pair per pipeline run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "alignment_result_id",
+    "source_artifact_id",
+    "minutes_artifact_id",
+    "pair_id",
+    "artifact_type",
+    "schema_version",
+    "created_at",
+    "coverage_alignments",
+    "review_alignments",
+    "chunking_strategy",
+    "provenance"
+  ],
+  "properties": {
+    "alignment_result_id": { "type": "string", "format": "uuid" },
+    "source_artifact_id": { "type": "string", "minLength": 1 },
+    "minutes_artifact_id": { "type": "string", "minLength": 1 },
+    "pair_id": { "type": "string", "format": "uuid" },
+    "artifact_type": { "const": "alignment_result" },
+    "schema_version": { "const": "1.0.0" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "coverage_alignments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "minutes_item_text",
+          "matched_extracted_item_id",
+          "matched_extracted_item_text",
+          "semantic_similarity",
+          "content_word_overlap",
+          "alignment_status"
+        ],
+        "properties": {
+          "minutes_item_text": { "type": "string" },
+          "matched_extracted_item_id": { "type": ["string", "null"] },
+          "matched_extracted_item_text": { "type": ["string", "null"] },
+          "semantic_similarity": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "content_word_overlap": { "type": "integer", "minimum": 0 },
+          "alignment_status": { "enum": ["matched", "unmatched"] }
+        }
+      }
+    },
+    "review_alignments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "extracted_item_id",
+          "extracted_item_text",
+          "source_turn_ids",
+          "source_turn_validation",
+          "matched_minutes_text",
+          "semantic_similarity",
+          "alignment_status"
+        ],
+        "properties": {
+          "extracted_item_id": { "type": "string" },
+          "extracted_item_text": { "type": "string" },
+          "source_turn_ids": { "type": "array", "items": { "type": "string" } },
+          "source_turn_validation": { "type": "string" },
+          "matched_minutes_text": { "type": ["string", "null"] },
+          "semantic_similarity": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "alignment_status": { "enum": ["matched", "requires_review"] }
+        }
+      }
+    },
+    "chunking_strategy": {
+      "type": "string",
+      "enum": ["speaker_turn", "character_count_fallback", "unknown"]
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": { "const": "EvalAligner" }
+      }
+    }
+  }
+}

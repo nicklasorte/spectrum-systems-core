@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/eval/eval_summary.schema.json",
+  "title": "eval_summary",
+  "description": "Phase M.4 artifact produced by EvalRunner. Aggregates per-pair eval_results into pipeline-run-level coverage / precision / review numbers, broken down by chunking_strategy, plus baseline-comparison fields used by RegressionGate.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eval_summary_id",
+    "pipeline_run_id",
+    "artifact_type",
+    "schema_version",
+    "created_at",
+    "pairs_evaluated",
+    "pairs_skipped_pending_review",
+    "aggregate_coverage",
+    "aggregate_precision",
+    "total_items_requiring_review",
+    "by_chunking_strategy",
+    "eval_results",
+    "is_baseline",
+    "baseline_eval_summary_id",
+    "regression_detected",
+    "regression_detail",
+    "provenance"
+  ],
+  "properties": {
+    "eval_summary_id": { "type": "string", "format": "uuid" },
+    "pipeline_run_id": { "type": "string", "minLength": 1 },
+    "artifact_type": { "const": "eval_summary" },
+    "schema_version": { "const": "1.0.0" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "pairs_evaluated": { "type": "integer", "minimum": 0 },
+    "pairs_skipped_pending_review": { "type": "integer", "minimum": 0 },
+    "aggregate_coverage": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "aggregate_precision": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "total_items_requiring_review": { "type": "integer", "minimum": 0 },
+    "by_chunking_strategy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["speaker_turn", "character_count_fallback"],
+      "properties": {
+        "speaker_turn": { "$ref": "#/$defs/strategy_bucket" },
+        "character_count_fallback": { "$ref": "#/$defs/strategy_bucket" },
+        "unknown": { "$ref": "#/$defs/strategy_bucket" }
+      }
+    },
+    "eval_results": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" }
+    },
+    "is_baseline": { "type": "boolean" },
+    "baseline_eval_summary_id": { "type": ["string", "null"] },
+    "regression_detected": { "type": "boolean" },
+    "regression_detail": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pair_id", "metric", "baseline_value", "current_value", "delta"],
+        "properties": {
+          "pair_id": { "type": "string" },
+          "metric": { "enum": ["coverage", "items_requiring_review_rate"] },
+          "baseline_value": { "type": "number" },
+          "current_value": { "type": "number" },
+          "delta": { "type": "number" }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": { "const": "EvalRunner" }
+      }
+    }
+  },
+  "$defs": {
+    "strategy_bucket": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coverage", "precision", "pairs_count"],
+      "properties": {
+        "coverage": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "precision": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "pairs_count": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

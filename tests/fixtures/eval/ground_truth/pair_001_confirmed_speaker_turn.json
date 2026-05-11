@@ -1,0 +1,44 @@
+{
+  "pair_id": "11111111-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+  "source_artifact_id": "src-001-fixture",
+  "minutes_artifact_id": "min-001-fixture",
+  "meeting_date": "2026-02-19",
+  "meeting_name": "Fixture meeting 001 (speaker_turn, healthy)",
+  "match_confidence": "high",
+  "status": "confirmed",
+  "created_at": "2026-05-11T00:00:00+00:00",
+  "confirmed_at": "2026-05-11T00:00:00+00:00",
+  "confirmed_by": "fixture",
+  "schema_version": "1.0.0",
+  "provenance": { "produced_by": "GroundTruthLinker" },
+
+  "fixture_source_id": "fixture-meeting-001",
+  "fixture_chunking_strategy": "speaker_turn",
+  "fixture_minutes_text": "DECISION: Adopt the SAS-only sharing model for Phase 1.\nDECISION: Schedule the public comment review for next week.\nACTION: Alice drafts the FCC response by Friday.\nACTION: Bob coordinates with NTIA on test schedule.",
+  "fixture_extracted_items": [
+    {
+      "id": "story-001-a",
+      "text": "Decision: Adopt SAS-only sharing model for Phase 1 of 3.5 GHz spectrum coordination.",
+      "source_turn_ids": ["chunk-1"],
+      "source_turn_validation": "verified"
+    },
+    {
+      "id": "story-001-b",
+      "text": "Decision: Schedule public comment review for next week.",
+      "source_turn_ids": ["chunk-2"],
+      "source_turn_validation": "verified"
+    },
+    {
+      "id": "story-001-c",
+      "text": "Action item: Alice drafts FCC response by Friday.",
+      "source_turn_ids": ["chunk-3"],
+      "source_turn_validation": "verified"
+    },
+    {
+      "id": "story-001-d",
+      "text": "Action item: Bob coordinates with NTIA on test schedule.",
+      "source_turn_ids": ["chunk-4"],
+      "source_turn_validation": "verified"
+    }
+  ]
+}

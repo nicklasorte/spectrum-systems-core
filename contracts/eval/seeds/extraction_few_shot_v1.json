@@ -1,0 +1,49 @@
+{
+  "few_shot_id": "11111111-1111-1111-1111-111111111111",
+  "artifact_type": "few_shot_examples",
+  "schema_version": "1.0.0",
+  "prompt_schema_version": "1.0.0",
+  "source_meeting": "7-ghz-downlink-tig-meeting--transcript-2-19-26",
+  "created_at": "2026-05-11T00:00:00+00:00",
+  "examples": [
+    {
+      "example_type": "decision",
+      "input_chunk_text": "LaSorte, Nickolas: I think the way forward is we're just applying the ITU criteria. If there's any objections to that?\nDiFrancisco, Michael: Nick, be clear.\nLaSorte, Nickolas: 80th percentile -10.5 and -6 at .03%",
+      "speaker": "LaSorte, Nickolas",
+      "expected_output": {
+        "decision_text": "Group agreed to apply ITU two-point criteria: -10.5 dB at 80th percentile and -6 dB at 0.03% for FSS protection analysis",
+        "decision_type": "approved",
+        "stakeholders": [
+          "LaSorte, Nickolas",
+          "DiFrancisco, Michael",
+          "McKenna, Paul"
+        ],
+        "source_turn_ids": ["placeholder:1", "placeholder:2", "placeholder:3"]
+      },
+      "rationale": "Demonstrates the decision pattern: a proposal, a brief clarification request, and a precise restatement that becomes the agreed decision text. The decision_text consolidates the numeric criteria into one sentence rather than echoing the raw turn-by-turn dialogue."
+    },
+    {
+      "example_type": "action_item",
+      "input_chunk_text": "DiFrancisco, Michael: NTIA team will generate a specific request for additional information about the systems to pass to military departments through DWCIO.",
+      "speaker": "DiFrancisco, Michael",
+      "expected_output": {
+        "action": "NTIA to generate data request for additional system information",
+        "owner": "NTIA",
+        "source_turn_ids": ["placeholder:4"]
+      },
+      "rationale": "Demonstrates action_item extraction with clear single-owner attribution. The owner is the institutional name (NTIA), not the speaker. DWCIO is mentioned as the channel but is not the owner."
+    },
+    {
+      "example_type": "claim",
+      "input_chunk_text": "Sandip K Bhatt Ph.D.: -10.5 DB at .03% -- if you're proposing a single point, that is the only way to guarantee you aren't proposing worse protection than what is in the ITU proposal.",
+      "speaker": "Sandip K Bhatt Ph.D.",
+      "expected_output": {
+        "claim_text": "Single-point protection criterion of -10.5 dB at 0.03% is the minimum required to not weaken ITU protection levels",
+        "claim_type": "technical",
+        "speaker": "Sandip K Bhatt Ph.D.",
+        "source_turn_ids": ["placeholder:5"]
+      },
+      "rationale": "Demonstrates technical_claim extraction. claim_text paraphrases for clarity but preserves the binding numeric criterion. claim_type=technical because the assertion is about a measurable protection level, not a procedural or policy decision."
+    }
+  ]
+}

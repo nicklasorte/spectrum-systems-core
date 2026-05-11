@@ -1,0 +1,38 @@
+{
+  "pair_id": "33333333-cccc-4ccc-cccc-cccccccccccc",
+  "source_artifact_id": "src-003-fixture",
+  "minutes_artifact_id": "min-003-fixture",
+  "meeting_date": "2026-04-08",
+  "meeting_name": "Fixture meeting 003 (speaker_turn, items_requiring_review)",
+  "match_confidence": "high",
+  "status": "confirmed",
+  "created_at": "2026-05-11T00:00:00+00:00",
+  "confirmed_at": "2026-05-11T00:00:00+00:00",
+  "confirmed_by": "fixture",
+  "schema_version": "1.0.0",
+  "provenance": { "produced_by": "GroundTruthLinker" },
+
+  "fixture_source_id": "fixture-meeting-003",
+  "fixture_chunking_strategy": "speaker_turn",
+  "fixture_minutes_text": "DECISION: Approve the revised coordination window for the 7 GHz downlink TIG.",
+  "fixture_extracted_items": [
+    {
+      "id": "story-003-a",
+      "text": "Decision approved the revised coordination window for the 7 GHz downlink TIG study group.",
+      "source_turn_ids": ["chunk-20"],
+      "source_turn_validation": "verified"
+    },
+    {
+      "id": "story-003-b",
+      "text": "Speaker requested clarification on the antenna pattern assumptions used in the EPFD calculation but no decision was reached.",
+      "source_turn_ids": ["chunk-21"],
+      "source_turn_validation": "verified"
+    },
+    {
+      "id": "story-003-c",
+      "text": "Side conversation about meeting logistics for next quarter's working group sessions.",
+      "source_turn_ids": ["chunk-22"],
+      "source_turn_validation": "verified"
+    }
+  ]
+}
