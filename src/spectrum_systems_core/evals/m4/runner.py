@@ -179,12 +179,12 @@ class EvalRunner:
             is_baseline=set_baseline or (run_count == 1),
         )
 
-        self._validate_and_write(
-            "eval_summary",
-            summary,
-            self.sdl_root / "evals" / f"eval_summary_{self.pipeline_run_id}.json",
-        )
-
+        # Load the baseline FIRST so the gate sees per-pair records
+        # alongside aggregate numbers. The summary is written ONCE,
+        # after the gate decision has been folded back in -- a reader
+        # of eval_summary alone must see the same regression verdict
+        # as gate_decision (RT1 finding: previously the summary said
+        # regression_detected=False even when the gate said block).
         baseline_summary = self._load_baseline()
         baseline_pair_results: List[Dict[str, Any]] = []
         if baseline_summary is not None:
@@ -199,10 +199,15 @@ class EvalRunner:
             current_pair_results=eval_results,
             baseline_pair_results=baseline_pair_results,
         )
-        self._validate_and_write(
-            "gate_decision",
-            gate_decision,
-            self.sdl_root / "evals" / f"gate_decision_{self.pipeline_run_id}.json",
+
+        # Fold the gate's verdict into the summary so the artifact is
+        # self-explanatory.
+        summary["baseline_eval_summary_id"] = gate_decision.get(
+            "baseline_eval_summary_id"
+        )
+        summary["regression_detected"] = gate_decision["decision"] == "block"
+        summary["regression_detail"] = list(
+            gate_decision.get("regression_detail") or []
         )
 
         # Record baseline. Two ways to install one:
@@ -211,15 +216,26 @@ class EvalRunner:
         if set_baseline or (
             baseline_summary is None and run_count == 1
         ):
-            self._write_baseline(summary)
             summary["is_baseline"] = True
-            self._validate_and_write(
-                "eval_summary",
-                summary,
-                self.sdl_root
-                / "evals"
-                / f"eval_summary_{self.pipeline_run_id}.json",
-            )
+
+        # Single write of eval_summary, with the gate verdict baked in.
+        self._validate_and_write(
+            "eval_summary",
+            summary,
+            self.sdl_root / "evals" / f"eval_summary_{self.pipeline_run_id}.json",
+        )
+        self._validate_and_write(
+            "gate_decision",
+            gate_decision,
+            self.sdl_root / "evals" / f"gate_decision_{self.pipeline_run_id}.json",
+        )
+
+        # Baseline file is written ONLY after the summary has the
+        # gate-verdict fields baked in -- a baseline must not be
+        # installed with stale regression_detected=False if the run
+        # actually regressed (paranoid but cheap).
+        if summary["is_baseline"]:
+            self._write_baseline(summary)
 
         return {
             "status": "completed",
@@ -408,7 +424,7 @@ class EvalRunner:
             chunking_strategy=chunking_strategy,
         )
         if self.sdl_root is not None:
-            self._validate_and_write(
+            ok = self._validate_and_write(
                 "alignment_result",
                 alignment,
                 self.sdl_root
@@ -416,6 +432,17 @@ class EvalRunner:
                 / "alignment"
                 / f"{alignment['alignment_result_id']}.json",
             )
+            if not ok:
+                # RT1 finding: a schema-invalid alignment_result must
+                # NOT silently feed a downstream eval_result; the gate
+                # would see normal-looking numbers derived from invalid
+                # input. Skip this pair entirely; the .invalid.json
+                # sidecar that _validate_and_write already wrote lets
+                # a human inspect the failure.
+                logger.warning(
+                    "skipping_pair_invalid_alignment pair_id=%s", pair_id
+                )
+                return None
 
         eval_result = self.metrics.compute(
             alignment_result=alignment,
@@ -423,7 +450,7 @@ class EvalRunner:
             prompt_version=self.prompt_version,
         )
         if self.sdl_root is not None:
-            self._validate_and_write(
+            ok = self._validate_and_write(
                 "eval_result",
                 eval_result,
                 self.sdl_root
@@ -431,6 +458,14 @@ class EvalRunner:
                 / "results"
                 / f"{eval_result['eval_result_id']}.json",
             )
+            if not ok:
+                # Same trust property as the alignment_result case
+                # above: a schema-invalid eval_result must NOT enter
+                # the summary aggregation. RT1 finding.
+                logger.warning(
+                    "skipping_pair_invalid_eval_result pair_id=%s", pair_id
+                )
+                return None
         return eval_result
 
     # -- summary ----------------------------------------------------------

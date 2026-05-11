@@ -67,7 +67,10 @@ def _resolve_seed_path(
         )
         if candidate.is_file():
             return candidate
-    return contracts_root().parent / "eval" / "seeds" / SEED_FILENAME
+    # RT1 finding: the shipped seed lives at contracts/eval/seeds/, not
+    # at <repo>/eval/seeds/. Earlier resolution used .parent which
+    # pointed outside the contracts tree.
+    return contracts_root() / "eval" / "seeds" / SEED_FILENAME
 
 
 class FewShotLoader:

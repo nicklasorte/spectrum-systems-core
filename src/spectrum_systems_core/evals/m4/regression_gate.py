@@ -28,8 +28,19 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 
+# Thresholds. The 0.15 / 0.20 numbers are the M.4 spec defaults --
+# 15 % is roughly one missed minutes item per pair on a 7-item pair
+# (the median minutes-item-per-pair the eval was designed for) and 20 %
+# is the cost-of-review headroom: a 20 % rise in HITL queue rate is the
+# point at which the team would notice an extra reviewer-hour per pair
+# per week. Both are surfaced here, not buried in code, so a rebaselining
+# can move them in one place. Re-tune only after a real-data baseline.
 COVERAGE_DROP_THRESHOLD = 0.15
 REVIEW_RATE_RISE_THRESHOLD = 0.20
+
+# Runs 1 and 2 are baseline-establishment cycles. The gate becomes
+# authoritative on run 3 so the team has one cycle (run 2) to verify
+# the baseline by hand before it can block a build.
 GATE_ACTIVE_FROM_RUN = 3
 
 SCHEMA_VERSION = "1.0.0"
@@ -101,9 +112,27 @@ class RegressionGate:
                 regression_detail=[],
             )
 
+        # Fail-closed: gate is active but the baseline has no per-pair
+        # records to compare against. This happens when a baseline
+        # summary was installed from a partial / zero-pair run, or when
+        # its eval_result files are missing on disk. Without per-pair
+        # data we cannot tell whether anything regressed -- so we MUST
+        # NOT silently emit allow. RT1 finding.
+        current_pair_results = current_pair_results or []
+        baseline_pair_results = baseline_pair_results or []
+        if current_pair_results and not baseline_pair_results:
+            return self._decision(
+                eval_summary_id,
+                baseline_id,
+                decision="block",
+                reason="baseline_has_no_pair_results",
+                run_count=run_count,
+                regression_detail=[],
+            )
+
         # Per-pair regression check.
         regression_detail = self._regression_detail(
-            current_pair_results or [], baseline_pair_results or []
+            current_pair_results, baseline_pair_results
         )
 
         if regression_detail:

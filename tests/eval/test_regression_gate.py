@@ -216,6 +216,153 @@ def test_gate_decision_schema_validates() -> None:
     assert decision["artifact_type"] == "gate_decision"
 
 
+def test_empty_baseline_pair_results_blocks_not_allows() -> None:
+    """RT1 fix: gate active + baseline summary present + 0 baseline pair
+    records + current has pairs -> block (not allow).
+
+    The earlier code emitted decision=allow with reason=within_thresholds
+    because the per-pair loop found no overlapping pair_ids and so
+    produced an empty regression_detail. That silently let any run pass
+    whenever the baseline_eval_summary's eval_results list was empty
+    (zero confirmed pairs at baseline time, or its eval_result files
+    missing on disk). Fail-closed instead.
+    """
+    gate = RegressionGate()
+    current = [_pair_result("p1", coverage=0.30, review_rate=0.50)]
+    decision = gate.evaluate(
+        current_summary=_summary("cur"),
+        baseline_summary=_summary("base"),
+        run_count=3,
+        current_pair_results=current,
+        baseline_pair_results=[],
+    )
+    assert decision["decision"] == "block"
+    assert decision["reason"] == "baseline_has_no_pair_results"
+
+
+def test_empty_current_and_empty_baseline_is_allow() -> None:
+    """Counterpart: when BOTH sides have no per-pair records, that's a
+    benign state (a run with zero confirmed pairs) -- no regression
+    can be diagnosed. Allow rather than block."""
+    gate = RegressionGate()
+    decision = gate.evaluate(
+        current_summary=_summary("cur"),
+        baseline_summary=_summary("base"),
+        run_count=3,
+        current_pair_results=[],
+        baseline_pair_results=[],
+    )
+    assert decision["decision"] == "allow"
+
+
+def test_runner_skips_pair_when_alignment_fails_validation(tmp_path) -> None:
+    """RT1 fix: if the alignment_result fails schema validation, the
+    eval_result MUST NOT be computed from it. The pair is excluded
+    from the summary aggregation.
+
+    We simulate the failure by injecting an aligner that returns an
+    obviously-invalid alignment_result (artifact_type wrong).
+    """
+    from spectrum_systems_core.evals.m4 import EvalAligner, EvalMetrics
+
+    class BadAligner(EvalAligner):
+        def align(self, **kwargs):  # type: ignore[override]
+            result = super().align(**kwargs)
+            # Break the schema by setting an illegal artifact_type.
+            result["artifact_type"] = "not_an_alignment_result"
+            return result
+
+    sdl_root = tmp_path / "sdl"
+    # Stage one fixture pair.
+    fixture_path = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "eval"
+        / "ground_truth"
+        / "pair_001_confirmed_speaker_turn.json"
+    )
+    target_dir = sdl_root / "ground_truth"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    import shutil
+    shutil.copy(fixture_path, target_dir / fixture_path.name)
+
+    runner = EvalRunner(
+        data_lake_path=str(tmp_path),
+        sdl_root=str(sdl_root),
+        pipeline_run_id="rrun-bad-alignment",
+        aligner=BadAligner(),
+        metrics=EvalMetrics(),
+    )
+    result = runner.run()
+    assert result["status"] == "completed"
+    # The pair was skipped because its alignment_result was invalid.
+    assert result["pairs_evaluated"] == 0
+    assert result["summary"]["pairs_evaluated"] == 0
+    # The invalid alignment_result was written as .invalid.json for
+    # human inspection rather than dropped silently.
+    invalid_files = list(
+        (sdl_root / "evals" / "alignment").glob("*.invalid.json")
+    )
+    assert len(invalid_files) == 1
+
+
+def test_summary_regression_detected_reflects_gate_verdict(tmp_path) -> None:
+    """RT1 fix: eval_summary.regression_detected must match
+    gate_decision.decision == block. Previously the summary always said
+    False even when the gate said block.
+    """
+    sdl_root = tmp_path / "sdl"
+    runner1 = EvalRunner(
+        data_lake_path=str(tmp_path),
+        sdl_root=str(sdl_root),
+        pipeline_run_id="rrun-baseline",
+    )
+    runner1.run()
+
+    # Force the gate into the "block" branch on run 3: empty baseline
+    # pair_results + non-empty current. Stage one fixture pair so
+    # current is non-empty.
+    fixture_path = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "eval"
+        / "ground_truth"
+        / "pair_001_confirmed_speaker_turn.json"
+    )
+    target_dir = sdl_root / "ground_truth"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    import shutil
+    shutil.copy(fixture_path, target_dir / fixture_path.name)
+
+    # Wipe baseline eval_result files so baseline_pair_results loads as [].
+    results_dir = sdl_root / "evals" / "results"
+    for f in results_dir.glob("*.json"):
+        f.unlink()
+
+    runner2 = EvalRunner(
+        data_lake_path=str(tmp_path),
+        sdl_root=str(sdl_root),
+        pipeline_run_id="rrun-2",
+    )
+    runner2.run()
+    runner3 = EvalRunner(
+        data_lake_path=str(tmp_path),
+        sdl_root=str(sdl_root),
+        pipeline_run_id="rrun-3",
+    )
+    out3 = runner3.run()
+    assert out3["gate_decision"]["decision"] == "block"
+    summary_path = (
+        sdl_root / "evals" / f"eval_summary_{out3['pipeline_run_id']}.json"
+    )
+    on_disk = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert on_disk["regression_detected"] is True, (
+        "eval_summary on disk must agree with the gate verdict; "
+        "anything else is a 'cannot be explained from the artifact "
+        "alone' failure."
+    )
+
+
 def test_new_pair_cannot_regress() -> None:
     """A pair present only in current run -> cannot regress (no baseline value)."""
     gate = RegressionGate()
