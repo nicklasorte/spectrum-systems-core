@@ -1,3 +1,36 @@
+# Phase Infra — Wire pipeline automation
+
+## Prerequisites (recorded)
+
+- `.claude/settings.json` contains `dangerouslySkipPermissions: true` ✓
+- Branch: `claude/wire-pipeline-automation-EHap3` (per session instructions)
+- `scripts/seed_glossary.py` present ✓ (flags: `--out`, `--deterministic` only;
+  no `--force` or `--data-lake` — re-running overwrites in place, so `force`
+  semantics already hold; workflow uses `--out "$SDL_ROOT/glossary"`).
+- `.github/workflows/eval-ground-truth.yml` present ✓ (name: `Eval ground truth`)
+- `.github/workflows/migrate-artifact-kind.yml` present ✓ (name: `migrate-artifact-kind`)
+- `.github/workflows/run-pipeline.yml` present ✓ (name: `Run pipeline`)
+
+### Workflow name → trigger consistency table
+
+| File                       | `name:` field                          | Used in workflow_run triggers |
+|----------------------------|----------------------------------------|-------------------------------|
+| run-pipeline.yml           | `Run pipeline`                         | eval-ground-truth.yml         |
+| eval-ground-truth.yml      | `Eval ground truth`                    | (none)                        |
+| migrate-artifact-kind.yml  | `migrate-artifact-kind`                | (none)                        |
+| smoke-test.yml             | `Extraction Smoke Test`                | (none)                        |
+| cleanup-data-lake.yml      | `Data lake cleanup`                    | (none)                        |
+| cleanup-duplicate-pairs.yml| `Cleanup duplicate ground truth pairs` | (none)                        |
+| confirm-pairs.yml          | `Confirm ground truth pairs`           | (none)                        |
+| verify-pipeline-state.yml  | `Verify pipeline state`                | (none)                        |
+| pytest.yml                 | `pytest`                               | (none)                        |
+| seed-glossary.yml (new)    | `Seed glossary terms`                  | (none)                        |
+
+`eval-ground-truth.yml`'s `workflow_run.workflows: ["Run pipeline"]` matches the
+`run-pipeline.yml` `name:` field exactly.
+
+---
+
 # Phase ChunkClassifier-Fix — Zero typed extractions on all transcripts
 
 ## Step 1 — Diagnosis (branch: claude/fix-chunk-classifier-i1foz)
