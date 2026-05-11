@@ -99,6 +99,11 @@ def test_set_baseline_refuses_on_partial_run(tmp_path: Path) -> None:
         _write_pair(sdl, _confirmed_pair(sid))
     _seed_meeting_extraction(sdl, "a")  # only one extraction; partial run
 
+    # Stage evals/ up front so the post-run assertion checks an existing
+    # directory rather than evaluating to True via the missing-dir branch.
+    evals_dir = sdl / "evals"
+    evals_dir.mkdir(parents=True, exist_ok=True)
+
     runner = EvalRunner(
         data_lake_path=str(tmp_path),
         sdl_root=str(sdl),
@@ -111,12 +116,10 @@ def test_set_baseline_refuses_on_partial_run(tmp_path: Path) -> None:
         result.get("reason", "")
     )
     # No baseline file was written.
-    assert not (sdl / "evals" / "baseline_eval_summary.json").exists()
+    assert not (evals_dir / "baseline_eval_summary.json").exists()
     # No eval_summary should be written either — refusal blocks before
     # the per-pair eval loop.
-    assert not list((sdl / "evals").glob("eval_summary_*.json")) if (
-        sdl / "evals"
-    ).exists() else True
+    assert not list(evals_dir.glob("eval_summary_*.json"))
 
 
 def test_set_baseline_succeeds_on_complete_run(tmp_path: Path) -> None:

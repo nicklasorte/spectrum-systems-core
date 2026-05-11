@@ -176,6 +176,57 @@ def test_force_without_force_only_missing_reprocesses_all(
     assert "alpha" in result["source_ids_processed"]
 
 
+def test_source_ids_failed_includes_stage_2_to_4_failures(
+    tmp_path: Path,
+) -> None:
+    """A transcript that passes Stage 1 but fails Stage 2 must end up in
+    ``source_ids_failed`` (not only in ``source_ids_processed``)."""
+    root = _stage_lake(tmp_path)
+    _drop_txt(root, "alpha.txt")
+
+    def _ok_transcript(txt_path: Path, source_id: str, store_root: Path) -> Dict[str, Any]:
+        sid_dir = store_root / "processed" / "meetings" / source_id
+        sid_dir.mkdir(parents=True, exist_ok=True)
+        (sid_dir / "source_record.json").write_text(
+            json.dumps(
+                {
+                    "artifact_type": "source_record",
+                    "artifact_id": "sid-" + source_id,
+                    "payload": {"source_id": source_id, "raw_hash": ""},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "status": "success",
+            "artifact_id": "ok-" + source_id,
+            "reason": "",
+            "source_record": {"artifact_id": "ok-" + source_id},
+            "text_units": [],
+        }
+
+    def _stage2_fail(source_id: str, store_root: Path) -> Dict[str, Any]:
+        return {"status": "failure", "reason": "synthetic_stage2_failure"}
+
+    def _stage_runner_unused(source_id: str, store_root: Path) -> Dict[str, Any]:
+        # Stage 3+4 are not attempted when Stage 2 fails — assert by raising
+        # if reached.
+        raise AssertionError("stage 3/4 must not run after stage 2 failure")
+
+    orch = PipelineOrchestrator(
+        transcript_runner=_ok_transcript,
+        extract_stories_runner=_stage2_fail,
+        promote_knowledge_runner=_stage_runner_unused,
+        extract_claims_runner=_stage_runner_unused,
+        synthesize_runner=lambda _r: {"status": "success", "reason": ""},
+    )
+    result = orch.run(str(root))
+    # alpha passed Stage 1, so it lands in processed; but Stage 2 failure
+    # must also surface alpha in source_ids_failed.
+    assert "alpha" in result["source_ids_processed"]
+    assert "alpha" in result["source_ids_failed"]
+
+
 def test_orchestration_record_includes_new_fields(tmp_path: Path) -> None:
     """The run record must validate against schema 1.4.0 with new fields."""
     import jsonschema

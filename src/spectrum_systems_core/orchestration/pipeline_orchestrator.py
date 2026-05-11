@@ -814,11 +814,24 @@ class PipelineOrchestrator:
             overall_status = "success"
 
         # Phase O.3 — by-source_id rollups for the run record.
+        # source_ids_failed captures ANY stage failure (Stage 1 *or* any of
+        # Stages 2-4), not just Stage 1. A Stage-1-success-with-later-failure
+        # belongs in both _processed (its Stage 1 evidence is on disk) and
+        # _failed (so an operator can drive a targeted re-run).
+        any_stage_failed_filenames: set[str] = set()
+        for r in results_for_record:
+            stages = r.get("pipeline_stages") or {}
+            if any(s == STAGE_STATUS_FAILURE for s in stages.values()):
+                any_stage_failed_filenames.add(r.get("filename", ""))
         source_ids_processed = sorted({
             _slugify(Path(e["filename"]).stem) for e in processed_this_run
         })
         source_ids_failed = sorted({
             _slugify(Path(e["filename"]).stem) for e in failed_this_run
+        } | {
+            _slugify(Path(fn).stem)
+            for fn in any_stage_failed_filenames
+            if fn
         })
         source_ids_skipped = sorted({
             *(_slugify(Path(e["filename"]).stem) for e in skipped_already_done),
