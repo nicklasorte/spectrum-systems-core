@@ -58,6 +58,9 @@ def run_fixture_smoke_test(mock: bool = False) -> bool:
         from spectrum_systems_core.extraction.extraction_merger import (  # noqa: F401
             ExtractionMerger,
         )
+        from spectrum_systems_core.extraction.typed_extraction_runner import (
+            _resolve_api_callers,
+        )
     except ImportError as exc:
         print(f"FIXTURE SMOKE TEST FAILED: import error: {exc}")
         return False
@@ -75,7 +78,25 @@ def run_fixture_smoke_test(mock: bool = False) -> bool:
         print("FIXTURE SMOKE TEST FAILED: anthropic SDK not installed")
         return False
 
-    classifier = ChunkClassifier()
+    import os
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print("FIXTURE SMOKE TEST FAILED: ANTHROPIC_API_KEY not set")
+        return False
+
+    callers = _resolve_api_callers(None)
+    missing = [
+        k for k in ("classifier", "decision", "claim", "action_item")
+        if k not in callers
+    ]
+    if missing:
+        print(
+            f"FIXTURE SMOKE TEST FAILED: real API callers unavailable for "
+            f"{missing} (would silently classify everything as off_topic)"
+        )
+        return False
+
+    classifier = ChunkClassifier(api_caller=callers["classifier"])
     classifications: dict[str, str] = {}
     for chunk in chunks:
         result = classifier.classify(chunk, source_id="smoke-test-fixture")
@@ -112,17 +133,17 @@ def run_fixture_smoke_test(mock: bool = False) -> bool:
     action_items: list = []
 
     if decision_chunks:
-        decisions = DecisionExtractor().extract(
-            decision_chunks, "", available_turn_ids,
-        )
+        decisions = DecisionExtractor(
+            api_caller=callers["decision"],
+        ).extract(decision_chunks, "", available_turn_ids)
     if claim_chunks:
-        claims = ClaimExtractor().extract(
-            claim_chunks, "", available_turn_ids,
-        )
+        claims = ClaimExtractor(
+            api_caller=callers["claim"],
+        ).extract(claim_chunks, "", available_turn_ids)
     if action_chunks:
-        action_items = ActionItemExtractor().extract(
-            action_chunks, "", available_turn_ids,
-        )
+        action_items = ActionItemExtractor(
+            api_caller=callers["action_item"],
+        ).extract(action_chunks, "", available_turn_ids)
 
     total = len(decisions) + len(claims) + len(action_items)
     print(
