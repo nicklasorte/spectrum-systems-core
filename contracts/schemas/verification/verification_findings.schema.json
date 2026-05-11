@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/verification/verification_findings.schema.json",
+  "title": "verification_findings",
+  "description": "Phase O.6 artifact produced by compile-findings. Aggregates the latest pipeline_state_record and the latest eval_summary into a single human-reviewable record of Sev-1/2/3 findings, with next_required_actions and a metrics_snapshot.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "verification_findings_id",
+    "artifact_type",
+    "schema_version",
+    "created_at",
+    "cycle_id",
+    "pipeline_state_record_id",
+    "findings",
+    "metrics_snapshot",
+    "next_required_actions",
+    "provenance"
+  ],
+  "properties": {
+    "verification_findings_id": { "type": "string", "format": "uuid" },
+    "artifact_type": { "const": "verification_findings" },
+    "schema_version": { "const": "1.0.0" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "cycle_id": { "type": "string", "minLength": 1 },
+    "pipeline_state_record_id": { "type": ["string", "null"] },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "severity",
+          "area",
+          "title",
+          "description",
+          "affected_artifacts",
+          "proposed_remediation",
+          "github_issue_url"
+        ],
+        "properties": {
+          "severity": { "enum": ["sev_1", "sev_2", "sev_3"] },
+          "area": {
+            "enum": ["pipeline", "eval", "migration", "schema", "other"]
+          },
+          "title": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" },
+          "affected_artifacts": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "proposed_remediation": { "type": "string" },
+          "github_issue_url": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "metrics_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "aggregate_coverage",
+        "aggregate_precision",
+        "items_requiring_review_total",
+        "partial_run_warning",
+        "regulatory_verb_fallback_rate",
+        "human_dedup_rate"
+      ],
+      "properties": {
+        "aggregate_coverage": { "type": ["number", "null"] },
+        "aggregate_precision": { "type": ["number", "null"] },
+        "items_requiring_review_total": { "type": ["integer", "null"] },
+        "partial_run_warning": { "type": ["boolean", "null"] },
+        "regulatory_verb_fallback_rate": { "type": ["number", "null"] },
+        "human_dedup_rate": { "type": ["number", "null"] }
+      }
+    },
+    "next_required_actions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": {
+          "enum": ["verify-pipeline-state", "manual", "compile-findings"]
+        }
+      }
+    }
+  }
+}

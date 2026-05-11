@@ -11,6 +11,8 @@
     "completed_at",
     "dry_run",
     "force",
+    "force_only_missing",
+    "specific_source_id",
     "data_lake_path",
     "transcripts_found",
     "already_processed",
@@ -19,6 +21,9 @@
     "failed_this_run",
     "filtered_from_transcripts",
     "results",
+    "source_ids_skipped",
+    "source_ids_processed",
+    "source_ids_failed",
     "status",
     "synthesize_status",
     "total_stages_completed",
@@ -32,6 +37,8 @@
     "completed_at": { "type": "string", "format": "date-time" },
     "dry_run": { "type": "boolean" },
     "force": { "type": "boolean" },
+    "force_only_missing": { "type": "boolean" },
+    "specific_source_id": { "type": ["string", "null"] },
     "data_lake_path": { "type": "string", "minLength": 1 },
     "transcripts_found": { "type": "integer", "minimum": 0 },
     "already_processed": { "type": "integer", "minimum": 0 },
@@ -119,11 +126,23 @@
         }
       }
     },
+    "source_ids_skipped": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "source_ids_processed": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "source_ids_failed": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
     "status": {
       "type": "string",
       "enum": ["success", "partial", "failure", "dry_run"]
     },
-    "schema_version": { "const": "1.3.0" },
+    "schema_version": { "const": "1.4.0" },
     "provenance": {
       "type": "object",
       "additionalProperties": false,

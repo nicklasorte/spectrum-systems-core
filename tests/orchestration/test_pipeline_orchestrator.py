@@ -359,7 +359,7 @@ def test_orchestration_record_schema_validates(tmp_path):
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     jsonschema.Draft202012Validator(schema).validate(record)
 
-    assert record["schema_version"] == "1.3.0"
+    assert record["schema_version"] == "1.4.0"
     assert record["provenance"]["produced_by"] == "PipelineOrchestrator"
     assert record["status"] in {"success", "partial", "failure", "dry_run"}
 
@@ -642,7 +642,7 @@ def test_orchestration_record_with_filtered_validates_against_schema(tmp_path):
     assert schema_path is not None
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     jsonschema.Draft202012Validator(schema).validate(record)
-    assert record["schema_version"] == "1.3.0"
+    assert record["schema_version"] == "1.4.0"
 
 
 # ---------------------------------------------------------------------------

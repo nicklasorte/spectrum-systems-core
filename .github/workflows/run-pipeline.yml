@@ -19,6 +19,18 @@ on:
         options:
           - 'false'
           - 'true'
+      force_only_missing:
+        description: 'When combined with force=true, skip source_ids that already have a meeting_extraction artifact'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      specific_source_id:
+        description: 'Process only this source_id (optional; overrides force_only_missing)'
+        required: false
+        default: ''
   repository_dispatch:
     types: [transcript-added]
 
@@ -57,11 +69,21 @@ jobs:
           if [ "${{ github.event.inputs.force }}" = "true" ]; then
             FORCE_FLAG="--force"
           fi
+          FOM_FLAG=""
+          if [ "${{ github.event.inputs.force_only_missing }}" = "true" ]; then
+            FOM_FLAG="--force-only-missing"
+          fi
+          SSID_FLAG=""
+          if [ -n "${{ github.event.inputs.specific_source_id }}" ]; then
+            SSID_FLAG="--specific-source-id ${{ github.event.inputs.specific_source_id }}"
+          fi
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-            python -m spectrum_systems_core.cli run-pipeline --dry-run $FORCE_FLAG \
+            python -m spectrum_systems_core.cli run-pipeline --dry-run \
+              $FORCE_FLAG $FOM_FLAG $SSID_FLAG \
               --data-lake "${{ github.workspace }}/data-lake"
           else
-            python -m spectrum_systems_core.cli run-pipeline $FORCE_FLAG \
+            python -m spectrum_systems_core.cli run-pipeline \
+              $FORCE_FLAG $FOM_FLAG $SSID_FLAG \
               --data-lake "${{ github.workspace }}/data-lake"
           fi
 
