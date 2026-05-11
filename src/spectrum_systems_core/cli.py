@@ -2500,6 +2500,99 @@ def _format_stage_summary(stages: dict[str, str]) -> str:
     return "  [" + " ".join(parts) + "]"
 
 
+def extract_typed(
+    *,
+    source_id: str | None = None,
+    all_sources: bool = False,
+    data_lake: str | None = None,
+    force: bool = False,
+    out_stream=None,
+) -> int:
+    """Phase M3 CLI command: run typed extraction.
+
+    Exit codes:
+      0 -- one or more sources succeeded (partial success accepted).
+      1 -- nothing was processed (no chunks.jsonl found anywhere).
+      2 -- failure in argument resolution (no source_id and no --all, or
+           DATA_LAKE_PATH unset).
+    """
+    import sys
+    from pathlib import Path as _Path
+    from .extraction.typed_extraction_runner import (
+        _resolve_store_root,
+        _SOURCE_FAMILIES,
+        run_typed_extraction,
+    )
+
+    out = out_stream or sys.stdout
+
+    if not source_id and not all_sources:
+        print("extract-typed: --source-id or --all required", file=out)
+        return 2
+
+    store_root = _resolve_store_root(data_lake)
+    if store_root is None:
+        print("extract-typed: DATA_LAKE_PATH not set or path missing", file=out)
+        return 2
+
+    targets: list[str] = []
+    if source_id:
+        targets.append(source_id)
+    else:
+        # Discover every source_id with a chunks.jsonl
+        for family in _SOURCE_FAMILIES:
+            base = store_root / "processed" / family
+            if not base.is_dir():
+                continue
+            for src_dir in sorted(base.iterdir()):
+                if not src_dir.is_dir():
+                    continue
+                if (src_dir / "stories" / "chunks.jsonl").is_file():
+                    targets.append(src_dir.name)
+
+    if not targets:
+        print("extract-typed: no sources with chunks.jsonl found", file=out)
+        return 1
+
+    succeeded = 0
+    skipped = 0
+    failed = 0
+    for sid in targets:
+        result = run_typed_extraction(sid, data_lake=data_lake, force=force)
+        status = result.get("status")
+        if status == "success":
+            succeeded += 1
+            print(
+                f"extract-typed [{sid}] OK  "
+                f"decisions={result.get('decisions', 0)} "
+                f"claims={result.get('claims', 0)} "
+                f"action_items={result.get('action_items', 0)} "
+                f"off_topic={result.get('off_topic_count', 0)}/"
+                f"{result.get('total_chunks_classified', 0)} "
+                f"warn={result.get('routing_quality_warning', False)}",
+                file=out,
+            )
+        elif status == "skipped":
+            skipped += 1
+            print(
+                f"extract-typed [{sid}] SKIP {result.get('reason', '')}",
+                file=out,
+            )
+        else:
+            failed += 1
+            print(
+                f"extract-typed [{sid}] FAIL {result.get('reason', '')}",
+                file=out,
+            )
+
+    print(
+        f"extract-typed summary: succeeded={succeeded} skipped={skipped} "
+        f"failed={failed} total={len(targets)}",
+        file=out,
+    )
+    return 0
+
+
 def link_ground_truth(
     *,
     data_lake: str | None = None,
@@ -3344,6 +3437,50 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    et = sub.add_parser(
+        "extract-typed",
+        help="Phase M3: run typed extraction (decision/claim/action_item).",
+        description=(
+            "Phase M3 typed-extraction pipeline. Reads chunks.jsonl for the "
+            "given source(s), classifies each chunk with ChunkClassifier "
+            "(Haiku) + regulatory-verb fallback, routes classified chunks "
+            "to the three typed extractors, and writes one "
+            "meeting_extraction artifact per source under "
+            "$SDL_ROOT/extractions/. Idempotent: skips sources whose "
+            "meeting_extraction already exists unless --force is set."
+        ),
+    )
+    et_target = et.add_mutually_exclusive_group(required=True)
+    et_target.add_argument(
+        "--source-id",
+        default=None,
+        help="Run typed extraction for a specific source_id.",
+    )
+    et_target.add_argument(
+        "--all",
+        action="store_true",
+        help=(
+            "Run typed extraction for every source with a chunks.jsonl "
+            "under store/processed/."
+        ),
+    )
+    et.add_argument(
+        "--data-lake",
+        default=None,
+        help=(
+            "Path to the data lake root. Overrides the DATA_LAKE_PATH "
+            "environment variable when provided."
+        ),
+    )
+    et.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Re-extract even if a meeting_extraction artifact already "
+            "exists for the source."
+        ),
+    )
+
     lg = sub.add_parser(
         "link-ground-truth",
         help="Phase L.2: pair transcripts with meeting-minutes by date.",
@@ -3511,6 +3648,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "run-pipeline":
         return run_pipeline(
             dry_run=args.dry_run,
+            data_lake=args.data_lake,
+            force=args.force,
+        )
+    if args.command == "extract-typed":
+        return extract_typed(
+            source_id=args.source_id,
+            all_sources=args.all,
             data_lake=args.data_lake,
             force=args.force,
         )

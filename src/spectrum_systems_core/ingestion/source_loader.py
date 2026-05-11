@@ -207,11 +207,12 @@ class SourceLoader:
 
         source_record: Dict[str, Any] = {
             "artifact_kind": "source_record",
+            "artifact_type": "source_record",
             "artifact_id": str(uuid.uuid4()),
             "created_at": _now_iso(),
             "schema_ref": {
                 "name": "source_record",
-                "version": "1.1.0",
+                "version": "1.2.0",
                 "digest": schema_d,
             },
             "trace": {

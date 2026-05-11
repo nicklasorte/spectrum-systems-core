@@ -15,6 +15,7 @@
   ],
   "properties": {
     "artifact_kind": { "const": "source_record" },
+    "artifact_type": { "const": "source_record" },
     "artifact_id": { "type": "string", "format": "uuid" },
     "created_at": { "type": "string", "format": "date-time" },
     "schema_ref": {

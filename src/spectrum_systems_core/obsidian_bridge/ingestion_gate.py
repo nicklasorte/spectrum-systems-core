@@ -113,11 +113,12 @@ class ObsidianIngestionGate:
         # Step 7: assemble artifact
         artifact: Dict[str, Any] = {
             "artifact_kind": "obsidian_input_artifact",
+            "artifact_type": "obsidian_input_artifact",
             "artifact_id": artifact_id,
             "created_at": created_at,
             "schema_ref": {
                 "name": _SCHEMA_NAME,
-                "version": "1.0.0",
+                "version": "1.1.0",
                 "digest": digest,
             },
             "trace": {

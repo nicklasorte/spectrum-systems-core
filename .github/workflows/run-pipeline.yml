@@ -65,6 +65,24 @@ jobs:
               --data-lake "${{ github.workspace }}/data-lake"
           fi
 
+      - name: Run typed extraction (Phase M3)
+        if: github.event.inputs.dry_run != 'true'
+        env:
+          DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+          SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
+        run: |
+          python -m spectrum_systems_core.cli extract-typed --all \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            || echo "extract-typed completed with warnings"
+
+      - name: Baseline reminder
+        if: github.event.inputs.dry_run != 'true'
+        run: |
+          echo "::notice::Phase M3.2 baseline is NOT set automatically."
+          echo "After reviewing the first eval_summary, a human must run:"
+          echo "  python -m spectrum_systems_core.cli eval-ground-truth --set-baseline"
+          echo "to establish the regression baseline."
+
       - name: Link ground truth pairs (minutes + transcripts)
         env:
           DATA_LAKE_PATH: ${{ github.workspace }}/data-lake

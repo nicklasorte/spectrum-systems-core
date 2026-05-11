@@ -78,6 +78,15 @@
       "type": "string",
       "enum": ["speaker_turn", "character_count_fallback", "unknown"]
     },
+    "artifact_source": {
+      "type": "string",
+      "enum": ["story_artifacts", "meeting_extraction"],
+      "description": "Phase M3 C5. Which artifact type fed this alignment: legacy story_artifacts or the new typed meeting_extraction."
+    },
+    "eval_input_warning": {
+      "type": "boolean",
+      "description": "Phase M3 C5. True iff the source meeting_extraction had zero decisions AND zero claims. Continues with partial inputs rather than failing closed."
+    },
     "provenance": {
       "type": "object",
       "additionalProperties": false,

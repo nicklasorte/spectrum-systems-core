@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/extraction/meeting_extraction.schema.json",
+  "title": "meeting_extraction",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "meeting_extraction_id",
+    "source_artifact_id",
+    "artifact_type",
+    "schema_version",
+    "created_at",
+    "decisions",
+    "claims",
+    "action_items",
+    "total_chunks_classified",
+    "off_topic_count",
+    "regulatory_verb_fallback_count",
+    "routing_quality_warning",
+    "requires_human_dedup_count",
+    "extraction_run_id",
+    "provenance"
+  ],
+  "properties": {
+    "meeting_extraction_id": { "type": "string", "format": "uuid" },
+    "source_artifact_id": { "type": "string", "format": "uuid" },
+    "artifact_type": { "const": "meeting_extraction" },
+    "schema_version": { "const": "1.0.0" },
+    "created_at": { "type": "string", "format": "date-time" },
+
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "decision_text", "decision_type", "stakeholders", "rationale",
+          "source_turn_ids", "source_turn_validation"
+        ],
+        "properties": {
+          "decision_text": { "type": "string", "minLength": 1 },
+          "decision_type": {
+            "enum": [
+              "approved", "rejected", "deferred", "noted", "considered",
+              "action_required", "open_question", "to_be_determined"
+            ]
+          },
+          "stakeholders": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "rationale": { "type": ["string", "null"] },
+          "source_turn_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "source_turn_validation": {
+            "enum": ["verified", "invalid", "missing"]
+          },
+          "requires_human_dedup": { "type": "boolean" }
+        }
+      }
+    },
+
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "claim_text", "claim_type", "speaker",
+          "source_turn_ids", "source_turn_validation"
+        ],
+        "properties": {
+          "claim_text": { "type": "string", "minLength": 1 },
+          "claim_type": {
+            "enum": ["technical", "procedural", "regulatory", "opinion"]
+          },
+          "speaker": { "type": "string" },
+          "source_turn_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "source_turn_validation": {
+            "enum": ["verified", "invalid", "missing"]
+          },
+          "requires_human_dedup": { "type": "boolean" }
+        }
+      }
+    },
+
+    "action_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action", "owner", "due",
+          "source_turn_ids", "source_turn_validation"
+        ],
+        "properties": {
+          "action": { "type": "string", "minLength": 1 },
+          "owner": { "type": "string", "minLength": 1 },
+          "due": { "type": ["string", "null"] },
+          "source_turn_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "source_turn_validation": {
+            "enum": ["verified", "invalid", "missing"]
+          },
+          "requires_human_dedup": { "type": "boolean" }
+        }
+      }
+    },
+
+    "total_chunks_classified": { "type": "integer", "minimum": 0 },
+    "off_topic_count": { "type": "integer", "minimum": 0 },
+    "regulatory_verb_fallback_count": { "type": "integer", "minimum": 0 },
+    "routing_quality_warning": { "type": "boolean" },
+    "requires_human_dedup_count": { "type": "integer", "minimum": 0 },
+    "extraction_run_id": { "type": "string", "minLength": 1 },
+
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": { "const": "ExtractionMerger" }
+      }
+    }
+  }
+}

@@ -215,11 +215,12 @@ class ObsidianReviewParser:
 
         artifact: Dict[str, Any] = {
             "artifact_kind": "review_artifact",
+            "artifact_type": "review_artifact",
             "artifact_id": str(uuid.uuid4()),
             "created_at": _now_iso(),
             "schema_ref": {
                 "name": _SCHEMA_NAME,
-                "version": "1.0.0",
+                "version": "1.1.0",
                 "digest": digest,
             },
             "trace": {

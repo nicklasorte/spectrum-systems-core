@@ -150,6 +150,8 @@ class EvalAligner:
         source_artifact_id: Optional[str] = None,
         pair_id: Optional[str] = None,
         chunking_strategy: str = "unknown",
+        artifact_source: str = "story_artifacts",
+        eval_input_warning: bool = False,
     ) -> Dict[str, Any]:
         """Return an alignment_result artifact dict.
 
@@ -166,6 +168,13 @@ class EvalAligner:
               An empty / whitespace-only string is treated as "no minutes
               items": coverage will be vacuously 0 across nothing rather
               than vacuously matched.
+          artifact_source -- ``meeting_extraction`` if items were derived
+              from a Phase M3 meeting_extraction artifact, else
+              ``story_artifacts`` (the legacy path).
+          eval_input_warning -- True iff the caller could not find any
+              typed-extraction inputs and is running with zero decisions
+              and zero claims. Recorded on the result; does not affect
+              alignment math (partial evals are still informative).
         """
         items_norm = _normalize_extracted_items(extracted_items)
         minutes_items = _split_minutes_items(minutes_text)
@@ -186,8 +195,108 @@ class EvalAligner:
             "coverage_alignments": coverage,
             "review_alignments": review,
             "chunking_strategy": chunking_strategy or "unknown",
+            "artifact_source": artifact_source or "story_artifacts",
+            "eval_input_warning": bool(eval_input_warning),
             "provenance": {"produced_by": self.PRODUCED_BY},
         }
+
+    @staticmethod
+    def items_from_meeting_extraction(
+        meeting_extraction: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Flatten a meeting_extraction into the {text, source_turn_ids, ...}
+        shape that ``align()`` consumes.
+
+        Decisions/claims/action_items are concatenated. Empty inputs yield
+        ``[]``. Never raises.
+        """
+        out: List[Dict[str, Any]] = []
+        if not isinstance(meeting_extraction, dict):
+            return out
+        for d in meeting_extraction.get("decisions") or []:
+            if not isinstance(d, dict):
+                continue
+            text = d.get("decision_text")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            out.append({
+                "text": text,
+                "kind": "decision",
+                "source_turn_ids": d.get("source_turn_ids") or [],
+                "source_turn_validation": d.get("source_turn_validation", "missing"),
+            })
+        for c in meeting_extraction.get("claims") or []:
+            if not isinstance(c, dict):
+                continue
+            text = c.get("claim_text")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            out.append({
+                "text": text,
+                "kind": "claim",
+                "source_turn_ids": c.get("source_turn_ids") or [],
+                "source_turn_validation": c.get("source_turn_validation", "missing"),
+            })
+        for a in meeting_extraction.get("action_items") or []:
+            if not isinstance(a, dict):
+                continue
+            text = a.get("action")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            out.append({
+                "text": text,
+                "kind": "action_item",
+                "source_turn_ids": a.get("source_turn_ids") or [],
+                "source_turn_validation": a.get("source_turn_validation", "missing"),
+            })
+        return out
+
+    @staticmethod
+    def has_zero_typed_inputs(
+        meeting_extraction: Dict[str, Any],
+    ) -> bool:
+        """True iff the meeting_extraction has zero decisions AND zero claims.
+
+        Action items alone are not enough to suppress the warning: an
+        action-item-only extraction is suspect.
+        """
+        if not isinstance(meeting_extraction, dict):
+            return True
+        decisions = meeting_extraction.get("decisions") or []
+        claims = meeting_extraction.get("claims") or []
+        return not decisions and not claims
+
+    def align_from_meeting_extraction(
+        self,
+        meeting_extraction: Dict[str, Any],
+        minutes_text: str,
+        source_id: str,
+        minutes_artifact_id: str,
+        *,
+        source_artifact_id: Optional[str] = None,
+        pair_id: Optional[str] = None,
+        chunking_strategy: str = "unknown",
+    ) -> Dict[str, Any]:
+        """Align from a Phase M3 meeting_extraction artifact.
+
+        This is the production entry point for the typed-extraction path.
+        It auto-derives ``eval_input_warning`` from
+        ``has_zero_typed_inputs`` so no caller can forget the flag. The
+        artifact_source is fixed to ``"meeting_extraction"``.
+        """
+        items = self.items_from_meeting_extraction(meeting_extraction)
+        warn = self.has_zero_typed_inputs(meeting_extraction)
+        return self.align(
+            extracted_items=items,
+            minutes_text=minutes_text,
+            source_id=source_id,
+            minutes_artifact_id=minutes_artifact_id,
+            source_artifact_id=source_artifact_id,
+            pair_id=pair_id,
+            chunking_strategy=chunking_strategy,
+            artifact_source="meeting_extraction",
+            eval_input_warning=warn,
+        )
 
     # -- public stage helpers (also exposed for tests / future tuning) --
 

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/glossary/glossary_term.schema.json",
+  "title": "glossary_term",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "glossary_term_id",
+    "term",
+    "definition",
+    "authoritative_source",
+    "related_terms",
+    "is_regulatory_verb",
+    "canonical_verb_definition",
+    "artifact_type",
+    "schema_version",
+    "created_at",
+    "provenance"
+  ],
+  "properties": {
+    "glossary_term_id": { "type": "string", "format": "uuid" },
+    "term": { "type": "string", "minLength": 1 },
+    "definition": { "type": "string", "minLength": 1 },
+    "authoritative_source": {
+      "enum": ["ITU", "NTIA", "FCC", "DoD", "CLAUDE.md", "other"]
+    },
+    "related_terms": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "is_regulatory_verb": { "type": "boolean" },
+    "canonical_verb_definition": {
+      "type": ["string", "null"]
+    },
+    "artifact_type": { "const": "glossary_term" },
+    "schema_version": { "const": "1.0.0" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": { "const": "GlossaryManager" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "is_regulatory_verb": { "const": true } } },
+      "then": {
+        "properties": {
+          "canonical_verb_definition": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  ]
+}
