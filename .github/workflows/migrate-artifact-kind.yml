@@ -61,8 +61,8 @@ jobs:
 
       - name: Commit changes to data-lake
         if: ${{ github.event.inputs.confirm == 'yes' }}
-        working-directory: data-lake
         run: |
+          cd "${{ github.workspace }}/data-lake"
           if [[ -z "$(git status --porcelain)" ]]; then
             echo "No changes to commit; data-lake is already migrated."
             exit 0
