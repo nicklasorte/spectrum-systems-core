@@ -1,3 +1,73 @@
+# Phase ChunkClassifier-Fix — Zero typed extractions on all transcripts
+
+## Step 1 — Diagnosis (branch: claude/fix-chunk-classifier-i1foz)
+
+**Symptom**: `extract-typed` on all 13 transcripts produces
+`decisions=0 claims=0 action_items=0 off_topic=209/211` (etc.). The two
+non-off_topic chunks per transcript are rescued by the regulatory verb
+fallback, but produce zero downstream decisions.
+
+**Q1 — What text does the classifier send to the LLM?**
+`chunk["text"]`. `chunk_classifier.py::ChunkClassifier._build_prompt` (line 87)
+reads `(chunk or {}).get("text", "")`. Field name is correct.
+
+**Q2 — Classifier prompt template** (chunk_classifier.py:88-97):
+```
+Classify the following meeting speaker-turn into exactly one of: decision,
+claim, action_item, off_topic. Return JSON {"classification": "<one>",
+"confidence": <0..1 or null>}. Use 'decision' only when the group reaches or
+records an explicit outcome (approved/rejected/deferred/noted/considered).
+Use 'claim' for factual or technical assertions. Use 'action_item' for tasks
+assigned to a named owner. Otherwise use 'off_topic'.
+
+---
+{text}
+---
+```
+
+**Q3 — Regulatory verb fallback** (chunk_classifier.py:99-114):
+Reads `chunk["text"]` (passed as `chunk_text`), case-insensitive word-boundary
+regex. Verbs: approved, rejected, deferred, noted, considered,
+action required/action_required, agreed, consensus. Field name is correct.
+
+**Q4 — On LLM error**: returns `"off_topic"` **silently** — the bare
+`except Exception` at chunk_classifier.py:157-159 swallows the error
+with no log.
+
+**Q5 — Is a real Haiku API call happening? NO.**
+The `extract-typed` CLI calls `run_typed_extraction(sid, data_lake, force)`
+at `cli.py:2570` without passing `api_callers`. Inside
+`typed_extraction_runner.py:184-188`, `api_callers={}` so all four components
+are constructed as `ChunkClassifier(api_caller=None)` etc. With `api_caller=None`,
+each component falls back to its module-level `_default_api_caller`, which
+**always returns the offline default** (`{"classification": "off_topic"}` /
+`{"items": []}`). No HTTP call is ever made.
+
+This is the same pattern `StoryExtractor` had to solve: `story_extractor.py:170-176`
+lazy-builds a real `anthropic.Anthropic()` client when no caller is injected.
+`ChunkClassifier`, `DecisionExtractor`, `ClaimExtractor`, `ActionItemExtractor`
+were never given that pattern, and the runner doesn't build it for them either.
+
+**Q6 — `chunks.jsonl` field shape**: confirmed in existing tests
+(`test_typed_extraction_runner.py:102-105`, `test_chunk_classifier.py:48-50`)
+that real chunks carry `{"chunk_id": "...", "text": "...", "source_id": "..."}`.
+The classifier is reading the right field — there is just nothing on the other
+end of the api_caller seam in production.
+
+**Root cause**: the production code path never wires a real LLM caller into
+the four typed-extraction components. Everything below the runner is correct;
+the seam at `typed_extraction_runner.run_typed_extraction` needs to lazy-build
+real Anthropic callers when none are injected and `ANTHROPIC_API_KEY` is set,
+matching the `StoryExtractor` pattern.
+
+**Fix shape (Step 2)**: extend `typed_extraction_runner.py` to lazy-build a
+real Haiku `api_caller` per missing component. Add a small JSON-parsing helper
+(tolerant of markdown code fences). Add `logging.warning` to surface
+LLM-call errors instead of swallowing them. No changes to the four components'
+public API — tests that inject `api_caller` are unchanged.
+
+---
+
 # Phase Q — Extraction Quality Pass (few-shot + omit + confidence) progress
 
 ## Prerequisites (recorded)
