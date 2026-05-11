@@ -70,16 +70,20 @@ quality-only changes this PR carries.
 ## Test counts
 
 - Baseline (pre-Phase-Q): 1028 tests collected.
-- After Phase Q: 1065 tests collected (37 new).
-- All 37 new tests pass.
+- After Phase Q: 1068 tests collected (40 new).
+- All 40 new tests pass.
 - Full suite (excluding `tests/ingestion/` pre-existing PDF env failures):
-  906 passed, 0 failures.
+  909 passed, 0 failures.
 
 ## Red Team passes
 
-- Pass 1: pending.
-- Pass 2: pending.
-- Pass 3: pending.
+- Pass 1: 2 Sev-2 findings fixed (vacuous few-shot injection from
+  format_examples_for_prompt's header-only block; `omit_instruction_present`
+  made post-render instead of a decorative constant). 3 regression-guard
+  tests added.
+- Pass 2: no blocking findings on tests (real code paths exercised,
+  no loader mocking, positional checks numerical not substring-only).
+- Pass 3: ready to PR.
 
 # Phase P — Operational Verification Cycle (Safety Nets) progress
 
