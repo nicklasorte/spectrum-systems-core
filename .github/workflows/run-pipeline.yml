@@ -11,6 +11,14 @@ on:
         options:
           - 'false'
           - 'true'
+      force:
+        description: 'Force re-process all transcripts through all pipeline stages'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
   repository_dispatch:
     types: [transcript-added]
 
@@ -45,11 +53,15 @@ jobs:
 
       - name: Run the pipeline
         run: |
+          FORCE_FLAG=""
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            FORCE_FLAG="--force"
+          fi
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-            python -m spectrum_systems_core.cli run-pipeline --dry-run \
+            python -m spectrum_systems_core.cli run-pipeline --dry-run $FORCE_FLAG \
               --data-lake "${{ github.workspace }}/data-lake"
           else
-            python -m spectrum_systems_core.cli run-pipeline \
+            python -m spectrum_systems_core.cli run-pipeline $FORCE_FLAG \
               --data-lake "${{ github.workspace }}/data-lake"
           fi
 

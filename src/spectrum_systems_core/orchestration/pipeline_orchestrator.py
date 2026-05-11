@@ -60,8 +60,36 @@ TRANSCRIPTS_SUBDIR = ("raw", "transcripts")
 DEFAULT_SOURCE_FAMILY = "meetings"
 DEFAULT_SOURCE_TYPE = "meeting_transcript"
 DEFAULT_DATE = "1970-01-01"
-SCHEMA_VERSION = "1.2.0"
+SCHEMA_VERSION = "1.3.0"
 PRODUCED_BY = "PipelineOrchestrator"
+
+# Phase L.3 — full pipeline stage chain.
+STAGE_PROCESS_SOURCE = "process_source"
+STAGE_EXTRACT_STORIES = "extract_stories"
+STAGE_PROMOTE_KNOWLEDGE = "promote_knowledge"
+STAGE_EXTRACT_CLAIMS = "extract_claims"
+PIPELINE_STAGES = (
+    STAGE_PROCESS_SOURCE,
+    STAGE_EXTRACT_STORIES,
+    STAGE_PROMOTE_KNOWLEDGE,
+    STAGE_EXTRACT_CLAIMS,
+)
+STAGE_STATUS_SUCCESS = "success"
+STAGE_STATUS_SKIPPED = "skipped"
+STAGE_STATUS_FAILURE = "failure"
+STAGE_STATUS_FORCED = "forced"
+STAGE_STATUS_NOT_RUN = "not_run"
+STAGE_STATUSES = (
+    STAGE_STATUS_SUCCESS,
+    STAGE_STATUS_SKIPPED,
+    STAGE_STATUS_FAILURE,
+    STAGE_STATUS_FORCED,
+    STAGE_STATUS_NOT_RUN,
+)
+SYNTHESIZE_STATUS_SUCCESS = "success"
+SYNTHESIZE_STATUS_SKIPPED = "skipped"
+SYNTHESIZE_STATUS_FAILURE = "failure"
+SYNTHESIZE_STATUS_NOT_RUN = "not_run"
 
 _MINUTES_FILTER_REASON = (
     "filename_contains_minutes_keyword — "
@@ -149,9 +177,21 @@ def _schema_path() -> Path:
 #   {"status": "success" | "failure", "artifact_id": str, "reason": str}
 TranscriptRunner = Callable[[Path, str, Path], Dict[str, Any]]
 
+# Per-source stage runners (Stages 2-4). Each returns:
+#   {"status": "success" | "failure", "reason": str}
+StageRunner = Callable[[str, Path], Dict[str, Any]]
+
+# Synthesize runner (Stage 5). Runs once per orchestrator invocation.
+SynthesizeRunner = Callable[[Path], Dict[str, Any]]
+
 
 class PipelineOrchestrator:
-    """Detect and run unprocessed transcripts under a data-lake root."""
+    """Detect and run unprocessed transcripts through the full pipeline.
+
+    Phase L.3: extends the original Phase L.1 single-stage orchestrator
+    to chain Stages 2-5. Each stage is independently injectable for
+    testing; defaults wrap the production extractors.
+    """
 
     def __init__(
         self,
@@ -159,16 +199,34 @@ class PipelineOrchestrator:
         transcript_runner: Optional[TranscriptRunner] = None,
         docx_extractor: Optional[DocxExtractor] = None,
         ingestion_eval: Optional[IngestionEval] = None,
+        extract_stories_runner: Optional[StageRunner] = None,
+        promote_knowledge_runner: Optional[StageRunner] = None,
+        extract_claims_runner: Optional[StageRunner] = None,
+        synthesize_runner: Optional[SynthesizeRunner] = None,
     ) -> None:
         self._transcript_runner = transcript_runner or self._default_runner
         self._docx_extractor = docx_extractor or DocxExtractor()
         self._ingestion_eval = ingestion_eval or IngestionEval()
+        self._extract_stories_runner = (
+            extract_stories_runner or _default_extract_stories_runner
+        )
+        self._promote_knowledge_runner = (
+            promote_knowledge_runner or _default_promote_knowledge_runner
+        )
+        self._extract_claims_runner = (
+            extract_claims_runner or _default_extract_claims_runner
+        )
+        self._synthesize_runner = (
+            synthesize_runner or _default_synthesize_runner
+        )
 
     # -- public API --------------------------------------------------------
 
-    def scan(self, data_lake_path: str) -> Dict[str, Any]:
+    def scan(
+        self, data_lake_path: str, force: bool = False
+    ) -> Dict[str, Any]:
         try:
-            return self._scan(data_lake_path)
+            return self._scan(data_lake_path, force=force)
         except Exception as exc:  # defensive: never raise
             return {
                 "status": "failure",
@@ -185,14 +243,21 @@ class PipelineOrchestrator:
         self,
         data_lake_path: str,
         dry_run: bool = False,
+        force: bool = False,
     ) -> Dict[str, Any]:
         run_id = str(uuid.uuid4())
         try:
-            return self._run(data_lake_path, dry_run=dry_run, run_id=run_id)
+            return self._run(
+                data_lake_path,
+                dry_run=dry_run,
+                run_id=run_id,
+                force=force,
+            )
         except Exception as exc:  # defensive: never raise
             return {
                 "status": "failure",
                 "dry_run": bool(dry_run),
+                "force": bool(force),
                 "run_id": run_id,
                 "processed_this_run": [],
                 "skipped_already_done": [],
@@ -201,13 +266,18 @@ class PipelineOrchestrator:
                 "total_attempted": 0,
                 "total_succeeded": 0,
                 "total_failed": 0,
+                "synthesize_status": SYNTHESIZE_STATUS_NOT_RUN,
+                "total_stages_completed": 0,
+                "total_stages_failed": 0,
                 "orchestration_record_path": "",
                 "reason": f"unexpected_error:{exc}",
             }
 
     # -- scan --------------------------------------------------------------
 
-    def _scan(self, data_lake_path: str) -> Dict[str, Any]:
+    def _scan(
+        self, data_lake_path: str, force: bool = False
+    ) -> Dict[str, Any]:
         if not data_lake_path:
             return _scan_failure("data_lake_path_required")
         root = Path(data_lake_path)
@@ -355,6 +425,20 @@ class PipelineOrchestrator:
                     )
                     continue
 
+            # Force mode: Stage 1 evidence exists, but the operator wants
+            # everything re-run. Surface as unprocessed with reason="forced"
+            # so run() re-invokes Stage 1. Existing artifacts are not
+            # deleted; underlying loaders are content-addressed.
+            if force:
+                unprocessed.append(
+                    {
+                        **entry_common,
+                        "reason": "forced",
+                        "prior_artifact_id": ev.artifact_id,
+                    }
+                )
+                continue
+
             already_processed.append(
                 {
                     **entry_common,
@@ -382,14 +466,16 @@ class PipelineOrchestrator:
         *,
         dry_run: bool,
         run_id: str,
+        force: bool = False,
     ) -> Dict[str, Any]:
         started_at = _now_iso()
-        scan_result = self._scan(data_lake_path)
+        scan_result = self._scan(data_lake_path, force=force)
         if scan_result["status"] != "success":
             completed_at = _now_iso()
             return {
                 "status": "failure",
                 "dry_run": dry_run,
+                "force": force,
                 "run_id": run_id,
                 "processed_this_run": [],
                 "skipped_already_done": [],
@@ -398,6 +484,9 @@ class PipelineOrchestrator:
                 "total_attempted": 0,
                 "total_succeeded": 0,
                 "total_failed": 0,
+                "synthesize_status": SYNTHESIZE_STATUS_NOT_RUN,
+                "total_stages_completed": 0,
+                "total_stages_failed": 0,
                 "orchestration_record_path": "",
                 "reason": f"scan_failed:{scan_result.get('reason', '')}",
             }
@@ -418,6 +507,13 @@ class PipelineOrchestrator:
         failed_this_run: List[Dict[str, Any]] = []
         results_for_record: List[Dict[str, Any]] = []
 
+        # Track which transcripts reached Stage 4 success this run; Stage 5
+        # only fires if at least one did, OR if force=True (per task spec).
+        any_stage4_success_this_run = False
+        # Tally across all transcripts for the new aggregate fields.
+        total_stages_completed = 0
+        total_stages_failed = 0
+
         # Emit one results-row per filtered file so the run record has a
         # per-file trail (filtered files are also surfaced as the
         # aggregate `filtered_from_transcripts` array). They are NEVER
@@ -430,14 +526,17 @@ class PipelineOrchestrator:
                     "artifact_id": "",
                     "reason": f["reason"],
                     "eval_status": "not_run",
+                    "pipeline_stages": _empty_pipeline_stages(),
                 }
             )
 
+        # Process unprocessed transcripts (Stage 1 needs running).
         for entry in unprocessed:
             filename = entry["filename"]
             path = Path(entry["path"])
             source_id = _slugify(path.stem)
             scan_reason = entry.get("reason", "")
+            forced_entry = scan_reason == "forced"
 
             if dry_run:
                 results_for_record.append(
@@ -447,6 +546,7 @@ class PipelineOrchestrator:
                         "artifact_id": "",
                         "reason": scan_reason or "dry_run",
                         "eval_status": "not_run",
+                        "pipeline_stages": _empty_pipeline_stages(),
                     }
                 )
                 continue
@@ -457,6 +557,9 @@ class PipelineOrchestrator:
                 failed_this_run.append(
                     {"filename": filename, "reason": scan_reason}
                 )
+                pipeline_stages = _empty_pipeline_stages()
+                pipeline_stages[STAGE_PROCESS_SOURCE] = STAGE_STATUS_FAILURE
+                total_stages_failed += 1
                 results_for_record.append(
                     {
                         "filename": filename,
@@ -464,11 +567,14 @@ class PipelineOrchestrator:
                         "artifact_id": "",
                         "reason": scan_reason,
                         "eval_status": "not_run",
+                        "pipeline_stages": pipeline_stages,
                     }
                 )
                 continue
 
             run_result = self._run_one(path, source_id, store_root)
+            pipeline_stages = _empty_pipeline_stages()
+
             if run_result["status"] == "success":
                 eval_status = self._maybe_run_ingestion_eval(
                     docx_path=path if path.suffix.lower() == ".docx" else None,
@@ -483,11 +589,27 @@ class PipelineOrchestrator:
                         f"[orchestrator] extraction_quality_warning: {filename}"
                     )
                 elif eval_status == "warning":
-                    # Advisory check failed (e.g., raw_hash drift). Still
-                    # success — but the operator should see it.
                     print(
                         f"[orchestrator] ingestion_eval_warning: {filename}"
                     )
+                pipeline_stages[STAGE_PROCESS_SOURCE] = (
+                    STAGE_STATUS_FORCED if forced_entry else STAGE_STATUS_SUCCESS
+                )
+                total_stages_completed += 1
+
+                # Stages 2-4 chain — never blocks other transcripts.
+                stages_2_4 = self._run_stages_2_to_4(
+                    source_id=source_id,
+                    store_root=store_root,
+                    force=force,
+                    filename=filename,
+                )
+                pipeline_stages.update(stages_2_4["pipeline_stages"])
+                total_stages_completed += stages_2_4["completed"]
+                total_stages_failed += stages_2_4["failed"]
+                if stages_2_4["stage4_success"]:
+                    any_stage4_success_this_run = True
+
                 processed_this_run.append(
                     {
                         "filename": filename,
@@ -506,9 +628,12 @@ class PipelineOrchestrator:
                             else "ingestion_eval_failed"
                         ),
                         "eval_status": eval_status,
+                        "pipeline_stages": pipeline_stages,
                     }
                 )
             else:
+                pipeline_stages[STAGE_PROCESS_SOURCE] = STAGE_STATUS_FAILURE
+                total_stages_failed += 1
                 failed_this_run.append(
                     {
                         "filename": filename,
@@ -522,8 +647,64 @@ class PipelineOrchestrator:
                         "artifact_id": run_result.get("artifact_id", ""),
                         "reason": run_result["reason"],
                         "eval_status": "not_run",
+                        "pipeline_stages": pipeline_stages,
                     }
                 )
+
+        # Process already-Stage-1 transcripts. They skip Stage 1 but may
+        # still need Stages 2-4 (if their existing artifacts were created
+        # before those stages were added, OR if force=True).
+        for entry in already:
+            if dry_run:
+                continue
+            filename = entry["filename"]
+            source_id = _slugify(Path(entry["filename"]).stem)
+            pipeline_stages = _empty_pipeline_stages()
+            pipeline_stages[STAGE_PROCESS_SOURCE] = STAGE_STATUS_SKIPPED
+            stages_2_4 = self._run_stages_2_to_4(
+                source_id=source_id,
+                store_root=store_root,
+                force=force,
+                filename=filename,
+            )
+            pipeline_stages.update(stages_2_4["pipeline_stages"])
+            total_stages_completed += stages_2_4["completed"]
+            total_stages_failed += stages_2_4["failed"]
+            if stages_2_4["stage4_success"]:
+                any_stage4_success_this_run = True
+
+            results_for_record.append(
+                {
+                    "filename": filename,
+                    "status": "skipped_already_done",
+                    "artifact_id": entry["artifact_id"],
+                    "reason": entry.get("reason", ""),
+                    "eval_status": "not_run",
+                    "pipeline_stages": pipeline_stages,
+                }
+            )
+
+        # Stage 5 (synthesize) — runs once per invocation.
+        # Sev-1 hazard guard: force alone does NOT trigger synthesize.
+        # Synthesize runs iff at least one transcript reached Stage 4
+        # success this invocation (per Phase L.3 spec). With zero Stage 4
+        # successes, there is nothing new to synthesize regardless of force.
+        synthesize_status = SYNTHESIZE_STATUS_NOT_RUN
+        if not dry_run:
+            if any_stage4_success_this_run:
+                synth_result = self._run_synthesize(store_root)
+                if synth_result["status"] == "success":
+                    synthesize_status = SYNTHESIZE_STATUS_SUCCESS
+                    total_stages_completed += 1
+                else:
+                    synthesize_status = SYNTHESIZE_STATUS_FAILURE
+                    total_stages_failed += 1
+                    print(
+                        f"[orchestrator] synthesize_failed: "
+                        f"{synth_result.get('reason', '')}"
+                    )
+            else:
+                synthesize_status = SYNTHESIZE_STATUS_SKIPPED
 
         completed_at = _now_iso()
 
@@ -554,11 +735,16 @@ class PipelineOrchestrator:
                 results=results_for_record,
                 filtered_from_transcripts=filtered_from_transcripts,
                 status=overall_status,
+                force=force,
+                synthesize_status=synthesize_status,
+                total_stages_completed=total_stages_completed,
+                total_stages_failed=total_stages_failed,
             )
 
         return {
             "status": overall_status,
             "dry_run": dry_run,
+            "force": force,
             "run_id": run_id,
             "processed_this_run": processed_this_run,
             "skipped_already_done": skipped_already_done,
@@ -567,9 +753,180 @@ class PipelineOrchestrator:
             "total_attempted": len(unprocessed),
             "total_succeeded": len(processed_this_run),
             "total_failed": len(failed_this_run),
+            "synthesize_status": synthesize_status,
+            "total_stages_completed": total_stages_completed,
+            "total_stages_failed": total_stages_failed,
             "orchestration_record_path": record_path,
             "reason": "",
+            "results": results_for_record,
         }
+
+    # -- Stages 2-4 chain --------------------------------------------------
+
+    def _run_stages_2_to_4(
+        self,
+        *,
+        source_id: str,
+        store_root: Path,
+        force: bool,
+        filename: str,
+    ) -> Dict[str, Any]:
+        """Run Stages 2-4 in sequence with idempotency + dependency rules.
+
+        Rules (per Phase L.3 spec):
+        - Stage 2 fail => Stages 3 and 4 are NOT attempted (marked not_run).
+          They depend on Stage 2 output (or at least share its precondition).
+        - Stage 3 fail does NOT block Stage 4 (Stage 4 reads text_units
+          directly, not knowledge artifacts).
+        - Skipping (idempotency) is success-equivalent for downstream
+          dependency checks: a skipped Stage 2 still allows Stages 3+4.
+        - Force re-runs every stage regardless of existing artifacts;
+          underlying modules overwrite their own working files (no rm).
+
+        Returns:
+          {
+            "pipeline_stages": {extract_stories, promote_knowledge, extract_claims},
+            "completed": int (stages with success or skipped),
+            "failed": int,
+            "stage4_success": bool,
+          }
+        """
+        result_stages: Dict[str, str] = {
+            STAGE_EXTRACT_STORIES: STAGE_STATUS_NOT_RUN,
+            STAGE_PROMOTE_KNOWLEDGE: STAGE_STATUS_NOT_RUN,
+            STAGE_EXTRACT_CLAIMS: STAGE_STATUS_NOT_RUN,
+        }
+        completed = 0
+        failed = 0
+        stage4_success = False
+
+        # Stage 2: extract-stories
+        stage2 = self._run_one_stage(
+            stage_name=STAGE_EXTRACT_STORIES,
+            runner=self._extract_stories_runner,
+            source_id=source_id,
+            store_root=store_root,
+            force=force,
+            done_check=_stage2_done,
+            filename=filename,
+        )
+        result_stages[STAGE_EXTRACT_STORIES] = stage2["status"]
+        if stage2["status"] in (STAGE_STATUS_SUCCESS, STAGE_STATUS_FORCED, STAGE_STATUS_SKIPPED):
+            completed += 1
+        elif stage2["status"] == STAGE_STATUS_FAILURE:
+            failed += 1
+
+        # Per task: Stage 2 failure => Stages 3+4 not attempted for this transcript.
+        if stage2["status"] == STAGE_STATUS_FAILURE:
+            return {
+                "pipeline_stages": result_stages,
+                "completed": completed,
+                "failed": failed,
+                "stage4_success": stage4_success,
+            }
+
+        # Stage 3: promote-knowledge (KnowledgeSynthesizer)
+        stage3 = self._run_one_stage(
+            stage_name=STAGE_PROMOTE_KNOWLEDGE,
+            runner=self._promote_knowledge_runner,
+            source_id=source_id,
+            store_root=store_root,
+            force=force,
+            done_check=_stage3_done,
+            filename=filename,
+        )
+        result_stages[STAGE_PROMOTE_KNOWLEDGE] = stage3["status"]
+        if stage3["status"] in (STAGE_STATUS_SUCCESS, STAGE_STATUS_FORCED, STAGE_STATUS_SKIPPED):
+            completed += 1
+        elif stage3["status"] == STAGE_STATUS_FAILURE:
+            failed += 1
+
+        # Stage 4: extract-claims (independent of Stage 3 — still attempted
+        # even if Stage 3 failed).
+        stage4 = self._run_one_stage(
+            stage_name=STAGE_EXTRACT_CLAIMS,
+            runner=self._extract_claims_runner,
+            source_id=source_id,
+            store_root=store_root,
+            force=force,
+            done_check=_stage4_done,
+            filename=filename,
+        )
+        result_stages[STAGE_EXTRACT_CLAIMS] = stage4["status"]
+        if stage4["status"] in (STAGE_STATUS_SUCCESS, STAGE_STATUS_FORCED):
+            completed += 1
+            stage4_success = True
+        elif stage4["status"] == STAGE_STATUS_SKIPPED:
+            completed += 1
+        elif stage4["status"] == STAGE_STATUS_FAILURE:
+            failed += 1
+
+        return {
+            "pipeline_stages": result_stages,
+            "completed": completed,
+            "failed": failed,
+            "stage4_success": stage4_success,
+        }
+
+    def _run_one_stage(
+        self,
+        *,
+        stage_name: str,
+        runner: StageRunner,
+        source_id: str,
+        store_root: Path,
+        force: bool,
+        done_check: Callable[[Path, str], bool],
+        filename: str,
+    ) -> Dict[str, Any]:
+        """Run one stage with idempotency + force handling. Never raises."""
+        already_done = done_check(store_root, source_id)
+        if already_done and not force:
+            return {"status": STAGE_STATUS_SKIPPED, "reason": "already_done"}
+        prefix = "[force] " if (force and already_done) else ""
+        print(f"  {prefix}{stage_name}: {filename} ...", flush=True)
+        try:
+            result = runner(source_id, store_root)
+        except Exception as exc:  # defensive
+            return {
+                "status": STAGE_STATUS_FAILURE,
+                "reason": f"unexpected_error:{exc}",
+            }
+        if not isinstance(result, dict):
+            return {
+                "status": STAGE_STATUS_FAILURE,
+                "reason": "runner_returned_non_dict",
+            }
+        if result.get("status") == "success":
+            return {
+                "status": (
+                    STAGE_STATUS_FORCED
+                    if (force and already_done)
+                    else STAGE_STATUS_SUCCESS
+                ),
+                "reason": result.get("reason", ""),
+            }
+        return {
+            "status": STAGE_STATUS_FAILURE,
+            "reason": result.get("reason", "stage_failed"),
+        }
+
+    def _run_synthesize(self, store_root: Path) -> Dict[str, Any]:
+        """Stage 5. Runs the synthesize runner once. Never raises."""
+        print("  synthesize: (audience=technical, purpose=report) ...", flush=True)
+        try:
+            result = self._synthesize_runner(store_root)
+        except Exception as exc:  # defensive
+            return {
+                "status": "failure",
+                "reason": f"unexpected_error:{exc}",
+            }
+        if not isinstance(result, dict):
+            return {
+                "status": "failure",
+                "reason": "runner_returned_non_dict",
+            }
+        return result
 
     def _run_one(
         self,
@@ -740,12 +1097,17 @@ class PipelineOrchestrator:
         results: List[Dict[str, Any]],
         filtered_from_transcripts: List[Dict[str, Any]],
         status: str,
+        force: bool = False,
+        synthesize_status: str = SYNTHESIZE_STATUS_NOT_RUN,
+        total_stages_completed: int = 0,
+        total_stages_failed: int = 0,
     ) -> str:
         record = {
             "run_id": run_id,
             "started_at": started_at,
             "completed_at": completed_at,
             "dry_run": False,
+            "force": force,
             "data_lake_path": data_lake_path,
             "transcripts_found": transcripts_found,
             "already_processed": already_processed,
@@ -755,6 +1117,9 @@ class PipelineOrchestrator:
             "filtered_from_transcripts": filtered_from_transcripts,
             "results": results,
             "status": status,
+            "synthesize_status": synthesize_status,
+            "total_stages_completed": int(total_stages_completed),
+            "total_stages_failed": int(total_stages_failed),
             "schema_version": SCHEMA_VERSION,
             "provenance": {"produced_by": PRODUCED_BY},
         }
@@ -778,6 +1143,7 @@ class PipelineOrchestrator:
                 "started_at": started_at,
                 "completed_at": completed_at,
                 "dry_run": False,
+                "force": force,
                 "data_lake_path": data_lake_path or "unknown",
                 "transcripts_found": int(transcripts_found),
                 "already_processed": int(already_processed),
@@ -787,6 +1153,9 @@ class PipelineOrchestrator:
                 "filtered_from_transcripts": filtered_from_transcripts,
                 "results": [],
                 "status": "failure",
+                "synthesize_status": synthesize_status,
+                "total_stages_completed": int(total_stages_completed),
+                "total_stages_failed": int(total_stages_failed),
                 "schema_version": SCHEMA_VERSION,
                 "provenance": {"produced_by": PRODUCED_BY},
             }
@@ -843,6 +1212,232 @@ class PipelineOrchestrator:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _empty_pipeline_stages() -> Dict[str, str]:
+    """Initial per-transcript stage map; all stages start as not_run."""
+    return {
+        STAGE_PROCESS_SOURCE: STAGE_STATUS_NOT_RUN,
+        STAGE_EXTRACT_STORIES: STAGE_STATUS_NOT_RUN,
+        STAGE_PROMOTE_KNOWLEDGE: STAGE_STATUS_NOT_RUN,
+        STAGE_EXTRACT_CLAIMS: STAGE_STATUS_NOT_RUN,
+    }
+
+
+def _processed_dir(store_root: Path, source_id: str) -> Optional[Path]:
+    """Locate processed/<family>/<sid>/ for any known family; None if absent.
+
+    Mirrors `extraction._paths.find_processed_dir` without importing
+    extraction at module load time (avoids circular imports).
+    """
+    try:
+        from ..ingestion.source_loader import SOURCE_FAMILIES
+    except Exception:
+        SOURCE_FAMILIES = ("meetings",)
+    for family in SOURCE_FAMILIES:
+        candidate = store_root / "processed" / family / source_id
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _stage2_done(store_root: Path, source_id: str) -> bool:
+    """Stage 2 (extract-stories) marker: candidates.jsonl exists."""
+    pd = _processed_dir(store_root, source_id)
+    if pd is None:
+        return False
+    return (pd / "stories" / "candidates.jsonl").is_file()
+
+
+def _stage3_done(store_root: Path, source_id: str) -> bool:
+    """Stage 3 (knowledge) marker: any of concepts/themes/analogies.jsonl."""
+    pd = _processed_dir(store_root, source_id)
+    if pd is None:
+        return False
+    kd = pd / "knowledge"
+    return any(
+        (kd / f"{t}.jsonl").is_file()
+        for t in ("concepts", "themes", "analogies")
+    )
+
+
+def _stage4_done(store_root: Path, source_id: str) -> bool:
+    """Stage 4 (extract-claims) marker: paper/claims.jsonl exists."""
+    pd = _processed_dir(store_root, source_id)
+    if pd is None:
+        return False
+    return (pd / "paper" / "claims.jsonl").is_file()
+
+
+def _default_extract_stories_runner(
+    source_id: str, store_root: Path
+) -> Dict[str, Any]:
+    """Default Stage 2 runner: Chunker + StoryExtractor + StoryEval + Filter.
+
+    Never raises. Returns ``{"status": "success"|"failure", "reason": str}``.
+    Imports are lazy so import-time cost is paid only when the stage runs.
+    """
+    try:
+        from ..extraction import (
+            Chunker,
+            StoryEval,
+            StoryExtractor,
+            StoryworthyFilter,
+        )
+        chunk_result = Chunker().chunk(source_id, str(store_root))
+        if chunk_result.get("status") != "success":
+            return {
+                "status": "failure",
+                "reason": f"chunker_failed:{chunk_result.get('reason', '')}",
+            }
+        extractor_result = StoryExtractor().extract_from_source(
+            source_id, str(store_root)
+        )
+        if extractor_result.get("status") != "success":
+            return {
+                "status": "failure",
+                "reason": (
+                    "extractor_failed:"
+                    f"{extractor_result.get('reason', '')}"
+                ),
+            }
+        all_records = extractor_result.get("all_records", [])
+        StoryEval().run(all_records, source_id, str(store_root))
+        StoryworthyFilter().run_on_source(source_id, str(store_root))
+        return {"status": "success", "reason": ""}
+    except Exception as exc:  # defensive: never raise
+        return {"status": "failure", "reason": f"unexpected_error:{exc}"}
+
+
+def _default_promote_knowledge_runner(
+    source_id: str, store_root: Path
+) -> Dict[str, Any]:
+    """Default Stage 3 runner: KnowledgeSynthesizer (concepts+themes+analogies).
+
+    Reads stories/promoted/ (human-gated input). When there are no
+    promoted stories, the synthesizer succeeds with zero records — that
+    is the expected behavior for an automated pre-promotion run, not a
+    failure.
+    """
+    try:
+        from ..extraction import KnowledgeSynthesizer
+        ks = KnowledgeSynthesizer()
+        for method_name in (
+            "synthesize_concepts",
+            "synthesize_themes",
+            "synthesize_analogies",
+        ):
+            method = getattr(ks, method_name)
+            r = method(source_id, str(store_root))
+            if r.get("status") != "success":
+                return {
+                    "status": "failure",
+                    "reason": f"{method_name}:{r.get('reason', '')}",
+                }
+        return {"status": "success", "reason": ""}
+    except Exception as exc:  # defensive
+        return {"status": "failure", "reason": f"unexpected_error:{exc}"}
+
+
+def _default_extract_claims_runner(
+    source_id: str, store_root: Path
+) -> Dict[str, Any]:
+    """Default Stage 4 runner: claims + assumptions + evidence + contradictions."""
+    try:
+        from ..paper import (
+            AssumptionExtractor,
+            ClaimEval,
+            ClaimExtractor,
+            ContradictionDetector,
+            EvidenceBuilder,
+            EvidenceEval,
+        )
+        claim_result = ClaimExtractor().extract_from_source(
+            source_id, str(store_root)
+        )
+        if claim_result.get("status") != "success":
+            return {
+                "status": "failure",
+                "reason": (
+                    "claim_extraction_failed:"
+                    f"{claim_result.get('reason', '')}"
+                ),
+            }
+        assumption_result = AssumptionExtractor().extract_from_source(
+            source_id, str(store_root)
+        )
+        if assumption_result.get("status") != "success":
+            return {
+                "status": "failure",
+                "reason": (
+                    "assumption_extraction_failed:"
+                    f"{assumption_result.get('reason', '')}"
+                ),
+            }
+        claim_eval = ClaimEval().run(
+            claim_result.get("claims", []),
+            assumption_result.get("assumptions", []),
+            source_id,
+            str(store_root),
+        )
+        if claim_eval.get("decision") == "block":
+            return {
+                "status": "failure",
+                "reason": (
+                    "claim_eval_blocked:"
+                    + ",".join(claim_eval.get("reason_codes", []))
+                ),
+            }
+        evidence_result = EvidenceBuilder().build_for_source(
+            source_id, str(store_root)
+        )
+        if evidence_result.get("status") != "success":
+            return {
+                "status": "failure",
+                "reason": (
+                    "evidence_build_failed:"
+                    f"{evidence_result.get('reason', '')}"
+                ),
+            }
+        cd = ContradictionDetector().run_on_source(
+            source_id, str(store_root)
+        )
+        if cd.get("status") != "success":
+            return {
+                "status": "failure",
+                "reason": (
+                    "contradiction_detection_failed:"
+                    f"{cd.get('reason', '')}"
+                ),
+            }
+        # EvidenceEval is informational; do not block on warn-level eval.
+        return {"status": "success", "reason": ""}
+    except Exception as exc:  # defensive
+        return {"status": "failure", "reason": f"unexpected_error:{exc}"}
+
+
+def _default_synthesize_runner(store_root: Path) -> Dict[str, Any]:
+    """Default Stage 5 runner: cli.synthesize with audience=technical, purpose=report.
+
+    DATA_LAKE_PATH must point to the parent of ``store_root``; the runner
+    sets it temporarily and restores the previous value afterwards.
+    """
+    try:
+        from .. import cli as _cli  # lazy import to avoid circular load
+        prev = os.environ.get("DATA_LAKE_PATH")
+        os.environ["DATA_LAKE_PATH"] = str(store_root.parent)
+        try:
+            rc = _cli.synthesize(audience="technical", purpose="report")
+        finally:
+            if prev is None:
+                os.environ.pop("DATA_LAKE_PATH", None)
+            else:
+                os.environ["DATA_LAKE_PATH"] = prev
+        if rc != 0:
+            return {"status": "failure", "reason": f"synthesize_exit:{rc}"}
+        return {"status": "success", "reason": ""}
+    except Exception as exc:  # defensive
+        return {"status": "failure", "reason": f"unexpected_error:{exc}"}
 
 
 def _scan_failure(reason: str) -> Dict[str, Any]:
