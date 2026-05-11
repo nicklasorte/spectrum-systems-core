@@ -1119,3 +1119,61 @@ writing. Adding `source_turn_ids` as required will make missing-field
 artifacts fail validation here. No separate GOV-10 gate exists in this
 repo — schema validation in the extractor is the gate.
 
+
+---
+
+# Phase M4 — Eval Framework — Prerequisite Check (STOP)
+
+Branch: `claude/phase-m4-eval-framework-4u4vE` (off main, clean)
+Baseline pytest collected: **880 tests** (`python -m pytest --collect-only -q`)
+
+## STOP — multiple prerequisites unmet
+
+Per the task's STOP CONDITIONS. Surfacing to user instead of proceeding.
+
+### 1. `scipy` and `sklearn` not installed (BLOCKER)
+- `pyproject.toml` deps: `jsonschema>=4.0`, `PyYAML>=6.0`, `pdfminer.six`, `python-docx`. Dev: `pytest>=7.0`.
+- `python -c "import scipy"` → `ModuleNotFoundError`.
+- `python -c "import sklearn"` → `ModuleNotFoundError`.
+- Task: "scipy or sklearn not available (required for TF-IDF alignment) — surface dependency".
+
+### 2. Zero `ground_truth_pair` artifacts present (BLOCKER)
+- Schema exists: `contracts/schemas/ingestion/ground_truth_pair.schema.json`.
+- Linker exists: `src/spectrum_systems_core/ingestion/ground_truth_linker.py`.
+- But `data-lake/store/artifacts/` contains only `.gitkeep` — no `ground_truth/` directory, no JSON files.
+- Task asserts "13 confirmed ground_truth_pairs exist in the data-lake". They do not.
+- Task: "Fewer than 3 confirmed ground_truth_pairs exist (eval has nothing to measure)".
+
+### 3. `pipeline_run_id` missing from `orchestration_run_record` (SCHEMA GAP)
+- `contracts/schemas/orchestration/orchestration_run_record.schema.json` uses `run_id`, not `pipeline_run_id`.
+- Task requires `pipeline_run_id` on every `eval_result`, sourced from `orchestration_run_record`.
+- Task: "pipeline_run_id not available in orchestration_run_record — surface schema gap".
+
+### 4. `dry_run` shape mismatch
+- `orchestration_run_record` has `dry_run` as a **boolean**.
+- Task says skip when `pipeline_run_record.mode = "dry_run"` (a string mode field). No such field exists.
+
+## Other discrepancies between task prompt and the real codebase
+
+### A. `artifact_type` vs `artifact_kind`
+- Task and CLAUDE.md both say: use `artifact_type`, never `artifact_kind`.
+- Actual schemas: `source_record.schema.json`, `obsidian_input_artifact.schema.json`, `review_artifact.schema.json` use `artifact_kind`. Others (`vault_index_note`, `drift_signal_record`, `eval_case_candidate`, etc.) use `artifact_type`. The codebase is split.
+
+### B. `SpeakerChunker` is actually named `Chunker`
+- `src/spectrum_systems_core/extraction/chunker.py:74` defines `class Chunker`. No `SpeakerChunker`.
+
+### C. CLAUDE.md vs reality
+- CLAUDE.md lists seven modules and bans semantic search / embeddings; the real `src/spectrum_systems_core/` has 18 modules and the task itself asks for TF-IDF semantic similarity. CLAUDE.md is out of sync with the working codebase.
+
+### D. M1 (`source_turn_ids`) — IMPLEMENTED in schemas
+- `story_candidate.schema.json`, `paper/technical_claim.schema.json`, `paper/assumption_record.schema.json` all have `source_turn_ids` in `required` plus `source_turn_validation`.
+- Last commit on this branch: `05fe98e feat(phase-M1): source turn pointers in extraction schema`.
+- But no extraction artifacts exist in `data-lake/store/artifacts/` to confirm runtime emission. Cannot verify without running the pipeline, and pipeline has no inputs.
+
+## Questions for user (need answers before exiting plan mode)
+
+1. **scipy + sklearn** — add to `pyproject.toml` `dependencies`? Or use a stdlib alignment (Jaccard / character n-gram) and drop the TF-IDF stage?
+2. **ground_truth pairs** — generate them by running `GroundTruthLinker` against existing raw transcripts/minutes first, or proceed with a synthetic fixture and treat M4 as "framework only, no real baseline yet"?
+3. **`pipeline_run_id`** — add it (additive) to `orchestration_run_record`, or have `eval_result` record the existing `run_id` under the name `pipeline_run_id` (rename at eval boundary only)?
+4. **`artifact_type` vs `artifact_kind`** — new M4 schemas use which? Default to `artifact_type` per CLAUDE.md, leaving split for later?
+5. **Chunker class name** — confirm writing `chunking_strategy` from `Chunker` is intended.

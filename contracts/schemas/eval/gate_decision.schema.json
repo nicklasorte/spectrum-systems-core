@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/eval/gate_decision.schema.json",
+  "title": "gate_decision",
+  "description": "Phase M.4 artifact produced by RegressionGate. One decision per eval_summary. Decision is allow / block / skip_no_baseline / skip_run_count. block fires when any pair regresses past the configured thresholds against baseline. The two skip decisions cover the first two runs of the gate's lifecycle, during which baseline is being established.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "gate_decision_id",
+    "eval_summary_id",
+    "baseline_eval_summary_id",
+    "artifact_type",
+    "schema_version",
+    "created_at",
+    "decision",
+    "reason",
+    "run_count",
+    "regression_detail",
+    "provenance"
+  ],
+  "properties": {
+    "gate_decision_id": { "type": "string", "format": "uuid" },
+    "eval_summary_id": { "type": "string", "format": "uuid" },
+    "baseline_eval_summary_id": { "type": ["string", "null"] },
+    "artifact_type": { "const": "gate_decision" },
+    "schema_version": { "const": "1.0.0" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "decision": {
+      "enum": ["allow", "block", "skip_no_baseline", "skip_run_count"]
+    },
+    "reason": { "type": "string" },
+    "run_count": { "type": "integer", "minimum": 0 },
+    "regression_detail": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pair_id", "metric", "baseline_value", "current_value", "delta"],
+        "properties": {
+          "pair_id": { "type": "string" },
+          "metric": { "enum": ["coverage", "items_requiring_review_rate"] },
+          "baseline_value": { "type": "number" },
+          "current_value": { "type": "number" },
+          "delta": { "type": "number" }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": { "const": "RegressionGate" }
+      }
+    }
+  }
+}

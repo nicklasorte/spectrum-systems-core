@@ -97,7 +97,12 @@
         },
         "text_unit_count": { "type": "integer", "minimum": 0 },
         "processed_path": { "type": "string", "minLength": 1 },
-        "summary": { "type": "string" }
+        "summary": { "type": "string" },
+        "chunking_strategy": {
+          "type": "string",
+          "enum": ["speaker_turn", "character_count_fallback"],
+          "description": "Phase M.4. Chunking strategy used for this source. speaker_turn = one chunk per speaker statement. character_count_fallback = character-count chunking used because no speaker turns were detected. Written by Chunker after chunks.jsonl is produced; absent on source_records that have not been chunked yet."
+        }
       }
     }
   }

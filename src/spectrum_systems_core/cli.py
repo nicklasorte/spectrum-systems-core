@@ -2647,6 +2647,134 @@ def link_ground_truth(
     return 0
 
 
+def _resolve_pipeline_run_id_from_orchestration(
+    data_lake_path: str,
+) -> Optional[str]:
+    """Read the latest orchestration_run_record run_id, if available.
+
+    The orchestration_run_record uses ``run_id`` rather than the
+    ``pipeline_run_id`` name the eval framework adopted. The eval
+    framework intentionally renames at its own boundary so the
+    orchestration schema does not need bumping for M.4.
+    """
+    if not data_lake_path:
+        return None
+    candidates = [
+        Path(data_lake_path) / "store" / "artifacts" / "orchestration",
+        Path(data_lake_path) / "store" / "orchestration",
+    ]
+    for d in candidates:
+        if not d.is_dir():
+            continue
+        # Most-recent file wins (sorted by mtime).
+        try:
+            files = sorted(
+                d.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+            )
+        except OSError:
+            continue
+        for path in files:
+            try:
+                rec = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(rec, dict):
+                continue
+            run_id = rec.get("run_id")
+            if isinstance(run_id, str) and run_id:
+                return run_id
+    return None
+
+
+def _orchestration_record_is_dry_run(
+    data_lake_path: str, pipeline_run_id: Optional[str]
+) -> bool:
+    """If the orchestration_run_record for ``pipeline_run_id`` says
+    dry_run=true, return True. Defaults to False if the record cannot
+    be located -- the caller's --dry-run flag is the authoritative
+    fallback.
+    """
+    if not data_lake_path or not pipeline_run_id:
+        return False
+    candidates = [
+        Path(data_lake_path) / "store" / "artifacts" / "orchestration",
+        Path(data_lake_path) / "store" / "orchestration",
+    ]
+    for d in candidates:
+        if not d.is_dir():
+            continue
+        for path in d.glob("*.json"):
+            try:
+                rec = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(rec, dict):
+                continue
+            if rec.get("run_id") != pipeline_run_id:
+                continue
+            return bool(rec.get("dry_run", False))
+    return False
+
+
+def eval_ground_truth(
+    *,
+    data_lake: Optional[str] = None,
+    pipeline_run_id: Optional[str] = None,
+    pair_id: Optional[str] = None,
+    prompt_version: str = "unspecified",
+    set_baseline: bool = False,
+    is_dry_run: bool = False,
+    out_stream=None,
+) -> int:
+    """Phase M.4: evaluate the pipeline against confirmed ground_truth pairs.
+
+    Returns 0 on completion (including partial / skipped). Returns 1
+    only if SDL_ROOT/DATA_LAKE_PATH cannot be resolved.
+    """
+    from .evals.m4.runner import EvalRunner, format_cli_report
+
+    out = out_stream if out_stream is not None else sys.stdout
+
+    resolved = data_lake or os.environ.get("DATA_LAKE_PATH", "")
+    if not resolved:
+        print(
+            "error: DATA_LAKE_PATH not set and --data-lake not provided",
+            file=out,
+        )
+        return 1
+    if not Path(resolved).exists():
+        print(
+            f"error: data lake path does not exist: {resolved}",
+            file=out,
+        )
+        return 1
+
+    # Resolve pipeline_run_id: explicit flag wins, then orchestration
+    # record's run_id, then a generated UUID.
+    if not pipeline_run_id:
+        pipeline_run_id = _resolve_pipeline_run_id_from_orchestration(resolved)
+
+    # Auto-detect dry-run from orchestration record so a dry-run
+    # pipeline_run never produces eval artifacts even when the user
+    # forgets the --dry-run flag on the eval command.
+    if not is_dry_run and pipeline_run_id:
+        if _orchestration_record_is_dry_run(resolved, pipeline_run_id):
+            is_dry_run = True
+
+    runner = EvalRunner(
+        data_lake_path=resolved,
+        pipeline_run_id=pipeline_run_id,
+        prompt_version=prompt_version or "unspecified",
+    )
+    result = runner.run(
+        pair_id_filter=pair_id,
+        set_baseline=set_baseline,
+        is_dry_run=is_dry_run,
+    )
+    print(format_cli_report(result), file=out, end="")
+    return int(result.get("exit_code", 0))
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m spectrum_systems_core.cli",
@@ -3149,6 +3277,73 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    egt = sub.add_parser(
+        "eval-ground-truth",
+        help=(
+            "Phase M.4: evaluate the pipeline against confirmed "
+            "ground_truth_pairs."
+        ),
+        description=(
+            "Phase M.4 EvalRunner. Iterates confirmed ground_truth_pair "
+            "artifacts under $SDL_ROOT/ground_truth/, loads each pair's "
+            "source_record + minutes_text + extracted items, runs the "
+            "EvalAligner (semantic + lexical), computes coverage / "
+            "precision / items_requiring_review, aggregates an "
+            "eval_summary, and asks the RegressionGate for a decision "
+            "vs baseline. Writes alignment_result, eval_result, "
+            "eval_summary, and gate_decision artifacts under "
+            "$SDL_ROOT/evals/. pending_review pairs are excluded. "
+            "dry-run pipeline runs are skipped without writing artifacts."
+        ),
+    )
+    egt.add_argument(
+        "--data-lake",
+        default=None,
+        help=(
+            "Path to the data lake root. Overrides the DATA_LAKE_PATH "
+            "environment variable when provided."
+        ),
+    )
+    egt.add_argument(
+        "--pipeline-run-id",
+        default=None,
+        help=(
+            "Optional pipeline_run_id to record on every eval_result. "
+            "Resolved from orchestration_run_record.run_id when omitted; "
+            "auto-generated as a UUID when nothing else is available."
+        ),
+    )
+    egt.add_argument(
+        "--pair-id",
+        default=None,
+        help="Optional: evaluate only the named pair_id.",
+    )
+    egt.add_argument(
+        "--prompt-version",
+        default="unspecified",
+        help=(
+            "Tag or hash of the extraction prompts used for the run "
+            "under evaluation. Recorded on every eval_result."
+        ),
+    )
+    egt.add_argument(
+        "--set-baseline",
+        action="store_true",
+        help=(
+            "Explicitly write the current eval_summary as baseline, "
+            "overwriting any existing baseline. Use after a deliberate "
+            "rebaselining."
+        ),
+    )
+    egt.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Skip the eval and exit 0 without writing artifacts. Maps "
+            "to the dry-run pipeline mode."
+        ),
+    )
+
     lg = sub.add_parser(
         "link-ground-truth",
         help="Phase L.2: pair transcripts with meeting-minutes by date.",
@@ -3324,6 +3519,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             data_lake=args.data_lake,
             process_minutes=args.process_minutes,
             deduplicate=args.deduplicate,
+        )
+    if args.command == "eval-ground-truth":
+        return eval_ground_truth(
+            data_lake=args.data_lake,
+            pipeline_run_id=args.pipeline_run_id,
+            pair_id=args.pair_id,
+            prompt_version=args.prompt_version,
+            set_baseline=args.set_baseline,
+            is_dry_run=args.dry_run,
         )
     if args.command == "apply-compression":
         return apply_compression_cli(

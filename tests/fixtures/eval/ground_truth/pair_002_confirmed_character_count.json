@@ -1,0 +1,32 @@
+{
+  "pair_id": "22222222-bbbb-4bbb-bbbb-bbbbbbbbbbbb",
+  "source_artifact_id": "src-002-fixture",
+  "minutes_artifact_id": "min-002-fixture",
+  "meeting_date": "2026-03-04",
+  "meeting_name": "Fixture meeting 002 (character_count_fallback, partial coverage)",
+  "match_confidence": "high",
+  "status": "confirmed",
+  "created_at": "2026-05-11T00:00:00+00:00",
+  "confirmed_at": "2026-05-11T00:00:00+00:00",
+  "confirmed_by": "fixture",
+  "schema_version": "1.0.0",
+  "provenance": { "produced_by": "GroundTruthLinker" },
+
+  "fixture_source_id": "fixture-meeting-002",
+  "fixture_chunking_strategy": "character_count_fallback",
+  "fixture_minutes_text": "DECISION: Approve the ITU two-point criteria at -10.5 dB and -6 dB for FSS protection.\nDECISION: Defer the EPFD calculation methodology to the next meeting.\nACTION: NTIA generates data request for additional military system information.",
+  "fixture_extracted_items": [
+    {
+      "id": "story-002-a",
+      "text": "ITU two-point protection criteria of -10.5 dB and -6 dB approved for FSS protection in this meeting.",
+      "source_turn_ids": ["chunk-10"],
+      "source_turn_validation": "verified"
+    },
+    {
+      "id": "story-002-b",
+      "text": "Action: NTIA will generate a data request for additional military system information.",
+      "source_turn_ids": ["chunk-11"],
+      "source_turn_validation": "verified"
+    }
+  ]
+}
