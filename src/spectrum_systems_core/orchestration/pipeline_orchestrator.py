@@ -60,7 +60,7 @@ TRANSCRIPTS_SUBDIR = ("raw", "transcripts")
 DEFAULT_SOURCE_FAMILY = "meetings"
 DEFAULT_SOURCE_TYPE = "meeting_transcript"
 DEFAULT_DATE = "1970-01-01"
-SCHEMA_VERSION = "1.3.0"
+SCHEMA_VERSION = "1.4.0"
 PRODUCED_BY = "PipelineOrchestrator"
 
 # Phase L.3 — full pipeline stage chain.
@@ -267,7 +267,18 @@ class PipelineOrchestrator:
         data_lake_path: str,
         dry_run: bool = False,
         force: bool = False,
+        *,
+        force_only_missing: bool = False,
+        specific_source_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Run the orchestration loop.
+
+        Phase O.3 additions:
+        - ``specific_source_id``: process only the named source_id.
+        - ``force_only_missing``: when force=True, only reprocess source_ids
+          that have no meeting_extraction artifact yet. Has no effect when
+          force=False.
+        """
         run_id = str(uuid.uuid4())
         try:
             return self._run(
@@ -275,12 +286,16 @@ class PipelineOrchestrator:
                 dry_run=dry_run,
                 run_id=run_id,
                 force=force,
+                force_only_missing=force_only_missing,
+                specific_source_id=specific_source_id,
             )
         except Exception as exc:  # defensive: never raise
             return {
                 "status": "failure",
                 "dry_run": bool(dry_run),
                 "force": bool(force),
+                "force_only_missing": bool(force_only_missing),
+                "specific_source_id": specific_source_id,
                 "run_id": run_id,
                 "processed_this_run": [],
                 "skipped_already_done": [],
@@ -292,6 +307,9 @@ class PipelineOrchestrator:
                 "synthesize_status": SYNTHESIZE_STATUS_NOT_RUN,
                 "total_stages_completed": 0,
                 "total_stages_failed": 0,
+                "source_ids_processed": [],
+                "source_ids_skipped": [],
+                "source_ids_failed": [],
                 "orchestration_record_path": "",
                 "reason": f"unexpected_error:{exc}",
             }
@@ -490,6 +508,8 @@ class PipelineOrchestrator:
         dry_run: bool,
         run_id: str,
         force: bool = False,
+        force_only_missing: bool = False,
+        specific_source_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         started_at = _now_iso()
         scan_result = self._scan(data_lake_path, force=force)
@@ -499,6 +519,8 @@ class PipelineOrchestrator:
                 "status": "failure",
                 "dry_run": dry_run,
                 "force": force,
+                "force_only_missing": force_only_missing,
+                "specific_source_id": specific_source_id,
                 "run_id": run_id,
                 "processed_this_run": [],
                 "skipped_already_done": [],
@@ -510,6 +532,9 @@ class PipelineOrchestrator:
                 "synthesize_status": SYNTHESIZE_STATUS_NOT_RUN,
                 "total_stages_completed": 0,
                 "total_stages_failed": 0,
+                "source_ids_processed": [],
+                "source_ids_skipped": [],
+                "source_ids_failed": [],
                 "orchestration_record_path": "",
                 "reason": f"scan_failed:{scan_result.get('reason', '')}",
             }
@@ -520,6 +545,42 @@ class PipelineOrchestrator:
         filtered_from_transcripts = scan_result.get(
             "filtered_from_transcripts", []
         )
+
+        # Phase O.3 — specific_source_id filter wins over every other flag.
+        # If provided, drop everything that does not match. The filtered-out
+        # entries are NOT surfaced as failures (they are not "in scope").
+        if specific_source_id:
+            unprocessed = [
+                e for e in unprocessed
+                if _slugify(Path(e["filename"]).stem) == specific_source_id
+            ]
+            already = [
+                e for e in already
+                if _slugify(Path(e["filename"]).stem) == specific_source_id
+            ]
+
+        # Phase O.3 — force_only_missing: when force=True, skip transcripts
+        # whose meeting_extraction artifact already exists. Without force,
+        # the normal idempotency path already skips them — the flag is a
+        # no-op. The fail-closed direction here is "process": if we can't
+        # determine extraction existence we re-run.
+        skipped_by_force_only_missing: List[Dict[str, Any]] = []
+        if force and force_only_missing:
+            keep_unprocessed: List[Dict[str, Any]] = []
+            for entry in unprocessed:
+                sid = _slugify(Path(entry["filename"]).stem)
+                if _meeting_extraction_exists(store_root, sid):
+                    print(
+                        f"[orchestrator] meeting_extraction_exists_skipping: "
+                        f"{entry['filename']} source_id={sid}",
+                        flush=True,
+                    )
+                    skipped_by_force_only_missing.append(
+                        {"filename": entry["filename"], "source_id": sid}
+                    )
+                else:
+                    keep_unprocessed.append(entry)
+            unprocessed = keep_unprocessed
 
         skipped_already_done = [
             {"filename": e["filename"], "artifact_id": e["artifact_id"]}
@@ -752,6 +813,42 @@ class PipelineOrchestrator:
         else:
             overall_status = "success"
 
+        # Phase O.3 — by-source_id rollups for the run record.
+        # source_ids_failed captures ANY stage failure (Stage 1 *or* any of
+        # Stages 2-4), not just Stage 1. A Stage-1-success-with-later-failure
+        # belongs in both _processed (its Stage 1 evidence is on disk) and
+        # _failed (so an operator can drive a targeted re-run).
+        any_stage_failed_filenames: set[str] = set()
+        for r in results_for_record:
+            stages = r.get("pipeline_stages") or {}
+            if any(s == STAGE_STATUS_FAILURE for s in stages.values()):
+                any_stage_failed_filenames.add(r.get("filename", ""))
+        source_ids_processed = sorted({
+            _slugify(Path(e["filename"]).stem) for e in processed_this_run
+        })
+        source_ids_failed = sorted({
+            _slugify(Path(e["filename"]).stem) for e in failed_this_run
+        } | {
+            _slugify(Path(fn).stem)
+            for fn in any_stage_failed_filenames
+            if fn
+        })
+        source_ids_skipped = sorted({
+            *(_slugify(Path(e["filename"]).stem) for e in skipped_already_done),
+            *(e["source_id"] for e in skipped_by_force_only_missing),
+        })
+        # Surface force-only-missing skips in the per-file results so the
+        # run record carries one row per file the operator might ask about.
+        for skip in skipped_by_force_only_missing:
+            results_for_record.append({
+                "filename": skip["filename"],
+                "status": "skipped_already_done",
+                "artifact_id": "",
+                "reason": "meeting_extraction_exists_skipping",
+                "eval_status": "not_run",
+                "pipeline_stages": _empty_pipeline_stages(),
+            })
+
         record_path = ""
         if not dry_run:
             record_path = self._write_run_record(
@@ -760,8 +857,13 @@ class PipelineOrchestrator:
                 started_at=started_at,
                 completed_at=completed_at,
                 data_lake_path=data_lake_path,
-                transcripts_found=len(unprocessed) + len(already),
-                already_processed=len(already),
+                transcripts_found=(
+                    len(unprocessed) + len(already)
+                    + len(skipped_by_force_only_missing)
+                ),
+                already_processed=(
+                    len(already) + len(skipped_by_force_only_missing)
+                ),
                 attempted_this_run=len(unprocessed),
                 succeeded_this_run=len(processed_this_run),
                 failed_this_run=len(failed_this_run),
@@ -769,18 +871,29 @@ class PipelineOrchestrator:
                 filtered_from_transcripts=filtered_from_transcripts,
                 status=overall_status,
                 force=force,
+                force_only_missing=force_only_missing,
+                specific_source_id=specific_source_id,
                 synthesize_status=synthesize_status,
                 total_stages_completed=total_stages_completed,
                 total_stages_failed=total_stages_failed,
+                source_ids_processed=source_ids_processed,
+                source_ids_skipped=source_ids_skipped,
+                source_ids_failed=source_ids_failed,
             )
 
         return {
             "status": overall_status,
             "dry_run": dry_run,
             "force": force,
+            "force_only_missing": force_only_missing,
+            "specific_source_id": specific_source_id,
             "run_id": run_id,
             "processed_this_run": processed_this_run,
-            "skipped_already_done": skipped_already_done,
+            "skipped_already_done": skipped_already_done
+            + [
+                {"filename": s["filename"], "artifact_id": ""}
+                for s in skipped_by_force_only_missing
+            ],
             "failed_this_run": failed_this_run,
             "filtered_from_transcripts": filtered_from_transcripts,
             "total_attempted": len(unprocessed),
@@ -789,6 +902,9 @@ class PipelineOrchestrator:
             "synthesize_status": synthesize_status,
             "total_stages_completed": total_stages_completed,
             "total_stages_failed": total_stages_failed,
+            "source_ids_processed": source_ids_processed,
+            "source_ids_skipped": source_ids_skipped,
+            "source_ids_failed": source_ids_failed,
             "orchestration_record_path": record_path,
             "reason": "",
             "results": results_for_record,
@@ -1211,9 +1327,14 @@ class PipelineOrchestrator:
         filtered_from_transcripts: List[Dict[str, Any]],
         status: str,
         force: bool = False,
+        force_only_missing: bool = False,
+        specific_source_id: Optional[str] = None,
         synthesize_status: str = SYNTHESIZE_STATUS_NOT_RUN,
         total_stages_completed: int = 0,
         total_stages_failed: int = 0,
+        source_ids_processed: Optional[List[str]] = None,
+        source_ids_skipped: Optional[List[str]] = None,
+        source_ids_failed: Optional[List[str]] = None,
     ) -> str:
         record = {
             "run_id": run_id,
@@ -1221,6 +1342,8 @@ class PipelineOrchestrator:
             "completed_at": completed_at,
             "dry_run": False,
             "force": force,
+            "force_only_missing": bool(force_only_missing),
+            "specific_source_id": specific_source_id,
             "data_lake_path": data_lake_path,
             "transcripts_found": transcripts_found,
             "already_processed": already_processed,
@@ -1229,6 +1352,9 @@ class PipelineOrchestrator:
             "failed_this_run": failed_this_run,
             "filtered_from_transcripts": filtered_from_transcripts,
             "results": results,
+            "source_ids_processed": list(source_ids_processed or []),
+            "source_ids_skipped": list(source_ids_skipped or []),
+            "source_ids_failed": list(source_ids_failed or []),
             "status": status,
             "synthesize_status": synthesize_status,
             "total_stages_completed": int(total_stages_completed),
@@ -1257,6 +1383,8 @@ class PipelineOrchestrator:
                 "completed_at": completed_at,
                 "dry_run": False,
                 "force": force,
+                "force_only_missing": bool(force_only_missing),
+                "specific_source_id": specific_source_id,
                 "data_lake_path": data_lake_path or "unknown",
                 "transcripts_found": int(transcripts_found),
                 "already_processed": int(already_processed),
@@ -1265,6 +1393,9 @@ class PipelineOrchestrator:
                 "failed_this_run": int(failed_this_run),
                 "filtered_from_transcripts": filtered_from_transcripts,
                 "results": [],
+                "source_ids_processed": list(source_ids_processed or []),
+                "source_ids_skipped": list(source_ids_skipped or []),
+                "source_ids_failed": list(source_ids_failed or []),
                 "status": "failure",
                 "synthesize_status": synthesize_status,
                 "total_stages_completed": int(total_stages_completed),
@@ -1325,6 +1456,78 @@ class PipelineOrchestrator:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _meeting_extraction_exists(store_root: Path, source_id: str) -> bool:
+    """Return True iff a meeting_extraction artifact exists for ``source_id``.
+
+    Phase O.3 helper. Two file-naming patterns are accepted:
+
+      1. ``<SDL_ROOT>/extractions/<source_id>_meeting_extraction.json``
+         — the spec-level path the test suite seeds.
+      2. ``<SDL_ROOT>/extractions/<source_artifact_id>_meeting_extraction.json``
+         — what ``typed_extraction_runner`` writes today.
+
+    The (2) path requires resolving source_id -> source_artifact_id via
+    the on-disk source_record. If neither path can be checked, return
+    False (fail-closed in the *process* direction: when we cannot tell
+    whether an extraction exists, we re-run rather than silently skip).
+    """
+    if not source_id:
+        return False
+    sdl_root = _resolve_sdl_root(store_root)
+    extractions_dir = sdl_root / "extractions"
+    if not extractions_dir.is_dir():
+        return False
+
+    # Pattern (1) — fast path.
+    direct = extractions_dir / f"{source_id}_meeting_extraction.json"
+    if direct.is_file():
+        return True
+
+    # Pattern (2) — resolve via source_record.
+    source_artifact_id = ""
+    pd = _processed_dir(store_root, source_id)
+    if pd is not None:
+        record_path = pd / "source_record.json"
+        if record_path.is_file():
+            try:
+                rec = json.loads(record_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                rec = None
+            if isinstance(rec, dict):
+                aid = rec.get("artifact_id", "")
+                if isinstance(aid, str):
+                    source_artifact_id = aid
+
+    if source_artifact_id:
+        indirect = (
+            extractions_dir
+            / f"{source_artifact_id}_meeting_extraction.json"
+        )
+        if indirect.is_file():
+            return True
+
+    # Last resort: scan extractions/ and match by loaded source_artifact_id.
+    # Cheap because the directory typically has O(N_transcripts) files.
+    for path in extractions_dir.glob("*_meeting_extraction.json"):
+        if not path.is_file():
+            continue
+        try:
+            obj = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(obj, dict):
+            continue
+        # A meeting_extraction may store source_id directly (fixture path).
+        if obj.get("source_id") == source_id:
+            return True
+        if (
+            source_artifact_id
+            and obj.get("source_artifact_id") == source_artifact_id
+        ):
+            return True
+    return False
 
 
 def _empty_pipeline_stages() -> Dict[str, str]:

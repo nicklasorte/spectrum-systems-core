@@ -11,6 +11,7 @@ Replaces the vault-note-tag trigger from PR #10. Markdown is view only.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import re
@@ -2279,6 +2280,8 @@ def run_pipeline(
     dry_run: bool = False,
     data_lake: str | None = None,
     force: bool = False,
+    force_only_missing: bool = False,
+    specific_source_id: str | None = None,
     out_stream=None,
 ) -> int:
     """Phase L.3: scan data-lake/store/raw/transcripts/ and drive the full
@@ -2362,7 +2365,13 @@ def run_pipeline(
             print("Nothing to run.", file=out)
         return 0
 
-    result = orchestrator.run(resolved, dry_run=False, force=force)
+    result = orchestrator.run(
+        resolved,
+        dry_run=False,
+        force=force,
+        force_only_missing=force_only_missing,
+        specific_source_id=specific_source_id,
+    )
     if result["status"] == "failure" and "scan_failed" in result.get(
         "reason", ""
     ):
@@ -2868,6 +2877,252 @@ def eval_ground_truth(
     return int(result.get("exit_code", 0))
 
 
+# ---------------------------------------------------------------------------
+# Phase O — verification commands
+# ---------------------------------------------------------------------------
+
+
+def _resolve_verification_sdl(
+    data_lake: Optional[str], out
+) -> tuple[Optional[Path], Optional[str]]:
+    """Resolve (sdl_root, data_lake_path) for the verification commands.
+
+    Returns ``(None, None)`` and prints to ``out`` if nothing can be
+    resolved. SDL_ROOT env var wins; otherwise fall back to
+    ``<data-lake>/store/artifacts``.
+    """
+    resolved_lake = data_lake or os.environ.get("DATA_LAKE_PATH", "") or ""
+    env_sdl = os.environ.get("SDL_ROOT", "").strip()
+    sdl_root: Optional[Path] = None
+    if env_sdl:
+        sdl_root = Path(env_sdl)
+    elif resolved_lake:
+        sdl_root = Path(resolved_lake) / "store" / "artifacts"
+
+    if sdl_root is None:
+        print(
+            "error: SDL_ROOT not set and --data-lake not provided",
+            file=out,
+        )
+        return (None, None)
+    try:
+        sdl_root.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"error: could not create SDL_ROOT '{sdl_root}': {exc}", file=out)
+        return (None, None)
+    return (sdl_root, resolved_lake)
+
+
+def verify_pipeline_state(
+    *,
+    data_lake: Optional[str] = None,
+    validate_schemas: bool = True,
+    emit_actions_summary: bool = False,
+    out_stream=None,
+) -> int:
+    """Phase O.0 — scan SDL_ROOT, classify artifacts, write pipeline_state_record.
+
+    Exit 0 on completion (including empty SDL_ROOT — that's a finding,
+    not a failure). Exit 1 only when SDL_ROOT can't be resolved or the
+    record fails to write.
+    """
+    from .verification import (
+        scan_pipeline_state as _scan,
+        write_pipeline_state_record as _write,
+        emit_actions_summary as _emit,
+    )
+
+    out = out_stream if out_stream is not None else sys.stdout
+    sdl_root, resolved_lake = _resolve_verification_sdl(data_lake, out)
+    if sdl_root is None:
+        return 1
+
+    record = _scan(
+        data_lake_path=resolved_lake,
+        validate_schemas=validate_schemas,
+        sdl_root=str(sdl_root),
+    )
+
+    target = _write(record, sdl_root=sdl_root)
+    if target is None:
+        print(
+            "error: failed to write pipeline_state_record (see "
+            f"{sdl_root}/verifications/*.invalid.json)",
+            file=out,
+        )
+        # Still surface the summary so the operator sees the findings.
+    else:
+        print(f"wrote: {target}", file=out)
+
+    summary = _emit(record)
+    print(summary, file=out, end="")
+
+    if emit_actions_summary:
+        gh_path = os.environ.get("GITHUB_STEP_SUMMARY", "").strip()
+        if gh_path:
+            try:
+                with open(gh_path, "a", encoding="utf-8") as fh:
+                    fh.write(summary)
+            except OSError as exc:
+                print(f"warning: GITHUB_STEP_SUMMARY append failed: {exc}", file=out)
+    return 0 if target is not None else 1
+
+
+def review_baseline_candidate(
+    *,
+    data_lake: Optional[str] = None,
+    eval_summary_id: Optional[str] = None,
+    out_stream=None,
+) -> int:
+    """Phase O.5 — print PASS/REVIEW sanity-bound checklist.
+
+    READ-ONLY. Never installs a baseline. The operator must explicitly
+    invoke ``eval-ground-truth --set-baseline`` after reviewing this
+    output.
+    """
+    from .verification.findings_compiler import (
+        SANITY_BOUNDS,
+        _load_latest_eval_summary,
+        _load_meeting_extractions_from_sdl,
+        compute_extraction_rates,
+    )
+
+    out = out_stream if out_stream is not None else sys.stdout
+    sdl_root, _resolved_lake = _resolve_verification_sdl(data_lake, out)
+    if sdl_root is None:
+        return 1
+
+    if eval_summary_id:
+        target = sdl_root / "evals" / f"eval_summary_{eval_summary_id}.json"
+        if not target.is_file():
+            print(
+                f"error: eval_summary not found: {target}",
+                file=out,
+            )
+            return 1
+        try:
+            summary = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"error: could not read eval_summary: {exc}", file=out)
+            return 1
+    else:
+        summary = _load_latest_eval_summary(sdl_root)
+        if summary is None:
+            print(
+                "error: no eval_summary found under "
+                f"{sdl_root}/evals/. Run eval-ground-truth first.",
+                file=out,
+            )
+            return 1
+
+    extractions = _load_meeting_extractions_from_sdl(sdl_root)
+    rates = compute_extraction_rates(extractions)
+
+    partial = bool(summary.get("partial_run_warning", False))
+
+    print("=== review-baseline-candidate ===", file=out)
+    print(f"eval_summary_id: {summary.get('eval_summary_id', '')}", file=out)
+    print(
+        f"pipeline_run_id: {summary.get('pipeline_run_id', '')}",
+        file=out,
+    )
+    print(
+        f"partial_run_warning: {partial}",
+        file=out,
+    )
+    print("", file=out)
+    print("Sanity bounds:", file=out)
+    any_review = False
+    for key in (
+        "regulatory_verb_fallback_rate",
+        "human_dedup_rate",
+        "off_topic_rate",
+    ):
+        value = rates.get(key)
+        bound = SANITY_BOUNDS[key]
+        if value is None:
+            label = "REVIEW"
+            display = "n/a (no data)"
+            any_review = True
+        elif value < bound:
+            label = "PASS"
+            display = f"{value:.3f}"
+        else:
+            label = "REVIEW"
+            display = f"{value:.3f}"
+            any_review = True
+        print(f"  - [{label}] {key} = {display}  (< {bound:.2f})", file=out)
+    print("", file=out)
+
+    if partial:
+        any_review = True
+        print(
+            "  - [REVIEW] partial_run_warning is True on the eval_summary; "
+            "--set-baseline will refuse.",
+            file=out,
+        )
+        print("", file=out)
+
+    if any_review:
+        print(
+            "One or more metrics need human review. Do NOT --set-baseline "
+            "until those rates are below their bounds and partial_run_warning "
+            "is False.",
+            file=out,
+        )
+    else:
+        print(
+            "If all metrics PASS and you accept these baseline values, run:\n"
+            "  python -m spectrum_systems_core.cli eval-ground-truth "
+            "--set-baseline",
+            file=out,
+        )
+
+    return 0
+
+
+def compile_findings_cli(
+    *,
+    data_lake: Optional[str] = None,
+    cycle_id: Optional[str] = None,
+    out_stream=None,
+) -> int:
+    """Phase O.6 — write verification_findings artifact + Markdown summary."""
+    from .verification import (
+        compile_findings as _compile,
+        write_verification_findings as _write,
+        format_findings_markdown as _format,
+    )
+
+    out = out_stream if out_stream is not None else sys.stdout
+    sdl_root, _resolved_lake = _resolve_verification_sdl(data_lake, out)
+    if sdl_root is None:
+        return 1
+
+    cycle = cycle_id or f"phase-O-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d')}"
+    record = _compile(cycle_id=cycle, sdl_root=sdl_root)
+    target = _write(record, sdl_root=sdl_root)
+    if target is None:
+        print(
+            "error: failed to write verification_findings (see "
+            f"{sdl_root}/verifications/*.invalid.json)",
+            file=out,
+        )
+        return 1
+    print(f"wrote: {target}", file=out)
+
+    markdown = _format(record)
+    print(markdown, file=out, end="")
+    gh_path = os.environ.get("GITHUB_STEP_SUMMARY", "").strip()
+    if gh_path:
+        try:
+            with open(gh_path, "a", encoding="utf-8") as fh:
+                fh.write(markdown)
+        except OSError as exc:
+            print(f"warning: GITHUB_STEP_SUMMARY append failed: {exc}", file=out)
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m spectrum_systems_core.cli",
@@ -3369,6 +3624,22 @@ def _build_parser() -> argparse.ArgumentParser:
             "overwrite their own working files (pre-existing behavior)."
         ),
     )
+    rp.add_argument(
+        "--force-only-missing",
+        action="store_true",
+        help=(
+            "Phase O.3: combine with --force to skip source_ids that already "
+            "have a meeting_extraction artifact. No effect without --force."
+        ),
+    )
+    rp.add_argument(
+        "--specific-source-id",
+        default=None,
+        help=(
+            "Phase O.3: process only this source_id (slugified transcript "
+            "filename). Overrides --force-only-missing."
+        ),
+    )
 
     egt = sub.add_parser(
         "eval-ground-truth",
@@ -3523,6 +3794,82 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    vps = sub.add_parser(
+        "verify-pipeline-state",
+        help=(
+            "Phase O.0: scan SDL_ROOT, validate schemas, write "
+            "pipeline_state_record."
+        ),
+        description=(
+            "Phase O.0 verification. Scans SDL_ROOT (and the data-lake's "
+            "store/ tree) for JSON artifacts, classifies each by "
+            "artifact_type (or artifact_kind as a legacy fallback), "
+            "validates against the contract schema, and writes a "
+            "pipeline_state_record under $SDL_ROOT/verifications/. "
+            "Empty SDL_ROOT is reported as a finding, not silent success."
+        ),
+    )
+    vps.add_argument("--data-lake", default=None)
+    vps.add_argument(
+        "--no-validate-schemas",
+        action="store_true",
+        help="Skip per-artifact schema validation (default: validate).",
+    )
+    vps.add_argument(
+        "--emit-actions-summary",
+        action="store_true",
+        help="Append a Markdown summary to $GITHUB_STEP_SUMMARY if set.",
+    )
+
+    rbc = sub.add_parser(
+        "review-baseline-candidate",
+        help=(
+            "Phase O.5: print PASS/REVIEW sanity-bound checklist before "
+            "--set-baseline."
+        ),
+        description=(
+            "Phase O.5 baseline checklist. Reads the most recent "
+            "eval_summary (or the one specified by --eval-summary-id), "
+            "aggregates rates from meeting_extraction artifacts under "
+            "$SDL_ROOT, and prints a PASS/REVIEW label for each sanity "
+            "bound. READ-ONLY — never installs a baseline."
+        ),
+    )
+    rbc.add_argument("--data-lake", default=None)
+    rbc.add_argument(
+        "--eval-summary-id",
+        default=None,
+        help=(
+            "Optional eval_summary pipeline_run_id to review. Defaults to "
+            "the most recent eval_summary on disk."
+        ),
+    )
+
+    cf = sub.add_parser(
+        "compile-findings",
+        help=(
+            "Phase O.6: write verification_findings artifact + Markdown "
+            "summary."
+        ),
+        description=(
+            "Phase O.6 findings compiler. Reads the latest "
+            "pipeline_state_record and the latest eval_summary, computes "
+            "rates from meeting_extraction artifacts, and writes a "
+            "verification_findings artifact under "
+            "$SDL_ROOT/verifications/. Prints a Markdown summary to stdout "
+            "and to $GITHUB_STEP_SUMMARY if set."
+        ),
+    )
+    cf.add_argument("--data-lake", default=None)
+    cf.add_argument(
+        "--cycle-id",
+        default=None,
+        help=(
+            "Optional cycle id (e.g. 'phase-O-2026-05-11'). Defaults to "
+            "phase-O-<today>."
+        ),
+    )
+
     return parser
 
 
@@ -3650,6 +3997,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             dry_run=args.dry_run,
             data_lake=args.data_lake,
             force=args.force,
+            force_only_missing=args.force_only_missing,
+            specific_source_id=args.specific_source_id,
         )
     if args.command == "extract-typed":
         return extract_typed(
@@ -3680,6 +4029,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             human_id=args.human_id,
             note=args.note,
             yes=args.yes,
+        )
+    if args.command == "verify-pipeline-state":
+        return verify_pipeline_state(
+            data_lake=args.data_lake,
+            validate_schemas=not args.no_validate_schemas,
+            emit_actions_summary=args.emit_actions_summary,
+        )
+    if args.command == "review-baseline-candidate":
+        return review_baseline_candidate(
+            data_lake=args.data_lake,
+            eval_summary_id=args.eval_summary_id,
+        )
+    if args.command == "compile-findings":
+        return compile_findings_cli(
+            data_lake=args.data_lake,
+            cycle_id=args.cycle_id,
         )
     parser.error(f"unknown command: {args.command}")
     return 2

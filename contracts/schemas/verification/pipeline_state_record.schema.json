@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/verification/pipeline_state_record.schema.json",
+  "title": "pipeline_state_record",
+  "description": "Phase O.0 artifact produced by verify-pipeline-state. Scans SDL_ROOT, classifies every JSON artifact by artifact_type + schema_version, validates against the matching schema, cross-checks expected artifact counts, and emits a next_required_actions list.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "pipeline_state_record_id",
+    "artifact_type",
+    "schema_version",
+    "created_at",
+    "data_lake_path",
+    "sdl_root",
+    "total_artifacts_scanned",
+    "artifacts_by_type",
+    "artifacts_by_schema_version",
+    "validation_failures_by_type",
+    "artifacts_with_artifact_kind_only",
+    "artifacts_with_both_fields",
+    "artifacts_with_artifact_type_only",
+    "expected_artifacts",
+    "next_required_actions",
+    "warnings",
+    "provenance"
+  ],
+  "properties": {
+    "pipeline_state_record_id": { "type": "string", "format": "uuid" },
+    "artifact_type": { "const": "pipeline_state_record" },
+    "schema_version": { "const": "1.0.0" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "data_lake_path": { "type": "string" },
+    "sdl_root": { "type": "string" },
+    "total_artifacts_scanned": { "type": "integer", "minimum": 0 },
+    "artifacts_by_type": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "artifacts_by_schema_version": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "validation_failures_by_type": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "artifacts_with_artifact_kind_only": { "type": "integer", "minimum": 0 },
+    "artifacts_with_both_fields": { "type": "integer", "minimum": 0 },
+    "artifacts_with_artifact_type_only": { "type": "integer", "minimum": 0 },
+    "expected_artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_record_count",
+        "minutes_record_count",
+        "confirmed_pair_count",
+        "chunks_files_present",
+        "meeting_extraction_count",
+        "alignment_result_count",
+        "eval_result_count",
+        "baseline_eval_summary_present",
+        "glossary_term_count"
+      ],
+      "properties": {
+        "source_record_count": { "type": "integer", "minimum": 0 },
+        "minutes_record_count": { "type": "integer", "minimum": 0 },
+        "confirmed_pair_count": { "type": "integer", "minimum": 0 },
+        "chunks_files_present": { "type": "integer", "minimum": 0 },
+        "meeting_extraction_count": { "type": "integer", "minimum": 0 },
+        "alignment_result_count": { "type": "integer", "minimum": 0 },
+        "eval_result_count": { "type": "integer", "minimum": 0 },
+        "baseline_eval_summary_present": { "type": "boolean" },
+        "glossary_term_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "next_required_actions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": { "const": "verify-pipeline-state" }
+      }
+    }
+  }
+}

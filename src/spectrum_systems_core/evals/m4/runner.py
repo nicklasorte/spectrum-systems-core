@@ -52,7 +52,7 @@ from .regression_gate import RegressionGate
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION_SUMMARY = "1.0.0"
+SCHEMA_VERSION_SUMMARY = "1.1.0"
 PRODUCED_BY_SUMMARY = "EvalRunner"
 
 
@@ -166,6 +166,31 @@ class EvalRunner:
         confirmed = [p for p in pairs if p.get("status") == "confirmed"]
         pending = [p for p in pairs if p.get("status") == "pending_review"]
 
+        # Phase O.4 — partial-run detection. Compute BEFORE evaluating
+        # pairs so the warning shows up even if every pair would have
+        # produced a degenerate eval_result.
+        partial_warning, partial_detail = self._compute_partial_run_signal(
+            confirmed
+        )
+
+        # Refuse --set-baseline on partial runs. Returning exit_code=1
+        # ensures CI gates fail closed even when the underlying eval
+        # results otherwise look passable. The summary is NOT written.
+        if partial_warning and set_baseline:
+            return {
+                "status": "failed",
+                "reason": (
+                    "partial_run_warning_blocks_set_baseline: expected="
+                    f"{partial_detail.get('expected', 0)} actual="
+                    f"{partial_detail.get('actual', 0)} missing="
+                    f"{partial_detail.get('missing_source_ids', [])}"
+                ),
+                "exit_code": 1,
+                "pipeline_run_id": self.pipeline_run_id,
+                "partial_run_warning": True,
+                "partial_run_detail": partial_detail,
+            }
+
         eval_results: List[Dict[str, Any]] = []
         for pair in confirmed:
             er = self._evaluate_pair(pair)
@@ -176,7 +201,11 @@ class EvalRunner:
         summary = self._build_summary(
             eval_results=eval_results,
             pairs_skipped_pending_review=len(pending),
-            is_baseline=set_baseline or (run_count == 1),
+            is_baseline=(
+                (set_baseline or (run_count == 1)) and not partial_warning
+            ),
+            partial_run_warning=partial_warning,
+            partial_run_detail=partial_detail,
         )
 
         # Load the baseline FIRST so the gate sees per-pair records
@@ -213,9 +242,13 @@ class EvalRunner:
         # Record baseline. Two ways to install one:
         #   (a) implicit: run 1 with no baseline -> install current.
         #   (b) explicit: --set-baseline overrides whatever is there.
-        if set_baseline or (
-            baseline_summary is None and run_count == 1
-        ):
+        # Phase O.4 — partial runs must never install an implicit baseline
+        # either; the explicit --set-baseline path has already returned
+        # above with exit_code=1, but the implicit path runs here.
+        if (
+            set_baseline
+            or (baseline_summary is None and run_count == 1)
+        ) and not partial_warning:
             summary["is_baseline"] = True
 
         # Single write of eval_summary, with the gate verdict baked in.
@@ -475,6 +508,8 @@ class EvalRunner:
         eval_results: List[Dict[str, Any]],
         pairs_skipped_pending_review: int,
         is_baseline: bool,
+        partial_run_warning: bool = False,
+        partial_run_detail: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         n = len(eval_results)
         aggregate_coverage = (
@@ -539,8 +574,109 @@ class EvalRunner:
             "baseline_eval_summary_id": None,
             "regression_detected": False,
             "regression_detail": [],
+            "partial_run_warning": bool(partial_run_warning),
+            "partial_run_detail": partial_run_detail,
             "provenance": {"produced_by": PRODUCED_BY_SUMMARY},
         }
+
+    # -- partial-run detection (Phase O.4) ---------------------------------
+
+    def _compute_partial_run_signal(
+        self, confirmed_pairs: List[Dict[str, Any]]
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """Return (partial_run_warning, partial_run_detail).
+
+        ``expected`` = number of confirmed ground_truth_pairs.
+        ``actual``   = number of confirmed pairs whose meeting_extraction
+                       artifact is present on disk under
+                       ``$SDL_ROOT/extractions/``.
+        ``missing_source_ids`` lists the source_ids whose extraction is
+        absent.
+
+        Empty confirmed list (expected == 0) yields warning=False — there
+        is nothing to be partial about (divide-by-zero guard).
+        """
+        expected = len(confirmed_pairs)
+        if expected == 0:
+            return (False, {"expected": 0, "actual": 0, "missing_source_ids": []})
+
+        present = 0
+        missing: List[str] = []
+        for pair in confirmed_pairs:
+            sid = self._resolve_pair_source_id(pair)
+            if not sid:
+                # No source_id => we cannot prove extraction exists.
+                # Treat as missing so the warning fires loudly.
+                missing.append(pair.get("pair_id", "") or "<unknown>")
+                continue
+            if self._meeting_extraction_exists_for_source(sid, pair):
+                present += 1
+            else:
+                missing.append(sid)
+
+        warning = present < expected
+        return (
+            warning,
+            {
+                "expected": int(expected),
+                "actual": int(present),
+                "missing_source_ids": missing,
+            },
+        )
+
+    def _resolve_pair_source_id(self, pair: Dict[str, Any]) -> str:
+        sid = pair.get("fixture_source_id")
+        if isinstance(sid, str) and sid:
+            return sid
+        # Fall back to source_record.payload.source_id when available.
+        sa_id = pair.get("source_artifact_id") or ""
+        rec = self._load_source_record(sa_id, source_id_hint=None)
+        if isinstance(rec, dict):
+            payload = rec.get("payload") or {}
+            sid = payload.get("source_id")
+            if isinstance(sid, str) and sid:
+                return sid
+        return ""
+
+    def _meeting_extraction_exists_for_source(
+        self, source_id: str, pair: Dict[str, Any]
+    ) -> bool:
+        # Fixture-injected pairs carry their extracted items inline on
+        # the pair record itself; for those there is no separate
+        # meeting_extraction artifact and the partial-run check would
+        # always misfire. Treat the fixture key as evidence that an
+        # extraction equivalent exists.
+        if isinstance(pair.get("fixture_extracted_items"), list):
+            return True
+        if self.sdl_root is None:
+            return False
+        extractions_dir = self.sdl_root / "extractions"
+        if not extractions_dir.is_dir():
+            return False
+        direct = extractions_dir / f"{source_id}_meeting_extraction.json"
+        if direct.is_file():
+            return True
+        # Indirect: filename is <source_artifact_id>_meeting_extraction.json.
+        sa_id = pair.get("source_artifact_id") or ""
+        if isinstance(sa_id, str) and sa_id:
+            indirect = extractions_dir / f"{sa_id}_meeting_extraction.json"
+            if indirect.is_file():
+                return True
+        # Last-resort scan: match by payload contents.
+        for path in extractions_dir.glob("*_meeting_extraction.json"):
+            try:
+                obj = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(obj, dict):
+                continue
+            if obj.get("source_id") == source_id:
+                return True
+            if isinstance(sa_id, str) and sa_id and obj.get(
+                "source_artifact_id"
+            ) == sa_id:
+                return True
+        return False
 
     # -- baseline + run-count ---------------------------------------------
 
