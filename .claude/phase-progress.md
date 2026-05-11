@@ -230,3 +230,48 @@ quality-only changes this PR carries.
 
 - Baseline pytest collect-only: **966 tests**
 - After Phase O: 997 tests collected.
+
+# Phase: fix anthropic SDK install (current)
+
+Branch: `claude/fix-anthropic-sdk-install-KpD2d`
+
+## Step 1 — Diagnosis
+
+- **Is `anthropic` in project dependencies (pyproject.toml)?** No. The
+  `dependencies` array in `pyproject.toml` lists only `jsonschema`,
+  `PyYAML`, `pdfminer.six`, `python-docx`, `scikit-learn`, `scipy`. No
+  `requirements.txt` exists at the repo root.
+- **What does the install step run?**
+  - `run-pipeline.yml`: `pip install -e ".[dev]"`
+  - `smoke-test.yml`: `python -m pip install -e ".[dev]"`
+  - `eval-ground-truth.yml`: `pip install -e ".[dev]"`
+- **Is `anthropic` in `requirements.txt`?** No `requirements.txt` exists.
+
+Root cause: `pip install -e ".[dev]"` only installs declared dependencies
+plus the `dev` extra (`pytest`). Since `anthropic` is not declared, it is
+never installed, and `ChunkClassifier` falls back to offline defaults
+(`typed_extraction_anthropic_sdk_missing`).
+
+## Step 2 — Fix applied
+
+- Fix A: Added `"anthropic>=0.40.0"` to the `dependencies` array in
+  `pyproject.toml`.
+- Fix C: Added an explicit `python -m pip install anthropic` safety-net
+  line to the `Install dependencies` step in
+  `.github/workflows/run-pipeline.yml`.
+- Fix D: Same safety-net line added to
+  `.github/workflows/smoke-test.yml`.
+- Fix E (eval-ground-truth.yml): not applied. `grep -rn anthropic
+  src/spectrum_systems_core/evals/` returns nothing; the
+  `eval-ground-truth` CLI command does not import `anthropic`.
+
+## Step 3 — Local verification
+
+After `pip install anthropic`:
+`python -c "import anthropic; print(anthropic.__version__)"` succeeds.
+
+## Stop-condition reminders
+
+- The `ANTHROPIC_API_KEY` repository secret must be set
+  (Settings → Secrets → Actions). Without it, the SDK is importable
+  but real API calls will fail.
