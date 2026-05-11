@@ -215,6 +215,14 @@ def run_typed_extraction(
         available_turn_ids,
     )
 
+    # Carry per-extractor run metadata (few-shot status, low-confidence
+    # counts) into the merged artifact so the run is self-describing.
+    run_metadata = [
+        decision_x.last_run_metadata,
+        claim_x.last_run_metadata,
+        action_x.last_run_metadata,
+    ]
+
     extraction_run_id = "tex-" + uuid.uuid4().hex[:16]
     artifact = ExtractionMerger().merge(
         source_artifact_id=source_artifact_id,
@@ -223,6 +231,7 @@ def run_typed_extraction(
         decisions=decisions,
         claims=claims,
         action_items=actions,
+        run_metadata=run_metadata,
     )
 
     try:
@@ -247,6 +256,9 @@ def run_typed_extraction(
         "routing_quality_warning": artifact["routing_quality_warning"],
         "requires_human_dedup_count": artifact["requires_human_dedup_count"],
         "extraction_run_id": extraction_run_id,
+        "few_shot_injected": artifact["few_shot_injected"],
+        "few_shot_example_count": artifact["few_shot_example_count"],
+        "low_confidence_item_count": artifact["low_confidence_item_count"],
     }
 
 

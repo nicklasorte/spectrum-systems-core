@@ -18,7 +18,8 @@
           "DiFrancisco, Michael",
           "McKenna, Paul"
         ],
-        "source_turn_ids": ["placeholder:1", "placeholder:2", "placeholder:3"]
+        "source_turn_ids": ["placeholder:1", "placeholder:2", "placeholder:3"],
+        "confidence": 1.0
       },
       "rationale": "Demonstrates the decision pattern: a proposal, a brief clarification request, and a precise restatement that becomes the agreed decision text. The decision_text consolidates the numeric criteria into one sentence rather than echoing the raw turn-by-turn dialogue."
     },
@@ -29,7 +30,8 @@
       "expected_output": {
         "action": "NTIA to generate data request for additional system information",
         "owner": "NTIA",
-        "source_turn_ids": ["placeholder:4"]
+        "source_turn_ids": ["placeholder:4"],
+        "confidence": 1.0
       },
       "rationale": "Demonstrates action_item extraction with clear single-owner attribution. The owner is the institutional name (NTIA), not the speaker. DWCIO is mentioned as the channel but is not the owner."
     },
@@ -41,7 +43,8 @@
         "claim_text": "Single-point protection criterion of -10.5 dB at 0.03% is the minimum required to not weaken ITU protection levels",
         "claim_type": "technical",
         "speaker": "Sandip K Bhatt Ph.D.",
-        "source_turn_ids": ["placeholder:5"]
+        "source_turn_ids": ["placeholder:5"],
+        "confidence": 0.9
       },
       "rationale": "Demonstrates technical_claim extraction. claim_text paraphrases for clarity but preserves the binding numeric criterion. claim_type=technical because the assertion is about a measurable protection level, not a procedural or policy decision."
     }

@@ -209,46 +209,71 @@ class EvalAligner:
 
         Decisions/claims/action_items are concatenated. Empty inputs yield
         ``[]``. Never raises.
+
+        Phase Q: ``items_requiring_review`` and ``review_reason`` (set by
+        the extractors on low-confidence items) are carried through so the
+        review-alignment stage can tag ``low_confidence_flagged`` per
+        entry. This is the calibration hook: do low-confidence items align
+        worse than high-confidence ones?
         """
         out: List[Dict[str, Any]] = []
         if not isinstance(meeting_extraction, dict):
             return out
+
+        def _carry(it: Dict[str, Any]) -> Dict[str, Any]:
+            return {
+                "items_requiring_review": bool(
+                    it.get("items_requiring_review", False)
+                ),
+                "review_reason": (
+                    it.get("review_reason")
+                    if isinstance(it.get("review_reason"), str)
+                    else None
+                ),
+            }
+
         for d in meeting_extraction.get("decisions") or []:
             if not isinstance(d, dict):
                 continue
             text = d.get("decision_text")
             if not isinstance(text, str) or not text.strip():
                 continue
-            out.append({
+            entry = {
                 "text": text,
                 "kind": "decision",
                 "source_turn_ids": d.get("source_turn_ids") or [],
                 "source_turn_validation": d.get("source_turn_validation", "missing"),
-            })
+            }
+            entry.update(_carry(d))
+            out.append(entry)
         for c in meeting_extraction.get("claims") or []:
             if not isinstance(c, dict):
                 continue
             text = c.get("claim_text")
             if not isinstance(text, str) or not text.strip():
                 continue
-            out.append({
+            entry = {
                 "text": text,
                 "kind": "claim",
                 "source_turn_ids": c.get("source_turn_ids") or [],
                 "source_turn_validation": c.get("source_turn_validation", "missing"),
-            })
+            }
+            entry.update(_carry(c))
+            out.append(entry)
         for a in meeting_extraction.get("action_items") or []:
             if not isinstance(a, dict):
                 continue
             text = a.get("action")
             if not isinstance(text, str) or not text.strip():
                 continue
-            out.append({
+            entry = {
                 "text": text,
                 "kind": "action_item",
                 "source_turn_ids": a.get("source_turn_ids") or [],
                 "source_turn_validation": a.get("source_turn_validation", "missing"),
-            })
+            }
+            entry.update(_carry(a))
+            out.append(entry)
         return out
 
     @staticmethod
@@ -446,6 +471,13 @@ class EvalAligner:
                 ),
                 "semantic_similarity": float(best_sim),
                 "alignment_status": "matched" if matched else "requires_review",
+                # Phase Q calibration signal: the extractor flagged this item
+                # as low-confidence. Surfaced here so future tuning can ask
+                # "do low-confidence items align worse than high-confidence?"
+                "low_confidence_flagged": bool(
+                    ex.get("items_requiring_review", False)
+                    and ex.get("review_reason") == "low_confidence"
+                ),
             }
             out.append(entry)
         return out
@@ -477,6 +509,7 @@ def _normalize_extracted_items(
             or raw.get("artifact_id")
             or f"item-{i}"
         )
+        review_reason = raw.get("review_reason")
         out.append(
             {
                 "id": str(item_id),
@@ -484,6 +517,12 @@ def _normalize_extracted_items(
                 "source_turn_ids": list(raw.get("source_turn_ids", []) or []),
                 "source_turn_validation": (
                     raw.get("source_turn_validation") or "unknown"
+                ),
+                "items_requiring_review": bool(
+                    raw.get("items_requiring_review", False)
+                ),
+                "review_reason": (
+                    review_reason if isinstance(review_reason, str) else None
                 ),
             }
         )

@@ -29,6 +29,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+from ._prompt_blocks import CONFIDENCE_THRESHOLD
+
 
 _ROUTING_QUALITY_THRESHOLD = 0.20  # >20% off_topic -> warning fires
 
@@ -62,10 +64,53 @@ def _turn_set(item: Dict[str, Any]) -> Set[str]:
     return {str(x) for x in raw if isinstance(x, (str, int))}
 
 
+def _merge_run_metadata(
+    run_metadata: Optional[Sequence[Dict[str, Any]]],
+) -> Dict[str, Any]:
+    """Aggregate per-extractor metadata into per-run fields.
+
+    ``few_shot_injected`` is True iff at least one extractor successfully
+    injected examples (a partial degraded run still benefited from few-shot
+    where it could). ``few_shot_version`` is the version reported by any
+    extractor that injected (all three load the same seed so versions
+    agree in practice). Counts sum across extractors.
+
+    ``omit_instruction_present`` is True iff at least one extractor
+    confirmed (post-render) that its built prompt contained the OMIT
+    block. We do NOT default this to True -- a decorative claim that
+    drifts from reality would defeat the point of recording it.
+    """
+    out: Dict[str, Any] = {
+        "few_shot_injected": False,
+        "few_shot_version": None,
+        "few_shot_example_count": 0,
+        "omit_instruction_present": False,
+        "confidence_threshold": CONFIDENCE_THRESHOLD,
+        "low_confidence_item_count": 0,
+    }
+    for meta in run_metadata or []:
+        if not isinstance(meta, dict):
+            continue
+        if meta.get("few_shot_injected"):
+            out["few_shot_injected"] = True
+            v = meta.get("few_shot_version")
+            if isinstance(v, str) and v:
+                out["few_shot_version"] = v
+        c = meta.get("few_shot_example_count", 0)
+        if isinstance(c, int) and c > 0:
+            out["few_shot_example_count"] += c
+        if meta.get("omit_instruction_present") is True:
+            out["omit_instruction_present"] = True
+        low = meta.get("low_confidence_item_count", 0)
+        if isinstance(low, int) and low > 0:
+            out["low_confidence_item_count"] += low
+    return out
+
+
 class ExtractionMerger:
     """Merge three typed-extractor outputs into a meeting_extraction artifact."""
 
-    SCHEMA_VERSION = "1.0.0"
+    SCHEMA_VERSION = "1.1.0"
     ROUTING_QUALITY_THRESHOLD: float = _ROUTING_QUALITY_THRESHOLD
 
     def merge(
@@ -76,8 +121,15 @@ class ExtractionMerger:
         decisions: Sequence[Dict[str, Any]],
         claims: Sequence[Dict[str, Any]],
         action_items: Sequence[Dict[str, Any]],
+        run_metadata: Optional[Sequence[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """Return a meeting_extraction artifact dict. Never raises."""
+        """Return a meeting_extraction artifact dict. Never raises.
+
+        ``run_metadata`` is the list of ``last_run_metadata`` dicts from
+        the three typed extractors. When omitted (legacy callers / tests),
+        run-level few-shot and confidence fields default to "no injection,
+        no low-confidence items, threshold = CONFIDENCE_THRESHOLD".
+        """
         decisions_in = list(decisions or [])
         claims_in = list(claims or [])
         actions_in = list(action_items or [])
@@ -125,6 +177,8 @@ class ExtractionMerger:
         )
         warn = (total > 0) and ((off_topic / total) > self.ROUTING_QUALITY_THRESHOLD)
 
+        run_fields = _merge_run_metadata(run_metadata)
+
         return {
             "meeting_extraction_id": str(uuid.uuid4()),
             "source_artifact_id": source_artifact_id,
@@ -140,6 +194,12 @@ class ExtractionMerger:
             "routing_quality_warning": warn,
             "requires_human_dedup_count": dedup_count,
             "extraction_run_id": extraction_run_id or "",
+            "few_shot_injected": run_fields["few_shot_injected"],
+            "few_shot_version": run_fields["few_shot_version"],
+            "few_shot_example_count": run_fields["few_shot_example_count"],
+            "omit_instruction_present": run_fields["omit_instruction_present"],
+            "confidence_threshold": run_fields["confidence_threshold"],
+            "low_confidence_item_count": run_fields["low_confidence_item_count"],
             "provenance": {"produced_by": "ExtractionMerger"},
         }
 

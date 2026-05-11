@@ -70,7 +70,11 @@
           "source_turn_validation": { "type": "string" },
           "matched_minutes_text": { "type": ["string", "null"] },
           "semantic_similarity": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
-          "alignment_status": { "enum": ["matched", "requires_review"] }
+          "alignment_status": { "enum": ["matched", "requires_review"] },
+          "low_confidence_flagged": {
+            "type": "boolean",
+            "description": "Phase Q. True iff the extracted item was flagged items_requiring_review=True with review_reason=low_confidence by the extractor. Optional for backward compatibility with pre-Phase-Q alignment results."
+          }
         }
       }
     },

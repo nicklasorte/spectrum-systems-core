@@ -19,13 +19,19 @@
     "routing_quality_warning",
     "requires_human_dedup_count",
     "extraction_run_id",
+    "few_shot_injected",
+    "few_shot_version",
+    "few_shot_example_count",
+    "omit_instruction_present",
+    "confidence_threshold",
+    "low_confidence_item_count",
     "provenance"
   ],
   "properties": {
     "meeting_extraction_id": { "type": "string", "format": "uuid" },
     "source_artifact_id": { "type": "string", "format": "uuid" },
     "artifact_type": { "const": "meeting_extraction" },
-    "schema_version": { "const": "1.0.0" },
+    "schema_version": { "const": "1.1.0" },
     "created_at": { "type": "string", "format": "date-time" },
 
     "decisions": {
@@ -35,7 +41,7 @@
         "additionalProperties": false,
         "required": [
           "decision_text", "decision_type", "stakeholders", "rationale",
-          "source_turn_ids", "source_turn_validation"
+          "source_turn_ids", "source_turn_validation", "confidence"
         ],
         "properties": {
           "decision_text": { "type": "string", "minLength": 1 },
@@ -58,6 +64,9 @@
           "source_turn_validation": {
             "enum": ["verified", "invalid", "missing"]
           },
+          "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "items_requiring_review": { "type": "boolean" },
+          "review_reason": { "type": "string" },
           "requires_human_dedup": { "type": "boolean" }
         }
       }
@@ -70,7 +79,7 @@
         "additionalProperties": false,
         "required": [
           "claim_text", "claim_type", "speaker",
-          "source_turn_ids", "source_turn_validation"
+          "source_turn_ids", "source_turn_validation", "confidence"
         ],
         "properties": {
           "claim_text": { "type": "string", "minLength": 1 },
@@ -86,6 +95,9 @@
           "source_turn_validation": {
             "enum": ["verified", "invalid", "missing"]
           },
+          "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "items_requiring_review": { "type": "boolean" },
+          "review_reason": { "type": "string" },
           "requires_human_dedup": { "type": "boolean" }
         }
       }
@@ -98,7 +110,7 @@
         "additionalProperties": false,
         "required": [
           "action", "owner", "due",
-          "source_turn_ids", "source_turn_validation"
+          "source_turn_ids", "source_turn_validation", "confidence"
         ],
         "properties": {
           "action": { "type": "string", "minLength": 1 },
@@ -112,6 +124,9 @@
           "source_turn_validation": {
             "enum": ["verified", "invalid", "missing"]
           },
+          "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "items_requiring_review": { "type": "boolean" },
+          "review_reason": { "type": "string" },
           "requires_human_dedup": { "type": "boolean" }
         }
       }
@@ -123,6 +138,13 @@
     "routing_quality_warning": { "type": "boolean" },
     "requires_human_dedup_count": { "type": "integer", "minimum": 0 },
     "extraction_run_id": { "type": "string", "minLength": 1 },
+
+    "few_shot_injected": { "type": "boolean" },
+    "few_shot_version": { "type": ["string", "null"] },
+    "few_shot_example_count": { "type": "integer", "minimum": 0 },
+    "omit_instruction_present": { "type": "boolean" },
+    "confidence_threshold": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "low_confidence_item_count": { "type": "integer", "minimum": 0 },
 
     "provenance": {
       "type": "object",
