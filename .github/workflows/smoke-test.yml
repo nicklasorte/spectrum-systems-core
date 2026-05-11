@@ -46,19 +46,73 @@ jobs:
           python - <<'EOF'
           import json, sys, pathlib, os
 
-          sdl_root = os.environ["SDL_ROOT"]
+          data_lake = pathlib.Path(os.environ["DATA_LAKE_PATH"])
+          sdl_root = pathlib.Path(os.environ["SDL_ROOT"])
           source_id = "7-ghz-downlink-tig-meeting---transcript-2-19-26"
 
-          # Find the meeting_extraction artifact for this source
-          extractions_dir = pathlib.Path(sdl_root) / "extractions"
-          matches = list(extractions_dir.glob(f"{source_id}*.json"))
+          # The typed-extraction runner writes to:
+          #   <SDL_ROOT>/extractions/<source_artifact_id>_meeting_extraction.json
+          # where source_artifact_id is a UUID resolved from the source_record.
+          # Mirror the orchestrator's _meeting_extraction_exists lookup.
+          extractions_dir = sdl_root / "extractions"
+          processed_dir = data_lake / "store" / "processed"
 
-          if not matches:
-              print("SMOKE TEST FAILED: No meeting_extraction artifact found")
-              print(f"Searched: {extractions_dir}")
+          if not extractions_dir.is_dir():
+              print(f"SMOKE TEST FAILED: extractions dir missing: {extractions_dir}")
               sys.exit(1)
 
-          artifact = json.loads(matches[0].read_text())
+          source_artifact_id = ""
+          for record_path in processed_dir.glob(f"*/{source_id}/source_record.json"):
+              try:
+                  rec = json.loads(record_path.read_text(encoding="utf-8"))
+              except (OSError, json.JSONDecodeError):
+                  continue
+              aid = rec.get("artifact_id", "") if isinstance(rec, dict) else ""
+              if isinstance(aid, str) and aid:
+                  source_artifact_id = aid
+                  break
+
+          artifact_path = None
+          if source_artifact_id:
+              candidate = extractions_dir / f"{source_artifact_id}_meeting_extraction.json"
+              if candidate.is_file():
+                  artifact_path = candidate
+
+          if artifact_path is None:
+              direct = extractions_dir / f"{source_id}_meeting_extraction.json"
+              if direct.is_file():
+                  artifact_path = direct
+
+          if artifact_path is None:
+              for path in extractions_dir.glob("*_meeting_extraction.json"):
+                  try:
+                      obj = json.loads(path.read_text(encoding="utf-8"))
+                  except (OSError, json.JSONDecodeError):
+                      continue
+                  if not isinstance(obj, dict):
+                      continue
+                  if obj.get("source_id") == source_id:
+                      artifact_path = path
+                      break
+                  if (
+                      source_artifact_id
+                      and obj.get("source_artifact_id") == source_artifact_id
+                  ):
+                      artifact_path = path
+                      break
+
+          if artifact_path is None:
+              print("SMOKE TEST FAILED: No meeting_extraction artifact found")
+              print(f"Searched: {extractions_dir}")
+              print(f"source_id={source_id}")
+              print(f"source_artifact_id={source_artifact_id or '<unresolved>'}")
+              print("Directory contents:")
+              for p in sorted(extractions_dir.iterdir()) if extractions_dir.is_dir() else []:
+                  print(f"  {p.name}")
+              sys.exit(1)
+
+          artifact = json.loads(artifact_path.read_text())
+          print(f"Found artifact: {artifact_path.name}")
 
           decisions = len(artifact.get("decisions", []))
           claims = len(artifact.get("claims", []))
