@@ -32,8 +32,8 @@ jobs:
           repository: nicklasorte/data-lake
           ref: ${{ github.event.inputs.data_lake_ref }}
           path: data-lake
-token: ${{ secrets.GH_PAT }}
-        continue-on-error: true
+          token: ${{ secrets.GH_PAT }}
+        
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
