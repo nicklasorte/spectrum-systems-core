@@ -15,6 +15,7 @@ on:
   workflow_run:
     workflows: ["Run pipeline"]
     types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       pipeline_run_id:
@@ -126,3 +127,78 @@ jobs:
           Workflow run: ${{ github.run_id }}"
             git push
           fi
+
+      - name: Post eval summary
+        if: always()
+        env:
+          DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+          SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
+        run: |
+          python - <<'EOF'
+          import json, pathlib, os, glob
+
+          sdl_root = os.environ.get("SDL_ROOT", "")
+          evals_dir = pathlib.Path(sdl_root) / "evals"
+
+          summaries = sorted(
+              glob.glob(str(evals_dir / "eval_summary_*.json")),
+              key=lambda p: pathlib.Path(p).stat().st_mtime,
+              reverse=True,
+          )
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
+
+          with open(summary_path, "a") as f:
+              if not summaries:
+                  f.write("## Eval Summary\n\nNo eval_summary artifact found.\n")
+              else:
+                  data = json.loads(pathlib.Path(summaries[0]).read_text())
+                  coverage = data.get("aggregate_coverage", "N/A")
+                  precision = data.get("aggregate_precision", "N/A")
+                  pairs = data.get("pairs_evaluated", 0)
+                  review_items = data.get("total_items_requiring_review", 0)
+                  baseline_set = data.get("is_baseline", False)
+                  partial = data.get("partial_run_warning", False)
+
+                  f.write("## Eval Summary\n\n")
+                  f.write("| Metric | Value |\n|--------|-------|\n")
+                  f.write(f"| Pairs evaluated | {pairs} |\n")
+                  if isinstance(coverage, float):
+                      f.write(f"| Aggregate coverage | {coverage:.3f} |\n")
+                  else:
+                      f.write(f"| Aggregate coverage | {coverage} |\n")
+                  if isinstance(precision, float):
+                      f.write(f"| Aggregate precision | {precision:.3f} |\n")
+                  else:
+                      f.write(f"| Aggregate precision | {precision} |\n")
+                  f.write(f"| Items requiring review | {review_items} |\n")
+                  f.write(
+                      f"| Baseline set | {'✅ Yes' if baseline_set else '❌ No'} |\n"
+                  )
+
+                  if partial:
+                      f.write(
+                          "\n⚠️ **Partial run warning**: Not all transcripts have "
+                          "extractions.\n"
+                      )
+                      f.write(
+                          "Run pipeline with force=true before setting "
+                          "baseline.\n"
+                      )
+
+                  if not baseline_set and not partial:
+                      f.write("\n### Next step\n\n")
+                      f.write("```\n")
+                      f.write(
+                          "python -m spectrum_systems_core.cli "
+                          "review-baseline-candidate\n"
+                      )
+                      f.write("```\n")
+                      f.write("If all metrics PASS, run:\n")
+                      f.write("```\n")
+                      f.write(
+                          "python -m spectrum_systems_core.cli "
+                          "eval-ground-truth --set-baseline\n"
+                      )
+                      f.write("```\n")
+          EOF
