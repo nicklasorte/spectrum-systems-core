@@ -849,3 +849,160 @@ Reviewer confirmed:
 - Existing `test_force_synthesize_not_run_when_zero_stage4_success`
   semantics preserved (verified by full-suite pass).
 
+---
+
+# fix/orchestrator-stage-status + speaker-turn-chunking — Progress
+
+Branch `claude/fix-orchestrator-status-PuhMP` (PR vs `main`).
+
+## Step 1 — Inventory
+
+| Item | Result |
+|---|---|
+| pytest collect (baseline) | 845 |
+| pytest run (baseline) | 834 passed, 11 failed (pre-existing PDF/cffi) |
+| Part 1 status | already shipped in `main` (commit `ab3fc57`, PR #40) |
+| Part 2 status | NOT yet implemented — only the existing 8-unit character chunker exists |
+
+### Part 1 — already merged
+
+Commit `ab3fc57` (PR #40) on `main` already implements every requirement
+in the task's Steps 2–5: artifact-existence as primary success signal
+per stage, Sev-1 stale-artifact guard, three discrepancy warnings
+(`extract_stories_artifact_missing_despite_cli_success`,
+`extract_stories_artifact_present_despite_cli_failure`,
+`extract_stories_stale_artifact_not_treated_as_success`), synthesize
+gated on `any_stage2_success_this_run`, and all five required tests in
+`tests/orchestration/test_pipeline_orchestrator.py` (including the
+stale-artifact Sev-1 guard test). Phase-progress block on lines 724–851
+documents this work in detail. No re-implementation needed here.
+
+### Part 2 — speaker-turn chunking inventory
+
+The chunker is `src/spectrum_systems_core/extraction/chunker.py`. It
+reads `processed/<family>/<source_id>/text_units.jsonl` and writes
+`stories/chunks.jsonl`. The existing logic groups 8 text_units per
+chunk with 1-unit overlap. For meeting transcripts every text_unit is
+one paragraph line (DocxExtractor → SourceLoader → text_units). Speaker
+labels and content lines become alternating units, so 8-unit windows
+cut speakers mid-thought.
+
+`SourceLoader._SPEAKER_TURN_RE` exists but requires ALL-CAPS speaker
+labels with a trailing colon (`"^[A-Z][A-Z\s]{1,40}:\s"`), which never
+matches realistic meeting transcripts like `"DiFrancisco, Michael   5:48"`.
+The chunker is the right place to add real speaker-turn detection.
+
+## Step 2 — Implementation
+
+### Schema change
+
+`contracts/schemas/chunk.schema.json` gained two optional properties:
+
+- `speaker` (string, minLength 1)
+- `timestamp` (string or null)
+
+`additionalProperties: false` is preserved. Character-mode chunks omit
+both fields (verified by `test_character_chunks_validate_against_updated_schema`).
+
+### Chunker rewrite
+
+`Chunker.chunk` now branches on `_is_transcript(source_family, source_id)`
+= `source_family == "meetings"` OR `"transcript"` in source_id
+(case-insensitive). Two private methods:
+
+- `_chunk_by_speaker_turns(units, source_id, source_family)` returns
+  `(chunks, None)` on success, `(None, "no_speaker_turns_detected")`
+  when no labels match, or `(None, "all_speaker_turns_empty")` when
+  every detected label has no content lines before the next label.
+- `_chunk_by_character_count(...)` is the existing 8-unit-with-overlap
+  logic, refactored unchanged.
+
+Speaker-label regex:
+
+```
+^(?P<speaker>[A-Za-z+][^\t\n:]*?)(?:[ ]*\t[ \t]*|[ ]{3,})(?P<timestamp>\d{1,2}:\d{2})\s*$
+```
+
+Rationale (Gate A Sev-2 hardening):
+- Speaker starts with letter or `+` (phone numbers).
+- Speaker forbids `:` (kills `"Action: Bob   4:00"` false positives).
+- Separator is a tab (with optional surrounding whitespace) OR three
+  or more spaces. A 2-space gap (e.g., `"See you at  3:00"`) is not
+  enough.
+- Timestamp is `H:MM` or `HH:MM` anchored at end of line.
+
+Walks records line-by-line across all text_units so multi-line units
+(label + content in one paragraph) are split correctly. `unit_ids` is
+the ordered, deduped list of text_unit UUIDs whose lines contributed
+to the turn. `unit_count` = number of content lines (per task spec
+"number of lines in this turn"). `overlap_unit_id` is `None` for
+speaker-turn chunks.
+
+Empty turns are skipped. If every detected turn is empty, the function
+returns `(None, "all_speaker_turns_empty")` and the caller falls back
+to character chunking — preserving the invariant that the orchestrator's
+Stage 2 artifact-existence signal (`chunks.jsonl`) is never empty for a
+non-empty source.
+
+Fallback warning is emitted as one of two distinct messages:
+`[chunker] no_speaker_turns_detected: falling back to character chunking for <sid>`
+or `[chunker] all_speaker_turns_empty: falling back to character chunking for <sid>`
+(Gate B Sev-2 fix — the original message was misleading for the
+all-empty case).
+
+## Step 3 — Tests
+
+12 new tests in `tests/extraction/test_chunker.py::SpeakerTurnChunkingTests`:
+
+1. `test_transcript_chunked_by_speaker_turn` — task spec example.
+2. `test_speaker_turn_merges_consecutive_lines` — multi-line content
+   from one speaker → one chunk.
+3. `test_minutes_file_uses_paragraph_chunking` — non-transcript family
+   + non-transcript source_id stays in character mode.
+4. `test_no_speaker_turns_falls_back_to_character_chunking` — warning
+   printed; character chunks emitted.
+5. `test_empty_speaker_turns_skipped` — mid-stream empty turn dropped;
+   surrounding turns kept.
+6. `test_phone_number_speaker_detected` — `+1*******XX` pattern works.
+7. `test_transcript_source_id_triggers_speaker_mode_in_any_family` —
+   `"transcript"` in source_id is enough regardless of family.
+8. `test_character_chunks_validate_against_updated_schema` (Gate A
+   Sev-2) — explicit schema-compat assertion for existing non-transcript
+   chunks under `additionalProperties: false`.
+9. `test_regex_does_not_fire_on_two_space_gap` (Gate A Sev-2) — the
+   `"See you at  3:00"` class falls through to character mode.
+10. `test_regex_does_not_fire_on_colon_in_speaker_portion` (Gate A
+    Sev-2) — `"Action: Bob   4:00"` is content, not a boundary.
+11. `test_tab_separator_detected` — real docx exports use tab.
+12. `test_all_speaker_turns_empty_falls_back_to_character_chunking`
+    (Gate B Sev-2) — Stage 2 artifact-existence invariant held when
+    every turn is empty; distinct `all_speaker_turns_empty` warning.
+
+## Step 4 — Gate A (design redteam, fresh subagent)
+
+| # | Sev | Finding | Disposition |
+|---|---|---|---|
+| 1 | 2 | False-positive speaker detection on 2-space gap (`"See you at  3:00"`) and colon-bearing lines (`"Action: Bob   4:00"`) | FIXED — regex tightened: tab-or-3+-spaces separator, colon excluded from speaker portion. Two new regression tests. |
+| 2 | 2 | No explicit test that existing character chunks still validate against the schema with new optional properties | FIXED — added `test_character_chunks_validate_against_updated_schema`. |
+
+Zero Sev-1.
+
+## Step 5 — Gate B (diff redteam, fresh subagent)
+
+| # | Sev | Finding | Disposition |
+|---|---|---|---|
+| 1 | 2 | Missing test for "all turns empty" fallback — the invariant that the orchestrator's Stage 2 artifact-existence signal is preserved is asserted only in code comments | FIXED — added `test_all_speaker_turns_empty_falls_back_to_character_chunking`. |
+| 2 | 2 | Warning text says `no_speaker_turns_detected` even when labels were detected but every turn was empty; misdiagnoses the data quality issue | FIXED — `_chunk_by_speaker_turns` now returns a `(chunks, reason)` tuple; caller prints `no_speaker_turns_detected` vs. `all_speaker_turns_empty` to match reality. |
+
+Zero Sev-1.
+
+## Step 6 — Tests and audit post-fix
+
+| Check | Result |
+|---|---|
+| pytest collect | 857 (845 baseline + 12 new) |
+| pytest run | 846 passed, 11 failed (same 11 pre-existing PDF/cffi) |
+| audit-governance (`DATA_LAKE_PATH=data-lake`) | exit 0; total_flagged 0; high 0 |
+| lint / type-check | N/A — no config |
+| orchestrator tests | 39 passed (no regression from Part 1) |
+
