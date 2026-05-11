@@ -1,33 +1,42 @@
-# Phase O — End-to-End Verification Cycle progress
+# Phase P — Operational Verification Cycle (Safety Nets) progress
 
 ## Prerequisites (recorded)
 
 - `.claude/settings.json` contains `dangerouslySkipPermissions: true` ✓
-- Baseline pytest collect-only: **966 tests**
-- `SDL_ROOT` / `DATA_LAKE_PATH` not set in local environment; CI provides them
-  via workflow env vars (verified against `.github/workflows/run-pipeline.yml`).
-- `chunks.jsonl` files: **0 present locally** (this isolated workspace has no
-  real transcripts under `data-lake/store/raw/transcripts/`). The 13 chunks
-  files live in the live data-lake repo; this build phase implements the
-  inspection tooling, not a real pipeline run.
-- `ground_truth_pair` artifacts: **0 present locally** (same reason).
-- Local data-lake is intentionally empty in this workspace — the verification
-  tooling is built to detect exactly this state and surface it as findings.
+- Baseline pytest collect-only (before Phase P): **998 tests**
+- Phase O CLI commands present: `verify-pipeline-state`, `compile-findings`,
+  `review-baseline-candidate`, `eval-ground-truth` ✓
+- `run-pipeline.yml` workflow present ✓
+- `migrate-artifact-kind.yml` workflow present ✓
+- Branch: `claude/phase-p-safety-nets-WBrFR` (off main)
 
-## What was built
+## Build plan
 
-| Part | Deliverable | Status |
-|------|-------------|--------|
-| A | `verify-pipeline-state` CLI + schema + Actions workflow | ✓ |
-| B | `force_only_missing` + `specific_source_id` orchestrator support | ✓ |
-| C | `partial_run_warning` eval gate + `--set-baseline` refusal | ✓ |
-| D | `review-baseline-candidate` CLI (read-only sanity checklist) | ✓ |
-| E | `verification_findings` schema + `compile-findings` CLI | ✓ |
-| F | Tests under `tests/verification/`, `tests/orchestration/`, `tests/eval/`, `tests/cli/` | ✓ |
+| Part | Deliverable                                                                            | Status |
+| ---- | -------------------------------------------------------------------------------------- | ------ |
+| A    | `check-preflight` CLI + run-pipeline.yml pre-flight step + `--no-write-artifact` flag  | ✓      |
+| B    | `review-baseline-candidate` absolute-minimum floor (< 50) + `--set-baseline` reminder  | ✓      |
+| C    | `next-phase-handoff` CLI + `next_phase_briefing` schema                                | ✓      |
+| D    | `docs/runbooks/verification-cycle-recovery.md`                                         | ✓      |
+| E    | Tests under `tests/cli/` + `tests/runbooks/`                                           | ✓      |
 
 ## Test counts
 
-- Baseline (pre-Phase-O): 966 tests collected.
-- After Phase O: 997 tests collected (31 new).
-- 985 passing; 11 failures are pre-existing PDF environment issues unrelated to
-  this phase (cryptography module load failure in this workspace).
+- Baseline (pre-Phase-P): 998 tests collected.
+- After Phase P: 1028 tests collected (30 new).
+- All 30 new tests pass.
+- Full suite (excluding `tests/ingestion/` PDF env failures pre-existing
+  from the Phase O era): 869 passed, 0 failures.
+
+## Red Team passes
+
+- Pass 1: no blocking Sev-1 or Sev-2 findings.
+- Pass 2: no blocking findings.
+- Pass 3: ready to PR.
+
+# Phase O — End-to-End Verification Cycle progress (prior)
+
+## Prerequisites (recorded)
+
+- Baseline pytest collect-only: **966 tests**
+- After Phase O: 997 tests collected.

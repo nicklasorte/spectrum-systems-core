@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/verification/next_phase_briefing.schema.json",
+  "title": "next_phase_briefing",
+  "description": "Phase P artifact produced by next-phase-handoff. Snapshots the latest pipeline_state_record, eval_summary (if any), and verification_findings into a single self-contained briefing suitable for seeding the next planning cycle. Includes a copy-paste-ready prompt_opening and a freshness window (valid_until).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "next_phase_briefing_id",
+    "artifact_type",
+    "schema_version",
+    "created_at",
+    "cycle_id",
+    "freshness_window_hours",
+    "valid_until",
+    "pipeline_state_record_id",
+    "pipeline_state_recorded_at",
+    "eval_summary_id",
+    "eval_summary_recorded_at",
+    "verification_findings_id",
+    "inventory_snapshot",
+    "metrics_snapshot",
+    "outstanding_findings",
+    "next_required_actions",
+    "prompt_opening",
+    "provenance"
+  ],
+  "properties": {
+    "next_phase_briefing_id": { "type": "string", "format": "uuid" },
+    "artifact_type": { "const": "next_phase_briefing" },
+    "schema_version": { "const": "1.0.0" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "cycle_id": { "type": "string", "minLength": 1 },
+    "freshness_window_hours": { "type": "integer", "minimum": 1 },
+    "valid_until": { "type": "string", "format": "date-time" },
+
+    "pipeline_state_record_id": { "type": ["string", "null"] },
+    "pipeline_state_recorded_at": { "type": ["string", "null"] },
+
+    "eval_summary_id": { "type": ["string", "null"] },
+    "eval_summary_recorded_at": { "type": ["string", "null"] },
+
+    "verification_findings_id": { "type": ["string", "null"] },
+
+    "inventory_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_records",
+        "minutes_records",
+        "confirmed_pairs",
+        "meeting_extractions",
+        "eval_results",
+        "baseline_set",
+        "glossary_terms"
+      ],
+      "properties": {
+        "source_records": { "type": "integer", "minimum": 0 },
+        "minutes_records": { "type": "integer", "minimum": 0 },
+        "confirmed_pairs": { "type": "integer", "minimum": 0 },
+        "meeting_extractions": { "type": "integer", "minimum": 0 },
+        "eval_results": { "type": "integer", "minimum": 0 },
+        "baseline_set": { "type": "boolean" },
+        "glossary_terms": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "metrics_snapshot": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "aggregate_coverage",
+            "aggregate_precision",
+            "items_requiring_review_total",
+            "regulatory_verb_fallback_rate",
+            "human_dedup_rate",
+            "off_topic_rate",
+            "total_extracted_items"
+          ],
+          "properties": {
+            "aggregate_coverage": { "type": ["number", "null"] },
+            "aggregate_precision": { "type": ["number", "null"] },
+            "items_requiring_review_total": { "type": ["integer", "null"] },
+            "regulatory_verb_fallback_rate": { "type": ["number", "null"] },
+            "human_dedup_rate": { "type": ["number", "null"] },
+            "off_topic_rate": { "type": ["number", "null"] },
+            "total_extracted_items": { "type": ["integer", "null"] }
+          }
+        }
+      ]
+    },
+
+    "outstanding_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "area", "title"],
+        "properties": {
+          "severity": { "enum": ["sev_1", "sev_2", "sev_3"] },
+          "area": {
+            "enum": ["pipeline", "eval", "migration", "schema", "other"]
+          },
+          "title": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+
+    "next_required_actions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+
+    "prompt_opening": { "type": "string", "minLength": 1 },
+
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": { "const": "next-phase-handoff" }
+      }
+    }
+  }
+}

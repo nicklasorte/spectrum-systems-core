@@ -91,6 +91,19 @@ From the constitution: tests defend trust properties, not ceremony. Add a test o
 
 Golden transcripts live in `tests/fixtures/golden_meetings/`.
 
+## Phase planning protocol
+
+Before starting a new phase planning cycle, the operator should run:
+
+```
+python -m spectrum_systems_core.cli next-phase-handoff
+```
+
+The output `prompt_opening` should be pasted into the new Claude
+conversation as the seed for STEP 1 inventory. If the briefing's
+`valid_until` is in the past, re-run `verify-pipeline-state` first, then
+re-run `next-phase-handoff`.
+
 ## Files worth reading before non-trivial changes
 
 - `docs/architecture/system_constitution.md` — binding; precedence over everything else.
