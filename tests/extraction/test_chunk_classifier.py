@@ -117,6 +117,52 @@ class ChunkClassifierTests(unittest.TestCase):
         result = clf.classify({"chunk_id": "c", "text": ""}, source_id="s")
         self.assertEqual(result["provenance"]["model"], ChunkClassifier.MODEL_ID)
 
+    def test_classifier_reads_text_field_not_content(self) -> None:
+        # Regression guard: the classifier MUST read chunk["text"], not
+        # chunk["content"]. The production chunks.jsonl writes "text" and
+        # never "content"; reading the wrong key silently classifies every
+        # chunk as off_topic.
+        captured: dict[str, str] = {}
+
+        def caller(prompt: str) -> dict:
+            captured["prompt"] = prompt
+            return {"classification": "decision", "confidence": 0.8}
+
+        clf = ChunkClassifier(api_caller=caller)
+        chunk = {
+            "chunk_id": "c-text",
+            "text": "The group approved the ITU criteria.",
+            "content": "WRONG FIELD -- should not be read",
+        }
+        clf.classify(chunk, source_id="mtg-001")
+        self.assertIn("The group approved the ITU criteria.", captured["prompt"])
+        self.assertNotIn("WRONG FIELD", captured["prompt"])
+
+    def test_regulatory_verb_fallback_reads_text_field(self) -> None:
+        # Regression guard: fallback inspects chunk["text"], not chunk["content"].
+        clf = ChunkClassifier(api_caller=_api_returns("off_topic"))
+        chunk = {
+            "chunk_id": "c-verb",
+            "text": "The group approved the proposal.",
+            "content": "no verb here",
+        }
+        result = clf.classify(chunk, source_id="mtg-001")
+        self.assertEqual(result["classification"], "decision")
+        self.assertTrue(result["regulatory_verb_fallback_applied"])
+
+    def test_off_topic_chunk_without_regulatory_verb_stays(self) -> None:
+        # Regression guard companion to the fallback test: a chunk with no
+        # regulatory verb stays off_topic even if "content" contains one.
+        clf = ChunkClassifier(api_caller=_api_returns("off_topic"))
+        chunk = {
+            "chunk_id": "c-clean",
+            "text": "Good morning everyone.",
+            "content": "approved",  # decoy in the wrong field
+        }
+        result = clf.classify(chunk, source_id="mtg-001")
+        self.assertEqual(result["classification"], "off_topic")
+        self.assertFalse(result["regulatory_verb_fallback_applied"])
+
 
 class RoutingQualityWarningTests(unittest.TestCase):
     """The routing-quality warning lives in ExtractionMerger, but the

@@ -19,6 +19,8 @@ from pathlib import Path
 from unittest import mock
 
 from spectrum_systems_core.extraction.typed_extraction_runner import (
+    _parse_json_response,
+    _resolve_api_callers,
     find_meeting_extraction,
     run_typed_extraction,
 )
@@ -220,6 +222,104 @@ class TypedExtractionRunnerTests(unittest.TestCase):
             )
         self.assertIsNotNone(path)
         self.assertTrue(path.is_file())
+
+
+class ResolveApiCallersTests(unittest.TestCase):
+    """Regression tests for the bug where ``extract-typed`` ran fully offline.
+
+    Before the fix, ``run_typed_extraction`` defaulted ``api_callers`` to ``{}``
+    and each component fell back to its offline ``_default_api_caller`` that
+    returned ``off_topic`` / empty items. Production runs produced 0 typed
+    extractions across all transcripts. These tests pin down the new
+    ``_resolve_api_callers`` seam.
+    """
+
+    def test_injected_callers_are_preserved_unchanged(self) -> None:
+        # When all four components are injected, the resolver returns them
+        # as-is and does not attempt to build Anthropic callers.
+        injected = {
+            "classifier": lambda _p: {"classification": "off_topic"},
+            "decision": _empty_caller,
+            "claim": _empty_caller,
+            "action_item": _empty_caller,
+        }
+        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test"}):
+            resolved = _resolve_api_callers(injected)
+        for key, value in injected.items():
+            self.assertIs(resolved[key], value)
+
+    def test_offline_when_api_key_unset_does_not_build_callers(self) -> None:
+        # Without ANTHROPIC_API_KEY the resolver returns an empty dict so each
+        # component falls back to its offline ``_default_api_caller``. The
+        # earlier bug was that this WAS the production path; now it is only
+        # reached when no key is configured (and a warning is logged).
+        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            resolved = _resolve_api_callers(None)
+        self.assertEqual(resolved, {})
+
+    def test_missing_keys_are_lazy_built_when_api_key_set(self) -> None:
+        # When ANTHROPIC_API_KEY is set, the resolver fills in any missing
+        # component slot with a callable. We mock ``_build_anthropic_caller``
+        # so the test does not require the ``anthropic`` SDK to be installed
+        # (it is a lazy import, not a declared dependency). This is the core
+        # regression guard: production code MUST get real callers.
+        stub = lambda _p: {"items": []}
+        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test"}), \
+             mock.patch(
+                 "spectrum_systems_core.extraction."
+                 "typed_extraction_runner._build_anthropic_caller",
+                 return_value=stub,
+             ) as build_mock:
+            resolved = _resolve_api_callers({"classifier": _empty_caller})
+        # Injected key untouched.
+        self.assertIs(resolved["classifier"], _empty_caller)
+        # The other three were lazy-built.
+        self.assertEqual(build_mock.call_count, 3)
+        for key in ("decision", "claim", "action_item"):
+            self.assertIs(resolved[key], stub)
+
+    def test_anthropic_sdk_missing_falls_back_to_offline(self) -> None:
+        # If the SDK is not installed, the resolver logs a warning and returns
+        # an empty dict so each component falls back to its offline default.
+        # The pipeline still runs (degraded) instead of crashing.
+        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test"}), \
+             mock.patch(
+                 "spectrum_systems_core.extraction."
+                 "typed_extraction_runner._build_anthropic_caller",
+                 side_effect=ImportError("No module named 'anthropic'"),
+             ):
+            resolved = _resolve_api_callers(None)
+        self.assertEqual(resolved, {})
+
+
+class ParseJsonResponseTests(unittest.TestCase):
+    """The default Anthropic caller parses model output via ``_parse_json_response``."""
+
+    def test_plain_json_object(self) -> None:
+        self.assertEqual(
+            _parse_json_response('{"classification": "decision"}'),
+            {"classification": "decision"},
+        )
+
+    def test_markdown_code_fence_is_stripped(self) -> None:
+        text = '```json\n{"items": [{"x": 1}]}\n```'
+        self.assertEqual(_parse_json_response(text), {"items": [{"x": 1}]})
+
+    def test_narrative_prefix_is_tolerated(self) -> None:
+        text = 'Sure! Here is the JSON:\n{"classification": "claim"}\nThanks.'
+        self.assertEqual(_parse_json_response(text), {"classification": "claim"})
+
+    def test_unparseable_text_returns_empty_dict(self) -> None:
+        self.assertEqual(_parse_json_response("not json at all"), {})
+
+    def test_empty_text_returns_empty_dict(self) -> None:
+        self.assertEqual(_parse_json_response(""), {})
+        self.assertEqual(_parse_json_response("   "), {})
+
+    def test_non_object_top_level_returns_empty_dict(self) -> None:
+        # A bare list is not what any component expects -- treat as failure.
+        self.assertEqual(_parse_json_response("[1, 2, 3]"), {})
 
 
 if __name__ == "__main__":

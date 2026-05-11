@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -31,9 +32,138 @@ from .extraction_merger import ExtractionMerger
 from .glossary_manager import GlossaryManager
 
 
+_LOG = logging.getLogger(__name__)
+
 _SOURCE_FAMILIES = (
     "meetings", "books", "comments", "working_papers", "notes",
 )
+
+# Component keys for the typed-extraction pipeline. Order matches the four
+# components constructed in ``run_typed_extraction``.
+_COMPONENT_KEYS: tuple = ("classifier", "decision", "claim", "action_item")
+
+# Token budget for default Anthropic callers. The classifier returns a tiny
+# JSON object; the three extractors return small lists of items. 2000 covers
+# both with headroom.
+_DEFAULT_MAX_TOKENS = 2000
+
+
+def _parse_json_response(text: str) -> Dict[str, Any]:
+    """Parse a model JSON response into a dict.
+
+    Tolerates markdown code fences (```json ... ```) and a leading or
+    trailing narrative line by extracting the outermost ``{ ... }`` span.
+    Returns ``{}`` on any failure so each component's existing defensive
+    paths produce empty results instead of raising.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return {}
+    candidates: List[str] = [text]
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        # Drop opening fence (possibly ```json) and trailing fence.
+        body = stripped[3:]
+        if body.startswith("json"):
+            body = body[4:]
+        body = body.lstrip("\n").rstrip()
+        if body.endswith("```"):
+            body = body[:-3].rstrip()
+        if body:
+            candidates.append(body)
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if 0 <= start < end:
+        candidates.append(stripped[start : end + 1])
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    _LOG.warning(
+        "typed_extraction_llm_json_parse_failed: head=%r", text[:200]
+    )
+    return {}
+
+
+def _build_anthropic_caller(
+    model: str, max_tokens: int = _DEFAULT_MAX_TOKENS
+) -> Callable[[str], Dict[str, Any]]:
+    """Build a Haiku api_caller returning the parsed JSON response.
+
+    The returned callable hands the prompt to ``anthropic.Anthropic()``, joins
+    text blocks from the response, and parses JSON. On network/SDK error or
+    JSON-parse failure it logs a warning and returns ``{}`` so the caller's
+    existing ``isinstance(resp, dict)`` guard yields an empty result instead
+    of raising.
+
+    Lazy import of ``anthropic`` so tests + offline runs that never invoke
+    this helper do not require the SDK at import time.
+    """
+    import anthropic
+
+    client = anthropic.Anthropic()
+
+    def _call(prompt: str) -> Dict[str, Any]:
+        try:
+            message = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                temperature=0,
+                messages=[{"role": "user", "content": prompt}],
+            )
+        except Exception as exc:  # SDK can raise many error types
+            _LOG.warning(
+                "typed_extraction_llm_call_failed: %s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            return {}
+        parts: List[str] = []
+        for block in getattr(message, "content", []) or []:
+            text = getattr(block, "text", None)
+            if isinstance(text, str):
+                parts.append(text)
+        return _parse_json_response("\n".join(parts))
+
+    return _call
+
+
+def _resolve_api_callers(
+    injected: Optional[Dict[str, Callable[[str], Dict[str, Any]]]],
+) -> Dict[str, Callable[[str], Dict[str, Any]]]:
+    """Return a callers dict with real Haiku callers filling missing keys.
+
+    - Injected callers are preserved (so unit tests are unaffected).
+    - Missing keys are lazy-built against ``ChunkClassifier.MODEL_ID``
+      (all four components share the same Haiku model id).
+    - If ``ANTHROPIC_API_KEY`` is unset or the SDK is missing, the missing
+      keys are left absent and each component falls back to its offline
+      ``_default_api_caller``. A warning is logged so the run records the
+      degraded mode.
+    """
+    callers: Dict[str, Callable[[str], Dict[str, Any]]] = dict(injected or {})
+    missing = [k for k in _COMPONENT_KEYS if k not in callers]
+    if not missing:
+        return callers
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        _LOG.warning(
+            "typed_extraction_offline_mode: ANTHROPIC_API_KEY unset; "
+            "components %s will classify every chunk as off_topic",
+            missing,
+        )
+        return callers
+    try:
+        for key in missing:
+            callers[key] = _build_anthropic_caller(ChunkClassifier.MODEL_ID)
+    except ImportError as exc:
+        _LOG.warning(
+            "typed_extraction_anthropic_sdk_missing: %s -- "
+            "continuing with offline defaults",
+            exc,
+        )
+    return callers
 
 
 def _now_iso() -> str:
@@ -181,7 +311,7 @@ def run_typed_extraction(
             str(glossary_root) if glossary_root else None
         )
 
-    api_callers = api_callers or {}
+    api_callers = _resolve_api_callers(api_callers)
     classifier = ChunkClassifier(api_caller=api_callers.get("classifier"))
     decision_x = DecisionExtractor(api_caller=api_callers.get("decision"))
     claim_x = ClaimExtractor(api_caller=api_callers.get("claim"))

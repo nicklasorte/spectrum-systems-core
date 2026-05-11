@@ -22,9 +22,12 @@ Design rules:
 from __future__ import annotations
 
 import datetime
+import logging
 import re
 import uuid
 from typing import Any, Callable, Dict, Optional, Set
+
+_LOG = logging.getLogger(__name__)
 
 
 _MODEL_ID = "claude-haiku-4-5-20251001"
@@ -154,7 +157,11 @@ class ChunkClassifier:
                     resp.get("classification")
                 )
                 confidence = self._normalize_confidence(resp.get("confidence"))
-        except Exception:  # never raise -- default to off_topic
+        except Exception as exc:  # never raise -- default to off_topic
+            _LOG.warning(
+                "chunk_classifier_api_error: chunk_id=%s %s: %s",
+                chunk_id or "?", type(exc).__name__, exc,
+            )
             raw_classification = "off_topic"
             confidence = None
 
