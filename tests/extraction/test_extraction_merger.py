@@ -35,6 +35,7 @@ def _decision(text: str, turn_ids: list[str], dtype: str = "approved") -> dict:
         "rationale": None,
         "source_turn_ids": list(turn_ids),
         "source_turn_validation": "verified",
+        "confidence": 1.0,
     }
 
 
@@ -45,6 +46,7 @@ def _claim(text: str, turn_ids: list[str]) -> dict:
         "speaker": "X",
         "source_turn_ids": list(turn_ids),
         "source_turn_validation": "verified",
+        "confidence": 1.0,
     }
 
 
@@ -55,6 +57,7 @@ def _action(text: str, turn_ids: list[str]) -> dict:
         "due": None,
         "source_turn_ids": list(turn_ids),
         "source_turn_validation": "verified",
+        "confidence": 1.0,
     }
 
 
