@@ -2278,10 +2278,16 @@ def run_pipeline(
     *,
     dry_run: bool = False,
     data_lake: str | None = None,
+    force: bool = False,
     out_stream=None,
 ) -> int:
-    """Phase L.1: scan data-lake/store/raw/transcripts/ and run any
-    transcripts that have no on-disk processed evidence.
+    """Phase L.3: scan data-lake/store/raw/transcripts/ and drive the full
+    5-stage pipeline (process-source → extract-stories → promote-knowledge
+    → extract-claims → synthesize) on the unprocessed transcripts.
+
+    With ``--force``, bypasses idempotency checks and re-runs every stage
+    on every transcript. Existing artifacts are NEVER deleted; underlying
+    extractors overwrite their own working files (pre-existing behavior).
 
     Returns:
         0 on success, partial success, or dry_run completion. 1 only when
@@ -2310,12 +2316,14 @@ def run_pipeline(
     )
 
     print("=== Pipeline Orchestrator ===", file=out)
+    if force:
+        print("Mode: FORCE RE-PROCESS (all phases)", file=out)
     print(f"Scanning: {transcripts_dir}/", file=out)
 
     orchestrator = PipelineOrchestrator()
     # Always scan first so we have the per-transcript reason annotations
     # to surface alongside each Running:/Skipping: line.
-    scan_result = orchestrator.scan(resolved)
+    scan_result = orchestrator.scan(resolved, force=force)
     if scan_result["status"] != "success":
         print(f"error: scan failed: {scan_result.get('reason', '')}", file=out)
         return 1
@@ -2354,7 +2362,7 @@ def run_pipeline(
             print("Nothing to run.", file=out)
         return 0
 
-    result = orchestrator.run(resolved, dry_run=False)
+    result = orchestrator.run(resolved, dry_run=False, force=force)
     if result["status"] == "failure" and "scan_failed" in result.get(
         "reason", ""
     ):
@@ -2374,51 +2382,122 @@ def run_pipeline(
     )
     print("", file=out)
 
+    # Per-transcript stage map for the summary output.
+    stages_by_filename: dict[str, dict[str, str]] = {
+        r["filename"]: r.get("pipeline_stages", {})
+        for r in result.get("results", [])
+    }
+
     for entry in result["skipped_already_done"]:
+        stages = stages_by_filename.get(entry["filename"], {})
+        annotation = _format_stage_summary(stages)
         print(
             f"Skipping (already processed): {entry['filename']} "
-            f"(artifact: {entry['artifact_id']})",
+            f"(artifact: {entry['artifact_id']}){annotation}",
             file=out,
         )
 
     for entry in result["processed_this_run"]:
         scan_reason = reason_by_filename.get(entry["filename"], "")
+        force_prefix = "[force] " if scan_reason == "forced" else ""
         annotation = (
             f" [{scan_reason}]"
-            if scan_reason and scan_reason != "no_processed_evidence"
+            if scan_reason
+            and scan_reason not in ("no_processed_evidence", "forced")
             else ""
         )
+        stages = stages_by_filename.get(entry["filename"], {})
+        stage_summary = _format_stage_summary(stages)
         print(
-            f"Running: {entry['filename']}{annotation} ... ✓ artifact: "
-            f"{entry['artifact_id']}",
+            f"{force_prefix}Running: {entry['filename']}{annotation} ... "
+            f"✓ artifact: {entry['artifact_id']}{stage_summary}",
             file=out,
         )
     for entry in result["failed_this_run"]:
         scan_reason = reason_by_filename.get(entry["filename"], "")
+        force_prefix = "[force] " if scan_reason == "forced" else ""
         annotation = (
             f" [{scan_reason}]"
-            if scan_reason and scan_reason != "no_processed_evidence"
+            if scan_reason
+            and scan_reason not in ("no_processed_evidence", "forced")
             else ""
         )
         print(
-            f"Running: {entry['filename']}{annotation} ... ✗ failed: "
-            f"{entry['reason']}",
+            f"{force_prefix}Running: {entry['filename']}{annotation} ... "
+            f"✗ failed: {entry['reason']}",
             file=out,
         )
 
     print("", file=out)
     print("=== Summary ===", file=out)
+
+    # Per-transcript "succeeded all stages" tally — every stage in
+    # pipeline_stages must be success/forced/skipped (no failure).
+    # "Partial" = Stage 1 succeeded but some later stage failed.
+    succeeded_all = 0
+    partial = 0
+    for r in result.get("results", []):
+        if r.get("status") not in ("success", "extraction_quality_warning"):
+            continue
+        stages = r.get("pipeline_stages", {})
+        statuses = list(stages.values())
+        if any(s == "failure" for s in statuses):
+            partial += 1
+        else:
+            succeeded_all += 1
+
     print(
-        f"Attempted: {result['total_attempted']} | "
-        f"Succeeded: {result['total_succeeded']} | "
-        f"Failed: {result['total_failed']}",
+        f"Transcripts: {result['total_attempted']} | "
+        f"Succeeded all stages: {succeeded_all} | "
+        f"Partial: {partial} | Failed: {result['total_failed']}",
         file=out,
     )
+    print(
+        f"Stages completed: {result['total_stages_completed']} | "
+        f"Stages failed: {result['total_stages_failed']}",
+        file=out,
+    )
+    synth_status = result.get("synthesize_status", "not_run")
+    synth_glyph = (
+        "✓" if synth_status == "success"
+        else "✗" if synth_status == "failure"
+        else "—"
+    )
+    print(f"Synthesize: {synth_glyph} {synth_status}", file=out)
     if result["orchestration_record_path"]:
         print(f"Record: {result['orchestration_record_path']}", file=out)
 
     # Partial success is exit 0; only scan failures are exit 1.
     return 0
+
+
+def _format_stage_summary(stages: dict[str, str]) -> str:
+    """Render a compact one-line summary of pipeline_stages for a transcript."""
+    if not stages:
+        return ""
+    glyphs = {
+        "success": "✓",
+        "forced": "↻",
+        "skipped": "·",
+        "failure": "✗",
+        "not_run": "—",
+    }
+    short = {
+        "process_source": "src",
+        "extract_stories": "sty",
+        "promote_knowledge": "knw",
+        "extract_claims": "clm",
+    }
+    parts: list[str] = []
+    for stage in (
+        "process_source",
+        "extract_stories",
+        "promote_knowledge",
+        "extract_claims",
+    ):
+        s = stages.get(stage, "not_run")
+        parts.append(f"{short[stage]}{glyphs.get(s, '?')}")
+    return "  [" + " ".join(parts) + "]"
 
 
 def link_ground_truth(
@@ -3060,6 +3139,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "environment variable when provided."
         ),
     )
+    rp.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Bypass idempotency and re-run every stage on every transcript. "
+            "Existing artifacts are NEVER deleted; underlying extractors "
+            "overwrite their own working files (pre-existing behavior)."
+        ),
+    )
 
     lg = sub.add_parser(
         "link-ground-truth",
@@ -3229,6 +3317,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_pipeline(
             dry_run=args.dry_run,
             data_lake=args.data_lake,
+            force=args.force,
         )
     if args.command == "link-ground-truth":
         return link_ground_truth(

@@ -567,3 +567,155 @@ Workflow file mirrors `confirm-pairs.yml`: same checkout/setup steps, same
 commit/push tail. Input is `dry_run` (default `'true'`), choice of
 `'true'`/`'false'`. Dry-run preview step always runs; real run + commit
 step gated by `dry_run == 'false'`.
+
+---
+
+# Phase L.3 — Full Pipeline Orchestration + --force Flag
+
+Branch: `claude/full-pipeline-orchestration-lOr62` (harness-assigned;
+task spec said `phase-L3/full-pipeline-orchestration`).
+
+## Step 1 — Inventory
+
+### Test baseline
+**828 tests collected** (`python -m pytest --collect-only -q`). Phase L.3
+must not regress this count and must not break any green tests.
+
+### CLI commands available (from `cli.py::_build_parser`)
+`process-source`, `prepare-pdf`, `extract-stories`, `promote-knowledge`,
+`extract-claims`, `process-comments`, `approve-revisions`, `format-paper`,
+`certify-paper`, `build-agency-profile`, `predict-objections`,
+`track-outcome`, `synthesize`, `record-run`, `record-outcome`,
+`compare-runs`, `record-override`, `promote-eval-case`, `audit-entropy`,
+`ask-memory`, `audit-governance`, `extract-docx`, `run-pipeline`,
+`link-ground-truth`, `apply-compression`.
+
+### Pipeline stage map — actual CLI signatures vs. task spec
+
+| Stage | Task spec | Actual CLI command | Underlying module | Programmatically runnable? |
+|---|---|---|---|---|
+| 1 | `process-source` | `process-source --source-id X` (Phase A) | `SourceLoader` + `SourceEval` + `Promoter` (already invoked by orchestrator's `_default_runner`) | YES — already wired |
+| 2 | `extract-stories --source-id X` | matches | `Chunker` + `StoryExtractor` + `StoryEval` + `StoryworthyFilter` | YES |
+| 3 | `promote-knowledge --source-id X` | **MISMATCH**: actual CLI requires `--artifact-id X --source-id Y --artifact-type {concept\|theme\|analogy\|connection}` and is a *human-gated single-artifact promotion* (per FINDING-C-003 — no auto-promotion path) | `KnowledgeSynthesizer.synthesize_{concepts,themes,analogies}` is the closest automated step; it reads `stories/promoted/` (human-gated input) and writes `knowledge/<type>.jsonl` candidates | YES — but with the adjustment below |
+| 4 | `extract-claims --source-id X` | matches | `ClaimExtractor` + `AssumptionExtractor` + `ClaimEval` + `EvidenceBuilder` + `ContradictionDetector` + `EvidenceEval` (reads `text_units.jsonl` directly — does NOT depend on Stage 2 output) | YES |
+| 5 | `synthesize --audience X --purpose Y` | matches | `BundleAssembler` + `BundleEval` + `ThemeSynthesizer` + `StoryMatrix` + `ReportGenerator` + `GroundingEval` + `KeynoteGenerator` + `KeynoteEval` — global, one run | YES |
+
+### Stage-3 adjustment (per Stop Conditions)
+The `promote-knowledge` CLI is human-gated and cannot run in an automated
+orchestrator. The closest automated step is `KnowledgeSynthesizer`, which
+produces **candidate** knowledge artifacts (concepts/themes/analogies)
+from promoted stories. In a fresh run with no human promotion yet, this
+is a no-op that succeeds with 0 records — which is the correct behavior:
+the automated pipeline produces what it can, and humans promote
+individual artifacts via the existing CLI.
+
+**Decision:** Stage 3 in the orchestrator wraps
+`KnowledgeSynthesizer.synthesize_{concepts,themes,analogies}`. The
+existing CLI `promote-knowledge` command is unchanged — the orchestrator
+does not call it. The stage is logged as `extract-knowledge` internally
+but maps to the `promote_knowledge` slot in the pipeline_stages dict so
+the task spec's vocabulary is preserved.
+
+### "Already processed" markers per stage
+Idempotency checks (orchestrator skips when `force=False` and):
+
+| Stage | Marker file |
+|---|---|
+| 1 (process-source) | existing `source_record.json` for this `source_id` under `processed/<family>/<sid>/` or matching SDL artifact (existing behavior) |
+| 2 (extract-stories) | `processed/<family>/<sid>/stories/candidates.jsonl` exists |
+| 3 (promote-knowledge / knowledge-extract) | any of `processed/<family>/<sid>/knowledge/{concepts,themes,analogies}.jsonl` exists |
+| 4 (extract-claims) | `processed/<family>/<sid>/paper/claims.jsonl` exists |
+| 5 (synthesize) | runs once globally per orchestrator invocation; skipped if no transcript reached Stage 4 success AND not forced |
+
+### Stage dependency (per task spec)
+- If Stage 2 fails for a transcript → skip Stages 3 and 4 for THAT
+  transcript only. Other transcripts continue independently.
+- Stage 5 (synthesize) runs once after all transcripts. It runs iff at
+  least one transcript reached Stage 4 success this run, OR `force=True`
+  and at least one transcript reached Stage 4 success this run. Skipped
+  if all transcripts skipped, all failed before Stage 4, or no
+  transcripts present.
+
+### Force flag semantics
+- `scan(force=True)`: reports all transcripts as "to run" regardless of
+  existing source_record evidence.
+- `run(force=True)`: re-runs every stage per transcript regardless of
+  existing artifacts. The orchestrator NEVER issues `rm` operations.
+  Underlying modules (StoryExtractor, etc.) may overwrite their own
+  working-state files (`candidates.jsonl`, `claims.jsonl`) — this is
+  pre-existing module behavior, not new in this phase. SDL-promoted
+  artifacts (e.g., `source_record`) are content-addressed by their
+  Promoter; re-running with unchanged content produces the same
+  artifact_id (idempotent at the SDL layer), while changed content
+  produces a new artifact with a new id. Old SDL files are never
+  removed.
+
+### Schema changes (`orchestration_run_record.schema.json`, bump 1.2.0 → 1.3.0)
+Additive top-level fields: `force` (bool), `synthesize_status` (enum),
+`total_stages_completed` (int), `total_stages_failed` (int). Per-result
+adds `pipeline_stages` object with one entry per stage. Schema bumped to
+1.3.0; readers of 1.2.0 records will not re-validate older files.
+
+### Files to change
+- `src/spectrum_systems_core/orchestration/pipeline_orchestrator.py`
+  — add `force` param, Stage 2-5 chain, per-stage idempotency checks.
+- `contracts/schemas/orchestration/orchestration_run_record.schema.json`
+  — schema_version bump + new fields.
+- `src/spectrum_systems_core/cli.py::run_pipeline` — add `--force` flag,
+  print per-stage status.
+- `.github/workflows/run-pipeline.yml` — add `force` input.
+- `tests/orchestration/test_pipeline_orchestrator.py` — new tests
+  (force re-runs, stage 2 fail skips 3+4, stage 5 gating,
+  pipeline_stages on record).
+
+## Step 8 — Gate A (design redteam, fresh subagent)
+**Verdict: no blocking findings (zero Sev-1, zero Sev-2).**
+
+The reviewer walked the three required spot-checks:
+1. Force writes new artifacts vs deletes — Compliant. Forced entries
+   flow through `SourceLoader`/`Promoter` (content-addressed); zero
+   `rm`/`unlink`/`rmtree` calls in the orchestrator.
+2. Stage 5 skipped when zero transcripts reach Stage 4 — Compliant.
+   Force alone cannot trigger synthesize.
+3. Stage 2→3→4 dependency per transcript — Compliant. `_run_stages_2_to_4`
+   returns early on Stage 2 failure with stages 3+4 marked `not_run`,
+   while the outer loop iterates transcripts independently.
+
+One Sev-3 (style) note from the reviewer about a redundant
+`(force and any_stage4_success_this_run)` operand — cleaned up post-Gate-A
+to a single `if any_stage4_success_this_run:` with an explanatory
+comment. (Sev-3 not reported per rubric, but addressed for clarity.)
+
+## Step 9 — Test status
+| Check | Result |
+|---|---|
+| pytest collect | 840 (828 baseline + 12 new) |
+| pytest run | 829 passed, 11 failed (same 11 pre-existing PDF/cffi failures, zero regressions) |
+| audit-governance | exit 0; total_flagged: 0, high: 0 (with DATA_LAKE_PATH set) |
+| lint / type-check | N/A (no config) |
+
+## Step 10 — Gate B (diff redteam, fresh subagent)
+**Verdict: no blocking findings (zero Sev-1, zero Sev-2).**
+
+All four required spot-checks confirmed:
+1. YAML still valid — `.github/workflows/run-pipeline.yml` parses
+   cleanly with `yaml.safe_load`.
+2. `pipeline_stages` present in schema 1.3.0 with correct enum.
+3. `test_stage2_failure_skips_stages_3_and_4` present, asserts both
+   that runners 3+4 are NOT called AND that synthesize is skipped.
+4. `[force]` prefix logged in CLI run_pipeline (lines printing
+   `Mode: FORCE RE-PROCESS (all phases)` banner and `[force] Running:`
+   per-transcript).
+
+Sev-1 hazards re-checked:
+- No deletions (test_force_never_deletes_existing_artifacts asserts
+  prior `source_record.json` byte content is preserved).
+- Stage 5 with zero successes (test_force_synthesize_not_run_when_zero_stage4_success).
+- Deterministic stage order (stages run 2→3→4 inside `_run_stages_2_to_4`;
+  transcripts iterate in `sorted(transcripts_dir.iterdir())` order).
+
+Reviewer noted one design observation (not a blocker): operators
+expecting end-to-end re-synthesize over already-processed data must use
+`--force` to get one. This matches the documented "at least one
+transcript reached Stage 4 success this run" rule.
+
