@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/extraction/chunk_classification.schema.json",
+  "title": "chunk_classification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "classification_id",
+    "chunk_id",
+    "source_id",
+    "classification",
+    "regulatory_verb_fallback_applied",
+    "confidence",
+    "artifact_type",
+    "schema_version",
+    "created_at",
+    "provenance"
+  ],
+  "properties": {
+    "classification_id": { "type": "string", "format": "uuid" },
+    "chunk_id": { "type": "string", "minLength": 1 },
+    "source_id": { "type": "string", "minLength": 1 },
+    "classification": {
+      "enum": ["decision", "claim", "action_item", "off_topic"]
+    },
+    "regulatory_verb_fallback_applied": { "type": "boolean" },
+    "confidence": {
+      "type": ["number", "null"],
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "artifact_type": { "const": "chunk_classification" },
+    "schema_version": { "const": "1.0.0" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by", "model"],
+      "properties": {
+        "produced_by": { "const": "ChunkClassifier" },
+        "model": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

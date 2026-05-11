@@ -1177,3 +1177,44 @@ Per the task's STOP CONDITIONS. Surfacing to user instead of proceeding.
 3. **`pipeline_run_id`** — add it (additive) to `orchestration_run_record`, or have `eval_result` record the existing `run_id` under the name `pipeline_run_id` (rename at eval boundary only)?
 4. **`artifact_type` vs `artifact_kind`** — new M4 schemas use which? Default to `artifact_type` per CLAUDE.md, leaving split for later?
 5. **Chunker class name** — confirm writing `chunking_strategy` from `Chunker` is intended.
+
+---
+
+# Phase Pre-N + M2 + M3 — artifact_type Migration + Glossary + Typed Extraction
+
+## Prerequisites check (recorded 2026-05-11)
+
+### Environment
+- `.claude/settings.json` present with `permissions.defaultMode: bypassPermissions`.
+- `pip install -e ".[dev]"` succeeded.
+- `python3 -c "import scipy, sklearn"` succeeded after install.
+- `python -m pytest --collect-only -q` baseline: **921 tests collected**.
+- `python -m pytest` baseline: **910 passed, 11 failed** (all 11 pre-existing PDF/cffi failures from L.0/L.1 — same as phase-progress L.1 step 6).
+
+### Schemas using `artifact_kind` (3)
+- `contracts/schemas/source_record.schema.json` (const `source_record`)
+- `contracts/schemas/obsidian_input_artifact.schema.json` (const `obsidian_input_artifact`)
+- `contracts/schemas/review_artifact.schema.json` (const `review_artifact`)
+
+All three use `additionalProperties: false`. None have an internal `schema_version` field — version is carried in `schema_ref.version` inside the artifact body (e.g., source_loader writes `version: "1.1.0"`).
+
+### Source files writing `artifact_kind`
+- `src/spectrum_systems_core/ingestion/source_loader.py:209` (source_record write)
+- `src/spectrum_systems_core/obsidian_bridge/ingestion_gate.py:43,115` (failure + input artifact)
+- `src/spectrum_systems_core/obsidian_bridge/review_parser.py:217` (review_artifact)
+
+### Source files reading `artifact_kind`
+- `src/spectrum_systems_core/ingestion/ground_truth_linker.py:477`
+- `scripts/cleanup_data_lake.py:70`
+
+### Existing artifacts in data-lake/processed dirs
+- `find data-lake processed -name "*.json" | xargs grep -l "artifact_kind"` → 0 files (clean slate; no historical artifacts to migrate beyond test fixtures).
+
+### Schemas already using `artifact_type` or `schema_version`
+- `vault_index_note`, `story_candidate`, `certification/*`, `paper/*`, `orchestration/*`, `eval/*` — many newer schemas already use `schema_version`. Pre-existing alongside `artifact_kind` schemas. Migration only touches the 3 schemas that still use `artifact_kind`.
+
+### Decision: schema_version field
+The task says "Bump schema_version from X.Y.Z to X.(Y+1).0" but the 3 target schemas have no internal `schema_version` field — they version via `schema_ref.version` in produced artifacts. Approach: keep schemas without an internal `schema_version` field (no need to invent one), but bump producer code's `schema_ref.version` to `1.2.0` (was `1.1.0` for source_record).
+
+### Decision: artifact_type as optional property
+Add `artifact_type` as a property with the same `const` value as `artifact_kind`, but NOT in `required` — so existing artifacts (with only artifact_kind) keep validating, and new producers can include artifact_type as the canonical field. Both fields remain allowed by `additionalProperties: false`.

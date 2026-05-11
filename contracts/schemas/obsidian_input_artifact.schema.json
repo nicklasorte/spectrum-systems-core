@@ -16,6 +16,7 @@
   ],
   "properties": {
     "artifact_kind": { "const": "obsidian_input_artifact" },
+    "artifact_type": { "const": "obsidian_input_artifact" },
     "artifact_id": { "type": "string", "format": "uuid" },
     "created_at": { "type": "string", "format": "date-time" },
     "schema_ref": {

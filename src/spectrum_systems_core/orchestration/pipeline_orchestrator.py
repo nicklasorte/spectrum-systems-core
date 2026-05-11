@@ -222,6 +222,29 @@ class PipelineOrchestrator:
 
     # -- public API --------------------------------------------------------
 
+    def run_typed_extraction(
+        self,
+        source_id: str,
+        *,
+        data_lake_path: Optional[str] = None,
+        force: bool = False,
+    ) -> Dict[str, Any]:
+        """Phase M3.0+M3.1. Run the typed-extraction pipeline for one source.
+
+        This method is additive: it is NOT called by ``run()`` so existing
+        Stage 2-5 behavior is unchanged. Invoke explicitly from the CLI
+        (``extract-typed``) once chunks.jsonl exists for the source.
+
+        Never raises.
+        """
+        try:
+            from ..extraction.typed_extraction_runner import run_typed_extraction
+            return run_typed_extraction(
+                source_id, data_lake=data_lake_path, force=force,
+            )
+        except Exception as exc:  # defensive: never raise
+            return {"status": "failure", "reason": f"unexpected_error:{exc}"}
+
     def scan(
         self, data_lake_path: str, force: bool = False
     ) -> Dict[str, Any]:

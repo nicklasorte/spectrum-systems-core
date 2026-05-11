@@ -1,0 +1,75 @@
+name: migrate-artifact-kind
+# One-time migration: add artifact_type alongside artifact_kind across the
+# data lake. Manual trigger only. Defaults to dry-run; pass confirm: "yes"
+# to commit changes back to the data-lake repository.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'yes' to APPLY changes (otherwise dry-run only)."
+        required: false
+        default: "no"
+      data_lake_ref:
+        description: "Ref of the data-lake repo to check out (branch or sha)."
+        required: false
+        default: "main"
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+        with:
+          path: spectrum-systems-core
+
+      - name: Checkout data-lake
+        uses: actions/checkout@v4
+        with:
+          repository: nicklasorte/data-lake
+          ref: ${{ github.event.inputs.data_lake_ref }}
+          path: data-lake
+          token: ${{ secrets.DATA_LAKE_TOKEN }}
+        continue-on-error: true
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install core dependencies
+        working-directory: spectrum-systems-core
+        run: python -m pip install -e ".[dev]"
+
+      - name: Migration (dry-run, always first)
+        working-directory: spectrum-systems-core
+        run: |
+          python scripts/migrate_artifact_kind.py \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            --dry-run
+
+      - name: Migration (apply changes)
+        if: ${{ github.event.inputs.confirm == 'yes' }}
+        working-directory: spectrum-systems-core
+        run: |
+          python scripts/migrate_artifact_kind.py \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            --confirm
+
+      - name: Commit changes to data-lake
+        if: ${{ github.event.inputs.confirm == 'yes' }}
+        working-directory: data-lake
+        run: |
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "No changes to commit; data-lake is already migrated."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "migrate-artifact-kind-$(date -u +%Y%m%dT%H%M%SZ)"
+          git add -A
+          git commit -m "chore: migrate artifact_kind -> artifact_type (additive, step 1 of 2)"
+          git push -u origin HEAD

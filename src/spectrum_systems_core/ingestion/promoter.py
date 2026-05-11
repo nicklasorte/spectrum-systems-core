@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
+from spectrum_systems_core.governance.artifact_validator import validate_and_log
+
 
 def _summary_for(payload: Dict[str, Any]) -> str:
     metadata = payload.get("metadata", {}) or {}
@@ -35,6 +37,7 @@ class _LocalDataLake:
     def store(self, artifact: Dict[str, Any]) -> str:
         self.root.mkdir(parents=True, exist_ok=True)
         artifact_id = artifact["artifact_id"]
+        validate_and_log(artifact, schema_path=str(self.root / f"{artifact_id}.json"))
         out = self.root / f"{artifact_id}.json"
         out.write_text(
             json.dumps(artifact, indent=2, sort_keys=True) + "\n",
@@ -93,6 +96,7 @@ class Promoter:
                     }
                 lake = _LocalDataLake(Path(sdl_root).resolve())
 
+            validate_and_log(source_record, schema_path="promoter.promote")
             sdl_ref = lake.store(source_record)
             if not isinstance(sdl_ref, str) or not sdl_ref.startswith("sdl://"):
                 sdl_ref = f"sdl://{source_record['artifact_id']}"
