@@ -252,11 +252,15 @@ def run_typed_extraction(
     force: bool = False,
     api_callers: Optional[Dict[str, Callable[[str], Dict[str, Any]]]] = None,
     glossary_manager: Optional[GlossaryManager] = None,
+    max_chunks: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Run the typed-extraction pipeline for one source_id.
 
     Returns ``{"status": "success"|"skipped"|"failure", ...}``.
     Never raises.
+
+    ``max_chunks`` limits classification + extraction to the first N chunks
+    of ``chunks.jsonl``. Used by the PR smoke test to bound API calls.
     """
     if not source_id:
         return {"status": "failure", "reason": "source_id_required"}
@@ -297,6 +301,18 @@ def run_typed_extraction(
             "status": "failure",
             "reason": f"chunks_jsonl_empty:source_id={source_id}",
         }
+
+    if max_chunks is not None and max_chunks >= 0 and len(chunks) > max_chunks:
+        _LOG.info(
+            "smoke_test_mode: classifying first %d of %d chunks",
+            max_chunks,
+            len(chunks),
+        )
+        print(
+            f"smoke_test_mode: classifying first {max_chunks} of {len(chunks)} chunks",
+            flush=True,
+        )
+        chunks = chunks[:max_chunks]
 
     available_turn_ids: Set[str] = set()
     for c in chunks:
