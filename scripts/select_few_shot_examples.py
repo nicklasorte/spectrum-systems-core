@@ -88,10 +88,17 @@ def _select_candidates_from_decisions(
 ) -> List[Tuple[str, Dict[str, Any]]]:
     """Return up to 3 (outcome, decision) tuples — one per outcome.
 
-    Within each outcome bucket we choose the highest-confidence
-    decision that has ``grounding_verified is True`` when the field is
-    present; ties are broken by source_turn_ids (lexicographic) for
+    Within each outcome bucket we choose the GROUNDED decision with the
+    highest confidence (grounded examples are always preferred over
+    ungrounded ones even when the ungrounded candidate has higher
+    confidence). Ties are broken by source_turn_ids (lexicographic) for
     determinism.
+
+    Codex P2 fix: the previous key ordered by confidence first, so an
+    ungrounded high-confidence decision could beat a grounded
+    lower-confidence one. Few-shot examples MUST prioritise grounding
+    because the prompt teaches the model to copy structure, not to
+    invent it.
     """
     buckets: Dict[str, List[Dict[str, Any]]] = {o: [] for o in TARGET_OUTCOMES}
     for d in decisions or []:
@@ -108,8 +115,8 @@ def _select_candidates_from_decisions(
             continue
         items.sort(
             key=lambda d: (
-                -float(d.get("confidence") or 0.0),
                 0 if d.get("grounding_verified") is True else 1,
+                -float(d.get("confidence") or 0.0),
                 ",".join(sorted(str(s) for s in (d.get("source_turn_ids") or []))),
             )
         )

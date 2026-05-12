@@ -315,10 +315,27 @@ class EvalRunner:
         # baseline_type + baseline_scope -- record them when we are
         # installing a baseline so the operator can distinguish a
         # development from a production baseline.
-        gate_decision["baseline_type"] = (
-            "development" if (becoming_baseline and source_id_filter)
-            else ("production" if becoming_baseline else None)
-        )
+        #
+        # Codex P2 fix: on a non-baseline run, derive baseline_type from
+        # the existing baseline's baseline_scope so a reader of
+        # gate_decision can still answer "what kind of baseline is this
+        # regression compared against?". Previous behaviour wrote
+        # baseline_type=null on every non-baseline run, losing that
+        # signal the moment the first baseline-setting run finished.
+        if becoming_baseline:
+            gate_decision["baseline_type"] = (
+                "development" if source_id_filter else "production"
+            )
+        elif baseline_summary is not None:
+            prior_scope = baseline_summary.get("baseline_scope")
+            if prior_scope == "single_transcript":
+                gate_decision["baseline_type"] = "development"
+            elif prior_scope == "full_corpus":
+                gate_decision["baseline_type"] = "production"
+            else:
+                gate_decision["baseline_type"] = None
+        else:
+            gate_decision["baseline_type"] = None
         gate_decision["baseline_scope"] = baseline_scope
 
         # Single write of eval_summary, with the gate verdict baked in.

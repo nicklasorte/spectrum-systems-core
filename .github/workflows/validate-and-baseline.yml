@@ -1,0 +1,309 @@
+name: Validate and baseline (single transcript)
+
+# Phase X2.7 + follow-up — mobile workflow (step 5 of 5).
+# End-to-end validation for a single transcript. On push to main that
+# touches the extraction / glossary / evals surface, OR on manual
+# workflow_dispatch, this workflow:
+#
+#   1. Runs the typed-extraction pipeline for the single transcript.
+#   2. Verifies the 5 Phase W wiring signals are green.
+#   3. Calls `eval-ground-truth --set-baseline --specific-source-id`.
+#   4. Commits the resulting baseline_eval_summary back to data-lake.
+#
+# Guards:
+#   * The baseline commit message contains BOTH `[skip ci]` (which
+#     GitHub Actions honors to suppress workflow_runs) AND
+#     `[baseline-commit]` (which the early-exit step here checks
+#     defensively in case GitHub's skip-ci behavior changes).
+#   * The early-exit step also short-circuits when
+#     `SKIP_BASELINE_WORKFLOW=true` is set as a repository variable
+#     so an operator can mute this workflow without editing the YAML.
+#
+# Out of scope: this is the SINGLE-transcript baseline (a "development"
+# baseline). The full-corpus / "production" baseline is set after all
+# 13 transcripts have run, via the same CLI without
+# `--specific-source-id`.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/spectrum_systems_core/extraction/**'
+      - 'src/spectrum_systems_core/glossary/**'
+      - 'src/spectrum_systems_core/evals/**'
+      - 'src/spectrum_systems_core/agenda/**'
+      - 'data-lake/store/artifacts/glossary/**'
+      - 'data-lake/store/artifacts/evals/few_shot/**'
+  workflow_dispatch:
+    inputs:
+      source_id:
+        description: 'source_id to validate + baseline'
+        required: false
+        default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
+      force_baseline:
+        description: 'Pass --set-baseline even when wiring signals fail (override)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      enable_judge:
+        description: 'Run LLM-as-judge during this validation'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: read
+
+env:
+  TARGET_SOURCE_ID: ${{ github.event.inputs.source_id || '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218' }}
+  FORCE_BASELINE: ${{ github.event.inputs.force_baseline || 'false' }}
+  JUDGE_ENABLED: ${{ github.event.inputs.enable_judge || 'false' }}
+
+jobs:
+  early-exit-check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - name: Check skip guards
+        id: check
+        run: |
+          # Two guards: [baseline-commit] in HEAD message OR explicit
+          # SKIP_BASELINE_WORKFLOW variable. If GitHub's skip-ci tag is
+          # ever ignored, this still prevents an infinite loop because
+          # the baseline commit itself carries [baseline-commit].
+          if [ "${SKIP_BASELINE_WORKFLOW:-false}" = "true" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::SKIP_BASELINE_WORKFLOW is true; exiting."
+            exit 0
+          fi
+          MSG="${{ github.event.head_commit.message }}"
+          case "$MSG" in
+            *"[baseline-commit]"*)
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "::notice::HEAD is a baseline commit; exiting to break loops."
+              exit 0
+              ;;
+          esac
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+        env:
+          SKIP_BASELINE_WORKFLOW: ${{ vars.SKIP_BASELINE_WORKFLOW }}
+
+  validate-and-baseline:
+    needs: early-exit-check
+    if: needs.early-exit-check.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    env:
+      DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+      SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
+      PIPELINE_RUN_ID: ${{ github.run_id }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Checkout data-lake
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.DATA_LAKE_REPO }}
+          token: ${{ secrets.GH_PAT }}
+          path: data-lake
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install anthropic
+
+      # ------------------------------------------------------------------
+      # 1. Run the extraction pipeline for the single transcript.
+      # ------------------------------------------------------------------
+      - name: Run pipeline for target transcript
+        run: |
+          python -m spectrum_systems_core.cli run-pipeline \
+            --data-lake "${DATA_LAKE_PATH}" \
+            --specific-source-id "${TARGET_SOURCE_ID}" \
+            --force
+
+      # ------------------------------------------------------------------
+      # 2. Verify the 5 wiring signals (X2.7 success criterion).
+      # ------------------------------------------------------------------
+      - name: Verify Phase W wiring signals
+        id: verify
+        run: |
+          set -euo pipefail
+          python <<'PY'
+          import json, os, pathlib, sys
+
+          sdl = pathlib.Path(os.environ["SDL_ROOT"])
+          source = os.environ["TARGET_SOURCE_ID"]
+          report = {
+              "agenda_item_id_nonnull": False,
+              "few_shot_present_with_verified": False,
+              "glossary_terms_injected_present": False,
+              "binding_taxonomy_present": False,
+              "generalization_check_ran": False,
+          }
+
+          # 1) agenda_item_id non-null on chunks.jsonl
+          chunks_path = sdl.parent.parent / "store" / "processed" / "meetings" / source / "stories" / "chunks.jsonl"
+          if chunks_path.is_file():
+              with chunks_path.open() as fh:
+                  for line in fh:
+                      try:
+                          c = json.loads(line)
+                      except Exception:
+                          continue
+                      if isinstance(c.get("agenda_item_id"), str) and c["agenda_item_id"]:
+                          report["agenda_item_id_nonnull"] = True
+                          break
+
+          # 2) decision_examples_v1.json present + >=1 verified example
+          fewshot = sdl / "evals" / "few_shot" / "decision_examples_v1.json"
+          if fewshot.is_file():
+              doc = json.loads(fewshot.read_text())
+              examples = doc.get("examples") or []
+              if any(isinstance(ex, dict) and ex.get("verified") is True for ex in examples):
+                  report["few_shot_present_with_verified"] = True
+
+          # 3) glossary_terms_injected on at least one chunk record
+          extr_dir = sdl / "extractions"
+          if extr_dir.is_dir():
+              for path in extr_dir.glob("*.json"):
+                  try:
+                      doc = json.loads(path.read_text())
+                  except Exception:
+                      continue
+                  if doc.get("source_id") != source:
+                      continue
+                  for rec in doc.get("chunk_extraction_records") or []:
+                      if isinstance(rec, dict) and isinstance(rec.get("glossary_terms_injected"), list):
+                          report["glossary_terms_injected_present"] = True
+                          break
+
+          # 4) regulatory_verb (or decision_outcome) present on >=1 decision
+          if extr_dir.is_dir():
+              for path in extr_dir.glob("*.json"):
+                  try:
+                      doc = json.loads(path.read_text())
+                  except Exception:
+                      continue
+                  if doc.get("source_id") != source:
+                      continue
+                  for d in doc.get("decisions") or []:
+                      if isinstance(d, dict) and (
+                          isinstance(d.get("regulatory_verb"), str)
+                          or isinstance(d.get("decision_outcome"), str)
+                      ):
+                          report["binding_taxonomy_present"] = True
+                          break
+
+          # 5) scope_overgeneralization_count present on orchestration_result
+          orch_dir = sdl / "orchestration"
+          if orch_dir.is_dir():
+              for path in orch_dir.glob("*.json"):
+                  try:
+                      doc = json.loads(path.read_text())
+                  except Exception:
+                      continue
+                  if doc.get("source_id") != source:
+                      continue
+                  if "scope_overgeneralization_count" in doc:
+                      report["generalization_check_ran"] = True
+                      break
+
+          all_green = all(report.values())
+          summary = "\n".join(f"- {k}: {'OK' if v else 'MISSING'}" for k, v in report.items())
+          print("Phase W wiring signals:")
+          print(summary)
+          gh_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if gh_summary:
+              with open(gh_summary, "a") as fh:
+                  fh.write("## Phase W wiring signals\n\n")
+                  fh.write(summary)
+                  fh.write("\n")
+          if not all_green and os.environ.get("FORCE_BASELINE") != "true":
+              sys.exit(1)
+          if not all_green:
+              print(
+                  "::warning::FORCE_BASELINE=true; continuing despite "
+                  "missing wiring signals (operator override)."
+              )
+          PY
+
+      # ------------------------------------------------------------------
+      # 3. Set the baseline (only when all 5 signals are green OR
+      #    force_baseline=true).
+      # ------------------------------------------------------------------
+      - name: Set development baseline
+        run: |
+          python -m spectrum_systems_core.cli eval-ground-truth \
+            --data-lake "${DATA_LAKE_PATH}" \
+            --set-baseline \
+            --specific-source-id "${TARGET_SOURCE_ID}"
+
+      # ------------------------------------------------------------------
+      # 4. Commit baseline artifacts back to the data-lake.
+      # ------------------------------------------------------------------
+      - name: Commit baseline artifacts
+        if: success()
+        working-directory: data-lake
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add store/artifacts/evals/ store/artifacts/health/
+          if git diff --staged --quiet; then
+            echo "No baseline artifact changes to commit."
+            exit 0
+          fi
+          # IMPORTANT: BOTH [skip ci] and [baseline-commit] go in the
+          # message. [skip ci] is the standard GitHub Actions guard;
+          # [baseline-commit] is the secondary guard that the
+          # early-exit-check job inspects defensively in case GitHub's
+          # behavior changes.
+          git commit -m "baseline: development baseline for ${TARGET_SOURCE_ID} [skip ci] [baseline-commit]"
+          attempt=0
+          delay=2
+          while [ $attempt -lt 5 ]; do
+            attempt=$((attempt+1))
+            git rebase --abort 2>/dev/null || true
+            git fetch origin main
+            if git pull --rebase origin main && git push origin HEAD:main; then
+              echo "Push succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Push attempt $attempt failed; sleeping ${delay}s..."
+            sleep $delay
+            delay=$((delay*2))
+          done
+          echo "::error::Failed to push baseline artifacts after 5 attempts"
+          exit 1
+
+      # ------------------------------------------------------------------
+      # Step summary -- single-page operator view.
+      # ------------------------------------------------------------------
+      - name: Append step summary
+        if: always()
+        run: |
+          {
+            echo "## Validate-and-baseline result"
+            echo ""
+            echo "Target source: \`${TARGET_SOURCE_ID}\`"
+            echo "Force baseline: \`${FORCE_BASELINE}\`"
+            echo "Judge enabled: \`${JUDGE_ENABLED}\`"
+            echo ""
+            echo "After this workflow merges, the development baseline"
+            echo "is set. The gate_decision artifact carries"
+            echo "\`baseline_type: development\`."
+          } >> "$GITHUB_STEP_SUMMARY"

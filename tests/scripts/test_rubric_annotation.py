@@ -168,6 +168,61 @@ def test_main_no_candidates_returns_nonzero(tmp_path: Path) -> None:
     assert rc == 2
 
 
+# --- Codex P1 fix: --source-id filter on production-shaped pairs ----
+
+
+def test_filter_matches_production_source_artifact_id(tmp_path: Path) -> None:
+    """A pair whose ONLY source field is ``source_artifact_id`` (the
+    canonical production field) must be returned when --source-id
+    matches that value. Regression test for the Codex P1 finding."""
+    sdl_root = tmp_path / "store" / "artifacts"
+    _seed_gt_pair(
+        sdl_root, "55555555-5555-4555-5555-555555555555",
+        target_type="decision",
+    )  # _base_pair sets source_artifact_id="src-001" and no fixture_source_id
+    matched = annotate_rubric.list_candidates(sdl_root, source_id="src-001")
+    assert len(matched) == 1
+    assert matched[0]["source_artifact_id"] == "src-001"
+
+
+def test_filter_matches_fixture_source_id_when_present(tmp_path: Path) -> None:
+    """Fixture pairs that carry an additional ``fixture_source_id`` field
+    can still be filtered by that field. Both source-id fields are honoured."""
+    sdl_root = tmp_path / "store" / "artifacts"
+    _seed_gt_pair(
+        sdl_root, "66666666-6666-4666-6666-666666666666",
+        target_type="decision",
+        fixture_source_id="fixture-meeting-002",
+    )
+    matched = annotate_rubric.list_candidates(
+        sdl_root, source_id="fixture-meeting-002",
+    )
+    assert len(matched) == 1
+
+
+def test_unknown_source_id_returns_helpful_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Filter with a typo'd source_id must exit non-zero AND print the
+    available identifiers — never silently return zero pairs. Codex P1."""
+    sdl_root = tmp_path / "store" / "artifacts"
+    _seed_gt_pair(
+        sdl_root, "77777777-7777-4777-7777-777777777777",
+        target_type="decision",
+    )
+    rc = annotate_rubric.main([
+        "--data-lake", str(tmp_path),
+        "--source-id", "not-a-real-source-id",
+    ])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "not-a-real-source-id" in err
+    assert "matched 0 ground truth pairs" in err
+    # The error must point the operator at what IS available.
+    assert "Available source identifiers" in err
+    assert "src-001" in err
+
+
 # --- judge calibration uses rubric_notes -----------------------
 
 

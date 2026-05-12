@@ -639,6 +639,95 @@ the rubric annotation is a ground-truth labeling decision, and the
 operator running steps 3 + 4 needs to confirm the baseline matches
 expectations before promoting to production.
 
+## Phase X2 follow-up — Codex fixes, agenda wiring, mobile workflows
+
+### Codex bug fixes shipped with the follow-up
+
+1. **`scripts/annotate_rubric.py` `--source-id` filter.** Production GT
+   pairs only carry `source_artifact_id` (per
+   `contracts/schemas/ingestion/ground_truth_pair.schema.json`);
+   fixture pairs may additionally carry `fixture_source_id`. The
+   filter accepts a match against ANY value in `_SOURCE_ID_FIELDS`.
+   When the filter matches zero pairs the CLI prints a helpful error
+   listing available identifiers and exits non-zero — never silently
+   returns empty results.
+2. **`gate_decision.baseline_type` preserved across runs.** Previously
+   only set when `becoming_baseline` was true, so subsequent
+   non-baseline runs wrote `null` and lost the dev/prod label. The
+   runner now derives `baseline_type` from the existing baseline's
+   `baseline_scope` (`single_transcript` → `development`,
+   `full_corpus` → `production`) on every non-baseline run.
+3. **Few-shot selection prioritises grounding over confidence.**
+   `scripts/select_few_shot_examples.py::_select_candidates_from_decisions`
+   sorts by grounding-first, then confidence-desc, then
+   source_turn_ids. A grounded mid-confidence decision now beats an
+   ungrounded high-confidence one in the same outcome bucket.
+
+### Agenda detector wired into the chunker
+
+Phase X2.1 shipped `extraction/heuristic_agenda_detector.py` but
+deferred the live-pipeline integration. The follow-up wires it in. The
+chunker call order is now mandatory and explicit:
+
+```
+merge_short_chunks
+  -> split_oversized_chunks
+  -> merge_short_chunks (re-merge if split fired)
+  -> assign_chunk_positions
+  -> assign_agenda_item_ids   # <-- Phase X2 follow-up; MUST be last
+```
+
+`agenda_item_id` is a non-empty string on every chunk after the
+detector runs (either an `AI-NNN` id or the literal string
+`"unclassified"`). When `AGENDA_DETECTION_ENABLED=false`, the
+chunker skips the wiring entirely and the field is absent — that is
+the documented rollback path back to pre-X2 behaviour. The chunker
+also writes the detected `agenda_items` list to
+`source_record.payload.agenda_items` so downstream readers can map
+ids back to titles.
+
+### `--force` flag on `verify_example.py`
+
+`verify_example.py` refuses to run when `ANTHROPIC_API_KEY` is set in
+the environment unless `--force` is also passed. The flag exists for
+use in controlled GitHub Actions contexts (specifically the
+`verify-few-shot-example.yml` mobile workflow) where the secret is
+exported globally but the workflow itself is the human-approved
+review action. **The `--force` flag is for use in controlled GitHub
+Actions contexts only**; CLI invocations must not pass it.
+
+### Mobile workflow_dispatch workflows (phone sequence)
+
+The five mobile workflows let an operator drive the post-merge
+human-only steps from a phone with no laptop. Run them in this
+order — the next step always consumes an id printed by the prior
+step's step-summary, so a copy-paste loop is sufficient:
+
+1. **`select-few-shot-candidates.yml`** — auto-select up to N decision
+   candidates for `source_id`, write them to
+   `decision_examples_v1.json` with `verified: false`, and print each
+   `example_id` plus decision text in the step summary.
+2. **`verify-few-shot-example.yml`** — given an `example_id` plus
+   `reviewer_id`, decision (`approve` / `reject`), and notes, set
+   `verified: true` (or record a rejection in the audit log) and
+   commit. Passes `--force` to `verify_example.py` because the secret
+   is present in the Actions environment.
+3. **`annotate-gt-rubric.yml`** — auto-classify the rubric for every
+   GT pair under `source_id` using `OUTCOME_TO_VERBS` from
+   `config/taxonomy.py` (no API key). Posts a proposals table.
+4. **`confirm-rubric-annotations.yml`** — rubber-stamp the
+   auto-classification with `reviewer_id`, or override a single pair
+   via `override_pair_id` + `override_outcome`. Commits.
+5. **`validate-and-baseline.yml`** — runs the extraction pipeline,
+   verifies the 5 Phase W wiring signals, and calls
+   `eval-ground-truth --set-baseline --specific-source-id`. Carries
+   both `[skip ci]` and `[baseline-commit]` early-exit guards.
+
+Secret policy: only `validate-and-baseline.yml` references
+`secrets.ANTHROPIC_API_KEY` (it runs the actual extraction). The
+other four workflows operate on existing artifacts and must NOT pull
+the secret into their job env.
+
 ## Files worth reading before non-trivial changes
 
 - `docs/architecture/system_constitution.md` — binding; precedence over everything else.

@@ -33,7 +33,7 @@ import datetime
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # Outcomes we ALWAYS want representation for, in priority order.
 # Selecting balanced examples (5 per bucket by default) makes the
@@ -152,6 +152,26 @@ def apply_annotations_from_file(
     return applied
 
 
+# Fields a GT pair may carry that identify its source. Order matters
+# only for diagnostic listings; the filter accepts a match against any
+# of them. ``source_artifact_id`` is the production-schema field
+# (see contracts/schemas/ingestion/ground_truth_pair.schema.json);
+# ``fixture_source_id`` is set on test fixtures so fixture pairs can be
+# filtered by their human-readable meeting id rather than the opaque
+# artifact id.
+_SOURCE_ID_FIELDS: Tuple[str, ...] = ("source_artifact_id", "fixture_source_id")
+
+
+def _pair_source_ids(pair: Dict[str, Any]) -> List[str]:
+    """Return the non-empty string values of every source_id-like field."""
+    out: List[str] = []
+    for key in _SOURCE_ID_FIELDS:
+        val = pair.get(key)
+        if isinstance(val, str) and val:
+            out.append(val)
+    return out
+
+
 def list_candidates(
     sdl_root: Path,
     *,
@@ -162,6 +182,11 @@ def list_candidates(
 
     Filters to ``target_type == "decision"`` when present. Balances
     across decision_outcome buckets per ``DEFAULT_BUCKET_LIMIT``.
+
+    When ``source_id`` is given, a pair matches when ANY of its
+    ``_SOURCE_ID_FIELDS`` equals the filter. Production pairs only carry
+    ``source_artifact_id`` (per the schema); fixture pairs may also
+    carry ``fixture_source_id`` for human-readable filtering.
     """
     pairs_dir = sdl_root / "ground_truth"
     if not pairs_dir.is_dir():
@@ -171,14 +196,29 @@ def list_candidates(
         pair = _load_pair(path)
         if pair is None:
             continue
-        if source_id and pair.get("fixture_source_id") != source_id and (
-            pair.get("source_artifact_id") != source_id
-        ):
+        if source_id and source_id not in _pair_source_ids(pair):
             continue
         if pair.get("target_type") not in (None, "decision"):
             continue
         out.append(pair)
     return out[:limit]
+
+
+def _all_source_ids_seen(sdl_root: Path) -> List[str]:
+    """Return the sorted set of every source_id-like value present in
+    the ground_truth/ directory. Used only for the helpful error
+    message when ``--source-id`` matches zero pairs."""
+    pairs_dir = sdl_root / "ground_truth"
+    if not pairs_dir.is_dir():
+        return []
+    seen: set = set()
+    for path in sorted(pairs_dir.glob("*.json")):
+        pair = _load_pair(path)
+        if pair is None:
+            continue
+        for sid in _pair_source_ids(pair):
+            seen.add(sid)
+    return sorted(seen)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -212,6 +252,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         sdl_root, source_id=args.source_id, limit=args.limit,
     )
     if not candidates:
+        if args.source_id:
+            # Codex P1 fix: never silently return empty when --source-id
+            # is provided. Surface the available identifiers so the
+            # operator can spot a typo or wrong dataset immediately.
+            seen = _all_source_ids_seen(sdl_root)
+            preview = seen[:5] if seen else []
+            print(
+                f"ERROR: --source-id '{args.source_id}' matched 0 ground "
+                f"truth pairs.\n"
+                f"Available source identifiers in GT pairs: {preview}",
+                file=sys.stderr,
+            )
+            return 2
         print(
             "no annotatable ground_truth decision pairs found "
             f"under {sdl_root / 'ground_truth'}",
