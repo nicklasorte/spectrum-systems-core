@@ -1,0 +1,269 @@
+"""Phase R.2: binding validation on multi-property tuples.
+
+Tan & D'Souza (IRCDL 2026): LLMs degrade sharply when binding multiple
+properties (actor + verb + object + band) to a single entity. For
+spectrum-policy work the difference between "considered" / "approved" /
+"deferred" is load-bearing, so a decision that fails to bind the
+regulatory verb has to surface as a warning even when it passes the
+required-field check.
+
+Binding validation is fail-OPEN: it never halts a chunk. Failed bindings
+emit a ``binding_warning`` artifact (forensic record) and add a
+``binding_valid=false`` annotation to the decision so downstream
+consumers can filter.
+"""
+from __future__ import annotations
+
+import datetime
+import json
+import logging
+import uuid
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+
+_LOG = logging.getLogger(__name__)
+
+
+REQUIRED_DECISION_FIELDS: tuple = (
+    "decision_text",
+    "decision_type",
+    "stakeholders",
+    "source_turns",
+)
+
+REGULATORY_VERBS: tuple = (
+    "approved", "rejected", "deferred", "noted", "required",
+    "recommended", "prohibited", "authorized", "designated",
+)
+
+
+def _now_iso() -> str:
+    return (
+        datetime.datetime.now(datetime.timezone.utc)
+        .strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    )
+
+
+def _count_regulatory_verbs(text: str) -> int:
+    """Count case-insensitive whole-word regulatory-verb occurrences.
+
+    Whole-word match (bounded by non-letter chars) so "approved" does
+    not also fire on "disapproved" or compound words. Counts distinct
+    verb types, not occurrences -- two mentions of the same verb is
+    one binding signal.
+    """
+    if not isinstance(text, str) or not text:
+        return 0
+    lowered = text.lower()
+    found: set = set()
+    for verb in REGULATORY_VERBS:
+        # Build a manual word-boundary check that does not require regex.
+        start = 0
+        while True:
+            idx = lowered.find(verb, start)
+            if idx < 0:
+                break
+            before_ok = idx == 0 or not lowered[idx - 1].isalpha()
+            after_idx = idx + len(verb)
+            after_ok = (
+                after_idx == len(lowered) or not lowered[after_idx].isalpha()
+            )
+            if before_ok and after_ok:
+                found.add(verb)
+                break
+            start = idx + 1
+    return len(found)
+
+
+def validate_decision_binding(decision: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate the binding of a single decision item.
+
+    Returns::
+
+        {
+          "binding_valid": bool,        # all required fields present + non-empty
+          "regulatory_verb_count": int,
+          "regulatory_verb_found": bool,
+          "binding_weak": bool,         # zero regulatory verbs
+          "binding_ambiguous": bool,    # >1 distinct regulatory verbs
+          "missing_fields": [str, ...],
+          "warnings": [str, ...],
+        }
+
+    The schema defers to the *outer* typed_extraction schema for
+    decision field names: ``source_turn_ids`` in the schema maps to
+    ``source_turns`` in this validator's REQUIRED list. We accept either
+    spelling so the validator can run before or after the extraction
+    merger normalises field names.
+    """
+    if not isinstance(decision, dict):
+        return {
+            "binding_valid": False,
+            "regulatory_verb_count": 0,
+            "regulatory_verb_found": False,
+            "binding_weak": True,
+            "binding_ambiguous": False,
+            "missing_fields": list(REQUIRED_DECISION_FIELDS),
+            "warnings": ["decision_not_a_dict"],
+        }
+
+    missing: List[str] = []
+    for field in REQUIRED_DECISION_FIELDS:
+        if field == "source_turns":
+            # The extraction merger writes ``source_turn_ids``; accept
+            # either spelling.
+            value = decision.get("source_turns")
+            if value is None:
+                value = decision.get("source_turn_ids")
+        else:
+            value = decision.get(field)
+        if value is None:
+            missing.append(field)
+            continue
+        if isinstance(value, (list, tuple)) and len(value) == 0:
+            missing.append(field)
+            continue
+        if isinstance(value, str) and not value.strip():
+            missing.append(field)
+            continue
+
+    text = decision.get("decision_text") or ""
+    verb_count = _count_regulatory_verbs(text)
+    binding_weak = verb_count == 0
+    binding_ambiguous = verb_count > 1
+    regulatory_verb_found = verb_count == 1
+
+    warnings: List[str] = []
+    if missing:
+        warnings.append(f"missing_required_fields:{','.join(missing)}")
+    if binding_weak:
+        warnings.append("binding_weak:zero_regulatory_verbs")
+    if binding_ambiguous:
+        warnings.append(f"binding_ambiguous:{verb_count}_regulatory_verbs")
+
+    return {
+        "binding_valid": not missing,
+        "regulatory_verb_count": verb_count,
+        "regulatory_verb_found": regulatory_verb_found,
+        "binding_weak": binding_weak,
+        "binding_ambiguous": binding_ambiguous,
+        "missing_fields": missing,
+        "warnings": warnings,
+    }
+
+
+def build_binding_warning(
+    decision: Dict[str, Any],
+    result: Dict[str, Any],
+    *,
+    source_id: str,
+    extraction_run_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a binding_warning artifact for a decision that flunked.
+
+    The artifact is a *warning* — not a halt — so the orchestrator does
+    NOT bump a blocked-chunk counter. It is emitted into the eval
+    summary so the operator can spot extraction quality drift.
+    """
+    return {
+        "artifact_type": "binding_warning",
+        "schema_version": "1.0.0",
+        "binding_warning_id": str(uuid.uuid4()),
+        "source_id": source_id or "",
+        "extraction_run_id": extraction_run_id or "",
+        "decision_text": str(decision.get("decision_text") or "")[:1000],
+        "decision_type": decision.get("decision_type") or "",
+        "binding_valid": bool(result.get("binding_valid")),
+        "regulatory_verb_count": int(result.get("regulatory_verb_count", 0)),
+        "binding_weak": bool(result.get("binding_weak")),
+        "binding_ambiguous": bool(result.get("binding_ambiguous")),
+        "missing_fields": list(result.get("missing_fields") or []),
+        "warnings": list(result.get("warnings") or []),
+        "created_at": _now_iso(),
+    }
+
+
+def annotate_and_collect_warnings(
+    decisions: List[Dict[str, Any]],
+    *,
+    source_id: str,
+    extraction_run_id: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Run binding validation across every decision in the list.
+
+    Each decision is annotated in-place with a ``binding_valid`` flag
+    plus the supporting fields (``regulatory_verb_count`` etc.) and a
+    list of ``binding_warning`` artifacts is built for every decision
+    whose validation produced any warning string.
+
+    Returns ``(annotated_decisions, binding_warnings)``. The caller
+    decides where to persist the warnings (eval_summary, on-disk
+    artifacts, etc.). The decision objects are NOT removed -- binding
+    is a warning, not a halt.
+    """
+    annotated: List[Dict[str, Any]] = []
+    warnings: List[Dict[str, Any]] = []
+    for d in decisions or []:
+        result = validate_decision_binding(d)
+        out = dict(d) if isinstance(d, dict) else {}
+        out["binding_valid"] = bool(result["binding_valid"])
+        out["regulatory_verb_count"] = int(result["regulatory_verb_count"])
+        out["binding_weak"] = bool(result["binding_weak"])
+        out["binding_ambiguous"] = bool(result["binding_ambiguous"])
+        annotated.append(out)
+        if result["warnings"]:
+            warnings.append(
+                build_binding_warning(
+                    d if isinstance(d, dict) else {},
+                    result,
+                    source_id=source_id,
+                    extraction_run_id=extraction_run_id,
+                )
+            )
+    return annotated, warnings
+
+
+def write_binding_warnings(
+    warnings: List[Dict[str, Any]],
+    sdl_root: Optional[Path],
+) -> List[Path]:
+    """Persist binding_warning artifacts under ``<sdl_root>/binding/``.
+
+    Failure to write is logged but never raised. The warnings list
+    itself is the durable signal -- callers carry it into the eval
+    summary regardless of whether disk write succeeded.
+    """
+    if not warnings or sdl_root is None:
+        return []
+    target_dir = Path(sdl_root) / "binding"
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _LOG.warning("binding_warning_dir_create_failed: %s", exc)
+        return []
+    out: List[Path] = []
+    for w in warnings:
+        path = target_dir / f"{w['binding_warning_id']}.json"
+        try:
+            path.write_text(
+                json.dumps(w, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            out.append(path)
+        except OSError as exc:
+            _LOG.warning(
+                "binding_warning_write_failed: id=%s err=%s",
+                w["binding_warning_id"], exc,
+            )
+    return out
+
+
+__all__ = [
+    "REGULATORY_VERBS",
+    "REQUIRED_DECISION_FIELDS",
+    "annotate_and_collect_warnings",
+    "build_binding_warning",
+    "validate_decision_binding",
+    "write_binding_warnings",
+]

@@ -14,11 +14,20 @@ Two chunking modes:
 2. Character-count mode (everything else, plus transcripts with no
    detected speaker labels): the previous behaviour — overlapping chunks
    of ``CHUNK_SIZE`` text units with ``OVERLAP`` shared boundary unit.
+
+Phase R.0: After chunks are produced, sub-threshold chunks (text shorter
+than ``MIN_CHUNK_CHARS``) are merged into a neighbour before chunks.jsonl
+is written. This eliminates the 2-68 char chunks that caused pipeline #23
+empty-response failures upstream of guard_empty_response (Phase X). The
+merge pass is bypass-able via ``CHUNK_MERGE_ENABLED=false`` env var.
 """
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
+import logging
+import os
 import re
 import uuid
 from pathlib import Path
@@ -30,8 +39,239 @@ from ..ingestion._paths import schema_path
 from ._paths import find_processed_dir
 
 
+_LOG = logging.getLogger(__name__)
+
+
 CHUNK_SIZE = 8
 OVERLAP = 1
+
+# Phase R.0. Roughly 30-50 tokens per the research synthesis -- well below
+# the 400-512 token recommendation but sufficient to eliminate the 2-68
+# char chunks observed on the 7-ghz-downlink-tig-meeting-kickoff
+# transcript (pipeline #23). Set conservatively so the merge pass only
+# absorbs trivially short turns.
+MIN_CHUNK_CHARS: int = 150
+
+# Env var override knobs. Tests use MIN_CHUNK_CHARS_ENV to crank the
+# threshold; operators use CHUNK_MERGE_ENABLED to flag-off the entire
+# merge pass.
+MIN_CHUNK_CHARS_ENV: str = "MIN_CHUNK_CHARS"
+CHUNK_MERGE_ENABLED_ENV: str = "CHUNK_MERGE_ENABLED"
+_DISABLED_VALUES: frozenset = frozenset({"false", "0", "no", "off"})
+
+
+def _now_iso() -> str:
+    return (
+        datetime.datetime.now(datetime.timezone.utc)
+        .strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    )
+
+
+def _resolve_min_chunk_chars() -> int:
+    """Read MIN_CHUNK_CHARS from env or fall back to the constant.
+
+    A non-integer / negative env var falls back to the module default
+    rather than disabling the merge pass silently.
+    """
+    raw = os.environ.get(MIN_CHUNK_CHARS_ENV, "").strip()
+    if not raw:
+        return MIN_CHUNK_CHARS
+    try:
+        value = int(raw)
+    except ValueError:
+        _LOG.warning(
+            "chunk_merge_min_chars_invalid: %s=%r -> falling back to %d",
+            MIN_CHUNK_CHARS_ENV, raw, MIN_CHUNK_CHARS,
+        )
+        return MIN_CHUNK_CHARS
+    if value < 0:
+        _LOG.warning(
+            "chunk_merge_min_chars_negative: %s=%d -> falling back to %d",
+            MIN_CHUNK_CHARS_ENV, value, MIN_CHUNK_CHARS,
+        )
+        return MIN_CHUNK_CHARS
+    return value
+
+
+def _merge_enabled() -> bool:
+    raw = os.environ.get(CHUNK_MERGE_ENABLED_ENV, "").strip().lower()
+    if raw in _DISABLED_VALUES:
+        return False
+    return True
+
+
+def _agenda_boundary(prev_chunk: Dict[str, Any], next_chunk: Dict[str, Any]) -> bool:
+    """Return True when ``prev`` and ``next`` cross an agenda boundary.
+
+    Phase R.0 rule 4: never merge across a strong agenda-boundary signal.
+    Until Phase W's agenda detector is wired into the chunker (it runs
+    later in the typed_extraction stage), the only available signal is a
+    differing ``agenda_item_id`` set on the chunk. When the field is
+    absent on either side, no boundary is asserted.
+    """
+    a = prev_chunk.get("agenda_item_id")
+    b = next_chunk.get("agenda_item_id")
+    if not isinstance(a, str) or not isinstance(b, str):
+        return False
+    if not a or not b:
+        return False
+    return a != b
+
+
+def merge_short_chunks(
+    chunks: List[Dict[str, Any]],
+    min_chars: Optional[int] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
+    """Merge any chunk below ``min_chars`` into its nearest neighbour.
+
+    Phase R.0. Rules:
+
+    1. Prefer merging with the preceding chunk (same speaker context).
+    2. If no preceding chunk exists, merge with the following chunk.
+    3. After merge, re-check: the merged chunk may now be below threshold
+       if both components were short. Repeat until stable.
+    4. Never merge across an agenda-boundary signal (differing
+       ``agenda_item_id``).
+    5. The merged chunk's speaker is the speaker of the FIRST component.
+    6. The merged chunk's unit_ids is the UNION of both components'
+       unit_ids (set semantics; ordering preserved from prev then next).
+    7. The merged chunk's text is the concatenation with a single
+       ``"\\n"`` separator.
+    8. ``chunk_index`` is rewritten sequentially over the survivors.
+
+    Returns ``(merged_chunks, merge_pairs)``. ``merge_pairs`` records
+    every absorption that happened, in the order it happened.
+    """
+    if min_chars is None:
+        min_chars = _resolve_min_chunk_chars()
+    if min_chars <= 0 or not chunks:
+        # Re-index defensively so callers can rely on contiguous indices.
+        out = [dict(c) for c in chunks]
+        for i, c in enumerate(out):
+            c["chunk_index"] = i
+        return out, []
+
+    # Work on shallow copies so the caller's chunk dicts are not mutated.
+    working: List[Dict[str, Any]] = [dict(c) for c in chunks]
+    pairs: List[Dict[str, str]] = []
+
+    # Iterate to a fixed point. Each pass merges every short chunk into
+    # whichever neighbour the rules dictate; the resulting chunk may
+    # still be short (both components below threshold) -- the outer loop
+    # catches that on the next pass.
+    while True:
+        idx = _first_short(working, min_chars)
+        if idx is None:
+            break
+        # Choose merge partner.
+        prev_idx = idx - 1
+        next_idx = idx + 1
+        partner: Optional[int] = None
+        absorbed = working[idx]
+        if prev_idx >= 0 and not _agenda_boundary(working[prev_idx], absorbed):
+            partner = prev_idx
+        elif next_idx < len(working) and not _agenda_boundary(absorbed, working[next_idx]):
+            partner = next_idx
+        else:
+            # Cannot merge in either direction (agenda boundaries on both
+            # sides or singleton chunk). Leave as-is; the orchestrator's
+            # downstream gates (Phase X guard_empty_response) will catch
+            # the empty response if the model returns nothing.
+            _LOG.info(
+                "chunk_merge_blocked_by_agenda_boundary: chunk_id=%s",
+                absorbed.get("chunk_id"),
+            )
+            break
+
+        if partner < idx:
+            merged = _merge_pair(working[partner], absorbed)
+            pairs.append({
+                "absorbed_chunk_id": str(absorbed.get("chunk_id", "")),
+                "into_chunk_id": str(working[partner].get("chunk_id", "")),
+                "reason": "below_min_chars",
+            })
+            working[partner] = merged
+            working.pop(idx)
+        else:  # partner == idx + 1
+            merged = _merge_pair(absorbed, working[partner])
+            # When merging forward, the survivor keeps the FIRST
+            # component's chunk_id (per rule 5: speaker/identity comes
+            # from the first component).
+            pairs.append({
+                "absorbed_chunk_id": str(working[partner].get("chunk_id", "")),
+                "into_chunk_id": str(absorbed.get("chunk_id", "")),
+                "reason": "below_min_chars",
+            })
+            working[idx] = merged
+            working.pop(partner)
+
+    # Re-index after all merges so the survivor's chunk_index is
+    # contiguous from 0.
+    for i, c in enumerate(working):
+        c["chunk_index"] = i
+    return working, pairs
+
+
+def _first_short(
+    chunks: List[Dict[str, Any]],
+    min_chars: int,
+) -> Optional[int]:
+    """Return the index of the first below-threshold chunk, or None."""
+    for i, c in enumerate(chunks):
+        # char_count is the schema field; fall back to len(text) when
+        # the field is absent (defensive: callers may pass partial dicts
+        # in tests).
+        cc = c.get("char_count")
+        if not isinstance(cc, int):
+            cc = len(c.get("text") or "")
+        if cc < min_chars:
+            return i
+    return None
+
+
+def _merge_pair(
+    prev: Dict[str, Any], nxt: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Combine two adjacent chunks into a single chunk.
+
+    The survivor inherits ``prev``'s identity (chunk_id, speaker,
+    timestamp, source_id, source_family, page_numbers ordering) and
+    accumulates ``nxt``'s content.
+    """
+    merged = dict(prev)
+    prev_text = prev.get("text") or ""
+    next_text = nxt.get("text") or ""
+    merged_text = prev_text + "\n" + next_text if prev_text and next_text else (prev_text or next_text)
+
+    # Union of unit_ids preserving order from prev then nxt; dedupe to
+    # honour the "set" semantics in rule 6.
+    seen: set = set()
+    union_units: List[str] = []
+    for uid in list(prev.get("unit_ids") or []) + list(nxt.get("unit_ids") or []):
+        if uid in seen:
+            continue
+        seen.add(uid)
+        union_units.append(uid)
+
+    # Page numbers: union, sorted ascending (matches existing chunker).
+    pages_seen: set = set()
+    page_union: List[int] = []
+    for p in list(prev.get("page_numbers") or []) + list(nxt.get("page_numbers") or []):
+        if isinstance(p, int) and p not in pages_seen:
+            pages_seen.add(p)
+            page_union.append(p)
+    page_union.sort()
+
+    merged["text"] = merged_text
+    merged["text_hash"] = "sha256:" + _sha256_hex(merged_text.encode("utf-8"))
+    merged["unit_ids"] = union_units
+    merged["unit_count"] = len(union_units)
+    merged["char_count"] = len(merged_text)
+    merged["page_numbers"] = page_union
+    # Speaker / timestamp come from prev per rule 5; nothing to do
+    # because ``merged = dict(prev)`` already carries those keys.
+
+    return merged
 
 # Speaker-label pattern: a single line where a speaker name is separated
 # from a trailing ``HH:MM`` (or ``H:MM``) timestamp by either a tab or
@@ -179,6 +419,20 @@ class Chunker:
                 units, source_id, source_family
             )
 
+        # Phase R.0: merge sub-threshold chunks BEFORE the schema check
+        # and BEFORE chunks.jsonl is written. This is the only point in
+        # the pipeline where the chunks have not yet flowed downstream,
+        # so it is the only place the merge can have an effect (RT1
+        # finding: doing the merge after write is a no-op).
+        original_chunk_count = len(chunks)
+        merge_pairs: List[Dict[str, str]] = []
+        min_chunk_chars_used = _resolve_min_chunk_chars()
+        if _merge_enabled():
+            chunks, merge_pairs = merge_short_chunks(
+                chunks, min_chars=min_chunk_chars_used,
+            )
+        merged_chunk_count = len(chunks)
+
         for chunk in chunks:
             try:
                 validator.validate(chunk)
@@ -198,6 +452,19 @@ class Chunker:
         except OSError as exc:
             return _failure(f"write_error: {exc}")
 
+        # Phase R.0: chunk_merge_summary artifact. Even when the merge
+        # pass is disabled or no chunks were absorbed, we write the
+        # artifact so the run is self-describing (the operator can see
+        # the merge ran and found nothing, vs. the merge was disabled).
+        merge_summary_path = self._write_chunk_merge_summary(
+            processed_dir=processed_dir,
+            source_id=source_id,
+            original_chunk_count=original_chunk_count,
+            merged_chunk_count=merged_chunk_count,
+            merge_pairs=merge_pairs,
+            min_chunk_chars=min_chunk_chars_used,
+        )
+
         # Phase M.4: persist the chunking_strategy back into the
         # source_record so downstream readers (EvalAligner, eval_summary
         # grouping) can attribute coverage/precision to the strategy used.
@@ -212,7 +479,77 @@ class Chunker:
             "chunks": chunks,
             "chunking_strategy": chunking_strategy,
             "reason": "",
+            "original_chunk_count": original_chunk_count,
+            "merged_chunk_count": merged_chunk_count,
+            "chunks_merged": original_chunk_count - merged_chunk_count,
+            "merge_pairs": merge_pairs,
+            "chunk_merge_summary_path": (
+                str(merge_summary_path) if merge_summary_path else ""
+            ),
         }
+
+    # -- chunk_merge_summary artifact (Phase R.0) ------------------------
+
+    def _write_chunk_merge_summary(
+        self,
+        *,
+        processed_dir: Path,
+        source_id: str,
+        original_chunk_count: int,
+        merged_chunk_count: int,
+        merge_pairs: List[Dict[str, str]],
+        min_chunk_chars: int,
+    ) -> Optional[Path]:
+        """Persist the chunk_merge_summary artifact alongside chunks.jsonl.
+
+        Writing it next to ``chunks.jsonl`` keeps the merge bookkeeping
+        co-located with the chunks the operator inspects when triaging a
+        run. Failure to write is non-fatal: chunks.jsonl is the canonical
+        output, the summary is a forensic mirror.
+        """
+        artifact = {
+            "artifact_type": "chunk_merge_summary",
+            "schema_version": "1.0.0",
+            "source_id": source_id,
+            "min_chunk_chars": int(min_chunk_chars),
+            "original_chunk_count": int(original_chunk_count),
+            "merged_chunk_count": int(merged_chunk_count),
+            "chunks_merged": int(original_chunk_count - merged_chunk_count),
+            "merge_pairs": list(merge_pairs),
+            "created_at": _now_iso(),
+        }
+        # Validate via the central gate so a malformed summary cannot
+        # silently ship. Validation failures are logged but never raise
+        # -- the chunks themselves are the durable signal.
+        try:
+            from ..validation import (
+                ArtifactValidationError,
+                validate_artifact,
+            )
+            try:
+                validate_artifact(artifact, "chunk_merge_summary")
+            except ArtifactValidationError as exc:
+                _LOG.warning(
+                    "chunk_merge_summary_schema_violation: %s", exc,
+                )
+        except ImportError:
+            # Validation module unavailable; continue.
+            pass
+
+        try:
+            out_dir = processed_dir / "stories"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            target = out_dir / "chunk_merge_summary.json"
+            target.write_text(
+                json.dumps(artifact, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            return target
+        except OSError as exc:
+            _LOG.warning(
+                "chunk_merge_summary_write_failed: %s", exc,
+            )
+            return None
 
     # -- character-count mode --------------------------------------------
 
