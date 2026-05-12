@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/health_finding.schema.json",
+  "title": "health_finding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "finding_id",
+    "finding_code",
+    "severity",
+    "pipeline_run_id",
+    "detected_at",
+    "context",
+    "remediation"
+  ],
+  "properties": {
+    "artifact_type": { "const": "health_finding" },
+    "schema_version": { "const": "1.0.0" },
+    "finding_id": { "type": "string", "minLength": 1 },
+    "finding_code": {
+      "type": "string",
+      "enum": [
+        "upstream_failure_eval_blocked",
+        "upstream_failure_eval_invalid",
+        "eval_zero_cause_upstream",
+        "eval_zero_cause_extraction",
+        "feature_flag_missing",
+        "feature_flag_disabled",
+        "eval_pairs_excluded",
+        "stale_artifact_in_bundle",
+        "smoke_test_skipped",
+        "model_registry_drift",
+        "artifact_not_indexed",
+        "no_prior_orchestration_artifact"
+      ]
+    },
+    "severity": { "enum": ["halt", "warn", "info"] },
+    "pipeline_run_id": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "detected_at": { "type": "string", "minLength": 1 },
+    "context": { "type": "object" },
+    "remediation": { "type": "string" }
+  }
+}

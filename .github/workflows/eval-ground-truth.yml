@@ -97,6 +97,34 @@ jobs:
         if: steps.upstream.outputs.is_dry_run != 'true'
         run: pip install -e ".[dev]"
 
+      - name: Upstream health gate (Classes 1+2)
+        if: steps.upstream.outputs.is_dry_run != 'true'
+        id: upstream_gate
+        # Halts the eval step if synthesize failed upstream so the
+        # operator sees "Eval blocked: synthesize failed..." instead of
+        # a misleading 0.000 coverage. Emits a health_finding artifact
+        # to the data-lake under store/artifacts/health/.
+        run: |
+          set -eu
+          PIPELINE_RUN_ID="${{ github.event.inputs.pipeline_run_id }}"
+          if [ -z "$PIPELINE_RUN_ID" ]; then
+            # Fall back to the latest orchestration record's run_id.
+            ORCH_DIR="data-lake/store/artifacts/orchestration"
+            if [ -d "$ORCH_DIR" ]; then
+              LATEST=$(ls -t "$ORCH_DIR"/*.json 2>/dev/null | head -1 || true)
+              if [ -n "$LATEST" ]; then
+                PIPELINE_RUN_ID=$(python -c "import json,sys; d=json.load(open('$LATEST')); print(d.get('run_id') or '')")
+              fi
+            fi
+          fi
+          if [ -z "$PIPELINE_RUN_ID" ]; then
+            echo "no pipeline_run_id resolvable; skipping upstream gate"
+            exit 0
+          fi
+          python -m spectrum_systems_core.health upstream-gate \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            --pipeline-run-id "$PIPELINE_RUN_ID"
+
       - name: Run eval-ground-truth
         if: steps.upstream.outputs.is_dry_run != 'true'
         run: |
