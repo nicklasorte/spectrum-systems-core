@@ -545,7 +545,16 @@ technically.
 
 ### X2.7 — validate-and-baseline GitHub Actions workflow
 
-Workflow: `.github/workflows/validate-and-baseline.yml`.
+Workflow: `.github/workflows/validate-and-baseline.yml` (shipped in a
+**follow-up PR** so the main Phase X2 PR does not trigger GitHub's
+"approve workflows when a PR modifies .github/workflows/" gate —
+which silently blocks `pytest` and `smoke-test` until a maintainer
+clicks approve. The follow-up PR carries the workflow file alone so
+its approval is a separate, scoped decision).
+
+The tests in `tests/ci/test_validate_baseline_workflow.py` skip when
+the workflow file is absent, so the test file is safe to land in
+either PR.
 
 - Triggers: push to main touching extraction / glossary / evals /
   agenda code, OR explicit workflow_dispatch with an optional
