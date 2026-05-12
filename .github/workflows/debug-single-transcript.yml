@@ -1,0 +1,248 @@
+name: Debug single transcript
+
+# Debug-only workflow. Runs the full pipeline + typed extraction against a
+# single short transcript so a parse-failure regression can be reproduced in
+# ~4 minutes instead of waiting on the 13-way parallel matrix in run-pipeline.
+# Not part of the production pipeline chain; trigger manually with
+# `workflow_dispatch` from the Actions tab.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  debug-single-transcript:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+      SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
+      # Change this to debug a different transcript.
+      SOURCE_ID: 7-ghz-downlink-tig-meeting-kickoff---transcript-20251218
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Checkout data-lake
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.DATA_LAKE_REPO }}
+          token: ${{ secrets.GH_PAT }}
+          path: data-lake
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install anthropic
+
+      - name: Run pipeline for single transcript
+        run: |
+          python -m spectrum_systems_core.cli run-pipeline \
+            --force \
+            --specific-source-id "$SOURCE_ID" \
+            --data-lake "$DATA_LAKE_PATH"
+
+      - name: Run typed extraction for single transcript
+        run: |
+          python -m spectrum_systems_core.cli extract-typed \
+            --source-id "$SOURCE_ID" \
+            --data-lake "$DATA_LAKE_PATH" \
+            --force
+
+      - name: Collect and display blocked artifacts
+        id: collect
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          source_id = os.environ["SOURCE_ID"]
+          data_lake = Path(os.environ["DATA_LAKE_PATH"])
+          sdl_root = Path(os.environ["SDL_ROOT"])
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+
+          # Buckets correspond to the spec's reporting table. "other" is the
+          # catch-all so we never lose a blocked artifact even if a new
+          # block_reason prefix is introduced.
+          CATEGORIES = (
+              "json_parse_error",
+              "rate_limit_exhausted",
+              "empty_response",
+              "other",
+          )
+
+          def categorize(reason: str) -> str:
+              if not reason:
+                  return "other"
+              lowered = reason.lower()
+              if "json_parse" in lowered or "parse_error" in lowered:
+                  return "json_parse_error"
+              if "rate_limit" in lowered:
+                  return "rate_limit_exhausted"
+              if "empty_response" in lowered or "empty response" in lowered:
+                  return "empty_response"
+              return "other"
+
+          buckets: dict[str, list[dict]] = {c: [] for c in CATEGORIES}
+          total_attempted = 0
+
+          # 1. story-extractor blocked candidates: written to candidates.jsonl
+          #    with status="blocked" and a block_reason field.
+          processed_root = data_lake / "store" / "processed"
+          if processed_root.is_dir():
+              for family_dir in processed_root.iterdir():
+                  source_dir = family_dir / source_id
+                  if not source_dir.is_dir():
+                      continue
+                  chunks_path = source_dir / "stories" / "chunks.jsonl"
+                  if chunks_path.is_file():
+                      with chunks_path.open("r", encoding="utf-8") as fh:
+                          for line in fh:
+                              if line.strip():
+                                  total_attempted += 1
+                  candidates_path = source_dir / "stories" / "candidates.jsonl"
+                  if not candidates_path.is_file():
+                      continue
+                  with candidates_path.open("r", encoding="utf-8") as fh:
+                      for line in fh:
+                          line = line.strip()
+                          if not line:
+                              continue
+                          try:
+                              record = json.loads(line)
+                          except json.JSONDecodeError:
+                              continue
+                          if record.get("status") != "blocked":
+                              continue
+                          reason = str(record.get("block_reason", ""))
+                          buckets[categorize(reason)].append({
+                              "origin": str(candidates_path),
+                              "record": record,
+                          })
+
+          # 2. typed-extraction failure artifacts: written to
+          #    <sdl_root>/failures/<failure_id>.json. Filter to this source_id.
+          failures_dir = sdl_root / "failures"
+          FAILURE_TYPE_TO_CATEGORY = {
+              "typed_extraction_llm_json_parse_failed": "json_parse_error",
+              "api_rate_limit_exhausted": "rate_limit_exhausted",
+              "extraction_empty_response": "empty_response",
+              "typed_extraction_empty_result": "other",
+          }
+          if failures_dir.is_dir():
+              for path in sorted(failures_dir.glob("*.json")):
+                  try:
+                      record = json.loads(path.read_text(encoding="utf-8"))
+                  except (OSError, json.JSONDecodeError):
+                      continue
+                  if record.get("source_id") != source_id:
+                      continue
+                  artifact_type = str(record.get("artifact_type", ""))
+                  category = FAILURE_TYPE_TO_CATEGORY.get(artifact_type, "other")
+                  buckets[category].append({
+                      "origin": str(path),
+                      "record": record,
+                  })
+
+          total_blocked = sum(len(v) for v in buckets.values())
+
+          def write_lines(lines):
+              text = "\n".join(lines) + "\n"
+              print(text, end="")
+              with summary_path.open("a", encoding="utf-8") as fh:
+                  fh.write(text)
+
+          header = [
+              "## Debug single transcript",
+              "",
+              f"- Source ID: `{source_id}`",
+              f"- Total attempted: {total_attempted}",
+              f"- Total blocked: {total_blocked}",
+              "",
+          ]
+
+          if total_blocked == 0:
+              header.append("[OK] No blocked chunks")
+              write_lines(header)
+          else:
+              header.append(f"[WARN] {total_blocked} chunks blocked")
+              header.append("")
+              header.append("### Blocked Artifact Summary")
+              header.append("")
+              header.append("| block_reason | count |")
+              header.append("| --- | ---: |")
+              for cat in CATEGORIES:
+                  header.append(f"| {cat} | {len(buckets[cat])} |")
+              header.append(f"| **Total blocked** | **{total_blocked}** |")
+              header.append(f"| **Total attempted** | **{total_attempted}** |")
+              header.append("")
+              write_lines(header)
+
+          # Stdout banner (matches the format in the task spec).
+          print("=== Blocked Artifact Summary ===")
+          for cat in CATEGORIES:
+              print(f"{cat:>22}: {len(buckets[cat])} chunks")
+          print(f"Total blocked: {total_blocked} / Total attempted: {total_attempted}")
+          print()
+
+          # First 3 blocked artifacts in full per category.
+          for cat in CATEGORIES:
+              entries = buckets[cat]
+              if not entries:
+                  continue
+              banner = f"--- First {min(3, len(entries))} blocked artifact(s): {cat} ---"
+              print(banner)
+              detail_block = [f"### Examples: `{cat}`", ""]
+              for entry in entries[:3]:
+                  pretty = json.dumps(entry["record"], indent=2, sort_keys=True)
+                  print(f"# origin: {entry['origin']}")
+                  print(pretty)
+                  print()
+                  detail_block.append(f"**origin:** `{entry['origin']}`")
+                  detail_block.append("")
+                  detail_block.append("```json")
+                  detail_block.append(pretty)
+                  detail_block.append("```")
+                  detail_block.append("")
+              with summary_path.open("a", encoding="utf-8") as fh:
+                  fh.write("\n".join(detail_block) + "\n")
+          PY
+
+      - name: Commit and push results to data-lake
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          cd "$DATA_LAKE_PATH"
+          git config user.name "spectrum-pipeline[bot]"
+          git config user.email "spectrum-pipeline[bot]@users.noreply.github.com"
+          git add store/artifacts/ store/processed/ store/raw/
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "debug: single transcript run for 20251218 kickoff"
+          attempt=0
+          delay=2
+          while [ $attempt -lt 5 ]; do
+            attempt=$((attempt+1))
+            git rebase --abort 2>/dev/null || true
+            git fetch origin main
+            if git pull --rebase origin main && git push origin HEAD:main; then
+              echo "Push succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Push attempt $attempt failed; sleeping ${delay}s..."
+            sleep $delay
+            delay=$((delay*2))
+          done
+          echo "::error::Failed to push debug artifacts after 5 attempts"
+          exit 1
