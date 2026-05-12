@@ -91,6 +91,48 @@ From the constitution: tests defend trust properties, not ceremony. Add a test o
 
 Golden transcripts live in `tests/fixtures/golden_meetings/`.
 
+## Claude Code Execution Standard (non-negotiable)
+
+Every Claude Code session that writes or modifies code MUST follow this loop
+before opening a PR. No exceptions.
+
+### Required loop
+
+1. **BUILD** — implement the change
+2. **SELF-REVIEW** — re-read every file written; attack:
+   - Any path where a bad artifact could pass a gate silently
+   - Any gate bypassable by missing input
+   - Any failure a new engineer could not explain from the artifact alone
+   - Any field using `artifact_kind` instead of `artifact_type`
+   - Any step that only fails post-CI instead of pre-PR
+3. **FIX** — fix every finding from the self-review
+4. **VERIFY** — run automated verification scripts that simulate the actual
+   failure case and prove the fix works. These must be inline Python/bash
+   scripts in the session, not just `pytest`. At minimum:
+   - Run the full test suite (`pytest`)
+   - Simulate the specific failure the fix targets and assert it no longer occurs
+   - Assert no regression on related paths
+5. **RE-REVIEW** — re-read the fixed code; attack again
+6. **FIX AGAIN** — fix any new findings
+7. **OPEN PR** — PR description MUST include:
+   - Output of all verification scripts (copy-paste, not paraphrase)
+   - What each self-review pass found
+   - What was fixed in response
+   - Confirmation the simulated failure case now passes
+
+### What "verify" means
+
+Verification is not just `pytest`. It means writing a small script that
+reproduces the exact failure that motivated the fix, running it, and
+asserting it passes. Example: if the bug was a trailing space causing
+a lookup failure, the verification script must pass `"value "` (with space)
+to the fixed function and assert it succeeds.
+
+### Enforcement
+
+If a PR description is missing verification output, it must not be merged.
+The operator should request the missing verification before approving.
+
 ## Phase planning protocol
 
 Before starting a new phase planning cycle, the operator should run:
