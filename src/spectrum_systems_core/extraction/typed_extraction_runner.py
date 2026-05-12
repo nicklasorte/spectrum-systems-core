@@ -31,8 +31,25 @@ from .claim_extractor import ClaimExtractor
 from .classification_cache import ClassificationCache
 from .decision_extractor import DecisionExtractor
 from .extraction_merger import ExtractionMerger
+from .generalization_checker import scan_items as _scan_overgeneralization
 from .glossary_manager import GlossaryManager
 from ._chunk_counters import ChunkCounters
+from ._prompt_blocks import REGULATORY_TAXONOMY_BLOCK
+from ..glossary.chunk_position import (
+    POSITION_MIDDLE,
+    attention_block_for_position,
+)
+from ..glossary.few_shot_loader import (
+    build_few_shot_block,
+    load_few_shot_examples,
+)
+from ..glossary.glossary_builder import load_versioned_glossary
+from ..glossary.term_injector import (
+    build_terminology_block,
+    find_matching_terms,
+    summarize_injections,
+)
+from ..health.finding import HealthFinding
 from ._failure_artifacts import (
     clear_chunk_lookup,
     emit_empty_response,
@@ -574,6 +591,7 @@ def _write_orchestration_result(
     run_id: str,
     source_id: str,
     sdl_root: Optional[Path],
+    phase_w_extras: Optional[Dict[str, Any]] = None,
 ) -> Optional[Path]:
     """Serialise the counter into the orchestration_result artifact.
 
@@ -582,8 +600,15 @@ def _write_orchestration_result(
     logged and the artifact is still written so forensic evidence is
     preserved -- the strict invariant is "the in-memory counter is
     authoritative", and the artifact is a forensic mirror.
+
+    ``phase_w_extras`` (Phase W integration wiring) carries the
+    optional ``glossary_injection_summary``, ``binding_tuple_call_count``,
+    and ``scope_overgeneralization_count`` fields. They are
+    additive -- existing artifacts written before Phase W remain
+    schema-valid because the new properties are declared optional in
+    ``orchestration_result.schema.json``.
     """
-    artifact = {
+    artifact: Dict[str, Any] = {
         "artifact_type": "orchestration_result",
         "schema_version": "1.0.0",
         "run_id": run_id,
@@ -592,6 +617,11 @@ def _write_orchestration_result(
         "created_at": _now_iso(),
         **counters.as_dict(),
     }
+    if phase_w_extras:
+        for key, value in phase_w_extras.items():
+            if value is None:
+                continue
+            artifact[key] = value
     try:
         from ..validation import validate_artifact, ArtifactValidationError
         try:
@@ -616,6 +646,305 @@ def _write_orchestration_result(
     except OSError as exc:
         _LOG.warning("orchestration_result_write_failed: %s", exc)
         return None
+
+
+# -- Phase W (integration wiring) helpers -----------------------------------
+#
+# These helpers wire the Phase T/V modules (versioned glossary,
+# chunk-position attention, V.3 few-shot, generalization checker,
+# orchestration counters) into the live runner. They are intentionally
+# small and pure: the runner composes them at call sites so the
+# wiring is auditable in one place. The integration smoke test
+# (``tests/integration/test_extraction_runner_wiring.py``) calls
+# ``build_extraction_prompt`` directly to assert block ordering
+# without having to invoke an extractor.
+
+
+_PHASE_W_GLOSSARY_NOT_PRELOADED_LOG_EMITTED: bool = False
+
+
+def _resolve_versioned_glossary_root(sdl_root: Optional[Path]) -> Optional[Path]:
+    """Locate the versioned-glossary artifact directory.
+
+    The versioned glossary (``spectrum_glossary_v1.json``) ships as an
+    artifact under ``<sdl_root>/glossary/`` -- NOT under the legacy
+    per-term ``<store_root>/glossary/`` location that
+    ``_resolve_glossary_root`` returns for ``GlossaryManager``. The
+    two locations are independent. An explicit ``SDL_VERSIONED_GLOSSARY``
+    env var (or its alias ``SDL_GLOSSARY_V1``) wins when set so smoke
+    tests can point at a synthetic glossary without polluting the
+    legacy path.
+    """
+    for env_name in ("SDL_VERSIONED_GLOSSARY", "SDL_GLOSSARY_V1"):
+        value = os.environ.get(env_name, "").strip()
+        if value:
+            return Path(value)
+    if sdl_root is None:
+        return None
+    return sdl_root / "glossary"
+
+
+def _resolve_versioned_glossary_terms(
+    sdl_root: Optional[Path],
+) -> List[Dict[str, Any]]:
+    """Load the versioned glossary terms list. Returns ``[]`` if absent.
+
+    The function never raises; a missing or malformed artifact returns
+    an empty list and a single debug-level log line per process. The
+    runner's ``glossary_terms_injected`` field will then be ``[]`` on
+    every chunk -- still a list shape, never None -- so downstream
+    consumers do not have to special-case the unloaded path.
+    """
+    global _PHASE_W_GLOSSARY_NOT_PRELOADED_LOG_EMITTED
+    if sdl_root is None:
+        return []
+    glossary_root = _resolve_versioned_glossary_root(sdl_root)
+    if glossary_root is None or not glossary_root.is_dir():
+        if not _PHASE_W_GLOSSARY_NOT_PRELOADED_LOG_EMITTED:
+            _LOG.debug(
+                "glossary_not_preloaded: versioned glossary root missing "
+                "(sdl_root=%s); extraction continues with empty injection",
+                sdl_root,
+            )
+            _PHASE_W_GLOSSARY_NOT_PRELOADED_LOG_EMITTED = True
+        return []
+    artifact = load_versioned_glossary(glossary_root)
+    if not isinstance(artifact, dict):
+        return []
+    terms = artifact.get("terms")
+    if not isinstance(terms, list):
+        return []
+    return [t for t in terms if isinstance(t, dict)]
+
+
+def _per_chunk_glossary_records(
+    chunks: Sequence[Dict[str, Any]],
+    glossary_terms: Sequence[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Build per-chunk records of glossary term injections + position.
+
+    Returns a list (one entry per chunk) of dicts with keys
+    ``chunk_id``, ``chunk_position`` and ``glossary_terms_injected``.
+    ``glossary_terms_injected`` is always a list (never None) so the
+    field shape is stable regardless of whether the glossary was
+    loaded. Term entries carry ``term_id`` (stable UUID) so historical
+    comparison is not broken by term-text edits.
+    """
+    out: List[Dict[str, Any]] = []
+    for c in chunks:
+        if not isinstance(c, dict):
+            continue
+        text = c.get("text") or ""
+        matched = find_matching_terms(text, glossary_terms)
+        out.append({
+            "chunk_id": str(c.get("chunk_id") or c.get("id") or ""),
+            "chunk_position": c.get("chunk_position") or "",
+            "glossary_terms_injected": [
+                str(t.get("term_id")) for t in matched if t.get("term_id")
+            ],
+        })
+    return out
+
+
+def _phase_w_block_for_group(
+    group_chunks: Sequence[Dict[str, Any]],
+    glossary_terms: Sequence[Dict[str, Any]],
+    few_shot_block_str: str,
+    legacy_glossary_block: str,
+) -> str:
+    """Compose the Phase W prompt blocks for one extractor group.
+
+    Block order (canonical):
+      1. TERMINOLOGY FOR THIS SECTION (V.2, union of matched terms across the group)
+      2. ATTENTION DIRECTION (V.4, when any chunk in the group is `middle`)
+      3. FEW-SHOT EXAMPLES (V.3, when one or more verified examples were loaded)
+      4. Legacy GlossaryManager block (when versioned glossary is absent and the
+         caller still has a non-empty legacy block; mutually exclusive with V.2
+         to avoid duplicate ``TERMINOLOGY FOR THIS SECTION`` headers)
+
+    The result is passed as the ``glossary_block`` argument to the
+    extractors so no extractor signature changes. The legacy block is
+    a fallback only -- when V.2 produces a non-empty terminology
+    block, the legacy GlossaryManager output is suppressed.
+    """
+    union_terms: List[Dict[str, Any]] = []
+    seen_term_ids: set[str] = set()
+    any_middle = False
+    for c in group_chunks:
+        if not isinstance(c, dict):
+            continue
+        if c.get("chunk_position") == POSITION_MIDDLE:
+            any_middle = True
+        matched = find_matching_terms(c.get("text") or "", glossary_terms)
+        for t in matched:
+            tid = str(t.get("term_id") or "")
+            if not tid or tid in seen_term_ids:
+                continue
+            seen_term_ids.add(tid)
+            union_terms.append(t)
+
+    terminology_block = build_terminology_block(union_terms)
+    attention_block = (
+        attention_block_for_position(POSITION_MIDDLE) if any_middle else ""
+    )
+
+    parts: List[str] = []
+    if terminology_block:
+        parts.append(terminology_block)
+    elif legacy_glossary_block:
+        # Phase W: when the versioned glossary contributed zero terms,
+        # fall back to the legacy GlossaryManager block so we do not
+        # regress on transcripts that still rely on the per-term
+        # files in `<glossary_root>/<slug>.json`.
+        parts.append(legacy_glossary_block)
+    if attention_block:
+        parts.append(attention_block)
+    if few_shot_block_str:
+        parts.append(few_shot_block_str)
+    return "\n\n".join(parts)
+
+
+def build_extraction_prompt(
+    chunk_text: str,
+    extraction_type: str = "decision",
+    *,
+    terminology_block: str = "",
+    attention_block: str = "",
+    few_shot_block: str = "",
+    glossary_block: str = "",
+) -> str:
+    """Compose the canonical Phase W extraction-prompt block order.
+
+    The runner's group-level prompt is built INSIDE each extractor
+    (``DecisionExtractor._build_prompt`` and friends). This helper
+    mirrors the same block order on a SINGLE chunk so the W.6
+    integration smoke test can inspect prompt content without
+    invoking the LLM. Block order:
+
+      1. Role / extraction-type instruction (always present)
+      2. REGULATORY TAXONOMY BLOCK (Phase T.1, always present)
+      3. TERMINOLOGY FOR THIS SECTION (Phase V.2, when non-empty)
+      4. ATTENTION DIRECTION (Phase V.4, when non-empty)
+      5. FEW-SHOT EXAMPLES (Phase V.3, when non-empty)
+      6. Legacy glossary block (when non-empty -- typically suppressed
+         because the versioned glossary block (3) replaces it)
+      7. CHUNK content (always present)
+
+    A missing block is omitted entirely (no header, no separator).
+    Tests can therefore assert ``"ATTENTION DIRECTION" not in
+    opening_prompt`` when the attention block is empty.
+    """
+    parts: List[str] = [
+        f"Extract {extraction_type.upper()} items from the following chunk.",
+        REGULATORY_TAXONOMY_BLOCK,
+    ]
+    if terminology_block:
+        parts.append(terminology_block)
+    if attention_block:
+        parts.append(attention_block)
+    if few_shot_block:
+        parts.append(few_shot_block)
+    if glossary_block:
+        parts.append(glossary_block)
+    parts.append(f"CHUNK:\n{chunk_text}")
+    return "\n\n".join(parts)
+
+
+def _glossary_injection_summary_from_records(
+    records: Sequence[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Compute the ``glossary_injection_summary`` shape.
+
+    Scans the per-chunk records produced by
+    ``_per_chunk_glossary_records``. Records missing
+    ``glossary_terms_injected`` entirely contribute to
+    ``stale_records_count`` -- this only happens when a caller passes
+    a partially-built record list, never in the live runner path.
+    """
+    chunks_with_matches = 0
+    chunks_without_field = 0
+    all_term_ids: List[str] = []
+    for r in records or []:
+        if not isinstance(r, dict):
+            continue
+        injected = r.get("glossary_terms_injected")
+        if injected is None:
+            chunks_without_field += 1
+            continue
+        if len(injected) > 0:
+            chunks_with_matches += 1
+            all_term_ids.extend(str(t) for t in injected)
+    from collections import Counter
+    most = [tid for tid, _ in Counter(all_term_ids).most_common(5)]
+    total = len(records or [])
+    no_match = total - chunks_with_matches - chunks_without_field
+    return {
+        "chunks_with_matches": chunks_with_matches,
+        "chunks_with_no_matches": max(0, no_match),
+        "total_term_injections": len(all_term_ids),
+        "most_injected_terms": most,
+        "stale_records_count": chunks_without_field,
+    }
+
+
+def _run_overgeneralization_scan(
+    decisions: Sequence[Dict[str, Any]],
+    claims: Sequence[Dict[str, Any]],
+    chunks_by_id: Dict[str, Dict[str, Any]],
+    *,
+    pipeline_run_id: str,
+) -> List[HealthFinding]:
+    """Run the V.6 generalization checker on decisions + claims.
+
+    The checker requires ``source_text`` to be the chunk text the item
+    was extracted from (NOT the full transcript -- otherwise any chunk
+    that names a band would taint every item). We attach the chunk
+    text per-item under the ``__source_text`` key before delegating
+    to ``generalization_checker.scan_items``.
+
+    Returns a flat list of ``HealthFinding`` objects; an empty list
+    when ``GENERALIZATION_CHECK_ENABLED=false`` or no item triggered.
+    """
+
+    def _attach_source(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            sources = item.get("source_turn_ids") or []
+            chunk_text_parts: List[str] = []
+            for sid in sources:
+                src = chunks_by_id.get(str(sid))
+                if isinstance(src, dict):
+                    text = src.get("text") or ""
+                    if text:
+                        chunk_text_parts.append(text)
+            enriched = dict(item)
+            enriched["__source_text"] = "\n".join(chunk_text_parts)
+            out.append(enriched)
+        return out
+
+    decisions_enriched = _attach_source(decisions)
+    claims_enriched = _attach_source(claims)
+
+    findings: List[HealthFinding] = []
+    findings.extend(
+        _scan_overgeneralization(
+            decisions_enriched,
+            source_text_key="__source_text",
+            extracted_text_key="decision_text",
+            pipeline_run_id=pipeline_run_id,
+        )
+    )
+    findings.extend(
+        _scan_overgeneralization(
+            claims_enriched,
+            source_text_key="__source_text",
+            extracted_text_key="claim_text",
+            pipeline_run_id=pipeline_run_id,
+        )
+    )
+    return findings
 
 
 def run_typed_extraction(
@@ -908,22 +1237,78 @@ def run_typed_extraction(
     for chunk, cls in zip(chunks, classifications):
         bucket[cls["classification"]].append(chunk)
 
-    # Glossary context block is rebuilt per group (cheap; one call per
-    # extractor here). Concatenate texts from this group to pick relevant
-    # terms.
-    def _block_for(group: Sequence[Dict[str, Any]]) -> str:
+    # Phase W (integration wiring): load the versioned glossary once
+    # per run + the Phase V.3 few-shot examples once per run. Both
+    # are pure functions returning lists; a missing or malformed
+    # artifact returns an empty list and the run continues with no
+    # injection. Per-chunk records are built across ALL chunks
+    # (including off_topic) so the orchestration summary reflects
+    # actual glossary coverage, not just extractor-routed coverage.
+    versioned_glossary_terms = _resolve_versioned_glossary_terms(sdl_root)
+    chunk_extraction_records = _per_chunk_glossary_records(
+        chunks, versioned_glossary_terms,
+    )
+
+    few_shot_result = load_few_shot_examples(sdl_root)
+    few_shot_block_str = build_few_shot_block(few_shot_result.examples)
+    run_findings: List[HealthFinding] = []
+    if few_shot_result.finding_code:
+        try:
+            run_findings.append(
+                HealthFinding(
+                    finding_code=few_shot_result.finding_code,
+                    severity=few_shot_result.severity or "info",
+                    context={
+                        "artifact_present": few_shot_result.artifact_present,
+                    },
+                    remediation=few_shot_result.remediation,
+                    pipeline_run_id=extraction_run_id,
+                )
+            )
+        except ValueError as exc:  # pragma: no cover -- defensive
+            _LOG.warning("phase_w_few_shot_finding_invalid: %s", exc)
+
+    # Glossary context block is rebuilt per group. The Phase W
+    # composite block combines (1) the V.2 versioned-glossary
+    # terminology block, (2) the V.4 attention-direction block when
+    # any chunk in the group is `middle`, (3) the V.3 few-shot
+    # examples block. The legacy ``GlossaryManager`` block is kept
+    # as a fallback for when the versioned glossary is unavailable;
+    # the two never both contribute (they share the
+    # ``TERMINOLOGY FOR THIS SECTION`` header).
+    def _legacy_block_for(group: Sequence[Dict[str, Any]]) -> str:
         text = " ".join((c.get("text") or "") for c in group)
         terms = glossary_manager.retrieve_for_chunk(text)
         return glossary_manager.format_for_prompt(terms)
 
+    def _block_for(
+        group: Sequence[Dict[str, Any]],
+        *,
+        extraction_type: str,
+    ) -> str:
+        legacy = _legacy_block_for(group)
+        # Phase V.3 few-shot examples ship a `decision_examples_v1`
+        # artifact only. Claims and action items receive no examples
+        # until separate artifacts are authored. Passing "" here keeps
+        # the block omitted entirely (no header, no separator).
+        few_shot = few_shot_block_str if extraction_type == "decision" else ""
+        return _phase_w_block_for_group(
+            group, versioned_glossary_terms, few_shot, legacy,
+        )
+
     decisions = decision_x.extract(
-        bucket["decision"], _block_for(bucket["decision"]), available_turn_ids,
+        bucket["decision"],
+        _block_for(bucket["decision"], extraction_type="decision"),
+        available_turn_ids,
     )
     claims = claim_x.extract(
-        bucket["claim"], _block_for(bucket["claim"]), available_turn_ids,
+        bucket["claim"],
+        _block_for(bucket["claim"], extraction_type="claim"),
+        available_turn_ids,
     )
     actions = action_x.extract(
-        bucket["action_item"], _block_for(bucket["action_item"]),
+        bucket["action_item"],
+        _block_for(bucket["action_item"], extraction_type="action_item"),
         available_turn_ids,
     )
 
@@ -1006,6 +1391,44 @@ def run_typed_extraction(
                 "reason": f"verification_error:{type(exc).__name__}:{exc}",
             }
 
+    # Phase W (integration wiring): run the V.6 generalization checker
+    # on decisions + claims using the EXTRACTING CHUNK text as the
+    # source -- never the full transcript, otherwise a band reference
+    # anywhere in the transcript would taint every item. The checker
+    # is gated by ``GENERALIZATION_CHECK_ENABLED`` (default on); when
+    # disabled the call returns an empty list and the counter is 0.
+    chunks_by_id_for_scan: Dict[str, Dict[str, Any]] = {}
+    for c in chunks:
+        cid = c.get("chunk_id") or c.get("id")
+        if isinstance(cid, str) and cid:
+            chunks_by_id_for_scan[cid] = c
+    overgen_findings = _run_overgeneralization_scan(
+        artifact.get("decisions") or [],
+        artifact.get("claims") or [],
+        chunks_by_id_for_scan,
+        pipeline_run_id=extraction_run_id,
+    )
+    run_findings.extend(overgen_findings)
+
+    # Phase W (integration wiring): orchestration counters. The
+    # binding-tuple count is derived from the merged artifact (the
+    # extractor sets ``binding_tuple`` to a dict when the V.5 flag is
+    # on and to None when off), so the count is 0 by design unless
+    # ``BINDING_TUPLE_ENABLED=true``.
+    binding_tuple_call_count = sum(
+        1
+        for d in (artifact.get("decisions") or [])
+        if isinstance(d, dict) and isinstance(d.get("binding_tuple"), dict)
+    )
+    glossary_injection_summary = _glossary_injection_summary_from_records(
+        chunk_extraction_records,
+    )
+    phase_w_extras = {
+        "glossary_injection_summary": glossary_injection_summary,
+        "binding_tuple_call_count": binding_tuple_call_count,
+        "scope_overgeneralization_count": len(overgen_findings),
+    }
+
     try:
         ExtractionMerger.write_to(artifact, out_path)
     except OSError as exc:
@@ -1013,7 +1436,7 @@ def run_typed_extraction(
         # operator can see the chunk-level counters from the failed run.
         _write_orchestration_result(
             counters, run_id=extraction_run_id, source_id=source_id,
-            sdl_root=sdl_root,
+            sdl_root=sdl_root, phase_w_extras=phase_w_extras,
         )
         return {
             "status": "failure",
@@ -1031,6 +1454,7 @@ def run_typed_extraction(
         run_id=extraction_run_id,
         source_id=source_id,
         sdl_root=sdl_root,
+        phase_w_extras=phase_w_extras,
     )
 
     # X-3: calibration_warning. The histogram is computed from
@@ -1094,6 +1518,22 @@ def run_typed_extraction(
         "few_shot_example_count": artifact["few_shot_example_count"],
         "low_confidence_item_count": artifact["low_confidence_item_count"],
         "phase_w": phase_w_metrics,
+        # Phase W (integration wiring) -- additive, never overwrites
+        # the existing ``phase_w`` agenda-detection metrics above. The
+        # integration smoke test asserts on these fields:
+        "chunk_extraction_records": chunk_extraction_records,
+        "glossary_injection_summary": glossary_injection_summary,
+        "binding_tuple_call_count": binding_tuple_call_count,
+        "scope_overgeneralization_count": len(overgen_findings),
+        "phase_w_findings": [
+            {
+                "finding_code": f.finding_code,
+                "severity": f.severity,
+                "context": dict(f.context),
+                "remediation": f.remediation,
+            }
+            for f in run_findings
+        ],
         **counters.as_dict(),
         "stage_status": counters.stage_status(),
         "orchestration_result_path": (

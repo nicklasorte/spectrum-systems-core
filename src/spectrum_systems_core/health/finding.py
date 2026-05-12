@@ -106,6 +106,13 @@ ALL_FINDING_CODES: frozenset[str] = frozenset(
         # band reference (numeric MHz/GHz/kHz) AND extracted_text
         # contains an OVERGENERALIZATION_MARKERS entry. severity warn.
         "scope_overgeneralization",
+        # Phase W (integration wiring): emitted when more than 50%
+        # of records scanned for the ``glossary_injection_summary``
+        # rollup lack the ``glossary_terms_injected`` field. This
+        # signals that the records are stale from before Phase W
+        # wired per-chunk injection. Remediation: re-run extraction
+        # with force=true. severity info -- never blocks the run.
+        "glossary_injection_field_absent",
     }
 )
 
