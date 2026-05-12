@@ -50,7 +50,8 @@
         "few_shot_no_verified_examples",
         "binding_tuple_parse_failed",
         "binding_tuple_incomplete",
-        "scope_overgeneralization"
+        "scope_overgeneralization",
+        "glossary_injection_field_absent"
       ]
     },
     "severity": { "enum": ["halt", "warn", "info"] },

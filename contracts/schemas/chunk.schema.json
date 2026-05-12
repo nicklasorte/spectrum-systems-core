@@ -47,6 +47,11 @@
     "agenda_item_id": {
       "type": ["string", "null"],
       "description": "Phase W (schema 1.1.0): UUID of the agenda_item artifact this chunk belongs to. Optional. Null when Phase W disabled or detection failed for this transcript."
+    },
+    "chunk_position": {
+      "type": "string",
+      "enum": ["opening", "middle", "closing"],
+      "description": "Phase W (integration wiring): proportional position label assigned by glossary.chunk_position.assign_chunk_positions after all merge/split passes. Used by the extraction runner to inject the attention-direction prompt block on middle chunks."
     }
   }
 }

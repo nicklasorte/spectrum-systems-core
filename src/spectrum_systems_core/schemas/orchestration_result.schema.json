@@ -40,6 +40,31 @@
       }
     },
     "stage_status": { "enum": ["ok", "partial", "failed"] },
-    "created_at": { "type": "string" }
+    "created_at": { "type": "string" },
+    "glossary_injection_summary": {
+      "type": "object",
+      "description": "Phase W (integration wiring): rollup of versioned-glossary term injections across all chunks in the run.",
+      "additionalProperties": false,
+      "properties": {
+        "chunks_with_matches": { "type": "integer", "minimum": 0 },
+        "chunks_with_no_matches": { "type": "integer", "minimum": 0 },
+        "total_term_injections": { "type": "integer", "minimum": 0 },
+        "most_injected_terms": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "stale_records_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "binding_tuple_call_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Phase W (integration wiring): number of decisions with a populated binding_tuple sub-object. Always 0 when BINDING_TUPLE_ENABLED=false (default)."
+    },
+    "scope_overgeneralization_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Phase W (integration wiring): number of scope_overgeneralization findings emitted by generalization_checker.scan_items on this run."
+    }
   }
 }

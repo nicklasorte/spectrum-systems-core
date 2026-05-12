@@ -262,6 +262,126 @@ validators. Tests assert `id()` equality on the imported objects.
   reference and the extracted text uses an
   `OVERGENERALIZATION_MARKERS` entry.
 
+## Phase W (integration wiring) — Connecting Phase T/V into the runner
+
+Phase W is a **wiring-only** phase: it adds no new logic. PRs #68
+(Phase T) and #69 (Phase V) built the glossary injector, the
+chunk-position attention block, the V.3 few-shot loader, and the
+generalization checker, but those modules were never called by the
+live extraction runner. Phase W routes them through
+`extraction/typed_extraction_runner.py` so every run produces
+measurable output for the wired features.
+
+Note on naming: the existing `apply_phase_w_if_enabled` symbol in
+`spectrum_systems_core.agenda` is for **agenda detection** (a
+predecessor "Phase W" name). Phase W (integration wiring) does NOT
+touch that code path; the two phases share a letter but are
+otherwise independent.
+
+### What the wiring does, in one place
+
+1. **Glossary injection (W.1).** The runner loads
+   `<sdl_root>/glossary/spectrum_glossary_v1.json` once per run via
+   `glossary.glossary_builder.load_versioned_glossary` and matches
+   each chunk's text against the term list with
+   `glossary.term_injector.find_matching_terms`. Matched terms feed
+   `build_terminology_block`, which is concatenated into the
+   `glossary_block` string passed to each typed extractor.
+   `glossary_terms_injected` (a list of `term_id` strings — never
+   None) is recorded per-chunk in
+   `result["chunk_extraction_records"]`. Term IDs are stable UUIDs,
+   so a future glossary edit does NOT invalidate historical
+   comparison.
+2. **Chunk position + attention block (W.2).** The chunker calls
+   `glossary.chunk_position.assign_chunk_positions` AFTER all merge
+   AND split passes — the position is proportional to the FINAL
+   chunk count, so reordering this call would label positions on
+   the wrong chunk list. The runner reads `chunk_position` per
+   chunk and prepends the `ATTENTION DIRECTION` block when any
+   chunk in an extractor group is `middle` AND
+   `POSITION_AWARE_PROMPTING_ENABLED=true` (default).
+3. **Few-shot examples (W.3).** The runner calls
+   `glossary.few_shot_loader.load_few_shot_examples(sdl_root)` once
+   per run for decision extraction only (claims / action items have
+   no examples shipped). The loader returns
+   `FewShotLoadResult(examples, finding_code, severity,
+   remediation)`; the runner promotes any non-None `finding_code`
+   into a `HealthFinding` and surfaces it under
+   `result["phase_w_findings"]`. Unverified examples never reach
+   the prompt.
+4. **Generalization checker (W.4).** After the merger runs, the
+   runner calls
+   `extraction.generalization_checker.scan_items` on decisions and
+   claims with `source_text` set to the **chunk** text (never the
+   full transcript). The returned `HealthFinding` list is appended
+   to `result["phase_w_findings"]` and the count is reported as
+   `scope_overgeneralization_count`. Gated by
+   `GENERALIZATION_CHECK_ENABLED=true` (default).
+5. **Orchestration counters (W.5).** The orchestration_result
+   artifact carries three new optional fields:
+   `glossary_injection_summary`,
+   `binding_tuple_call_count`, and
+   `scope_overgeneralization_count`. They are additive — the
+   `schema_version` const stays `"1.0.0"` because all three are
+   declared optional in `orchestration_result.schema.json`.
+
+### `build_extraction_prompt` — the canonical prompt-builder
+
+`typed_extraction_runner.build_extraction_prompt` is exported so the
+W.6 integration smoke test can inspect block ordering without
+invoking the LLM. Block order (omitted entirely when empty):
+
+```
+1. Role / extraction-type instruction
+2. REGULATORY TAXONOMY BLOCK (Phase T.1)
+3. TERMINOLOGY FOR THIS SECTION (Phase V.2)
+4. ATTENTION DIRECTION (Phase V.4)
+5. FEW-SHOT EXAMPLES (Phase V.3)
+6. Legacy glossary block (suppressed when 3 is non-empty)
+7. CHUNK content
+```
+
+The runner's group-level prompt is still built INSIDE each
+extractor (`DecisionExtractor._build_prompt` etc.); the helper
+mirrors the same order on a single chunk. The legacy `GlossaryManager`
+block and the V.2 terminology block share the
+`TERMINOLOGY FOR THIS SECTION` header, so the runner suppresses the
+legacy block whenever the versioned glossary produces a non-empty
+terminology block. This avoids duplicate headers in the same prompt.
+
+### Chunk position computation order (chunker)
+
+`extraction/chunker.py` calls passes in this fixed order; do not
+reorder:
+
+```
+merge_short_chunks → split_oversized_chunks → merge_short_chunks (re-merge if split fired) → assign_chunk_positions
+```
+
+`assign_chunk_positions` MUST run AFTER all merge and split passes
+because the proportional cut-offs depend on the final chunk count.
+The `chunks.jsonl` write happens AFTER `assign_chunk_positions` so
+the position lands on every chunk on disk.
+
+### `glossary_not_preloaded` debug log (not a finding)
+
+When `<sdl_root>/glossary/` is missing entirely, the runner emits a
+single per-process debug log line and continues with empty
+injection. This is NOT a `HealthFinding` because it is an
+efficiency note, not a governance concern: a caller without a
+glossary directory still gets a working extraction run with
+`glossary_terms_injected: []` on every chunk.
+
+### Findings introduced by Phase W
+
+- `glossary_injection_field_absent` (info) — emitted when more than
+  50% of records scanned for the
+  `glossary_injection_summary` rollup lack the
+  `glossary_terms_injected` field. Remediation: re-run extraction
+  with `force=true` so the field lands on every record. Reserved
+  in `ALL_FINDING_CODES`; not raised by the current runner because
+  the field is always populated on writes since Phase W.
+
 ## Files worth reading before non-trivial changes
 
 - `docs/architecture/system_constitution.md` — binding; precedence over everything else.

@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import jsonschema
 
+from ..glossary.chunk_position import assign_chunk_positions
 from ..ingestion._paths import schema_path
 from ._paths import find_processed_dir
 
@@ -595,6 +596,16 @@ class Chunker:
             chunks, _post_split_merge_pairs = merge_short_chunks(
                 chunks, min_chars=min_chunk_chars_used,
             )
+
+        # Phase W (integration wiring): chunk_position MUST be computed
+        # AFTER all merge AND split passes are complete because the
+        # position is proportional to the final chunk count. Do not
+        # reorder: a future engineer running assign_chunk_positions
+        # before the merge/split passes would label positions on a
+        # different chunk list than what ships in chunks.jsonl, so
+        # downstream attention-direction wiring would target the wrong
+        # chunks.
+        chunks = assign_chunk_positions(chunks)
 
         for chunk in chunks:
             try:
