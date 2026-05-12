@@ -136,13 +136,30 @@ class ChunkerTests(unittest.TestCase):
 
 
 class SpeakerTurnChunkingTests(unittest.TestCase):
-    """Tests for the transcript speaker-turn chunking mode."""
+    """Tests for the transcript speaker-turn chunking mode.
+
+    Phase R.0's merge pass folds short adjacent chunks together, which
+    would otherwise collapse the toy transcripts these tests use. Each
+    test below validates speaker-turn semantics (one chunk per labelled
+    turn, speaker / timestamp parsing, fallback paths) -- not the
+    merge logic, which has its own ``test_phase_r_chunk_merge`` suite.
+    The merge pass is therefore disabled for the duration of this test
+    class so the toy fixtures keep their original meaning.
+    """
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.repo_root = Path(self._tmp.name)
+        import os
+        self._prev_merge_env = os.environ.get("CHUNK_MERGE_ENABLED")
+        os.environ["CHUNK_MERGE_ENABLED"] = "false"
 
     def tearDown(self) -> None:
+        import os
+        if self._prev_merge_env is None:
+            os.environ.pop("CHUNK_MERGE_ENABLED", None)
+        else:
+            os.environ["CHUNK_MERGE_ENABLED"] = self._prev_merge_env
         self._tmp.cleanup()
 
     def test_transcript_chunked_by_speaker_turn(self) -> None:

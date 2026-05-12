@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/chunk_merge_summary.schema.json",
+  "title": "chunk_merge_summary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "source_id",
+    "min_chunk_chars",
+    "original_chunk_count",
+    "merged_chunk_count",
+    "chunks_merged",
+    "merge_pairs",
+    "created_at"
+  ],
+  "properties": {
+    "artifact_type":          { "const": "chunk_merge_summary" },
+    "schema_version":         { "const": "1.0.0" },
+    "source_id":              { "type": "string", "minLength": 1 },
+    "min_chunk_chars":        { "type": "integer", "minimum": 0 },
+    "original_chunk_count":   { "type": "integer", "minimum": 0 },
+    "merged_chunk_count":     { "type": "integer", "minimum": 0 },
+    "chunks_merged":          { "type": "integer", "minimum": 0 },
+    "created_at":             { "type": "string", "minLength": 1 },
+    "merge_pairs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "absorbed_chunk_id",
+          "into_chunk_id",
+          "reason"
+        ],
+        "properties": {
+          "absorbed_chunk_id": { "type": "string", "minLength": 1 },
+          "into_chunk_id":     { "type": "string", "minLength": 1 },
+          "reason":            { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}
