@@ -151,7 +151,13 @@ def test_eval_summary_schema_includes_partial_run_fields() -> None:
     required = schema.get("required", [])
     assert "partial_run_warning" in required
     assert "partial_run_detail" in required
-    assert schema["properties"]["schema_version"]["const"] == "1.1.0"
+    # Phase W relaxed this from const to enum so 1.1.0 stays valid while
+    # also admitting 1.2.0 (hidden_stratification fields).
+    sv = schema["properties"]["schema_version"]
+    if "const" in sv:
+        assert sv["const"] == "1.1.0"
+    else:
+        assert "1.1.0" in sv.get("enum", [])
 
 
 def test_zero_confirmed_pairs_does_not_divide_by_zero(tmp_path: Path) -> None:

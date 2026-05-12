@@ -15,6 +15,7 @@ from typing import Union
 _LOG = logging.getLogger(__name__)
 
 PHASE_V_FLAG_NAME = "phase_v_post_hoc_verification"
+PHASE_W_FLAG_NAME = "phase_w_agenda_detection"
 
 
 class FeatureFlag:

@@ -30,7 +30,7 @@
     "eval_summary_id": { "type": "string", "format": "uuid" },
     "pipeline_run_id": { "type": "string", "minLength": 1 },
     "artifact_type": { "const": "eval_summary" },
-    "schema_version": { "const": "1.1.0" },
+    "schema_version": { "type": "string", "enum": ["1.1.0", "1.2.0"] },
     "created_at": { "type": "string", "format": "date-time" },
     "pairs_evaluated": { "type": "integer", "minimum": 0 },
     "pairs_skipped_pending_review": { "type": "integer", "minimum": 0 },
@@ -95,6 +95,18 @@
       "properties": {
         "produced_by": { "const": "EvalRunner" }
       }
+    },
+    "agenda_coverage_std_deviation": {
+      "type": "number", "minimum": 0.0,
+      "description": "Phase W.5 (schema 1.2.0): population std-dev of per-agenda coverage across non-excluded agendas in this run."
+    },
+    "agenda_precision_std_deviation": {
+      "type": "number", "minimum": 0.0,
+      "description": "Phase W.5 (schema 1.2.0): population std-dev of per-agenda precision across non-excluded agendas in this run."
+    },
+    "flag_hidden_stratification": {
+      "type": "boolean",
+      "description": "Phase W.5 (schema 1.2.0): True iff either std-deviation exceeds 0.20 -- warn in summary output."
     }
   },
   "$defs": {

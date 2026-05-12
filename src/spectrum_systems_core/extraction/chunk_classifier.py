@@ -133,13 +133,43 @@ class ChunkClassifier:
         self,
         api_caller: Optional[Callable[[str], Dict[str, Any]]] = None,
         model: Optional[str] = None,
+        *,
+        agenda_resolver: Optional[Callable[[Dict[str, Any]], Optional[str]]] = None,
     ) -> None:
         self._api_caller = api_caller or _default_api_caller
         self._model = model or self.MODEL_ID
+        # Phase W.4: optional resolver returns the agenda label to
+        # inject into the classifier prompt for ``chunk``. Returns
+        # None for "no agenda context to inject" (flag off, undetected
+        # agenda, missing field, etc). The resolver is responsible
+        # for all gating logic so the classifier stays a pure
+        # text-in/JSON-out classifier.
+        self._agenda_resolver = agenda_resolver
+
+    def _agenda_prompt_line(self, chunk: Dict[str, Any]) -> str:
+        """Return ``"Current agenda item: ...\\n\\n"`` or ``""``.
+
+        Centralised so both the per-chunk and the batch prompt paths
+        share the same gating semantics.
+        """
+        if self._agenda_resolver is None:
+            return ""
+        try:
+            label = self._agenda_resolver(chunk)
+        except Exception as exc:  # noqa: BLE001 - never raise out
+            _LOG.warning(
+                "chunk_classifier_agenda_resolver_error: %s: %s",
+                type(exc).__name__, exc,
+            )
+            return ""
+        if not isinstance(label, str) or not label.strip():
+            return ""
+        return f"Current agenda item: {label.strip()}\n\n"
 
     def _build_prompt(self, chunk: Dict[str, Any]) -> str:
         text = (chunk or {}).get("text", "")
         return (
+            f"{self._agenda_prompt_line(chunk if isinstance(chunk, dict) else {})}"
             "Classify the following meeting speaker-turn into exactly one of: "
             "decision, claim, action_item, off_topic. Return JSON "
             '{"classification": "<one>", "confidence": <0..1 or null>}. '
@@ -296,6 +326,14 @@ class ChunkClassifier:
                 cid = str(chunk.get("chunk_id") or chunk.get("id") or "")
                 text = chunk.get("text") or ""
             lines.append(f"Chunk {i} (chunk_id: {cid}):")
+            # Phase W.4: per-chunk agenda context (resolver-gated).
+            agenda_line = self._agenda_prompt_line(
+                chunk if isinstance(chunk, dict) else {}
+            )
+            if agenda_line:
+                # Strip the trailing blank line; we already insert one
+                # below.
+                lines.append(agenda_line.rstrip())
             lines.append(text[: self.BATCH_CHUNK_TEXT_CAP])
             lines.append("")
         return "\n".join(lines)
