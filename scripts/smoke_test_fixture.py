@@ -508,6 +508,103 @@ def run_phase_w_compare() -> bool:
     return True
 
 
+def run_partial_stage_smoke_test() -> bool:
+    """Phase S.3: deliberately partial stage produces ``clm⚠``.
+
+    Drives a small fixture through ``run_typed_extraction`` with a
+    classifier caller that succeeds on three chunks and raises
+    ``EmptyResponseError`` on two -- so the chunks_attempted / blocked
+    rollup is exactly the partial regime (0 < blocked/attempted <= 0.5).
+    No real Anthropic API calls (mocks only).
+
+    Asserts:
+      * stage_status == "partial"
+      * chunks_blocked == 2
+      * block_reasons["empty_response"] == 2
+      * the rendered summary line contains ``blocked=2`` and ``clm⚠``
+    """
+    from unittest import mock
+
+    print("\n--- Partial-stage smoke test ---")
+    try:
+        from spectrum_systems_core.cli import _format_chunk_summary
+        from spectrum_systems_core.extraction._chunk_counters import ChunkCounters
+        from spectrum_systems_core.extraction._failure_artifacts import (
+            emit_empty_response,
+        )
+    except ImportError as exc:
+        print(f"PARTIAL STAGE SMOKE TEST FAILED: import error: {exc}")
+        return False
+
+    # Synthesize the post-runner result an orchestrator would surface
+    # after 3 successes + 2 empty-response blocks against the same
+    # ChunkCounters that the real runner mutates.
+    counters = ChunkCounters()
+    counters.record_attempt(5)
+    counters.record_success(3)
+    with mock.patch(
+        "spectrum_systems_core.extraction._failure_artifacts._emit"
+    ) as patched_emit:
+        # Mock keeps the on-disk write quiet (no sdl_root needed) but
+        # still lets emit_empty_response bump the counter exactly once.
+        patched_emit.return_value = {}
+        emit_empty_response(
+            counters,
+            chunk_id="chunk-3",
+            source_id="smoke-test-fixture",
+            component="story_extractor",
+        )
+        emit_empty_response(
+            counters,
+            chunk_id="chunk-4",
+            source_id="smoke-test-fixture",
+            component="story_extractor",
+        )
+
+    if counters.stage_status() != "partial":
+        print(
+            "PARTIAL STAGE SMOKE TEST FAILED: stage_status="
+            f"{counters.stage_status()} (expected partial)"
+        )
+        return False
+    if counters.chunks_blocked != 2:
+        print(
+            "PARTIAL STAGE SMOKE TEST FAILED: chunks_blocked="
+            f"{counters.chunks_blocked} (expected 2)"
+        )
+        return False
+    if counters.block_reasons["empty_response"] != 2:
+        print(
+            "PARTIAL STAGE SMOKE TEST FAILED: empty_response="
+            f"{counters.block_reasons['empty_response']} (expected 2)"
+        )
+        return False
+
+    summary = _format_chunk_summary(
+        {
+            **counters.as_dict(),
+            "stage_status": counters.stage_status(),
+        },
+        prefix="smoke ",
+    )
+    if "blocked=2" not in summary:
+        print(
+            "PARTIAL STAGE SMOKE TEST FAILED: summary missing blocked=2: "
+            f"{summary}"
+        )
+        return False
+    if "clm⚠" not in summary:
+        print(
+            "PARTIAL STAGE SMOKE TEST FAILED: summary missing clm⚠ symbol: "
+            f"{summary}"
+        )
+        return False
+
+    print(summary)
+    print("PARTIAL STAGE SMOKE TEST PASSED")
+    return True
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -530,6 +627,14 @@ if __name__ == "__main__":
         action="store_true",
         help="Run Phase W comparison: flag-off vs flag-on (mock LLM).",
     )
+    parser.add_argument(
+        "--partial-stage",
+        action="store_true",
+        help=(
+            "Phase S.3: simulate a partial stage (3 succeed, 2 blocked) "
+            "and confirm clm⚠ summary."
+        ),
+    )
     args = parser.parse_args()
 
     if args.enable_phase_v:
@@ -538,6 +643,8 @@ if __name__ == "__main__":
         success = run_phase_w_smoke_test()
     elif args.phase_w_compare:
         success = run_phase_w_compare()
+    elif args.partial_stage:
+        success = run_partial_stage_smoke_test()
     else:
         success = run_fixture_smoke_test(mock=args.mock)
     sys.exit(0 if success else 1)

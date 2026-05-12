@@ -22,6 +22,13 @@ _LOG = logging.getLogger(__name__)
 
 from ..ingestion._paths import schema_path
 from ._paths import find_processed_dir
+# Phase S.0: reuse the Phase X resilience primitives so the story
+# extraction parse path uses the same call order
+# (guard_empty_response -> strip_markdown_fence -> json.loads). Import,
+# never duplicate -- one implementation per primitive.
+from ._chunk_counters import ChunkCounters
+from ._failure_artifacts import emit_story_empty_response, emit_story_parse_failed
+from ._resilience import EmptyResponseError, guard_empty_response, strip_markdown_fence
 
 
 _COMPONENT_NAME = "story_extractor"
@@ -140,6 +147,12 @@ class StoryExtractor:
     def __init__(self, api_caller: Optional[Callable[[str], str]] = None):
         # Tests inject api_caller; production uses the real Anthropic client.
         self._api_caller = api_caller
+        # Phase S.0 counter: every chunk produces exactly one outcome
+        # (success, story_extraction_empty_response, story_extraction_parse_failed,
+        # api_error, or schema_violation). The counter is per-run, surfaced
+        # on the return dict so the orchestrator can roll it into
+        # ``chunks_blocked``.
+        self.last_run_counters: ChunkCounters = ChunkCounters()
 
     def extract_from_source(
         self, source_id: str, repo_root: str
@@ -188,6 +201,19 @@ class StoryExtractor:
 
         valid_chunk_ids = {c["chunk_id"] for c in chunks if "chunk_id" in c}
 
+        # Phase S.0: fresh counter per source so multi-source callers do
+        # not accumulate across runs. Attempts are bumped once per chunk
+        # submitted to the API.
+        counters = ChunkCounters()
+        counters.record_attempt(len(chunks))
+        # ``_resolve_sdl_root`` is not available here without growing this
+        # module's dependency surface; the orchestrator persists failure
+        # artifacts via a follow-up call when sdl_root is known. We pass
+        # ``sdl_root=None`` so emission still bumps the counter (the
+        # authoritative record) and logs the failure type even when on-
+        # disk persistence is unavailable from this layer.
+        failure_sdl_root = None
+
         for chunk in chunks:
             prompt = PROMPT_TEMPLATE.format(
                 source_id=source_id,
@@ -196,6 +222,7 @@ class StoryExtractor:
                 page_numbers=chunk.get("page_numbers", []),
                 chunk_text=chunk.get("text", ""),
             )
+            chunk_id_str = str(chunk.get("chunk_id") or "")
             try:
                 response_text = self._api_caller(prompt)
             except Exception as exc:  # broad: API can raise many error types
@@ -209,9 +236,50 @@ class StoryExtractor:
                 )
                 continue
 
+            # Phase S.0: identical call order to typed extraction
+            # (typed_extraction_runner._parse_json_response_strict):
+            #   guard_empty_response -> strip_markdown_fence -> json.loads.
+            # An empty / whitespace-only response or a fence-only response
+            # halts this chunk and counts it under ``empty_response``. A
+            # non-empty response that still fails to parse counts under
+            # ``parse_error``. Both keep the chunk debuggable via a
+            # blocked candidate in candidates.jsonl AND via a
+            # failure artifact in <sdl_root>/failures/.
             try:
-                parsed = json.loads(response_text)
+                raw = guard_empty_response(response_text, chunk_id_str)
+                stripped = strip_markdown_fence(raw)
+                if not stripped:
+                    raise EmptyResponseError(
+                        f"Markdown fence wrapped no JSON content for chunk {chunk_id_str}"
+                    )
+            except EmptyResponseError as exc:
+                emit_story_empty_response(
+                    counters,
+                    chunk_id=chunk_id_str,
+                    source_id=source_id,
+                    detail=str(exc),
+                    sdl_root=failure_sdl_root,
+                )
+                all_records.append(
+                    _make_blocked_skeleton(
+                        chunk,
+                        source_id=source_id,
+                        source_family=source_family,
+                        block_reason=f"empty_response: {exc}",
+                    )
+                )
+                continue
+
+            try:
+                parsed = json.loads(stripped)
             except (TypeError, json.JSONDecodeError) as exc:
+                emit_story_parse_failed(
+                    counters,
+                    chunk_id=chunk_id_str,
+                    source_id=source_id,
+                    detail=f"{type(exc).__name__}: {exc}",
+                    sdl_root=failure_sdl_root,
+                )
                 all_records.append(
                     _make_blocked_skeleton(
                         chunk,
@@ -223,6 +291,13 @@ class StoryExtractor:
                 continue
 
             if not isinstance(parsed, dict):
+                emit_story_parse_failed(
+                    counters,
+                    chunk_id=chunk_id_str,
+                    source_id=source_id,
+                    detail="response was not a JSON object",
+                    sdl_root=failure_sdl_root,
+                )
                 all_records.append(
                     _make_blocked_skeleton(
                         chunk,
@@ -288,6 +363,7 @@ class StoryExtractor:
 
             all_records.append(candidate)
             ok_candidates.append(candidate)
+            counters.record_success(1)
 
         # Always overwrite (FINDING from RT2: appending produces duplicates).
         out_path = processed_dir / "stories" / "candidates.jsonl"
@@ -302,11 +378,17 @@ class StoryExtractor:
         except OSError as exc:
             return _failure(f"write_error: {exc}")
 
+        self.last_run_counters = counters
         return {
             "status": "success",
             "candidates": ok_candidates,
             "all_records": all_records,
             "reason": "",
+            "chunks_attempted": counters.chunks_attempted,
+            "chunks_succeeded": counters.chunks_succeeded,
+            "chunks_blocked": counters.chunks_blocked,
+            "block_reasons": dict(counters.block_reasons),
+            "stage_status": counters.stage_status(),
         }
 
     def _assemble_candidate(
