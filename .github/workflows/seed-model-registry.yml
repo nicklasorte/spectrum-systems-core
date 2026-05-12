@@ -5,8 +5,10 @@ name: Seed model registry
 # model strings are hardcoded in code. Update this artifact (re-run with
 # force=true) to migrate model versions.
 #
-# URGENT: claude-sonnet-4-20250514 retires June 15, 2026. The seeded
-# registry uses claude-sonnet-4-6 for generation to avoid the retirement.
+# The registry content lives at ai/registry/model_registry.json in this
+# repo so the model strings are kept out of workflow YAML (the
+# no-model-strings-in-workflows CI gate would otherwise flag them).
+# Edit that JSON file and re-run with force=true to roll a new version.
 #
 # By default this workflow skips if model_registry.json already exists.
 # Pass force=true to overwrite an existing registry.
@@ -24,6 +26,11 @@ jobs:
   seed-model-registry:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+        with:
+          path: spectrum-systems-core
+
       - name: Checkout data-lake
         uses: actions/checkout@v4
         with:
@@ -45,24 +52,16 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Write model_registry.json
+      - name: Copy model_registry.json into data-lake
         if: steps.check.outputs.skip != 'true'
         env:
+          SRC: ${{ github.workspace }}/spectrum-systems-core/ai/registry/model_registry.json
           CONFIG_DIR: ${{ github.workspace }}/data-lake/store/artifacts/config
         run: |
           mkdir -p "$CONFIG_DIR"
-          cat > "$CONFIG_DIR/model_registry.json" <<'EOF'
-          {
-            "artifact_type": "model_registry",
-            "schema_version": "1.0.0",
-            "models": {
-              "extraction": "claude-haiku-4-5-20251001",
-              "generation": "claude-sonnet-4-6",
-              "complex_reasoning": "claude-opus-4-5"
-            },
-            "note": "No hardcoded model strings anywhere in code. All model resolution must use ModelRegistry.get(task_type). Update this file to migrate model versions."
-          }
-          EOF
+          # Validate JSON before copying so a malformed registry never lands.
+          python -c "import json,sys; json.loads(open('$SRC').read())"
+          cp "$SRC" "$CONFIG_DIR/model_registry.json"
 
       - name: Commit registry to data-lake
         if: steps.check.outputs.skip != 'true'
