@@ -45,7 +45,12 @@
         "ground_truth_missing_type",
         "low_confidence_extraction",
         "correction_candidate_expired",
-        "atomic_decomposition_failed"
+        "atomic_decomposition_failed",
+        "few_shot_artifact_missing",
+        "few_shot_no_verified_examples",
+        "binding_tuple_parse_failed",
+        "binding_tuple_incomplete",
+        "scope_overgeneralization"
       ]
     },
     "severity": { "enum": ["halt", "warn", "info"] },

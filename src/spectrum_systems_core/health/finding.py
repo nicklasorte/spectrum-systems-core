@@ -85,6 +85,27 @@ ALL_FINDING_CODES: frozenset[str] = frozenset(
         # Phase T.7: emitted when ATOMIC_DECOMPOSITION_ENABLED=true and
         # the second Haiku call produced zero atomic facts. severity warn.
         "atomic_decomposition_failed",
+        # Phase V.3: emitted when the few-shot examples artifact is
+        # absent. severity halt when FEW_SHOT_REQUIRED=true,
+        # otherwise severity info.
+        "few_shot_artifact_missing",
+        # Phase V.3: emitted when the few-shot artifact is present
+        # but contains zero examples with ``verified: true``. The
+        # extraction continues with no examples injected.
+        "few_shot_no_verified_examples",
+        # Phase V.5: emitted when BINDING_TUPLE_ENABLED=true and the
+        # second-pass JSON could not be parsed. severity warn; the
+        # decision's binding_tuple is set to null and surrounding
+        # extraction is unaffected.
+        "binding_tuple_parse_failed",
+        # Phase V.5: emitted when BINDING_TUPLE_ENABLED=true and a
+        # decision with outcome approval/rejection had a null actor.
+        # severity warn. Only fires when BINDING_TUPLE_ENABLED=true.
+        "binding_tuple_incomplete",
+        # Phase V.6: emitted when source_text contains a specific
+        # band reference (numeric MHz/GHz/kHz) AND extracted_text
+        # contains an OVERGENERALIZATION_MARKERS entry. severity warn.
+        "scope_overgeneralization",
     }
 )
 
@@ -103,6 +124,9 @@ HALT_FINDING_CODES: frozenset[str] = frozenset(
         # Phase T.1: optionally promoted to halt when
         # BINDING_VALIDATOR_HALT_ENABLED=true. Default severity is warn.
         "taxonomy_regulatory_verb_missing",
+        # Phase V.3: promoted to halt when FEW_SHOT_REQUIRED=true and
+        # the few-shot artifact is missing. Default severity is info.
+        "few_shot_artifact_missing",
     }
 )
 

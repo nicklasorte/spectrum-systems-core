@@ -187,6 +187,81 @@ validators. Tests assert `id()` equality on the imported objects.
   correction candidates. The preflight scanner emits an info finding when
   a candidate's `expires_at` falls in the past; no auto-deletion.
 
+## Operator env vars (Phase V — domain grounding)
+
+- `MAX_GLOSSARY_TERMS_PER_CHUNK=10` (default `10`) — cap on the
+  number of glossary terms injected per chunk by
+  `glossary.term_injector.find_matching_terms`. Set to `0` to disable
+  injection without reverting code. Each definition is truncated to
+  the term's `short_definition` (<= 200 chars) so 10 terms add ~2 KB
+  to the prompt at most.
+- `FEW_SHOT_REQUIRED=true` (default `false`) — promote
+  `few_shot_artifact_missing` from `info` to `halt`. Off by default
+  so first-run environments without
+  `data-lake/store/artifacts/evals/few_shot/decision_examples_v1.json`
+  do not block; the loader emits the same `info` finding so the
+  operator still sees it in health output.
+- `POSITION_AWARE_PROMPTING_ENABLED=true` (default `true`) — when
+  true, `chunk_position == "middle"` chunks receive an
+  ATTENTION DIRECTION prompt block. `chunk_position` is computed
+  proportionally from the CURRENT chunk-list length on every run, so
+  re-runs with a different chunk count get fresh positions.
+- `BINDING_TUPLE_ENABLED=true` (default `false`) — run a second Haiku
+  call per decision to extract
+  `(actor, action_verb, object_description, band_or_spectrum_ref,
+  constraint_or_condition)`. Cost: roughly `$0.0005 per decision`.
+  When `false`, `binding_tuple` is `null` and zero model calls are
+  made — `binding_tuple_incomplete` cannot fire in that mode by
+  design.
+- `GENERALIZATION_CHECK_ENABLED=true` (default `true`) — when true,
+  the post-extraction scanner emits `scope_overgeneralization` warn
+  findings when a source chunk carries a specific band reference
+  (`r"\d(\.\d+)?\s*(MHz|GHz|kHz)"`) and the extracted text contains
+  an entry from `OVERGENERALIZATION_MARKERS`. Set to `false` to
+  disable.
+
+### Glossary governance (Phase V.1)
+
+- The versioned glossary lives at
+  `data-lake/store/artifacts/glossary/spectrum_glossary_v1.json` with
+  `artifact_type: spectrum_glossary` and a `content_hash` computed via
+  `glossary.glossary_builder.compute_glossary_content_hash` (sorted
+  keys, compact JSON, sha256). Any term-list edit must bump
+  `glossary_version` AND recompute `content_hash`.
+- The legacy `working_paper.json` referenced by the predecessor
+  `spectrum-systems` repo is superseded; the marker
+  `working_paper.retired.json` is kept alongside the versioned
+  artifact so future tooling does not look for it.
+- `OVERGENERALIZATION_MARKERS` (in
+  `src/spectrum_systems_core/config/taxonomy.py`) is governed under
+  the same rule as `REGULATORY_VERBS`: updates require a PR. Tests
+  assert the list is non-empty so it cannot be accidentally emptied.
+
+### Few-shot examples (Phase V.3)
+
+- The artifact at
+  `data-lake/store/artifacts/evals/few_shot/decision_examples_v1.json`
+  ships with `verified: false` placeholders. Examples are NEVER
+  injected into a prompt while `verified: false` — the loader filters
+  to verified examples only. Promote an example to live by setting
+  `"verified": true` (and ideally populating `verified_by`).
+- The artifact uses `artifact_type: decision_few_shot_examples` so
+  it does NOT collide with the legacy `few_shot_examples` artifact
+  consumed by `evals.m4.few_shot.FewShotLoader`.
+
+### Findings introduced by Phase V
+
+- `few_shot_artifact_missing` (info default; halt when
+  `FEW_SHOT_REQUIRED=true`).
+- `few_shot_no_verified_examples` (info).
+- `binding_tuple_parse_failed` (warn) — only fires when
+  `BINDING_TUPLE_ENABLED=true`.
+- `binding_tuple_incomplete` (warn) — null `actor` on
+  `approval` / `rejection`; only fires when `BINDING_TUPLE_ENABLED=true`.
+- `scope_overgeneralization` (warn) — source has a numeric MHz/GHz/kHz
+  reference and the extracted text uses an
+  `OVERGENERALIZATION_MARKERS` entry.
+
 ## Files worth reading before non-trivial changes
 
 - `docs/architecture/system_constitution.md` — binding; precedence over everything else.

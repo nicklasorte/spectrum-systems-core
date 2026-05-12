@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/decision_few_shot_examples.schema.json",
+  "title": "decision_few_shot_examples",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "examples_version",
+    "extraction_type",
+    "examples"
+  ],
+  "properties": {
+    "artifact_type": { "const": "decision_few_shot_examples" },
+    "schema_version": { "const": "1.0.0" },
+    "examples_version": { "type": "string", "minLength": 1 },
+    "extraction_type": {
+      "enum": ["decision", "claim", "action_item"]
+    },
+    "verified": { "type": "boolean" },
+    "created_at": { "type": "string" },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "example_id",
+          "source_meeting_id",
+          "input_text",
+          "expected_output",
+          "verified"
+        ],
+        "properties": {
+          "example_id": { "type": "string", "minLength": 1 },
+          "source_meeting_id": { "type": "string", "minLength": 1 },
+          "source_turn_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "input_text": { "type": "string", "minLength": 1 },
+          "expected_output": { "type": "object" },
+          "verified": { "type": "boolean" },
+          "verified_by": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

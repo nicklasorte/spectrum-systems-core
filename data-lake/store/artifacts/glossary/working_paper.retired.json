@@ -1,0 +1,8 @@
+{
+  "artifact_type": "glossary_retirement",
+  "schema_version": "1.0.0",
+  "retired_at": "1970-01-01T00:00:00+00:00",
+  "retired_reason": "superseded_by_spectrum_glossary_v1",
+  "superseded_by": "store/artifacts/glossary/spectrum_glossary_v1.json",
+  "notes": "The legacy informal working_paper.json glossary was never serialized into this tree; the retirement marker is recorded for governance continuity so future scanners do not look for it."
+}

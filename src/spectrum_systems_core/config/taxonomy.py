@@ -81,9 +81,27 @@ OUTCOME_TO_VERBS: dict = {
 }
 
 
+# Phase V.6: scope over-broadening markers. The generalization-bias
+# detector fires when source_text contains a specific band reference
+# (e.g. "7 GHz", "6525 MHz") AND extracted_text contains one of these
+# markers. Updating this list is a policy change and requires a PR --
+# same governance as REGULATORY_VERBS.
+OVERGENERALIZATION_MARKERS: Tuple[str, ...] = (
+    "all spectrum",
+    "all bands",
+    "all frequencies",
+    "entire spectrum",
+    "any frequency",
+    "all allocations",
+    "every band",
+    "the spectrum as a whole",
+)
+
+
 __all__ = [
     "CLAIM_TYPES",
     "DECISION_OUTCOME_TYPES",
     "OUTCOME_TO_VERBS",
+    "OVERGENERALIZATION_MARKERS",
     "REGULATORY_VERBS",
 ]
