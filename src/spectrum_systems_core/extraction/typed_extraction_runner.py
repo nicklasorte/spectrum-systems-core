@@ -32,6 +32,10 @@ from .classification_cache import ClassificationCache
 from .decision_extractor import DecisionExtractor
 from .extraction_merger import ExtractionMerger
 from .glossary_manager import GlossaryManager
+from ..verification.pipeline_integration import (
+    VerificationIncompleteError,
+    apply_phase_v_if_enabled,
+)
 
 
 _LOG = logging.getLogger(__name__)
@@ -568,6 +572,46 @@ def run_typed_extraction(
         action_items=actions,
         run_metadata=run_metadata,
     )
+
+    # Phase V: if the post-hoc verification flag is on, run the verifier,
+    # annotate each item with verification_status, write a
+    # source_verification_result artifact, and fail-closed on incomplete
+    # coverage. When disabled, this returns None and the legacy v1.1.0
+    # write path runs unchanged.
+    #
+    # The flag check needs SOME data_lake path -- so we resolve from the
+    # kwarg OR the DATA_LAKE_PATH env var so callers that drive the
+    # runner via env (PipelineOrchestrator, smoke tests, CI) cannot
+    # silently bypass Phase V (RT1 Sev-1 fix).
+    verification_result = None
+    resolved_data_lake = data_lake or os.environ.get("DATA_LAKE_PATH") or ""
+    if resolved_data_lake:
+        try:
+            chunks_by_id = {
+                c.get("chunk_id") or c.get("id"): c
+                for c in chunks
+                if (c.get("chunk_id") or c.get("id"))
+            }
+            verification_result = apply_phase_v_if_enabled(
+                artifact,
+                chunks_by_id,
+                data_lake_path=resolved_data_lake,
+                sdl_root=sdl_root,
+                pipeline_run_id=extraction_run_id,
+                api_caller=(api_callers or {}).get("verifier"),
+            )
+        except VerificationIncompleteError as exc:
+            _LOG.error("phase_v_verification_incomplete: %s", exc)
+            return {
+                "status": "failure",
+                "reason": f"verification_incomplete:{exc}",
+            }
+        except Exception as exc:  # pragma: no cover -- never escape
+            _LOG.exception("phase_v_unexpected_error: %s", exc)
+            return {
+                "status": "failure",
+                "reason": f"verification_error:{type(exc).__name__}:{exc}",
+            }
 
     try:
         ExtractionMerger.write_to(artifact, out_path)

@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/extraction/meeting_extraction.v2.schema.json",
+  "title": "meeting_extraction (v2.0.0)",
+  "description": "Phase V variant: every decision/claim/action_item carries verification_status. v1.x extractions remain valid under the original meeting_extraction.schema.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "meeting_extraction_id",
+    "source_artifact_id",
+    "artifact_type",
+    "schema_version",
+    "created_at",
+    "decisions",
+    "claims",
+    "action_items",
+    "total_chunks_classified",
+    "off_topic_count",
+    "regulatory_verb_fallback_count",
+    "routing_quality_warning",
+    "requires_human_dedup_count",
+    "extraction_run_id",
+    "few_shot_injected",
+    "few_shot_version",
+    "few_shot_example_count",
+    "omit_instruction_present",
+    "confidence_threshold",
+    "low_confidence_item_count",
+    "verification_artifact_id",
+    "provenance"
+  ],
+  "properties": {
+    "meeting_extraction_id": { "type": "string", "format": "uuid" },
+    "source_artifact_id": { "type": "string", "format": "uuid" },
+    "artifact_type": { "const": "meeting_extraction" },
+    "schema_version": { "const": "2.0.0" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "verification_artifact_id": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "decision_text", "decision_type", "stakeholders", "rationale",
+          "source_turn_ids", "source_turn_validation", "confidence",
+          "verification_status"
+        ],
+        "properties": {
+          "decision_text": { "type": "string", "minLength": 1 },
+          "decision_type": {
+            "enum": [
+              "approved", "rejected", "deferred", "noted", "considered",
+              "action_required", "open_question", "to_be_determined"
+            ]
+          },
+          "stakeholders": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "rationale": { "type": ["string", "null"] },
+          "source_turn_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "source_turn_validation": {
+            "enum": ["verified", "invalid", "missing"]
+          },
+          "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "items_requiring_review": { "type": "boolean" },
+          "review_reason": { "type": "string" },
+          "requires_human_dedup": { "type": "boolean" },
+          "verification_status": {
+            "enum": [
+              "verified", "unsupported", "contradicted",
+              "insufficient_evidence", "verification_failed"
+            ]
+          },
+          "exclusion_reasons": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "claim_text", "claim_type", "speaker",
+          "source_turn_ids", "source_turn_validation", "confidence",
+          "verification_status"
+        ],
+        "properties": {
+          "claim_text": { "type": "string", "minLength": 1 },
+          "claim_type": {
+            "enum": ["technical", "procedural", "regulatory", "opinion"]
+          },
+          "speaker": { "type": "string" },
+          "source_turn_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "source_turn_validation": {
+            "enum": ["verified", "invalid", "missing"]
+          },
+          "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "items_requiring_review": { "type": "boolean" },
+          "review_reason": { "type": "string" },
+          "requires_human_dedup": { "type": "boolean" },
+          "verification_status": {
+            "enum": [
+              "verified", "unsupported", "contradicted",
+              "insufficient_evidence", "verification_failed"
+            ]
+          },
+          "exclusion_reasons": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "action_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action", "owner", "due",
+          "source_turn_ids", "source_turn_validation", "confidence",
+          "verification_status"
+        ],
+        "properties": {
+          "action": { "type": "string", "minLength": 1 },
+          "owner": { "type": "string", "minLength": 1 },
+          "due": { "type": ["string", "null"] },
+          "source_turn_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "source_turn_validation": {
+            "enum": ["verified", "invalid", "missing"]
+          },
+          "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "items_requiring_review": { "type": "boolean" },
+          "review_reason": { "type": "string" },
+          "requires_human_dedup": { "type": "boolean" },
+          "verification_status": {
+            "enum": [
+              "verified", "unsupported", "contradicted",
+              "insufficient_evidence", "verification_failed"
+            ]
+          },
+          "exclusion_reasons": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "total_chunks_classified": { "type": "integer", "minimum": 0 },
+    "off_topic_count": { "type": "integer", "minimum": 0 },
+    "regulatory_verb_fallback_count": { "type": "integer", "minimum": 0 },
+    "routing_quality_warning": { "type": "boolean" },
+    "requires_human_dedup_count": { "type": "integer", "minimum": 0 },
+    "extraction_run_id": { "type": "string", "minLength": 1 },
+
+    "few_shot_injected": { "type": "boolean" },
+    "few_shot_version": { "type": ["string", "null"] },
+    "few_shot_example_count": { "type": "integer", "minimum": 0 },
+    "omit_instruction_present": { "type": "boolean" },
+    "confidence_threshold": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "low_confidence_item_count": { "type": "integer", "minimum": 0 },
+
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": { "const": "ExtractionMerger" },
+        "phase": { "const": "V" }
+      }
+    }
+  }
+}
