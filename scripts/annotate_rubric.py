@@ -233,6 +233,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # Strip whitespace from every string CLI arg. Mobile workflow_dispatch
+    # inputs frequently arrive with a trailing space pasted from a phone
+    # keyboard; an unstripped source_id then fails exact-string matches
+    # against the GT pair source identifiers.
+    for _attr in vars(args):
+        _val = getattr(args, _attr)
+        if isinstance(_val, str):
+            setattr(args, _attr, _val.strip())
+
     sdl_root = (
         Path(args.sdl_root) if args.sdl_root
         else Path(args.data_lake) / "store" / "artifacts"
