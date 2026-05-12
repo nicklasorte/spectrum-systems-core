@@ -34,10 +34,13 @@ from .extraction_merger import ExtractionMerger
 from .glossary_manager import GlossaryManager
 from ._chunk_counters import ChunkCounters
 from ._failure_artifacts import (
+    clear_chunk_lookup,
     emit_empty_response,
     emit_json_parse_failed,
     emit_rate_limit_exhausted,
+    install_chunk_lookup,
 )
+from ._raw_response_log import write_log_from_context as _write_raw_response_log
 from ._resilience import (
     EmptyResponseError,
     MAX_CONCURRENT_HAIKU_CALLS,
@@ -199,7 +202,12 @@ def _build_anthropic_caller(
             text = getattr(block, "text", None)
             if isinstance(text, str):
                 parts.append(text)
-        return _parse_json_response("\n".join(parts))
+        raw_text = "\n".join(parts)
+        # Phase O.1: optional raw-response log. Disabled-mode is a
+        # single boolean read at module load, so the hot path stays
+        # free when RAW_RESPONSE_LOG_ENABLED is false.
+        _write_raw_response_log(raw_text, model_override=model)
+        return _parse_json_response(raw_text)
 
     return _call
 
@@ -250,7 +258,11 @@ def _build_anthropic_batch_classifier_caller(
             text = getattr(block, "text", None)
             if isinstance(text, str):
                 parts.append(text)
-        return {"text": "\n".join(parts)}
+        raw_text = "\n".join(parts)
+        _write_raw_response_log(
+            raw_text, model_override=model, call_type_override="classifier",
+        )
+        return {"text": raw_text}
 
     return _call
 
@@ -311,7 +323,11 @@ def _build_anthropic_async_batch_classifier_caller(
             text = getattr(block, "text", None)
             if isinstance(text, str):
                 parts.append(text)
-        return {"text": "\n".join(parts)}
+        raw_text = "\n".join(parts)
+        _write_raw_response_log(
+            raw_text, model_override=model, call_type_override="classifier",
+        )
+        return {"text": raw_text}
 
     return _acall
 
@@ -675,6 +691,13 @@ def run_typed_extraction(
             flush=True,
         )
         chunks = chunks[:max_chunks]
+
+    # Phase O.2: install the chunk lookup table once. Every failure
+    # artifact emitted during this run will resolve chunk_id -> chunk
+    # text in O(1) without re-reading chunks.jsonl. The table is
+    # cleared at the end of the run so subsequent runs cannot see
+    # stale chunk data.
+    install_chunk_lookup(chunks)
 
     available_turn_ids: Set[str] = set()
     for c in chunks:

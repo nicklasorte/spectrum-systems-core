@@ -104,6 +104,35 @@ conversation as the seed for STEP 1 inventory. If the briefing's
 `valid_until` is in the past, re-run `verify-pipeline-state` first, then
 re-run `next-phase-handoff`.
 
+## Operator env vars (Phase O — pipeline debug observability)
+
+- `RAW_RESPONSE_LOG_ENABLED=true` (default `false`) — turn on the
+  per-chunk raw API response logger. Writes a `raw_api_response_log`
+  artifact under
+  `<sdl_root>/debug/raw_responses/<source_id>/<chunk_id>_<call_type>.json`.
+  Zero-overhead when disabled (the enable flag is read once at module
+  import).
+- `RAW_RESPONSE_LOG_MAX_CHARS=2000` (default `2000`) — truncation
+  budget for `raw_response_preview`. Larger payloads are classified as
+  `response_type: truncated`.
+
+`pipeline_run_summary` artifacts land under
+`<data_lake>/store/artifacts/pipeline_runs/<pipeline_run_id>.json`
+after the post-pipeline job. They are read by
+`python -m spectrum_systems_core.health.run_diff` (workflow:
+`.github/workflows/diff-pipeline-runs.yml`, workflow_dispatch only).
+
+`blocked_chunk` envelopes (schema 2.0.0) are written alongside the
+existing typed failure artifacts; the
+`spectrum_systems_core.health.blocked_chunk_text_check` scanner
+reports any legacy v1.0.0 envelope still on disk as an info-severity
+health finding (`blocked_artifact_missing_chunk_text`).
+
+`eval_summary` artifacts now carry a `pair_breakdown` and (when ≥2
+distinct source_ids are present) `per_source_metrics`. Pairs whose
+ground_truth record lacks a `source_id` field emit
+`eval_pair_missing_source_id` info findings.
+
 ## PR Smoke Test
 
 Every PR triggers an automatic extraction smoke test on the

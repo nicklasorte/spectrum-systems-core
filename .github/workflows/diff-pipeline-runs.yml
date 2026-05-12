@@ -1,0 +1,47 @@
+name: Diff pipeline runs
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_a_id:
+        description: 'Earlier run ID (e.g. pipeline-run-23)'
+        required: true
+      run_b_id:
+        description: 'Later run ID (e.g. pipeline-run-24)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Checkout data-lake
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.DATA_LAKE_REPO }}
+          token: ${{ secrets.GH_PAT }}
+          path: data-lake
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -e ".[dev]"
+
+      - name: Diff pipeline runs
+        env:
+          DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+        run: |
+          python -m spectrum_systems_core.health.run_diff \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            --run-a-id "${{ github.event.inputs.run_a_id }}" \
+            --run-b-id "${{ github.event.inputs.run_b_id }}" \
+            --output-format github_actions_summary

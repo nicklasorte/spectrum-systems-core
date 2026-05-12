@@ -260,6 +260,17 @@ jobs:
           echo "After reviewing the first eval_summary, a human must run:"
           echo "  python -m spectrum_systems_core.cli eval-ground-truth --set-baseline"
 
+      - name: Write pipeline run summary
+        if: always()
+        env:
+          DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+          PIPELINE_RUN_ID: ${{ github.run_id }}
+        run: |
+          python -m spectrum_systems_core.health.run_summary \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            --pipeline-run-id "${{ github.run_id }}" \
+            --output-format github_actions_summary
+
       - name: Commit and push post-pipeline artifacts
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}

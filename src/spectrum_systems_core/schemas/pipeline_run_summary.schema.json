@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/pipeline_run_summary.schema.json",
+  "title": "pipeline_run_summary",
+  "description": "Phase O.3 aggregate artifact written after every pipeline run. Aggregates orchestration_result + health findings into one envelope so a single read produces the GitHub Actions step summary AND feeds the run-diff tool (O.5).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "pipeline_run_id",
+    "created_at",
+    "transcripts",
+    "totals",
+    "block_reason_breakdown",
+    "health_findings"
+  ],
+  "properties": {
+    "artifact_type": { "const": "pipeline_run_summary" },
+    "schema_version": { "const": "1.0.0" },
+    "pipeline_run_id": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "minLength": 1 },
+    "transcripts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source_id",
+          "chunks_attempted",
+          "chunks_succeeded",
+          "chunks_blocked",
+          "stage_status",
+          "has_orchestration_artifact"
+        ],
+        "properties": {
+          "source_id": { "type": "string" },
+          "chunks_attempted": { "type": "integer", "minimum": 0 },
+          "chunks_succeeded": { "type": "integer", "minimum": 0 },
+          "chunks_blocked": { "type": "integer", "minimum": 0 },
+          "stage_status": {
+            "type": "string",
+            "enum": ["ok", "partial", "failed", "missing"]
+          },
+          "has_orchestration_artifact": { "type": "boolean" },
+          "block_reasons": {
+            "type": "object",
+            "additionalProperties": { "type": "integer", "minimum": 0 }
+          },
+          "synthesize_ok": { "type": ["boolean", "null"] }
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transcripts",
+        "chunks_attempted",
+        "chunks_succeeded",
+        "chunks_blocked"
+      ],
+      "properties": {
+        "transcripts": { "type": "integer", "minimum": 0 },
+        "chunks_attempted": { "type": "integer", "minimum": 0 },
+        "chunks_succeeded": { "type": "integer", "minimum": 0 },
+        "chunks_blocked": { "type": "integer", "minimum": 0 },
+        "blocked_rate": { "type": "number", "minimum": 0.0 }
+      }
+    },
+    "block_reason_breakdown": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "health_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_code", "severity"],
+        "properties": {
+          "finding_code": { "type": "string" },
+          "severity": { "enum": ["halt", "warn", "info"] },
+          "count": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "eval_metrics": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "aggregate_coverage": { "type": ["number", "null"] },
+        "aggregate_precision": { "type": ["number", "null"] }
+      }
+    }
+  }
+}
