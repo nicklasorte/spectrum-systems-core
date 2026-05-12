@@ -69,7 +69,37 @@
           "review_reason": { "type": "string" },
           "requires_human_dedup": { "type": "boolean" },
           "verification_status": { "type": "string" },
-          "verification_id": { "type": ["string", "null"] }
+          "verification_id": { "type": ["string", "null"] },
+          "decision_outcome": {
+            "type": "string",
+            "enum": [
+              "approval", "rejection", "deferral",
+              "action_required", "noted", "question"
+            ],
+            "description": "Phase T.1: outcome class grounded in regulatory verb from source text."
+          },
+          "binding_valid": { "type": "boolean" },
+          "regulatory_verb_count": { "type": "integer", "minimum": 0 },
+          "binding_weak": { "type": "boolean" },
+          "binding_ambiguous": { "type": "boolean" },
+          "grounded": { "type": "boolean" },
+          "grounding_overlap": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "grounding_verified": {
+            "type": "boolean",
+            "description": "Phase T.2: True when grounding_overlap >= GROUNDING_THRESHOLD."
+          },
+          "grounding_overlap_score": {
+            "type": "number", "minimum": 0.0, "maximum": 1.0,
+            "description": "Phase T.2: alias of grounding_overlap surfaced per-item."
+          },
+          "speaker": { "type": ["string", "null"] },
+          "speaker_ambiguous": { "type": "boolean" },
+          "atomic_facts": {
+            "type": ["array", "null"],
+            "items": { "type": "string", "minLength": 1 },
+            "description": "Phase T.7: atomic factual decomposition (feature-flagged)."
+          },
+          "atomic_decomposition_model": { "type": ["string", "null"] }
         }
       }
     },
@@ -102,7 +132,12 @@
           "review_reason": { "type": "string" },
           "requires_human_dedup": { "type": "boolean" },
           "verification_status": { "type": "string" },
-          "verification_id": { "type": ["string", "null"] }
+          "verification_id": { "type": ["string", "null"] },
+          "grounded": { "type": "boolean" },
+          "grounding_overlap": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "grounding_verified": { "type": "boolean" },
+          "grounding_overlap_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "speaker_ambiguous": { "type": "boolean" }
         }
       }
     },
@@ -133,7 +168,13 @@
           "review_reason": { "type": "string" },
           "requires_human_dedup": { "type": "boolean" },
           "verification_status": { "type": "string" },
-          "verification_id": { "type": ["string", "null"] }
+          "verification_id": { "type": ["string", "null"] },
+          "grounded": { "type": "boolean" },
+          "grounding_overlap": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "grounding_verified": { "type": "boolean" },
+          "grounding_overlap_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "speaker": { "type": ["string", "null"] },
+          "speaker_ambiguous": { "type": "boolean" }
         }
       }
     },

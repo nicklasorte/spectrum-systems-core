@@ -33,11 +33,13 @@ from ..evals.m4.few_shot import (
     format_examples_for_prompt,
     load_few_shot_examples,
 )
+from ..config.taxonomy import DECISION_OUTCOME_TYPES
 from ._prompt_blocks import (
     CONFIDENCE_SCORING_BLOCK,
     CONFIDENCE_THRESHOLD,
     OMIT_INSTRUCTION_BLOCK,
     PROMPT_SCHEMA_VERSION,
+    REGULATORY_TAXONOMY_BLOCK,
     apply_confidence_threshold,
     normalize_confidence,
 )
@@ -49,6 +51,8 @@ _DECISION_TYPES: Set[str] = {
     "approved", "rejected", "deferred", "noted", "considered",
     "action_required", "open_question", "to_be_determined",
 }
+
+_VALID_DECISION_OUTCOMES: Set[str] = set(DECISION_OUTCOME_TYPES)
 
 
 def _default_api_caller(prompt: str) -> Dict[str, Any]:  # noqa: ARG001
@@ -151,12 +155,18 @@ class DecisionExtractor:
         glossary_block: str,
         few_shot_block: str,
     ) -> str:
-        # Order: role -> OMIT -> glossary -> few-shot -> chunks -> schema -> confidence.
+        # Order: role -> OMIT -> regulatory taxonomy -> glossary ->
+        # few-shot -> chunks -> schema -> confidence.
         parts: List[str] = []
         parts.append(
             "Extract DECISION items from the following meeting chunks."
         )
         parts.append(OMIT_INSTRUCTION_BLOCK)
+        # Phase T.1: inject the regulatory verb taxonomy so the model
+        # has the domain signal to distinguish "approved" from
+        # "considered". The block is identical bytes across runs (built
+        # once at import from the canonical taxonomy.py constants).
+        parts.append(REGULATORY_TAXONOMY_BLOCK)
         if glossary_block:
             parts.append(glossary_block)
         if few_shot_block:
@@ -173,6 +183,8 @@ class DecisionExtractor:
             "Return JSON {\"items\": [{\"decision_text\": <str>, "
             "\"decision_type\": <one of approved/rejected/deferred/noted/"
             "considered/action_required/open_question/to_be_determined>, "
+            "\"decision_outcome\": <one of approval/rejection/deferral/"
+            "action_required/noted/question>, "
             "\"stakeholders\": [<str>...], \"rationale\": <str or null>, "
             "\"source_turn_ids\": [<chunk_id>...], "
             "\"confidence\": <number 0.0-1.0>}]}. "
@@ -231,7 +243,13 @@ class DecisionExtractor:
             rationale = raw.get("rationale")
             if rationale is not None and not isinstance(rationale, str):
                 rationale = None
-            out.append({
+            # Phase T.1: capture decision_outcome if the model emitted
+            # it, validated against the canonical enum. Items without an
+            # outcome leave the field absent so the schema's optional
+            # property is not present (vs. emitting a null sentinel that
+            # downstream consumers would have to distinguish from
+            # "missing").
+            decision_item: Dict[str, Any] = {
                 "decision_text": decision_text.strip(),
                 "decision_type": self._normalize_type(raw.get("decision_type")),
                 "stakeholders": stakeholders,
@@ -239,7 +257,11 @@ class DecisionExtractor:
                 "source_turn_ids": ids,
                 "source_turn_validation": validation,
                 "confidence": normalize_confidence(raw.get("confidence")),
-            })
+            }
+            raw_outcome = raw.get("decision_outcome")
+            if isinstance(raw_outcome, str) and raw_outcome in _VALID_DECISION_OUTCOMES:
+                decision_item["decision_outcome"] = raw_outcome
+            out.append(decision_item)
 
         low_count = apply_confidence_threshold(out, self.CONFIDENCE_THRESHOLD)
         self.last_run_metadata["low_confidence_item_count"] = low_count

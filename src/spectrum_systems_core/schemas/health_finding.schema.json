@@ -37,7 +37,15 @@
         "confidence_field_missing",
         "blocked_artifact_missing_chunk_text",
         "eval_pair_missing_source_id",
-        "pipeline_run_summary_missing"
+        "pipeline_run_summary_missing",
+        "taxonomy_regulatory_verb_missing",
+        "spurious_add_rate_elevated",
+        "speaker_attribution_missing",
+        "chunk_split_mid_turn_detected",
+        "ground_truth_missing_type",
+        "low_confidence_extraction",
+        "correction_candidate_expired",
+        "atomic_decomposition_failed"
       ]
     },
     "severity": { "enum": ["halt", "warn", "info"] },

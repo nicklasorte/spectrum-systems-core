@@ -56,6 +56,35 @@ ALL_FINDING_CODES: frozenset[str] = frozenset(
         # Used to halt the diff with a clear error rather than report
         # bogus zero-deltas.
         "pipeline_run_summary_missing",
+        # Phase T.1: emitted by the binding validator when
+        # BINDING_VALIDATOR_HALT_ENABLED=true and a decision had no
+        # regulatory verb. severity halt (gated) or warn (default).
+        "taxonomy_regulatory_verb_missing",
+        # Phase T.2: emitted by the eval runner when a transcript's
+        # spurious_add_rate exceeds the configured threshold. severity
+        # warn -- blocks --set-baseline but does NOT halt the run.
+        "spurious_add_rate_elevated",
+        # Phase T.3: emitted when speaker attribution cannot resolve
+        # a non-null speaker for a decision or claim. severity info.
+        "speaker_attribution_missing",
+        # Phase T.4: emitted when a chunk had to be split at a
+        # non-turn boundary (no speaker boundary existed within the
+        # MAX_CHUNK_CHARS budget). severity info.
+        "chunk_split_mid_turn_detected",
+        # Phase T.5: emitted when ground_truth pairs lack target_type
+        # so per_type_metrics cannot be computed. severity info.
+        "ground_truth_missing_type",
+        # Phase T.6: emitted when more than LOW_CONF_RATE_LIMIT of
+        # extracted items have confidence below LOW_CONF_THRESHOLD.
+        # A correction_candidate artifact is also written. severity warn.
+        "low_confidence_extraction",
+        # Phase T.6: emitted by preflight when a correction_candidate
+        # artifact's expires_at is in the past. severity info -- the
+        # operator decides whether to act.
+        "correction_candidate_expired",
+        # Phase T.7: emitted when ATOMIC_DECOMPOSITION_ENABLED=true and
+        # the second Haiku call produced zero atomic facts. severity warn.
+        "atomic_decomposition_failed",
     }
 )
 
@@ -71,6 +100,9 @@ HALT_FINDING_CODES: frozenset[str] = frozenset(
         "smoke_test_skipped",
         "artifact_not_indexed",
         "stale_artifact_in_bundle",
+        # Phase T.1: optionally promoted to halt when
+        # BINDING_VALIDATOR_HALT_ENABLED=true. Default severity is warn.
+        "taxonomy_regulatory_verb_missing",
     }
 )
 

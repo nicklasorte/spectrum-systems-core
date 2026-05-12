@@ -52,10 +52,19 @@ OVERLAP = 1
 # absorbs trivially short turns.
 MIN_CHUNK_CHARS: int = 150
 
+# Phase T.4: upper bound applied after the merge pass. Chroma context-rot
+# research shows extraction quality degrades past ~2,500 tokens of
+# context. Our merged chunks are bounded in character count, not token
+# count, so we set the budget conservatively. Operators tune via
+# ``MAX_CHUNK_CHARS``; set to a very large value (e.g. 999_999) to
+# disable the split pass without reverting code.
+MAX_CHUNK_CHARS: int = 2500
+
 # Env var override knobs. Tests use MIN_CHUNK_CHARS_ENV to crank the
 # threshold; operators use CHUNK_MERGE_ENABLED to flag-off the entire
 # merge pass.
 MIN_CHUNK_CHARS_ENV: str = "MIN_CHUNK_CHARS"
+MAX_CHUNK_CHARS_ENV: str = "MAX_CHUNK_CHARS"
 CHUNK_MERGE_ENABLED_ENV: str = "CHUNK_MERGE_ENABLED"
 _DISABLED_VALUES: frozenset = frozenset({"false", "0", "no", "off"})
 
@@ -98,6 +107,28 @@ def _merge_enabled() -> bool:
     if raw in _DISABLED_VALUES:
         return False
     return True
+
+
+def _resolve_max_chunk_chars() -> int:
+    """Return the configured upper-bound or the module default."""
+    raw = os.environ.get(MAX_CHUNK_CHARS_ENV, "").strip()
+    if not raw:
+        return MAX_CHUNK_CHARS
+    try:
+        value = int(raw)
+    except ValueError:
+        _LOG.warning(
+            "chunk_split_max_chars_invalid: %s=%r -> falling back to %d",
+            MAX_CHUNK_CHARS_ENV, raw, MAX_CHUNK_CHARS,
+        )
+        return MAX_CHUNK_CHARS
+    if value <= 0:
+        _LOG.warning(
+            "chunk_split_max_chars_non_positive: %s=%d -> falling back to %d",
+            MAX_CHUNK_CHARS_ENV, value, MAX_CHUNK_CHARS,
+        )
+        return MAX_CHUNK_CHARS
+    return value
 
 
 def _agenda_boundary(prev_chunk: Dict[str, Any], next_chunk: Dict[str, Any]) -> bool:
@@ -210,6 +241,120 @@ def merge_short_chunks(
     for i, c in enumerate(working):
         c["chunk_index"] = i
     return working, pairs
+
+
+def split_oversized_chunks(
+    chunks: List[Dict[str, Any]],
+    max_chars: Optional[int] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Phase T.4. Split any chunk exceeding ``max_chars`` at the nearest
+    speaker-turn boundary below the limit. Returns
+    ``(output_chunks, split_log)``.
+
+    Speaker-turn boundaries are detected via the merger's ``"\\n"``
+    separator: ``_merge_pair`` joins unit text with a single newline,
+    so each newline in a chunk's text is a unit-boundary (which is also
+    a speaker-boundary in transcript chunks). If no newline falls
+    within ``max_chars``, the chunk is split at ``max_chars`` exactly
+    and the entry in ``split_log`` carries
+    ``chunk_split_mid_turn: true``.
+
+    Each produced chunk inherits a fresh ``chunk_id`` so a downstream
+    citation cannot ambiguously point at "the merged chunk" vs "the
+    survivor of the split". The original chunk_id is preserved on the
+    log entry only.
+
+    Split chunks below ``MIN_CHUNK_CHARS`` are not re-merged here -- a
+    caller wanting that invariant should run ``merge_short_chunks``
+    after the split pass. The chunker already does this when it
+    invokes both passes.
+    """
+    if max_chars is None:
+        max_chars = _resolve_max_chunk_chars()
+    if max_chars <= 0 or not chunks:
+        out = [dict(c) for c in chunks]
+        for i, c in enumerate(out):
+            c["chunk_index"] = i
+        return out, []
+
+    working: List[Dict[str, Any]] = []
+    split_log: List[Dict[str, Any]] = []
+
+    for chunk in chunks:
+        text = chunk.get("text") or ""
+        cc = chunk.get("char_count")
+        if not isinstance(cc, int):
+            cc = len(text)
+        if cc <= max_chars:
+            working.append(dict(chunk))
+            continue
+
+        pieces = _split_text_at_boundary(text, max_chars)
+        produced_ids: List[str] = []
+        mid_turn_seen = False
+        for piece_text, was_mid_turn in pieces:
+            produced = dict(chunk)
+            produced["chunk_id"] = str(uuid.uuid4())
+            produced["text"] = piece_text
+            produced["text_hash"] = (
+                "sha256:" + _sha256_hex(piece_text.encode("utf-8"))
+            )
+            produced["char_count"] = len(piece_text)
+            # unit_count is best-effort: we know the piece contains at
+            # least one unit, and possibly more. Without re-running the
+            # unit assembler we cannot say exactly how many, so we
+            # report 1. The unit_ids list inherits from the original
+            # chunk because the split crosses unit boundaries; this is
+            # acknowledged in the split_log entry.
+            produced["unit_count"] = max(1, piece_text.count("\n") + 1)
+            working.append(produced)
+            produced_ids.append(produced["chunk_id"])
+            mid_turn_seen = mid_turn_seen or was_mid_turn
+
+        split_log.append({
+            "original_chunk_id": str(chunk.get("chunk_id") or ""),
+            "produced_chunk_ids": produced_ids,
+            "split_reason": "exceeded_max_chars",
+            "chunk_split_mid_turn": bool(mid_turn_seen),
+            "original_char_count": int(cc),
+            "max_chars": int(max_chars),
+        })
+
+    for i, c in enumerate(working):
+        c["chunk_index"] = i
+    return working, split_log
+
+
+def _split_text_at_boundary(
+    text: str,
+    max_chars: int,
+) -> List[Tuple[str, bool]]:
+    """Split ``text`` into pieces each at or below ``max_chars`` chars.
+
+    Boundary preference: the rightmost ``"\\n"`` strictly inside
+    ``[1, max_chars]``. If no such boundary exists, the cut is made at
+    ``max_chars`` exactly and the returned tuple's second slot is
+    ``True`` (mid-turn split). Empty input returns ``[("", False)]`` so
+    the caller's downstream ``unit_count`` heuristic still works.
+    """
+    if not text:
+        return [("", False)]
+    pieces: List[Tuple[str, bool]] = []
+    remaining = text
+    while len(remaining) > max_chars:
+        # Search for the rightmost newline in [1, max_chars].
+        cut = remaining.rfind("\n", 1, max_chars + 1)
+        if cut == -1:
+            pieces.append((remaining[:max_chars], True))
+            remaining = remaining[max_chars:]
+        else:
+            pieces.append((remaining[:cut], False))
+            # Skip the newline character itself so the next piece does
+            # not start with an empty line.
+            remaining = remaining[cut + 1:]
+    if remaining:
+        pieces.append((remaining, False))
+    return pieces
 
 
 def _first_short(
@@ -433,6 +578,24 @@ class Chunker:
             )
         merged_chunk_count = len(chunks)
 
+        # Phase T.4: cap any merged chunk that grew past MAX_CHUNK_CHARS.
+        # The split pass runs AFTER merge so an extreme worst case is
+        # two short turns merging into a 1500-char chunk and then a
+        # second pass running the split. We then re-run the merge pass
+        # so trailing split pieces below MIN_CHUNK_CHARS get absorbed.
+        max_chunk_chars_used = _resolve_max_chunk_chars()
+        chunks, split_log = split_oversized_chunks(
+            chunks, max_chars=max_chunk_chars_used,
+        )
+        post_split_count = len(chunks)
+        if _merge_enabled() and split_log:
+            # Second merge pass is fail-OPEN: any failure leaves the
+            # split survivors in place. The merge pass is idempotent
+            # so re-running on a clean list is a no-op.
+            chunks, _post_split_merge_pairs = merge_short_chunks(
+                chunks, min_chars=min_chunk_chars_used,
+            )
+
         for chunk in chunks:
             try:
                 validator.validate(chunk)
@@ -465,6 +628,18 @@ class Chunker:
             min_chunk_chars=min_chunk_chars_used,
         )
 
+        # Phase T.4: chunk_split_summary artifact. Always written so a
+        # run with zero splits is distinguishable from a run that
+        # skipped the split pass.
+        split_summary_path = self._write_chunk_split_summary(
+            processed_dir=processed_dir,
+            source_id=source_id,
+            original_chunk_count=merged_chunk_count,
+            split_chunk_count=post_split_count,
+            split_log=split_log,
+            max_chunk_chars=max_chunk_chars_used,
+        )
+
         # Phase M.4: persist the chunking_strategy back into the
         # source_record so downstream readers (EvalAligner, eval_summary
         # grouping) can attribute coverage/precision to the strategy used.
@@ -483,8 +658,14 @@ class Chunker:
             "merged_chunk_count": merged_chunk_count,
             "chunks_merged": original_chunk_count - merged_chunk_count,
             "merge_pairs": merge_pairs,
+            "chunks_split": len(split_log),
+            "post_split_count": post_split_count,
+            "split_log": split_log,
             "chunk_merge_summary_path": (
                 str(merge_summary_path) if merge_summary_path else ""
+            ),
+            "chunk_split_summary_path": (
+                str(split_summary_path) if split_summary_path else ""
             ),
         }
 
@@ -548,6 +729,65 @@ class Chunker:
         except OSError as exc:
             _LOG.warning(
                 "chunk_merge_summary_write_failed: %s", exc,
+            )
+            return None
+
+    # -- chunk_split_summary artifact (Phase T.4) ------------------------
+
+    def _write_chunk_split_summary(
+        self,
+        *,
+        processed_dir: Path,
+        source_id: str,
+        original_chunk_count: int,
+        split_chunk_count: int,
+        split_log: List[Dict[str, Any]],
+        max_chunk_chars: int,
+    ) -> Optional[Path]:
+        """Persist the chunk_split_summary artifact.
+
+        Co-located with chunks.jsonl and chunk_merge_summary.json so an
+        operator triaging a run sees the merge → split → final-chunks
+        progression in one directory. Write failure is non-fatal; the
+        chunks themselves are the canonical output.
+        """
+        artifact = {
+            "artifact_type": "chunk_split_summary",
+            "schema_version": "1.0.0",
+            "source_id": source_id,
+            "max_chunk_chars": int(max_chunk_chars),
+            "original_chunk_count": int(original_chunk_count),
+            "split_chunk_count": int(split_chunk_count),
+            "chunks_split": int(len(split_log)),
+            "split_log": list(split_log),
+            "created_at": _now_iso(),
+        }
+        try:
+            from ..validation import (
+                ArtifactValidationError,
+                validate_artifact,
+            )
+            try:
+                validate_artifact(artifact, "chunk_split_summary")
+            except ArtifactValidationError as exc:
+                _LOG.warning(
+                    "chunk_split_summary_schema_violation: %s", exc,
+                )
+        except ImportError:
+            pass
+
+        try:
+            out_dir = processed_dir / "stories"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            target = out_dir / "chunk_split_summary.json"
+            target.write_text(
+                json.dumps(artifact, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            return target
+        except OSError as exc:
+            _LOG.warning(
+                "chunk_split_summary_write_failed: %s", exc,
             )
             return None
 

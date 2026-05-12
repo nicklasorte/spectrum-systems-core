@@ -140,6 +140,36 @@
           "precision": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
         }
       }
+    },
+    "per_type_metrics": {
+      "type": ["object", "null"],
+      "description": "Phase T.5 (schema 2.0.0): precision / recall / F1 broken down by target_type. Suppressed (null) when any ground_truth pair lacks a target_type field; per_type_metrics_reason carries the explanation.",
+      "additionalProperties": false,
+      "properties": {
+        "decision": { "$ref": "#/$defs/type_metrics" },
+        "claim": { "$ref": "#/$defs/type_metrics" },
+        "action_item": { "$ref": "#/$defs/type_metrics" }
+      }
+    },
+    "per_type_metrics_reason": {
+      "type": ["string", "null"],
+      "description": "Phase T.5: non-null only when per_type_metrics is null; explains why."
+    },
+    "spurious_add_rate": {
+      "type": "number", "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase T.2: fraction of extracted items with grounding_verified=false across this run."
+    },
+    "grounding_overlap_p10": {
+      "type": "number", "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase T.2: 10th percentile of grounding_overlap_score across extracted items."
+    },
+    "grounding_overlap_p50": {
+      "type": "number", "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase T.2: median grounding_overlap_score."
+    },
+    "grounding_overlap_p90": {
+      "type": "number", "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase T.2: 90th percentile of grounding_overlap_score."
     }
   },
   "$defs": {
@@ -150,6 +180,17 @@
       "properties": {
         "coverage": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
         "precision": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "pairs_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "type_metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["precision", "recall", "f1", "pairs_count"],
+      "properties": {
+        "precision": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "recall": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "f1": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
         "pairs_count": { "type": "integer", "minimum": 0 }
       }
     }
