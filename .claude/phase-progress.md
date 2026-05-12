@@ -275,3 +275,47 @@ After `pip install anthropic`:
 - The `ANTHROPIC_API_KEY` repository secret must be set
   (Settings → Secrets → Actions). Without it, the SDK is importable
   but real API calls will fail.
+
+---
+
+# Phase Perf — Pipeline parallelization + batch + async + cache
+
+## Prerequisites recorded (2026-05-11)
+
+- `.claude/settings.json` contains `dangerouslySkipPermissions: true` ✓
+- Branch (per session instructions): `claude/perf-pipeline-parallelization-9sSeo`
+- Pytest baseline: **1085 tests collected** (`python -m pytest --collect-only -q`)
+- `anthropic` SDK version installed: 0.101.0 — `from anthropic import AsyncAnthropic` succeeds ✓
+
+### Key files reviewed
+
+- `src/spectrum_systems_core/extraction/chunk_classifier.py`
+  - Single-chunk classifier with regulatory-verb fallback.
+  - Exposes `classify(chunk, source_id)` only.
+  - Default api_caller is offline (returns `off_topic`).
+  - Model: `claude-haiku-4-5-20251001`.
+
+- `.github/workflows/run-pipeline.yml`
+  - Single sequential job `run-pipeline` runs everything.
+  - Steps: install → preflight → run-pipeline → extract-typed --all → link-ground-truth → commit.
+
+- `src/spectrum_systems_core/cli.py`
+  - Uses `argparse`, NOT `click`. Subparsers via `_build_parser` and dispatch in `main()`.
+  - `extract-typed --source-id <sid>` already runs typed extraction for ONE source_id.
+  - `run-pipeline --specific-source-id <sid>` already runs the orchestrator for ONE source_id.
+  - The slugify rule lives in `pipeline_orchestrator._slugify`:
+    `lower → spaces→'-' → [^a-z0-9_-]→'-' → strip('-_')` (preserves underscores!).
+
+- `src/spectrum_systems_core/extraction/typed_extraction_runner.py`
+  - `run_typed_extraction(source_id, ...)` is the per-source entry point.
+  - Currently calls `classifier.classify(chunk, source_id)` per chunk in a loop.
+
+## Implementation notes
+
+- **list-source-ids**: re-use `pipeline_orchestrator._slugify` so source_ids match
+  exactly what ingestion uses. Filter `*minutes*` filenames to mirror orchestrator
+  behavior. Walk both `.docx` and `.txt`.
+- **run-single**: thin wrapper that delegates to `run_pipeline(specific_source_id=…)`.
+  This avoids duplicating orchestrator logic and guarantees identical behavior.
+- **Matrix workflow**: keep existing single-job flow as the post-pipeline path; split
+  per-transcript work into the matrix.

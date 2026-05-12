@@ -38,7 +38,178 @@ permissions:
   contents: read
 
 jobs:
+  # ------------------------------------------------------------------
+  # discover: emit the matrix of source_ids for the per-transcript jobs.
+  # ------------------------------------------------------------------
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      source_ids: ${{ steps.scan.outputs.source_ids }}
+      has_sources: ${{ steps.scan.outputs.has_sources }}
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Checkout data-lake
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.DATA_LAKE_REPO }}
+          token: ${{ secrets.GH_PAT }}
+          path: data-lake
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install anthropic  # explicit safety net
+
+      - name: Pre-flight verification
+        if: ${{ github.event.inputs.dry_run != 'true' && (github.event.inputs.force == 'true' || github.event.inputs.force_only_missing == 'true') }}
+        env:
+          DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+          SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
+        run: |
+          python -m spectrum_systems_core.cli verify-pipeline-state \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            --no-write-artifact
+          python -m spectrum_systems_core.cli check-preflight \
+            --data-lake "${{ github.workspace }}/data-lake"
+
+      - name: Discover source IDs
+        id: scan
+        env:
+          DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+          SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
+        run: |
+          # If a specific source_id is requested, the matrix is just that one.
+          if [ -n "${{ github.event.inputs.specific_source_id }}" ]; then
+            SOURCE_IDS="[\"${{ github.event.inputs.specific_source_id }}\"]"
+          else
+            SOURCE_IDS=$(python -m spectrum_systems_core.cli list-source-ids \
+              --data-lake "${{ github.workspace }}/data-lake" \
+              --format json)
+          fi
+          echo "source_ids=$SOURCE_IDS" >> "$GITHUB_OUTPUT"
+          # Distinguish empty list from missing list — matrix on [] crashes.
+          if [ "$SOURCE_IDS" = "[]" ] || [ -z "$SOURCE_IDS" ]; then
+            echo "has_sources=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_sources=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Discovered source IDs: $SOURCE_IDS"
+
+  # ------------------------------------------------------------------
+  # run-pipeline: one parallel job per transcript.
+  # ------------------------------------------------------------------
   run-pipeline:
+    needs: discover
+    if: needs.discover.outputs.has_sources == 'true' && github.event.inputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false  # one failed transcript must not cancel the others.
+      max-parallel: 13
+      matrix:
+        source_id: ${{ fromJson(needs.discover.outputs.source_ids) }}
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+      SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Checkout data-lake
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.DATA_LAKE_REPO }}
+          token: ${{ secrets.GH_PAT }}
+          path: data-lake
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install anthropic
+
+      - name: Run pipeline for this transcript
+        run: |
+          FORCE_FLAG=""
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            FORCE_FLAG="--force"
+          fi
+          SKIP_FLAG=""
+          if [ "${{ github.event.inputs.force_only_missing }}" = "true" ]; then
+            SKIP_FLAG="--skip-existing"
+          fi
+          python -m spectrum_systems_core.cli run-single \
+            --source-id "${{ matrix.source_id }}" \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            $FORCE_FLAG $SKIP_FLAG
+
+      - name: Run typed extraction for this transcript
+        env:
+          DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+          SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
+        run: |
+          FORCE_FLAG=""
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            FORCE_FLAG="--force"
+          fi
+          python -m spectrum_systems_core.cli extract-typed \
+            --source-id "${{ matrix.source_id }}" \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            $FORCE_FLAG \
+            || echo "extract-typed completed with warnings"
+
+      - name: Commit and push artifacts for this transcript
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          cd "${{ github.workspace }}/data-lake"
+          git config user.name "spectrum-pipeline[bot]"
+          git config user.email "spectrum-pipeline[bot]@users.noreply.github.com"
+          git add store/artifacts/ store/processed/ store/raw/
+          if git diff --staged --quiet; then
+            echo "No artifact changes for ${{ matrix.source_id }}"
+            exit 0
+          fi
+          git commit -m "pipeline: artifacts for ${{ matrix.source_id }} (run ${{ github.run_id }})"
+          # Concurrent matrix jobs all push to the same branch. Retry with
+          # exponential backoff and a fresh rebase between attempts.
+          attempt=0
+          delay=2
+          while [ $attempt -lt 5 ]; do
+            attempt=$((attempt+1))
+            # Clear any half-rebase state from a previous failed attempt so
+            # the next `git pull --rebase` doesn't error out with
+            # "rebase in progress". Safe no-op when no rebase is active.
+            git rebase --abort 2>/dev/null || true
+            git fetch origin main
+            if git pull --rebase origin main && git push origin HEAD:main; then
+              echo "Push succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Push attempt $attempt failed; sleeping ${delay}s..."
+            sleep $delay
+            delay=$((delay*2))
+          done
+          echo "::error::Failed to push artifacts for ${{ matrix.source_id }} after 5 attempts"
+          exit 1
+
+  # ------------------------------------------------------------------
+  # post-pipeline: aggregations that must run AFTER every transcript.
+  # ------------------------------------------------------------------
+  post-pipeline:
+    needs: run-pipeline
+    if: always() && needs.run-pipeline.result != 'skipped'
     runs-on: ubuntu-latest
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -63,90 +234,86 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install -e ".[dev]"
-          python -m pip install anthropic  # explicit safety net
-
-      - name: Pre-flight verification
-        if: ${{ github.event.inputs.force == 'true' || github.event.inputs.force_only_missing == 'true' }}
-        env:
-          DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
-          SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
-        run: |
-          # Fresh verify-pipeline-state (do not pollute data-lake with an
-          # intermediate verification record on every pipeline trigger).
-          python -m spectrum_systems_core.cli verify-pipeline-state \
-            --data-lake "${{ github.workspace }}/data-lake" \
-            --no-write-artifact
-
-          # Block force-run if migration incomplete or ingestion empty.
-          python -m spectrum_systems_core.cli check-preflight \
-            --data-lake "${{ github.workspace }}/data-lake"
-
-      - name: Run the pipeline
-        run: |
-          FORCE_FLAG=""
-          if [ "${{ github.event.inputs.force }}" = "true" ]; then
-            FORCE_FLAG="--force"
-          fi
-          FOM_FLAG=""
-          if [ "${{ github.event.inputs.force_only_missing }}" = "true" ]; then
-            FOM_FLAG="--force-only-missing"
-          fi
-          SSID_FLAG=""
-          if [ -n "${{ github.event.inputs.specific_source_id }}" ]; then
-            SSID_FLAG="--specific-source-id ${{ github.event.inputs.specific_source_id }}"
-          fi
-          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-            python -m spectrum_systems_core.cli run-pipeline --dry-run \
-              $FORCE_FLAG $FOM_FLAG $SSID_FLAG \
-              --data-lake "${{ github.workspace }}/data-lake"
-          else
-            python -m spectrum_systems_core.cli run-pipeline \
-              $FORCE_FLAG $FOM_FLAG $SSID_FLAG \
-              --data-lake "${{ github.workspace }}/data-lake"
-          fi
-
-      - name: Run typed extraction (Phase M3)
-        if: github.event.inputs.dry_run != 'true'
-        env:
-          DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
-          SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
-        run: |
-          python -m spectrum_systems_core.cli extract-typed --all \
-            --data-lake "${{ github.workspace }}/data-lake" \
-            || echo "extract-typed completed with warnings"
-
-      - name: Baseline reminder
-        if: github.event.inputs.dry_run != 'true'
-        run: |
-          echo "::notice::Phase M3.2 baseline is NOT set automatically."
-          echo "After reviewing the first eval_summary, a human must run:"
-          echo "  python -m spectrum_systems_core.cli eval-ground-truth --set-baseline"
-          echo "to establish the regression baseline."
+          python -m pip install anthropic
 
       - name: Link ground truth pairs (minutes + transcripts)
-        env:
-          DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
-          SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
         run: |
           python -m spectrum_systems_core.cli link-ground-truth \
             --process-minutes \
             --deduplicate \
-            --data-lake "${{ github.workspace }}/data-lake" || echo "link-ground-truth completed with warnings"
+            --data-lake "${{ github.workspace }}/data-lake" \
+            || echo "link-ground-truth completed with warnings"
 
-      - name: Commit and push artifacts to data-lake
-        if: github.event.inputs.dry_run != 'true'
+      - name: Baseline reminder
+        run: |
+          echo "::notice::Phase M3.2 baseline is NOT set automatically."
+          echo "After reviewing the first eval_summary, a human must run:"
+          echo "  python -m spectrum_systems_core.cli eval-ground-truth --set-baseline"
+
+      - name: Commit and push post-pipeline artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           cd "${{ github.workspace }}/data-lake"
           git config user.name "spectrum-pipeline[bot]"
           git config user.email "spectrum-pipeline[bot]@users.noreply.github.com"
           git add store/artifacts/ store/processed/ store/raw/
           if git diff --staged --quiet; then
-            echo "No new artifacts to commit."
-          else
-            git commit -m "pipeline: add artifacts from run $(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-          Triggered by: ${{ github.event_name }}
-          Run ID: ${{ github.run_id }}
-          Workflow: ${{ github.workflow }}"
-            git push
+            echo "No post-pipeline artifact changes."
+            exit 0
           fi
+          git commit -m "pipeline: post-pipeline artifacts (run ${{ github.run_id }})"
+          attempt=0
+          delay=2
+          while [ $attempt -lt 5 ]; do
+            attempt=$((attempt+1))
+            # Clear any half-rebase state from a previous failed attempt so
+            # the next `git pull --rebase` doesn't error out with
+            # "rebase in progress". Safe no-op when no rebase is active.
+            git rebase --abort 2>/dev/null || true
+            git fetch origin main
+            if git pull --rebase origin main && git push origin HEAD:main; then
+              echo "Push succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "Push attempt $attempt failed; sleeping ${delay}s..."
+            sleep $delay
+            delay=$((delay*2))
+          done
+          echo "::error::Failed to push post-pipeline artifacts after 5 attempts"
+          exit 1
+
+  # ------------------------------------------------------------------
+  # dry-run: same scan-and-report behavior as before, single job.
+  # ------------------------------------------------------------------
+  dry-run:
+    if: github.event.inputs.dry_run == 'true'
+    runs-on: ubuntu-latest
+    env:
+      DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+      SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Checkout data-lake
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.DATA_LAKE_REPO }}
+          token: ${{ secrets.GH_PAT }}
+          path: data-lake
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install anthropic
+
+      - name: Run dry-run scan
+        run: |
+          python -m spectrum_systems_core.cli run-pipeline --dry-run \
+            --data-lake "${{ github.workspace }}/data-lake"
