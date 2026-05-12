@@ -37,6 +37,15 @@ jobs:
         # legacy artifact_kind in schemas, or hardcoded model strings
         # in workflows are introduced.
 
+      - name: Verify smoke-test workflow has no path filter (Class 6)
+        # Self-check: fail if smoke-test.yml introduces a pull_request
+        # path filter. Runs IN the smoke workflow so it always fires --
+        # if a path filter is present and somehow allowed the workflow
+        # to run, this still catches it.
+        run: |
+          python -m spectrum_systems_core.health.smoke_filter \
+            --repo-root "${{ github.workspace }}"
+
       - name: Fixture smoke test (fast, no data-lake)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

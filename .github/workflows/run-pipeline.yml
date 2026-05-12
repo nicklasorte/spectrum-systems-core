@@ -79,6 +79,16 @@ jobs:
           python -m spectrum_systems_core.cli check-preflight \
             --data-lake "${{ github.workspace }}/data-lake"
 
+      - name: Pipeline health preflight (feature flags)
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+          PIPELINE_RUN_ID: ${{ github.run_id }}
+        run: |
+          python -m spectrum_systems_core.health.preflight \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            --pipeline-run-id "${{ github.run_id }}"
+
       - name: Discover source IDs
         id: scan
         env:
