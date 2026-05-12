@@ -103,6 +103,39 @@ _AI_ADVISORY_BANNER = "⚠️ AI output is advisory only. Review before acting."
 _SLUG_RE = re.compile(r"[^a-z0-9_-]+")
 
 
+# Phase S.3 + X-0 part D: the orchestrator status symbol for the
+# chunk-level rollup. ``ok`` -> ``clm✓`` (everything succeeded),
+# ``partial`` -> ``clm⚠`` (some chunks blocked, the run still produced
+# output), ``failed`` -> ``clm✗`` (majority blocked, the run is a
+# diagnostic). The mapping is the single source of truth so tests can
+# assert on the symbol directly. Pulled into the cli + smoke fixture so
+# both surfaces render the same glyph.
+_CLM_STATUS_SYMBOLS = {
+    "ok": "clm✓",
+    "partial": "clm⚠",
+    "failed": "clm✗",
+}
+
+
+def _format_chunk_summary(result: Dict[str, Any], *, prefix: str = "") -> str:
+    """Render ``Chunks: attempted=N succeeded=N blocked=N <clm-symbol>``.
+
+    Reads ``chunks_attempted`` / ``chunks_succeeded`` / ``chunks_blocked``
+    / ``stage_status`` directly from the runner result. Never hardcodes
+    values -- a missing key falls back to 0 / ``ok`` so the summary line
+    is still well formed even on a degraded run.
+    """
+    attempted = int(result.get("chunks_attempted") or 0)
+    succeeded = int(result.get("chunks_succeeded") or 0)
+    blocked = int(result.get("chunks_blocked") or 0)
+    stage = str(result.get("stage_status") or "ok")
+    symbol = _CLM_STATUS_SYMBOLS.get(stage, "clm?")
+    return (
+        f"{prefix}Chunks: attempted={attempted} "
+        f"succeeded={succeeded} blocked={blocked} {symbol}"
+    )
+
+
 def _require_data_lake_store(out_stream=None) -> Optional[Path]:
     """Return DATA_LAKE_PATH/store, or print an error and return None."""
     out = out_stream if out_stream is not None else sys.stdout
@@ -2726,6 +2759,16 @@ def extract_typed(
             failed += 1
             print(
                 f"extract-typed [{sid}] FAIL {result.get('reason', '')}",
+                file=out,
+            )
+        # Phase S.3 + Phase X-0 part D: chunk-level rollup printed on
+        # every return path (success, skip, failure). The ChunkCounters
+        # values are authoritative -- the symbol is derived, never
+        # hardcoded. ``clm`` is the chunk-loop-manager glyph from the
+        # X-0 spec.
+        if "chunks_attempted" in result:
+            print(
+                _format_chunk_summary(result, prefix=f"extract-typed [{sid}] "),
                 file=out,
             )
 

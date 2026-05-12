@@ -70,7 +70,12 @@ def apply_phase_v_if_enabled(
         ``<sdl_root>/verifications/``.
     """
     flag = flag_reader or FeatureFlag(data_lake_path)
-    if not flag.is_enabled(PHASE_V_FLAG_NAME):
+    enabled = flag.is_enabled(PHASE_V_FLAG_NAME)
+    # Phase S.4: surface the gate state in the orchestrator log so an
+    # operator sees "Phase V enabled: True/False" without needing to grep
+    # the on-disk flag JSON. The verifier itself is silent on a clean run.
+    _LOG.info("Phase V enabled: %s", enabled)
+    if not enabled:
         return None
 
     registry = model_registry or ModelRegistry(sdl_root)

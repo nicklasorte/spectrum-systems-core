@@ -44,12 +44,20 @@ ARTIFACT_RATE_LIMIT_EXHAUSTED: str = "api_rate_limit_exhausted"
 ARTIFACT_EMPTY_RESPONSE: str = "extraction_empty_response"
 ARTIFACT_JSON_PARSE_FAILED: str = "typed_extraction_llm_json_parse_failed"
 ARTIFACT_EMPTY_RESULT: str = "typed_extraction_empty_result"
+# Phase S.0: story extraction failure artifacts. The story-extractor parse
+# site reuses guard_empty_response / strip_markdown_fence and emits these
+# so the orchestrator's chunks_blocked counter sees the same call shape
+# as typed extraction.
+ARTIFACT_STORY_EMPTY_RESPONSE: str = "story_extraction_empty_response"
+ARTIFACT_STORY_PARSE_FAILED: str = "story_extraction_parse_failed"
 
 FAILURE_ARTIFACT_TYPES: tuple = (
     ARTIFACT_RATE_LIMIT_EXHAUSTED,
     ARTIFACT_EMPTY_RESPONSE,
     ARTIFACT_JSON_PARSE_FAILED,
     ARTIFACT_EMPTY_RESULT,
+    ARTIFACT_STORY_EMPTY_RESPONSE,
+    ARTIFACT_STORY_PARSE_FAILED,
 )
 
 FAILURE_ARTIFACT_SCHEMA_VERSION: str = "1.0.0"
@@ -171,6 +179,60 @@ def emit_empty_result(
     counters.record_block(BLOCK_REASON_OTHER, n=n)
     return _emit(
         ARTIFACT_EMPTY_RESULT,
+        chunk_id=chunk_id,
+        source_id=source_id,
+        component=component,
+        detail=detail,
+        extraction_run_id=extraction_run_id,
+        sdl_root=sdl_root,
+    )
+
+
+def emit_story_empty_response(
+    counters: ChunkCounters,
+    *,
+    chunk_id: str,
+    source_id: str,
+    component: str = "story_extractor",
+    detail: str = "",
+    extraction_run_id: Optional[str] = None,
+    sdl_root: Optional[Path] = None,
+    n: int = 1,
+) -> Dict[str, Any]:
+    """Emit ``story_extraction_empty_response`` and bump ``empty_response``.
+
+    Mirrors ``emit_empty_response`` but with the story-path artifact_type so
+    the forensic record names the failing component. The counter still
+    bumps the same ``empty_response`` block_reason because the
+    orchestration_result rollup is component-agnostic.
+    """
+    counters.record_block(BLOCK_REASON_EMPTY_RESPONSE, n=n)
+    return _emit(
+        ARTIFACT_STORY_EMPTY_RESPONSE,
+        chunk_id=chunk_id,
+        source_id=source_id,
+        component=component,
+        detail=detail,
+        extraction_run_id=extraction_run_id,
+        sdl_root=sdl_root,
+    )
+
+
+def emit_story_parse_failed(
+    counters: ChunkCounters,
+    *,
+    chunk_id: str,
+    source_id: str,
+    component: str = "story_extractor",
+    detail: str = "",
+    extraction_run_id: Optional[str] = None,
+    sdl_root: Optional[Path] = None,
+    n: int = 1,
+) -> Dict[str, Any]:
+    """Emit ``story_extraction_parse_failed`` and bump ``parse_error``."""
+    counters.record_block(BLOCK_REASON_PARSE_ERROR, n=n)
+    return _emit(
+        ARTIFACT_STORY_PARSE_FAILED,
         chunk_id=chunk_id,
         source_id=source_id,
         component=component,

@@ -33,7 +33,8 @@
         "smoke_test_skipped",
         "model_registry_drift",
         "artifact_not_indexed",
-        "no_prior_orchestration_artifact"
+        "no_prior_orchestration_artifact",
+        "confidence_field_missing"
       ]
     },
     "severity": { "enum": ["halt", "warn", "info"] },

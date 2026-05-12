@@ -5,21 +5,37 @@ conservatively at 1 token ≈ 4 chars and stops adding items once the
 configured token budget is hit (FINDING-F-001). The resulting bundle_hash
 is a sha256 over sorted artifact_ids + recipe_id + audience and so two
 runs with identical inputs produce identical hashes (CHECK-RT2-004).
+
+Phase S.1: also collects ``verified_extraction_item`` candidates from
+``<sdl_root>/extractions/*_meeting_extraction.json``. When the
+``phase_v_post_hoc_verification`` feature flag is enabled, only items
+whose ``verification_status == "verified"`` (treated as
+``phase_v_verified=True``) are eligible. When the flag is disabled or
+missing, every item in a v2 meeting_extraction is eligible -- the
+fallback path (verified extraction items) replaces the
+"no promoted stories yet" gap so synthesize can succeed on the first
+run of a transcript before a human has promoted stories or themes.
 """
 from __future__ import annotations
 
 import datetime
 import hashlib
 import json
+import logging
+import os
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import jsonschema
 
+from ..config import PHASE_V_FLAG_NAME, FeatureFlag
 from ..ingestion.source_loader import SOURCE_FAMILIES
 from ._paths import synthesis_run_dir, synthesis_schema_path
 from .retrieval_registry import RetrievalRegistry
+
+
+_LOG = logging.getLogger(__name__)
 
 
 _COMPONENT_NAME = "bundle_assembler"
@@ -123,6 +139,19 @@ def _confidence_rank(prediction: Dict[str, Any]) -> int:
 class BundleAssembler:
     """Assemble a context_bundle artifact from promoted/evidenced sources."""
 
+    def __init__(
+        self,
+        *,
+        data_lake_path: Optional[Path] = None,
+        flag_reader: Optional[FeatureFlag] = None,
+    ) -> None:
+        # Phase S.1: ``data_lake_path`` overrides the env var lookup so
+        # tests can drive the assembler against a tmp_path without touching
+        # process state. Production callers (cli.synthesize) leave both
+        # None and we resolve from DATA_LAKE_PATH on assemble().
+        self._data_lake_path = data_lake_path
+        self._flag_reader = flag_reader
+
     def assemble(
         self,
         run_id: str,
@@ -194,11 +223,70 @@ class BundleAssembler:
                 running_total += tokens
                 input_artifact_ids.append(candidate["artifact_id"])
 
+        # Phase S.1: fold verified meeting_extraction items into the bundle
+        # so a pre-promotion run on a fresh transcript can still succeed.
+        # Phase V verification is treated as "evidenced" for the purpose of
+        # promoted_only enforcement -- the verifier checks every item
+        # against its source turns, which is the same trust property the
+        # ``evidenced`` claim status carries (PROMOTED_STATUSES set).
+        phase_v_enabled = self._phase_v_enabled()
+        verified_candidates = self._collect_verified_extraction_items(
+            phase_v_enabled=phase_v_enabled,
+        )
+        candidate_count = len(verified_candidates)
+        eligible_after_v = 0
+        for cand in verified_candidates:
+            excerpt = cand["excerpt"]
+            tokens = _estimate_tokens(excerpt)
+            if running_total + tokens > token_budget:
+                continue
+            item = {
+                "item_id": str(uuid.uuid4()),
+                "artifact_id": cand["artifact_id"],
+                "artifact_type": "verified_extraction_item",
+                "source_id": cand["source_id"],
+                "content_excerpt": excerpt,
+                "token_estimate": tokens,
+                "promoted_status": "evidenced",
+                "inclusion_reason": cand["reason"],
+            }
+            items.append(item)
+            running_total += tokens
+            input_artifact_ids.append(cand["artifact_id"])
+            eligible_after_v += 1
+
+        _LOG.info(
+            "Bundle assembly: found %d candidate artifacts",
+            candidate_count + len(items) - eligible_after_v,
+        )
+        _LOG.info(
+            "Bundle assembly: %d eligible after Phase V gate", eligible_after_v,
+        )
+        _LOG.info(
+            "Bundle assembly: phase_v_enabled=%s", phase_v_enabled,
+        )
+        for cand in verified_candidates:
+            _LOG.info(
+                "  artifact %s: status=%s phase_v_verified=%s",
+                cand["artifact_id"],
+                cand.get("status", ""),
+                cand.get("phase_v_verified"),
+            )
+
         if not items:
+            # S.1 RT3: a no-candidates run must NOT crash the synth.
+            # Surface a structured finding so the operator sees the
+            # zero-eligible state without an unhandled exception.
             return {
                 "status": "failure",
                 "bundle": {},
                 "reason": "no_eligible_artifacts",
+                "finding": {
+                    "artifact_type": "bundle_assembly_no_candidates",
+                    "schema_version": "1.0.0",
+                    "candidate_count": candidate_count,
+                    "phase_v_enabled": phase_v_enabled,
+                },
             }
 
         bundle_hash = self._bundle_hash(
@@ -383,3 +471,142 @@ class BundleAssembler:
         # included one. The default_report_v1 recipe lists this source for
         # forward-compatibility, but the assembler returns no items today.
         return []
+
+    # ------------------------------------------------------------------
+    # Phase S.1: verified meeting_extraction items
+    # ------------------------------------------------------------------
+
+    def _resolve_data_lake_path(self) -> Optional[Path]:
+        if self._data_lake_path is not None:
+            return Path(self._data_lake_path)
+        env = (os.environ.get("DATA_LAKE_PATH") or "").strip()
+        if env:
+            return Path(env)
+        return None
+
+    def _resolve_sdl_root(self) -> Optional[Path]:
+        env_sdl = (os.environ.get("SDL_ROOT") or "").strip()
+        if env_sdl:
+            return Path(env_sdl)
+        dl = self._resolve_data_lake_path()
+        if dl is None:
+            return None
+        return dl / "store" / "artifacts"
+
+    def _phase_v_enabled(self) -> bool:
+        """Read ``phase_v_post_hoc_verification_enabled.json`` -- fail-closed.
+
+        A missing / unreadable / malformed flag file resolves to False so
+        a flag-off run still produces eligible items via the
+        ``phase_v_enabled=False`` branch in
+        ``_collect_verified_extraction_items``.
+        """
+        if self._flag_reader is not None:
+            return bool(self._flag_reader.is_enabled(PHASE_V_FLAG_NAME))
+        dl = self._resolve_data_lake_path()
+        if dl is None:
+            return False
+        return FeatureFlag(dl).is_enabled(PHASE_V_FLAG_NAME)
+
+    def _collect_verified_extraction_items(
+        self, *, phase_v_enabled: bool,
+    ) -> List[Dict[str, Any]]:
+        """Scan ``<sdl_root>/extractions/*_meeting_extraction.json``.
+
+        Returns one candidate dict per extracted item (decision / claim /
+        action_item). When ``phase_v_enabled`` is True, only items with
+        ``verification_status == "verified"`` are returned. When False,
+        every item is returned -- the flag-off path treats every
+        extraction item as eligible so a regression in Phase V cannot
+        silently empty the bundle. Items missing ``verification_status``
+        are conservatively treated as ``phase_v_verified=False``.
+        """
+        out: List[Dict[str, Any]] = []
+        sdl_root = self._resolve_sdl_root()
+        if sdl_root is None:
+            return out
+        ext_dir = sdl_root / "extractions"
+        if not ext_dir.is_dir():
+            return out
+        for path in sorted(ext_dir.glob("*_meeting_extraction.json")):
+            try:
+                artifact = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            source_artifact_id = str(
+                artifact.get("source_artifact_id") or ""
+            ).strip()
+            source_id_for_item = source_artifact_id or path.stem
+            for kind in ("decisions", "claims", "action_items"):
+                items = artifact.get(kind) or []
+                if not isinstance(items, list):
+                    continue
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    verification_status = item.get("verification_status")
+                    phase_v_verified = (
+                        verification_status == "verified"
+                    )
+                    if phase_v_enabled and not phase_v_verified:
+                        continue
+                    excerpt = self._verified_excerpt(kind, item)
+                    if not excerpt or len(excerpt) < 10:
+                        continue
+                    out.append(
+                        {
+                            "artifact_id": self._verified_item_id(
+                                source_artifact_id, kind, item,
+                            ),
+                            "source_id": source_id_for_item,
+                            "excerpt": excerpt,
+                            "status": "evidenced",
+                            "phase_v_verified": phase_v_verified,
+                            "reason": (
+                                "phase_v_verified_extraction_item"
+                                if phase_v_enabled
+                                else "verification_disabled_extraction_item"
+                            ),
+                        }
+                    )
+        return out
+
+    @staticmethod
+    def _verified_excerpt(kind: str, item: Dict[str, Any]) -> str:
+        if kind == "decisions":
+            return _truncate(str(item.get("decision_text") or ""))
+        if kind == "claims":
+            return _truncate(str(item.get("claim_text") or ""))
+        if kind == "action_items":
+            action = str(item.get("action") or "")
+            owner = str(item.get("owner") or "")
+            return _truncate(f"{owner}: {action}" if owner else action)
+        return ""
+
+    @staticmethod
+    def _verified_item_id(
+        source_artifact_id: str, kind: str, item: Dict[str, Any]
+    ) -> str:
+        """Build a stable UUID-format id for a verified extraction item.
+
+        ``context_bundle_item`` requires ``artifact_id`` to look like a
+        UUID. Extraction items do not always carry a UUID-shaped id, so
+        we hash the (source_artifact_id, kind, source_turn_ids,
+        item_text) tuple and project the digest into a UUID v5 in the
+        DNS namespace. Deterministic across runs given the same inputs.
+        """
+        text_field = (
+            item.get("decision_text")
+            or item.get("claim_text")
+            or item.get("action")
+            or ""
+        )
+        seed = "|".join(
+            [
+                source_artifact_id,
+                kind,
+                ",".join(str(t) for t in (item.get("source_turn_ids") or [])),
+                str(text_field),
+            ]
+        )
+        return str(uuid.uuid5(uuid.NAMESPACE_DNS, seed))

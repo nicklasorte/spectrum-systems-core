@@ -38,6 +38,10 @@ ALL_FINDING_CODES: frozenset[str] = frozenset(
         "model_registry_drift",
         "artifact_not_indexed",
         "no_prior_orchestration_artifact",
+        # Phase S.2: emitted by ``confidence_field_check`` when a live
+        # meeting_extraction artifact is missing the ``confidence`` field
+        # on a decision or claim.
+        "confidence_field_missing",
     }
 )
 
