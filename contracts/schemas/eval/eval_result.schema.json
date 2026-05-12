@@ -34,7 +34,7 @@
     "pipeline_run_id": { "type": "string", "minLength": 1 },
     "prompt_version": { "type": "string", "minLength": 1 },
     "artifact_type": { "const": "eval_result" },
-    "schema_version": { "const": "1.0.0" },
+    "schema_version": { "type": "string", "enum": ["1.0.0", "1.1.0"] },
     "created_at": { "type": "string", "format": "date-time" },
     "chunking_strategy": {
       "type": "string",
@@ -46,6 +46,34 @@
     "items_requiring_review_rate": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
     "total_extracted_items": { "type": "integer", "minimum": 0 },
     "total_minutes_items": { "type": "integer", "minimum": 0 },
+    "coverage_by_agenda_item": {
+      "type": "object",
+      "description": "Phase W.5 (schema 1.1.0): per-agenda coverage. Number in [0,1] for evaluable agendas, string 'excluded_small' for agendas with <5 chunks.",
+      "additionalProperties": {
+        "anyOf": [
+          { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          { "type": "string", "const": "excluded_small" }
+        ]
+      }
+    },
+    "precision_by_agenda_item": {
+      "type": "object",
+      "description": "Phase W.5 (schema 1.1.0): per-agenda precision. Same shape as coverage_by_agenda_item.",
+      "additionalProperties": {
+        "anyOf": [
+          { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          { "type": "string", "const": "excluded_small" }
+        ]
+      }
+    },
+    "excluded_small_agenda_count": {
+      "type": "integer", "minimum": 0,
+      "description": "Phase W.5: count of agendas with <5 chunks (excluded from per-slice metrics)."
+    },
+    "agenda_items_evaluated_count": {
+      "type": "integer", "minimum": 0,
+      "description": "Phase W.5: count of agendas with >=5 chunks that received a real metric."
+    },
     "provenance": {
       "type": "object",
       "additionalProperties": false,
