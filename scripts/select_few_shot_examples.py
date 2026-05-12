@@ -34,6 +34,41 @@ REVIEW_CHECKLIST_RELPATH = "store/artifacts/evals/few_shot/REVIEW_CHECKLIST.md"
 # Outcome types we target. One example per type, highest confidence first.
 TARGET_OUTCOMES: Tuple[str, ...] = ("approval", "deferral", "action_required")
 
+# Source families that the typed_extraction_runner walks when locating
+# source_record.json. Kept in sync with
+# ``extraction/typed_extraction_runner.py::_SOURCE_FAMILIES``.
+_SOURCE_FAMILIES: Tuple[str, ...] = (
+    "meetings", "books", "comments", "working_papers", "notes",
+)
+
+
+def _resolve_source_artifact_id(
+    data_lake: Path, source_id: str
+) -> Optional[str]:
+    """Resolve a source_id slug to the source_record artifact_id.
+
+    The typed_extraction_runner writes
+    ``<sdl_root>/extractions/<source_artifact_id>_meeting_extraction.json``
+    where ``source_artifact_id`` comes from
+    ``<data_lake>/store/processed/<family>/<source_id>/source_record.json``
+    (its ``artifact_id`` field), NOT from the source_id slug. This helper
+    reproduces the runner's lookup so we can match the same artifact.
+    """
+    store_root = data_lake / "store"
+    for family in _SOURCE_FAMILIES:
+        sr_path = (
+            store_root / "processed" / family / source_id / "source_record.json"
+        )
+        if sr_path.is_file():
+            try:
+                data = json.loads(sr_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return None
+            aid = data.get("artifact_id") if isinstance(data, dict) else None
+            if isinstance(aid, str) and aid:
+                return aid
+    return None
+
 
 def _now_iso() -> str:
     return (
@@ -47,10 +82,18 @@ def _load_meeting_extraction(
 ) -> Optional[Dict[str, Any]]:
     """Locate the most-recent meeting_extraction artifact for source_id.
 
-    Looks under ``<data_lake>/store/artifacts/extractions/`` for files
-    whose ``source_id`` field matches the requested id, then under
-    ``<data_lake>/store/processed/meetings/<source_id>/`` as a fallback
-    for older directory layouts.
+    Real artifacts written by the typed_extraction_runner identify their
+    source via ``source_artifact_id`` (a UUID resolved from
+    ``source_record.json``), NOT via ``source_id`` (the slug). We resolve
+    the slug to the artifact_id and match on either field so the script
+    finds both live-runner artifacts (matched by ``source_artifact_id``)
+    AND synthetic test fixtures that carry a top-level ``source_id``
+    field.
+
+    Search order:
+      1. ``<data_lake>/store/artifacts/extractions/*.json`` (canonical).
+      2. ``<data_lake>/store/processed/meetings/<source_id>/`` as a
+         legacy fallback for older directory layouts.
     """
     extraction_dir = data_lake / "store" / "artifacts" / "extractions"
     candidates: List[Path] = []
@@ -65,6 +108,8 @@ def _load_meeting_extraction(
             sorted(processed_dir.rglob("meeting_extraction*.json"))
         )
 
+    resolved_artifact_id = _resolve_source_artifact_id(data_lake, source_id)
+
     chosen: Optional[Dict[str, Any]] = None
     chosen_path: Optional[Path] = None
     for path in candidates:
@@ -74,7 +119,16 @@ def _load_meeting_extraction(
             continue
         if not isinstance(doc, dict):
             continue
-        if doc.get("source_id") != source_id:
+        doc_source_id = doc.get("source_id")
+        doc_source_artifact_id = doc.get("source_artifact_id")
+        matches = (
+            (doc_source_id == source_id)
+            or (
+                resolved_artifact_id is not None
+                and doc_source_artifact_id == resolved_artifact_id
+            )
+        )
+        if not matches:
             continue
         # Prefer the most recently modified file.
         if chosen_path is None or path.stat().st_mtime > chosen_path.stat().st_mtime:
@@ -253,9 +307,17 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     extraction = _load_meeting_extraction(data_lake, args.source_id)
     if extraction is None:
+        resolved = _resolve_source_artifact_id(data_lake, args.source_id)
+        hint = (
+            f" (resolved source_artifact_id={resolved})" if resolved
+            else " (no source_record.json found under "
+            f"{data_lake}/store/processed/<family>/{args.source_id}/)"
+        )
         print(
             f"error: no meeting_extraction artifact found for "
-            f"source_id={args.source_id} under {data_lake}",
+            f"source_id={args.source_id}{hint} under {data_lake}. "
+            f"Scanned {data_lake}/store/artifacts/extractions/ for files "
+            f"with matching source_id or source_artifact_id.",
             file=sys.stderr,
         )
         return 1

@@ -48,6 +48,22 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
+      - name: List data-lake extraction artifacts
+        if: always()
+        run: |
+          echo "=== Extraction artifacts in data-lake ==="
+          find data-lake/store -name "*.json" -type f 2>/dev/null | head -50 | while read f; do
+            type=$(python -c "import json,sys; d=json.load(open('$f')); print(d.get('artifact_type','?'))" 2>/dev/null || echo "?")
+            sid=$(python -c "import json,sys; d=json.load(open('$f')); print(d.get('source_id') or d.get('source_artifact_id') or '?')" 2>/dev/null || echo "?")
+            echo "  $f | type=$type | source=$sid"
+          done
+          echo "=== source_record.json files ==="
+          find data-lake/store/processed -name "source_record.json" -type f 2>/dev/null | head -20 | while read f; do
+            aid=$(python -c "import json,sys; d=json.load(open('$f')); print(d.get('artifact_id','?'))" 2>/dev/null || echo "?")
+            echo "  $f | artifact_id=$aid"
+          done
+          echo "=== Done ==="
+
       - name: Select few-shot candidates
         id: select
         run: |
