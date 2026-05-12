@@ -38,6 +38,15 @@
       "type": "string",
       "enum": ["pending", "promoted", "discarded"]
     },
-    "extraction_run_id": { "type": ["string", "null"] }
+    "extraction_run_id": { "type": ["string", "null"] },
+    "review_status": {
+      "type": "string",
+      "enum": ["pending", "reviewed", "reviewed_after_expiry", "expired"],
+      "description": "Phase X2.6: lifecycle marker. submit_review.py updates this to 'reviewed' (or 'reviewed_after_expiry' when the candidate was past expires_at when reviewed). Default 'pending'."
+    },
+    "review_artifact_id": {
+      "type": ["string", "null"],
+      "description": "Phase X2.6: human_review_artifact_id of the most recent review on this candidate. Null until reviewed."
+    }
   }
 }

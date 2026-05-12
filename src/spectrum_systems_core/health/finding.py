@@ -113,6 +113,50 @@ ALL_FINDING_CODES: frozenset[str] = frozenset(
         # wired per-chunk injection. Remediation: re-run extraction
         # with force=true. severity info -- never blocks the run.
         "glossary_injection_field_absent",
+        # Phase X2.1: emitted when heuristic_agenda_detector scanned
+        # the transcript and found zero agenda headers. severity info.
+        # Context: source_id, lines_scanned. Caller assigns
+        # agenda_item_id="unclassified" to every chunk -- the field
+        # is never null.
+        "agenda_detection_failed",
+        # Phase X2.3: emitted when the LLM judge's per-decision
+        # agreement rate against ground truth falls below
+        # JUDGE_CALIBRATION_WARN_THRESHOLD (0.70). severity warn;
+        # the operator should inspect the judge prompt and any rubric
+        # drift before --set-baseline is run.
+        "judge_calibration_low",
+        # Phase X2.3: emitted when judge agreement falls below the
+        # halt threshold (0.60). severity halt; the gate refuses
+        # --set-baseline because the judge is unreliable as a
+        # quality signal.
+        "judge_calibration_failed",
+        # Phase X2.3: emitted when the judge and the extraction model
+        # belong to the same model family (e.g. both Claude); the
+        # judge's verdict cannot be considered independent. severity
+        # warn; the operator should pin the judge to a distinct
+        # family if independence matters for their use-case.
+        "judge_same_family",
+        # Phase X2.3: emitted when JUDGE_STABILITY_CHECK_ENABLED=true
+        # and re-running the judge on the same input produces a
+        # different verdict for some item. severity warn.
+        "judge_score_unstable",
+        # Phase X2.4: emitted on a successful eval-ground-truth
+        # --set-baseline run. severity info. Context carries the
+        # coverage / precision / f1 / baseline_scope / pairs_count
+        # snapshot so a future reader can answer "what IS the
+        # baseline?" without reading the artifact.
+        "baseline_set",
+        # Phase X2.4: emitted when --set-baseline is invoked but the
+        # last orchestration_result for the source had
+        # stage_status="failed". severity halt; we refuse to install
+        # a baseline measured on a broken run.
+        "baseline_requires_successful_run",
+        # Phase X2.6: emitted when a correction_candidate has been
+        # pending for more than HUMAN_REVIEW_TTL_DAYS without any
+        # human_review_artifact recording a decision. severity info;
+        # candidate-level state is for operator triage, not the
+        # blocking gate.
+        "human_review_artifact_missing",
     }
 )
 
@@ -134,6 +178,12 @@ HALT_FINDING_CODES: frozenset[str] = frozenset(
         # Phase V.3: promoted to halt when FEW_SHOT_REQUIRED=true and
         # the few-shot artifact is missing. Default severity is info.
         "few_shot_artifact_missing",
+        # Phase X2.3: hard-halt threshold (0.60 default) on judge
+        # agreement. The gate is fail-closed: if the judge is too
+        # unreliable to disagree with, --set-baseline is refused.
+        "judge_calibration_failed",
+        # Phase X2.4: gate refuses --set-baseline on a failed run.
+        "baseline_requires_successful_run",
     }
 )
 

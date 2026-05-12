@@ -51,7 +51,15 @@
         "binding_tuple_parse_failed",
         "binding_tuple_incomplete",
         "scope_overgeneralization",
-        "glossary_injection_field_absent"
+        "glossary_injection_field_absent",
+        "agenda_detection_failed",
+        "judge_calibration_low",
+        "judge_calibration_failed",
+        "judge_same_family",
+        "judge_score_unstable",
+        "baseline_set",
+        "baseline_requires_successful_run",
+        "human_review_artifact_missing"
       ]
     },
     "severity": { "enum": ["halt", "warn", "info"] },

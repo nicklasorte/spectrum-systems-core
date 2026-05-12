@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/human_review_artifact.schema.json",
+  "title": "human_review_artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "human_review_artifact_id",
+    "correction_candidate_id",
+    "source_id",
+    "reviewer_id",
+    "reviewed_at",
+    "decision",
+    "severity_assessment",
+    "provenance"
+  ],
+  "properties": {
+    "artifact_type": { "const": "human_review_artifact" },
+    "schema_version": { "const": "1.0.0" },
+    "human_review_artifact_id": { "type": "string", "minLength": 1 },
+    "correction_candidate_id": { "type": "string", "minLength": 1 },
+    "source_id": { "type": "string", "minLength": 1 },
+    "reviewer_id": { "type": "string", "minLength": 1 },
+    "reviewed_at": { "type": "string", "minLength": 1 },
+    "decision": {
+      "type": "string",
+      "enum": ["accept", "reject", "revise"]
+    },
+    "severity_assessment": {
+      "type": "string",
+      "enum": ["ok", "warn", "halt"]
+    },
+    "notes": { "type": ["string", "null"] },
+    "review_after_expiry": {
+      "type": "boolean",
+      "description": "Phase X2.6: true when the underlying correction_candidate had already expired at the time of review. The review is still recorded for audit; the field flags it to downstream readers."
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": { "const": "scripts/submit_review.py" }
+      }
+    }
+  }
+}

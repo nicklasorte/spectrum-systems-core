@@ -3004,6 +3004,7 @@ def eval_ground_truth(
     prompt_version: str = "unspecified",
     set_baseline: bool = False,
     is_dry_run: bool = False,
+    specific_source_id: Optional[str] = None,
     out_stream=None,
 ) -> int:
     """Phase M.4: evaluate the pipeline against confirmed ground_truth pairs.
@@ -3050,6 +3051,7 @@ def eval_ground_truth(
         pair_id_filter=pair_id,
         set_baseline=set_baseline,
         is_dry_run=is_dry_run,
+        source_id_filter=specific_source_id,
     )
     print(format_cli_report(result), file=out, end="")
 
@@ -4199,6 +4201,16 @@ def _build_parser() -> argparse.ArgumentParser:
             "to the dry-run pipeline mode."
         ),
     )
+    egt.add_argument(
+        "--specific-source-id",
+        default=None,
+        help=(
+            "Phase X2.4: filter the eval (and any --set-baseline) to a "
+            "single source_id. When provided alongside --set-baseline "
+            "the baseline is tagged baseline_scope='single_transcript' "
+            "/ baseline_type='development'."
+        ),
+    )
 
     lsi = sub.add_parser(
         "list-source-ids",
@@ -4664,6 +4676,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             prompt_version=args.prompt_version,
             set_baseline=args.set_baseline,
             is_dry_run=args.dry_run,
+            specific_source_id=args.specific_source_id,
         )
     if args.command == "apply-compression":
         return apply_compression_cli(

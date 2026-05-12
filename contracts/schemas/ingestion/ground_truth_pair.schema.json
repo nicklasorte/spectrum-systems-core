@@ -50,6 +50,45 @@
       "properties": {
         "produced_by": { "const": "GroundTruthLinker" }
       }
+    },
+    "rubric_notes": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Phase X2.5 (optional): annotator metadata used by judge calibration to score regulatory-verb discrimination separately from overall agreement. Existing GroundTruthLinker artifacts that lack this field continue to validate.",
+      "required": [
+        "expected_decision_outcome",
+        "verb_discrimination_example"
+      ],
+      "properties": {
+        "expected_decision_outcome": {
+          "type": "string",
+          "enum": [
+            "approval",
+            "rejection",
+            "deferral",
+            "action_required",
+            "noted",
+            "question"
+          ]
+        },
+        "verb_discrimination_example": { "type": "boolean" },
+        "annotator_id": { "type": ["string", "null"] },
+        "annotated_at": { "type": ["string", "null"] },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+    "target_type": {
+      "type": ["string", "null"],
+      "enum": ["decision", "claim", "action_item", null],
+      "description": "Phase X2.5: optional category tag used by per-type metric rollups and judge calibration. Existing pairs without target_type continue to validate."
+    },
+    "decision_id": {
+      "type": ["string", "null"],
+      "description": "Phase X2.5: optional link back to the extracted decision_id used by judge_calibration to align judge verdict with the ground truth pass/fail."
+    },
+    "ground_truth_pass": {
+      "type": ["boolean", "null"],
+      "description": "Phase X2.5: optional ground-truth verdict (the annotator's pass/fail), used by judge_calibration to compute agreement_rate_overall."
     }
   }
 }
