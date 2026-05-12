@@ -217,19 +217,21 @@ jobs:
                   fh.write("\n".join(detail_block) + "\n")
           PY
 
-      - name: Commit and push results to data-lake
+      - name: Commit pipeline artifacts to data-lake
+        if: success()
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          cd "$DATA_LAKE_PATH"
-          git config user.name "spectrum-pipeline[bot]"
-          git config user.email "spectrum-pipeline[bot]@users.noreply.github.com"
+          set -euo pipefail
+          cd data-lake
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add store/artifacts/ store/processed/ store/raw/
           if git diff --staged --quiet; then
-            echo "No changes to commit"
+            echo "No artifact changes to commit."
             exit 0
           fi
-          git commit -m "debug: single transcript run for 20251218 kickoff"
+          git commit -m "chore(pipeline): commit artifacts from debug run ${{ github.run_id }} [skip ci]"
           attempt=0
           delay=2
           while [ $attempt -lt 5 ]; do
