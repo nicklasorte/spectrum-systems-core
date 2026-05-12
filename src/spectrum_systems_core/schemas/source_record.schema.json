@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/source_record.schema.json",
+  "title": "source_record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "artifact_id",
+    "source_id",
+    "created_at"
+  ],
+  "properties": {
+    "artifact_type": { "const": "source_record" },
+    "schema_version": { "type": "string", "minLength": 1 },
+    "artifact_id": { "type": "string", "minLength": 1 },
+    "source_id": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string" },
+    "raw_hash": { "type": "string" },
+    "source_family": { "type": "string" },
+    "source_type": { "type": "string" },
+    "metadata": { "type": "object" },
+    "payload": { "type": "object" },
+    "provenance": { "type": "object" },
+    "trace": { "type": "object" },
+    "schema_ref": { "type": "object" }
+  }
+}

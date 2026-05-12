@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/eval_result.schema.json",
+  "title": "eval_result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "eval_type",
+    "status",
+    "created_at"
+  ],
+  "properties": {
+    "artifact_type": { "const": "eval_result" },
+    "schema_version": { "type": "string", "minLength": 1 },
+    "eval_type": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["pass", "fail", "warn"] },
+    "reason_codes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "subject_artifact_id": { "type": "string" },
+    "subject_artifact_type": { "type": "string" },
+    "created_at": { "type": "string" },
+    "details": { "type": "object" }
+  }
+}

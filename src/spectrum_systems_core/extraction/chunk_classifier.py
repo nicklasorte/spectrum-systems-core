@@ -119,6 +119,22 @@ def _default_api_caller(prompt: str) -> Dict[str, Any]:  # noqa: ARG001
     return {"classification": "off_topic", "confidence": None}
 
 
+def _is_rate_limit_error_name(exc: BaseException) -> bool:
+    """Best-effort RateLimitError detection.
+
+    Phase X-0: the chunk_classifier must NOT swallow rate-limit errors
+    via the per-chunk fallback path -- if Haiku rate-limited the
+    batch, the per-chunk calls will rate-limit too. Re-raising lets
+    the runner emit ``api_rate_limit_exhausted`` failure artifacts
+    and bump the chunks_blocked counter.
+
+    Uses class-name matching so we do not force an ``import anthropic``
+    at module load time (tests + offline runs may not have the SDK
+    installed).
+    """
+    return type(exc).__name__ == "RateLimitError"
+
+
 class ChunkClassifier:
     """Classify a chunk and emit a chunk_classification artifact."""
 
@@ -632,6 +648,12 @@ class ChunkClassifier:
                             self._classify_batch_sync, batch, source_id,
                         )
                     except Exception as exc:  # never raise
+                        # X-0: rate-limit-exhausted means every per-chunk
+                        # fallback call would also hit the limit. Re-raise
+                        # so the runner can emit the api_rate_limit_exhausted
+                        # failure artifact and bump the orchestrator counter.
+                        if _is_rate_limit_error_name(exc):
+                            raise
                         _LOG.warning(
                             "chunk_classifier_async_batch_error: %s: %s "
                             "(falling back per-chunk for %d chunks)",
@@ -649,6 +671,12 @@ class ChunkClassifier:
                     try:
                         resp = await async_caller(prompt)
                     except Exception as exc:
+                        # X-0: RateLimitError must bubble so the runner
+                        # counts blocked chunks. Falling back per-chunk
+                        # would only burn more retries and end the same
+                        # way.
+                        if _is_rate_limit_error_name(exc):
+                            raise
                         _LOG.warning(
                             "chunk_classifier_async_batch_api_error: %s: %s "
                             "(falling back per-chunk for %d chunks)",

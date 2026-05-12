@@ -32,11 +32,25 @@ from .classification_cache import ClassificationCache
 from .decision_extractor import DecisionExtractor
 from .extraction_merger import ExtractionMerger
 from .glossary_manager import GlossaryManager
+from ._chunk_counters import ChunkCounters
+from ._failure_artifacts import (
+    emit_empty_response,
+    emit_json_parse_failed,
+    emit_rate_limit_exhausted,
+)
+from ._resilience import (
+    EmptyResponseError,
+    MAX_CONCURRENT_HAIKU_CALLS,
+    call_with_backoff,
+    guard_empty_response,
+    strip_markdown_fence,
+)
 from ..agenda import (
     AgendaReferenceError,
     apply_phase_w_if_enabled,
     make_phase_w_agenda_resolver,
 )
+from ..verification.model_registry import ModelRegistry
 from ..verification.pipeline_integration import (
     VerificationIncompleteError,
     apply_phase_v_if_enabled,
@@ -59,41 +73,74 @@ _COMPONENT_KEYS: tuple = ("classifier", "decision", "claim", "action_item")
 _DEFAULT_MAX_TOKENS = 2000
 
 
-def _parse_json_response(text: str) -> Dict[str, Any]:
-    """Parse a model JSON response into a dict.
+def _parse_json_response_strict(text: str, chunk_id: str = "") -> Dict[str, Any]:
+    """X-1 call order: guard_empty_response -> strip_markdown_fence -> json.loads.
 
-    Tolerates markdown code fences (```json ... ```) and a leading or
-    trailing narrative line by extracting the outermost ``{ ... }`` span.
-    Returns ``{}`` on any failure so each component's existing defensive
-    paths produce empty results instead of raising.
+    Raises:
+      EmptyResponseError: text was empty / whitespace only.
+      json.JSONDecodeError: text was non-empty but did not parse as JSON
+        even after fence stripping. The caller is expected to emit the
+        ``typed_extraction_llm_json_parse_failed`` failure artifact and
+        bump the orchestrator's ``parse_error`` counter.
+      TypeError: parsed value was not a JSON object (the runner only
+        accepts ``dict``).
+
+    No silent ``return {}`` -- the legacy behaviour swallowed every
+    failure mode behind the same empty-dict and made it impossible
+    for the orchestrator to count blocked chunks. Callers MUST handle
+    the exceptions and emit the matching failure artifact.
     """
-    if not isinstance(text, str) or not text.strip():
+    raw = guard_empty_response(text, chunk_id)
+    stripped = strip_markdown_fence(raw)
+    if not stripped:
+        # Strip-to-empty after a non-empty input means the model wrote
+        # only a fence and no content. Treat as empty (X-1 fail-closed).
+        raise EmptyResponseError(
+            f"Markdown fence wrapped no JSON content for chunk {chunk_id}"
+        )
+    parsed = json.loads(stripped)
+    if not isinstance(parsed, dict):
+        raise TypeError(
+            f"expected JSON object, got {type(parsed).__name__} "
+            f"for chunk {chunk_id}"
+        )
+    return parsed
+
+
+def _parse_json_response(text: str) -> Dict[str, Any]:
+    """Legacy tolerant parser. Returns ``{}`` on any failure.
+
+    Retained for the existing ``_build_anthropic_caller`` callers and
+    the offline test path. New code paths must use
+    ``_parse_json_response_strict`` so the orchestrator can count
+    blocked chunks per X-0 / X-1.
+
+    Tolerates a narrative prefix / suffix around a JSON object by
+    falling back to the outermost ``{...}`` span when strict parsing
+    fails. The strict variant deliberately does NOT do this so the
+    failure mode can be counted as ``parse_error``.
+    """
+    try:
+        return _parse_json_response_strict(text)
+    except EmptyResponseError:
         return {}
-    candidates: List[str] = [text]
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        # Drop opening fence (possibly ```json) and trailing fence.
-        body = stripped[3:]
-        if body.startswith("json"):
-            body = body[4:]
-        body = body.lstrip("\n").rstrip()
-        if body.endswith("```"):
-            body = body[:-3].rstrip()
-        if body:
-            candidates.append(body)
+    except (TypeError, json.JSONDecodeError):
+        pass
+
+    # Narrative-prefix fallback (legacy tolerance).
+    stripped = (text or "").strip()
     start = stripped.find("{")
     end = stripped.rfind("}")
     if 0 <= start < end:
-        candidates.append(stripped[start : end + 1])
-    for candidate in candidates:
         try:
-            parsed = json.loads(candidate)
+            parsed = json.loads(stripped[start : end + 1])
+            if isinstance(parsed, dict):
+                return parsed
         except (TypeError, json.JSONDecodeError):
-            continue
-        if isinstance(parsed, dict):
-            return parsed
+            pass
     _LOG.warning(
-        "typed_extraction_llm_json_parse_failed: head=%r", text[:200]
+        "typed_extraction_llm_json_parse_failed: head=%r",
+        (text or "")[:200],
     )
     return {}
 
@@ -117,14 +164,30 @@ def _build_anthropic_caller(
     client = anthropic.Anthropic()
 
     def _call(prompt: str) -> Dict[str, Any]:
-        try:
-            message = client.messages.create(
+        # X-0 part A: every Haiku call goes through call_with_backoff so
+        # a transient RateLimitError does not silently produce {} (and
+        # hence zero items, which X-1's empty-items gate would then
+        # have to catch downstream).
+        def _send() -> Any:
+            return client.messages.create(
                 model=model,
                 max_tokens=max_tokens,
                 temperature=0,
                 messages=[{"role": "user", "content": prompt}],
             )
-        except Exception as exc:  # SDK can raise many error types
+
+        try:
+            message = call_with_backoff(_send)
+        except anthropic.RateLimitError as exc:
+            # Backoff exhausted -- re-raise so the runner emits the
+            # api_rate_limit_exhausted failure artifact and bumps the
+            # rate_limit_exhausted counter. Do NOT swallow.
+            _LOG.warning(
+                "typed_extraction_rate_limit_exhausted: %s",
+                exc,
+            )
+            raise
+        except Exception as exc:  # noqa: BLE001 - SDK error surface
             _LOG.warning(
                 "typed_extraction_llm_call_failed: %s: %s",
                 type(exc).__name__,
@@ -160,13 +223,22 @@ def _build_anthropic_batch_classifier_caller(
     client = anthropic.Anthropic()
 
     def _call(prompt: str) -> Dict[str, Any]:
-        try:
-            message = client.messages.create(
+        def _send() -> Any:
+            return client.messages.create(
                 model=model,
                 max_tokens=max_tokens,
                 temperature=0,
                 messages=[{"role": "user", "content": prompt}],
             )
+
+        try:
+            message = call_with_backoff(_send)
+        except anthropic.RateLimitError as exc:
+            _LOG.warning(
+                "typed_extraction_batch_classifier_rate_limit_exhausted: %s",
+                exc,
+            )
+            raise
         except Exception as exc:
             _LOG.warning(
                 "typed_extraction_batch_classifier_call_failed: %s: %s",
@@ -193,23 +265,47 @@ def _build_anthropic_async_batch_classifier_caller(
     batch classifier triggers its per-chunk fallback path.
     """
     import anthropic
+    import asyncio
+    import random as _random
 
     client = anthropic.AsyncAnthropic()
 
     async def _acall(prompt: str) -> Dict[str, Any]:
-        try:
-            message = await client.messages.create(
-                model=model,
-                max_tokens=max_tokens,
-                temperature=0,
-                messages=[{"role": "user", "content": prompt}],
-            )
-        except Exception as exc:
-            _LOG.warning(
-                "typed_extraction_async_batch_classifier_call_failed: %s: %s",
-                type(exc).__name__, exc,
-            )
-            return {"text": ""}
+        # X-0 part A: async equivalent of call_with_backoff. Retry on
+        # RateLimitError only; non-rate-limit exceptions surface on the
+        # first try. After max_retries the exception re-raises so the
+        # runner can emit the rate-limit failure artifact.
+        last_exc: Exception | None = None
+        from ._resilience import MAX_RETRIES as _MAX_RETRIES
+        for attempt in range(_MAX_RETRIES):
+            try:
+                message = await client.messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=0,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                break
+            except anthropic.RateLimitError as exc:
+                last_exc = exc
+                if attempt == _MAX_RETRIES - 1:
+                    _LOG.warning(
+                        "typed_extraction_async_batch_classifier_rate_limit_exhausted: %s",
+                        exc,
+                    )
+                    raise
+                wait = (2 ** attempt) + _random.uniform(0, 1)
+                await asyncio.sleep(wait)
+            except Exception as exc:
+                _LOG.warning(
+                    "typed_extraction_async_batch_classifier_call_failed: %s: %s",
+                    type(exc).__name__, exc,
+                )
+                return {"text": ""}
+        else:  # pragma: no cover - the for/else triggers only if loop exits cleanly
+            assert last_exc is not None
+            raise last_exc
+
         parts: List[str] = []
         for block in getattr(message, "content", []) or []:
             text = getattr(block, "text", None)
@@ -255,14 +351,19 @@ def _resolve_api_callers(
     # "SDK missing -> all components offline" invariant.
     try:
         new_callers: Dict[str, Callable[[str], Dict[str, Any]]] = {}
+        # X-0: never hardcode the model id. ModelRegistry.get("extraction")
+        # is the single source of truth -- callers pin via
+        # ``<SDL_ROOT>/config/model_registry.json`` and missing config
+        # falls back to the documented default (claude-haiku-4-5-*).
+        extraction_model = _resolve_extraction_model_id()
         for key in missing:
             if key == "classifier":
                 new_callers[key] = _build_anthropic_batch_classifier_caller(
-                    ChunkClassifier.MODEL_ID
+                    extraction_model
                 )
             else:
                 new_callers[key] = _build_anthropic_caller(
-                    ChunkClassifier.MODEL_ID
+                    extraction_model
                 )
     except ImportError as exc:
         _LOG.warning(
@@ -273,6 +374,26 @@ def _resolve_api_callers(
         return callers
     callers.update(new_callers)
     return callers
+
+
+def _resolve_extraction_model_id() -> str:
+    """Resolve the extraction model id via ``ModelRegistry.get("extraction")``.
+
+    Falls back to ``ChunkClassifier.MODEL_ID`` only if the registry
+    raises (which it should not -- ``ModelRegistry`` has a built-in
+    default). The fallback exists so a misconfigured SDL_ROOT cannot
+    take the whole extraction stack down.
+    """
+    try:
+        sdl_root_env = os.environ.get("SDL_ROOT", "").strip() or None
+        return ModelRegistry(sdl_root_env).get("extraction")["model"]
+    except Exception as exc:  # noqa: BLE001 - belt + braces
+        _LOG.warning(
+            "typed_extraction_model_registry_unreadable: %s -> "
+            "falling back to ChunkClassifier.MODEL_ID",
+            exc,
+        )
+        return ChunkClassifier.MODEL_ID
 
 
 def _resolve_async_classifier_caller(
@@ -291,7 +412,7 @@ def _resolve_async_classifier_caller(
         return None
     try:
         return _build_anthropic_async_batch_classifier_caller(
-            ChunkClassifier.MODEL_ID
+            _resolve_extraction_model_id()
         )
     except ImportError as exc:
         _LOG.warning(
@@ -379,6 +500,106 @@ def _load_chunks(path: Path) -> List[Dict[str, Any]]:
 
 def _meeting_extraction_path(sdl_root: Path, source_artifact_id: str) -> Path:
     return sdl_root / "extractions" / f"{source_artifact_id}_meeting_extraction.json"
+
+
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    """Best-effort RateLimitError detection without forcing an SDK import."""
+    try:
+        import anthropic  # noqa: WPS433 -- runtime check
+        return isinstance(exc, anthropic.RateLimitError)
+    except ImportError:
+        # No SDK installed; nothing to compare against. Fall back to the
+        # class name so we still catch rate-limit-shaped errors raised
+        # in tests via stubs.
+        return type(exc).__name__ == "RateLimitError"
+
+
+def _emit_rate_limit_for_all(
+    chunks: Sequence[Dict[str, Any]],
+    *,
+    counters: ChunkCounters,
+    source_id: str,
+    component: str,
+    detail: str,
+    extraction_run_id: str,
+    sdl_root: Optional[Path],
+) -> None:
+    """Emit one api_rate_limit_exhausted artifact per chunk that was
+    submitted but blocked, and bump ``rate_limit_exhausted`` accordingly.
+
+    Used when the classifier batch path exhausts retries and the runner
+    cannot tell which subset of chunks were affected -- the whole
+    submitted batch is counted as blocked, which is the conservative
+    fail-closed choice (RT1 finding: blocked chunks must NEVER be
+    silently treated as ``off_topic``).
+    """
+    for chunk in chunks:
+        cid = ""
+        if isinstance(chunk, dict):
+            cid = str(chunk.get("chunk_id") or chunk.get("id") or "")
+        emit_rate_limit_exhausted(
+            counters,
+            chunk_id=cid,
+            source_id=source_id,
+            component=component,
+            detail=detail,
+            extraction_run_id=extraction_run_id,
+            sdl_root=sdl_root,
+        )
+
+
+def _orchestration_result_path(sdl_root: Path, run_id: str) -> Path:
+    return sdl_root / "orchestration" / f"{run_id}_extraction.json"
+
+
+def _write_orchestration_result(
+    counters: ChunkCounters,
+    *,
+    run_id: str,
+    source_id: str,
+    sdl_root: Optional[Path],
+) -> Optional[Path]:
+    """Serialise the counter into the orchestration_result artifact.
+
+    The artifact is validated via ``validate_artifact`` before write so
+    a malformed result cannot land on disk. Validation failures are
+    logged and the artifact is still written so forensic evidence is
+    preserved -- the strict invariant is "the in-memory counter is
+    authoritative", and the artifact is a forensic mirror.
+    """
+    artifact = {
+        "artifact_type": "orchestration_result",
+        "schema_version": "1.0.0",
+        "run_id": run_id,
+        "source_id": source_id,
+        "stage_status": counters.stage_status(),
+        "created_at": _now_iso(),
+        **counters.as_dict(),
+    }
+    try:
+        from ..validation import validate_artifact, ArtifactValidationError
+        try:
+            validate_artifact(artifact, "orchestration_result")
+        except ArtifactValidationError as exc:
+            _LOG.warning(
+                "orchestration_result_schema_violation: %s", exc,
+            )
+    except ImportError:
+        pass
+
+    if sdl_root is None:
+        return None
+    target = _orchestration_result_path(sdl_root, run_id)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps(artifact, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return target
+    except OSError as exc:
+        _LOG.warning("orchestration_result_write_failed: %s", exc)
+        return None
 
 
 def run_typed_extraction(
@@ -534,6 +755,22 @@ def run_typed_extraction(
 
     async_caller = _resolve_async_classifier_caller(async_classifier_caller)
 
+    # X-0 part C: ``MAX_CONCURRENT_HAIKU_CALLS`` is the per-process
+    # concurrency cap. Explicit kwarg still wins so smoke tests can
+    # crank it down further, but the default is the constant -- never
+    # a hardcoded literal.
+    if max_concurrent_classifier_batches is None:
+        max_concurrent_classifier_batches = MAX_CONCURRENT_HAIKU_CALLS
+
+    # X-0 part D: track every chunk submitted vs blocked. Counter
+    # is updated on every non-success exit path (rate limit, empty
+    # response, parse error, zero items). At the end of the run the
+    # totals are serialised into the orchestration_result artifact.
+    counters = ChunkCounters()
+    counters.record_attempt(len(chunks))
+
+    extraction_run_id = "tex-" + uuid.uuid4().hex[:16]
+
     classifications: List[Dict[str, Any]]
     try:
         classifications = asyncio.run(
@@ -555,7 +792,7 @@ def run_typed_extraction(
         )
         import threading
 
-        result_box: Dict[str, Any] = {}
+        result_box: Dict[str, Any] = {"value": [], "error": None}
 
         def _runner() -> None:
             loop = asyncio.new_event_loop()
@@ -569,13 +806,75 @@ def run_typed_extraction(
                         cache=cache,
                     )
                 )
+            except BaseException as inner_exc:  # noqa: BLE001
+                result_box["error"] = inner_exc
             finally:
                 loop.close()
 
         t = threading.Thread(target=_runner, daemon=True)
         t.start()
         t.join()
-        classifications = result_box.get("value", [])  # type: ignore[assignment]
+        if result_box["error"] is not None:
+            inner = result_box["error"]
+            if _is_rate_limit_error(inner):
+                _emit_rate_limit_for_all(
+                    chunks,
+                    counters=counters,
+                    source_id=source_id,
+                    component="chunk_classifier",
+                    detail=str(inner),
+                    extraction_run_id=extraction_run_id,
+                    sdl_root=sdl_root,
+                )
+                _write_orchestration_result(
+                    counters,
+                    run_id=extraction_run_id,
+                    source_id=source_id,
+                    sdl_root=sdl_root,
+                )
+                return {
+                    "status": "failure",
+                    "reason": "api_rate_limit_exhausted:classifier",
+                    **counters.as_dict(),
+                    "stage_status": counters.stage_status(),
+                }
+            classifications = []
+        else:
+            classifications = result_box.get("value", []) or []  # type: ignore[assignment]
+    except Exception as exc:  # noqa: BLE001 - never escape
+        if _is_rate_limit_error(exc):
+            _emit_rate_limit_for_all(
+                chunks,
+                counters=counters,
+                source_id=source_id,
+                component="chunk_classifier",
+                detail=str(exc),
+                extraction_run_id=extraction_run_id,
+                sdl_root=sdl_root,
+            )
+            _write_orchestration_result(
+                counters,
+                run_id=extraction_run_id,
+                source_id=source_id,
+                sdl_root=sdl_root,
+            )
+            return {
+                "status": "failure",
+                "reason": "api_rate_limit_exhausted:classifier",
+                **counters.as_dict(),
+                "stage_status": counters.stage_status(),
+            }
+        raise
+
+    # Any chunks the classifier could not classify in time (because of
+    # an upstream rate limit / empty response that the runner caught at
+    # the API layer) come back as "off_topic" by default. The runner
+    # cannot tell those apart from real off_topic chunks here, so the
+    # counter is bumped from the failure-artifact path inside the API
+    # callers themselves. Successful classifications count as
+    # ``chunks_succeeded`` so the orchestrator's "✓" actually means
+    # every chunk produced *some* outcome.
+    counters.record_success(len(classifications))
 
     if cache is not None:
         cache.save(source_id)
@@ -613,7 +912,27 @@ def run_typed_extraction(
         action_x.last_run_metadata,
     ]
 
-    extraction_run_id = "tex-" + uuid.uuid4().hex[:16]
+    # X-1: minimum items_count gate. An extractor that returned zero
+    # items is a successful API call but a substantively empty result.
+    # Emit ``typed_extraction_empty_result`` so the orchestrator
+    # counter records it as ``other`` (blocked), but DO continue and
+    # write the merged meeting_extraction artifact -- a transcript can
+    # legitimately have zero decisions if it was mostly off-topic.
+    # The block_reason bump signals "this run did not produce useful
+    # extraction content" without erasing the routing/coverage data
+    # the merged artifact still carries.
+    from ._failure_artifacts import emit_empty_result
+    if not decisions and not claims and not actions:
+        emit_empty_result(
+            counters,
+            chunk_id="",
+            source_id=source_id,
+            component="typed_extraction_runner",
+            detail="zero items after extraction",
+            extraction_run_id=extraction_run_id,
+            sdl_root=sdl_root,
+        )
+
     artifact = ExtractionMerger().merge(
         source_artifact_id=source_artifact_id,
         extraction_run_id=extraction_run_id,
@@ -667,10 +986,72 @@ def run_typed_extraction(
     try:
         ExtractionMerger.write_to(artifact, out_path)
     except OSError as exc:
+        # Even on write failure, persist the orchestration_result so the
+        # operator can see the chunk-level counters from the failed run.
+        _write_orchestration_result(
+            counters, run_id=extraction_run_id, source_id=source_id,
+            sdl_root=sdl_root,
+        )
         return {
             "status": "failure",
             "reason": f"write_error:{exc}",
+            **counters.as_dict(),
+            "stage_status": counters.stage_status(),
         }
+
+    # X-0 part D: orchestration_result artifact is mandatory on every
+    # run -- this is where the "✓ / partial / failed" stage rollup is
+    # serialised. Written AFTER the meeting_extraction so the artifact
+    # always reflects the final, post-extraction counter state.
+    orchestration_path = _write_orchestration_result(
+        counters,
+        run_id=extraction_run_id,
+        source_id=source_id,
+        sdl_root=sdl_root,
+    )
+
+    # X-3: calibration_warning. The histogram is computed from
+    # succeeded-chunk items only (decisions / claims / action_items
+    # are all merged-artifact products of succeeded chunks). Blocked
+    # chunks NEVER contribute to the denominator.
+    calibration_path: Optional[Path] = None
+    from ._calibration import (
+        calibration_from_succeeded,
+        CALIBRATION_WARNING_SCHEMA_VERSION as _CWSV,
+    )
+    calibration = calibration_from_succeeded(
+        artifact.get("decisions") or [],
+        artifact.get("claims") or [],
+        artifact.get("action_items") or [],
+        counters=counters,
+        run_id=extraction_run_id,
+    )
+    if calibration is not None:
+        try:
+            from ..validation import validate_artifact, ArtifactValidationError
+            try:
+                validate_artifact(calibration, "calibration_warning")
+            except ArtifactValidationError as exc:
+                _LOG.warning(
+                    "calibration_warning_schema_violation: %s", exc,
+                )
+        except ImportError:
+            pass
+        if sdl_root is not None:
+            try:
+                target_dir = sdl_root / "calibration"
+                target_dir.mkdir(parents=True, exist_ok=True)
+                calibration_path = (
+                    target_dir / f"{extraction_run_id}_calibration_warning.json"
+                )
+                calibration_path.write_text(
+                    json.dumps(calibration, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+            except OSError as exc:
+                _LOG.warning(
+                    "calibration_warning_write_failed: %s", exc,
+                )
 
     return {
         "status": "success",
@@ -690,6 +1071,14 @@ def run_typed_extraction(
         "few_shot_example_count": artifact["few_shot_example_count"],
         "low_confidence_item_count": artifact["low_confidence_item_count"],
         "phase_w": phase_w_metrics,
+        **counters.as_dict(),
+        "stage_status": counters.stage_status(),
+        "orchestration_result_path": (
+            str(orchestration_path) if orchestration_path else ""
+        ),
+        "calibration_warning_path": (
+            str(calibration_path) if calibration_path else ""
+        ),
     }
 
 

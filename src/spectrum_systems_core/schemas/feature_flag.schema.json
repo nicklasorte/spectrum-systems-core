@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/feature_flag.schema.json",
+  "title": "feature_flag",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_type", "schema_version", "enabled"],
+  "properties": {
+    "artifact_type": { "const": "feature_flag" },
+    "schema_version": { "type": "string", "minLength": 1 },
+    "enabled": { "type": "boolean" },
+    "flag_name": { "type": "string" },
+    "rolled_out_at": { "type": "string" },
+    "rolled_out_by": { "type": "string" },
+    "rollback_command": { "type": "string" },
+    "created_at": { "type": "string" }
+  }
+}
