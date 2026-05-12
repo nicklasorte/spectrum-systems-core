@@ -102,3 +102,136 @@ on the 10-chunk fixture transcript with a deterministic stub that returns
 
     Verification artifact: verified=1, unsupported=9, total=10
     PHASE V SMOKE TEST PASSED
+
+---
+
+# Phase O — End-to-End Verification Cycle progress (prior)
+
+## Prerequisites (recorded)
+
+- Baseline pytest collect-only: **966 tests**
+- After Phase O: 997 tests collected.
+
+# Phase: fix anthropic SDK install (current)
+
+Branch: `claude/fix-anthropic-sdk-install-KpD2d`
+
+## Step 1 — Diagnosis
+
+- **Is `anthropic` in project dependencies (pyproject.toml)?** No. The
+  `dependencies` array in `pyproject.toml` lists only `jsonschema`,
+  `PyYAML`, `pdfminer.six`, `python-docx`, `scikit-learn`, `scipy`. No
+  `requirements.txt` exists at the repo root.
+- **What does the install step run?**
+  - `run-pipeline.yml`: `pip install -e ".[dev]"`
+  - `smoke-test.yml`: `python -m pip install -e ".[dev]"`
+  - `eval-ground-truth.yml`: `pip install -e ".[dev]"`
+- **Is `anthropic` in `requirements.txt`?** No `requirements.txt` exists.
+
+Root cause: `pip install -e ".[dev]"` only installs declared dependencies
+plus the `dev` extra (`pytest`). Since `anthropic` is not declared, it is
+never installed, and `ChunkClassifier` falls back to offline defaults
+(`typed_extraction_anthropic_sdk_missing`).
+
+## Step 2 — Fix applied
+
+- Fix A: Added `"anthropic>=0.40.0"` to the `dependencies` array in
+  `pyproject.toml`.
+- Fix C: Added an explicit `python -m pip install anthropic` safety-net
+  line to the `Install dependencies` step in
+  `.github/workflows/run-pipeline.yml`.
+- Fix D: Same safety-net line added to
+  `.github/workflows/smoke-test.yml`.
+- Fix E (eval-ground-truth.yml): not applied. `grep -rn anthropic
+  src/spectrum_systems_core/evals/` returns nothing; the
+  `eval-ground-truth` CLI command does not import `anthropic`.
+
+## Step 3 — Local verification
+
+After `pip install anthropic`:
+`python -c "import anthropic; print(anthropic.__version__)"` succeeds.
+
+## Stop-condition reminders
+
+- The `ANTHROPIC_API_KEY` repository secret must be set
+  (Settings → Secrets → Actions). Without it, the SDK is importable
+  but real API calls will fail.
+
+---
+
+# Phase Perf — Pipeline parallelization + batch + async + cache
+
+## Prerequisites recorded (2026-05-11)
+
+- `.claude/settings.json` contains `dangerouslySkipPermissions: true` ✓
+- Branch (per session instructions): `claude/perf-pipeline-parallelization-9sSeo`
+- Pytest baseline: **1085 tests collected** (`python -m pytest --collect-only -q`)
+- `anthropic` SDK version installed: 0.101.0 — `from anthropic import AsyncAnthropic` succeeds ✓
+
+### Key files reviewed
+
+- `src/spectrum_systems_core/extraction/chunk_classifier.py`
+  - Single-chunk classifier with regulatory-verb fallback.
+  - Exposes `classify(chunk, source_id)` only.
+  - Default api_caller is offline (returns `off_topic`).
+  - Model: `claude-haiku-4-5-20251001`.
+
+- `.github/workflows/run-pipeline.yml`
+  - Single sequential job `run-pipeline` runs everything.
+  - Steps: install → preflight → run-pipeline → extract-typed --all → link-ground-truth → commit.
+
+- `src/spectrum_systems_core/cli.py`
+  - Uses `argparse`, NOT `click`. Subparsers via `_build_parser` and dispatch in `main()`.
+  - `extract-typed --source-id <sid>` already runs typed extraction for ONE source_id.
+  - `run-pipeline --specific-source-id <sid>` already runs the orchestrator for ONE source_id.
+  - The slugify rule lives in `pipeline_orchestrator._slugify`:
+    `lower → spaces→'-' → [^a-z0-9_-]→'-' → strip('-_')` (preserves underscores!).
+
+- `src/spectrum_systems_core/extraction/typed_extraction_runner.py`
+  - `run_typed_extraction(source_id, ...)` is the per-source entry point.
+  - Currently calls `classifier.classify(chunk, source_id)` per chunk in a loop.
+
+## Implementation notes
+
+- **list-source-ids**: re-use `pipeline_orchestrator._slugify` so source_ids match
+  exactly what ingestion uses. Filter `*minutes*` filenames to mirror orchestrator
+  behavior. Walk both `.docx` and `.txt`.
+- **run-single**: thin wrapper that delegates to `run_pipeline(specific_source_id=…)`.
+  This avoids duplicating orchestrator logic and guarantees identical behavior.
+- **Matrix workflow**: keep existing single-job flow as the post-pipeline path; split
+  per-transcript work into the matrix.
+
+---
+
+# Phase Infra — Automated CI checks (branch: claude/automated-ci-checks-7oQIe)
+
+## Prerequisites (recorded 2026-05-12)
+
+1. `.claude/settings.json` has `dangerouslySkipPermissions: true` ✓
+2. pytest baseline: **1123 tests collected** (after `pip install -e ".[dev]"`).
+3. `grep -rn 'claude-sonnet-4-20250514' --include='*.py' .` — **9 hits, 5 files**:
+   - `src/spectrum_systems_core/synthesis/report_generator.py:28`
+   - `src/spectrum_systems_core/synthesis/keynote_generator.py:27`
+   - `src/spectrum_systems_core/paper/revision_workflow.py:3` (docstring)
+   - `src/spectrum_systems_core/paper/revision_workflow.py:29`
+   - `tests/synthesis/test_keynote_eval.py:39,174`
+   - `tests/synthesis/test_grounding_eval.py:57,132`
+   - `tests/synthesis/test_report_generator.py:135`
+4. `grep -rn '"artifact_kind"' contracts/schemas/` — **3 schemas**:
+   - `contracts/schemas/source_record.schema.json`
+   - `contracts/schemas/review_artifact.schema.json`
+   - `contracts/schemas/obsidian_input_artifact.schema.json`
+5. Workflow YAML validity: all 10 workflows parse OK.
+6. `grep -rn 'claude-' --include='*.yml' .github/workflows/` — **0 hits**.
+
+## Decisions
+
+- **Check 1**: Grandfather the 5 legacy files via `ALLOWED_LOCATIONS`
+  (user-approved). No `model_registry.py` exists yet, so it is NOT listed
+  as an allowed location. The check still blocks any NEW occurrence of a
+  deprecated string outside the grandfathered set. Migration of the legacy
+  files is tracked separately.
+- **Check 2**: Grandfather the 3 pre-migration schemas. New schemas using
+  `artifact_kind` will fail the check.
+- **Checks 3 & 4**: No violations — write tests directly.
+- **PyYAML**: already in main `dependencies` (`>=6.0`), not duplicated in dev.
