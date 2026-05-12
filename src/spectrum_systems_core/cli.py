@@ -2480,6 +2480,138 @@ def run_pipeline(
     return 0
 
 
+def list_source_ids(
+    *,
+    data_lake: str | None = None,
+    fmt: str = "text",
+    out_stream=None,
+) -> int:
+    """Phase Perf: list every source_id discoverable under store/raw/transcripts/.
+
+    Mirrors PipelineOrchestrator.scan() exactly so the emitted source_ids
+    match what ingestion / extract-typed actually use:
+
+    - Walk store/raw/transcripts/.
+    - Filter ``.docx`` / ``.txt`` files containing the substring
+      ``minutes`` (orchestrator's transcript filter).
+    - Pair ``.docx`` with its extracted ``.txt`` sibling (same stem) so
+      the matrix never processes both representations of the same
+      transcript twice.
+    - Drop any slug that two distinct stems collide on (orchestrator
+      treats slug collisions as unprocessable -- a matrix job for that
+      slug would race with the orchestrator's collision rejection).
+
+    Output formats:
+        text  -- one source_id per line (default).
+        json  -- a single JSON array (used by GitHub Actions matrix).
+
+    Exit codes:
+        0 -- success (including the empty-list case).
+        1 -- DATA_LAKE_PATH not set / path missing.
+    """
+    from .orchestration.pipeline_orchestrator import _slugify
+
+    out = out_stream if out_stream is not None else sys.stdout
+
+    resolved = data_lake or os.environ.get("DATA_LAKE_PATH", "")
+    if not resolved:
+        print(
+            "error: DATA_LAKE_PATH not set and --data-lake not provided",
+            file=out,
+        )
+        return 1
+    if not Path(resolved).exists():
+        print(f"error: data lake path does not exist: {resolved}", file=out)
+        return 1
+
+    source_ids: List[str] = []
+    transcripts_dir = Path(resolved) / "store" / "raw" / "transcripts"
+    if transcripts_dir.exists():
+        all_files = sorted(
+            (p for p in transcripts_dir.iterdir() if p.is_file()),
+            key=lambda x: x.name,
+        )
+        # 1. Filter "minutes" .docx/.txt and ignore other extensions
+        #    (mirrors PipelineOrchestrator.scan()).
+        files: List[Path] = []
+        for p in all_files:
+            ext = p.suffix.lower()
+            if ext not in (".docx", ".txt"):
+                continue
+            if "minutes" in p.name.lower():
+                continue
+            files.append(p)
+
+        # 2. Prefer .docx; skip .txt whose stem has a .docx peer.
+        docx_stems = {p.stem for p in files if p.suffix.lower() == ".docx"}
+        seen_stems: set = set()
+        ordered: List[Path] = []
+        for p in files:
+            ext = p.suffix.lower()
+            if ext == ".docx":
+                if p.stem not in seen_stems:
+                    ordered.append(p)
+                    seen_stems.add(p.stem)
+            elif ext == ".txt":
+                if p.stem in docx_stems:
+                    continue
+                if p.stem not in seen_stems:
+                    ordered.append(p)
+                    seen_stems.add(p.stem)
+
+        # 3. Drop slug collisions (orchestrator treats them as
+        #    unprocessable; a matrix job would race the rejection).
+        sid_to_paths: Dict[str, List[Path]] = {}
+        for p in ordered:
+            sid_to_paths.setdefault(_slugify(p.stem), []).append(p)
+        for p in ordered:
+            sid = _slugify(p.stem)
+            if len(sid_to_paths[sid]) > 1:
+                continue
+            source_ids.append(sid)
+
+    if fmt == "json":
+        print(json.dumps(source_ids), file=out)
+    else:
+        for sid in source_ids:
+            print(sid, file=out)
+    return 0
+
+
+def run_single(
+    *,
+    source_id: str,
+    data_lake: str | None = None,
+    force: bool = False,
+    skip_existing: bool = False,
+    out_stream=None,
+) -> int:
+    """Phase Perf: run the full pipeline for one source_id.
+
+    Thin wrapper over ``run_pipeline`` that pins ``--specific-source-id``.
+    Used by the GitHub Actions matrix where each job processes exactly
+    one transcript.
+
+    ``--skip-existing`` is the matrix equivalent of ``--force-only-missing``:
+    when combined with ``--force``, source_ids that already have a
+    ``meeting_extraction`` artifact are skipped. Without ``--force`` the
+    flag has no effect (the orchestrator's normal idempotency already
+    skips them).
+    """
+    if not source_id:
+        out = out_stream if out_stream is not None else sys.stdout
+        print("error: --source-id is required", file=out)
+        return 2
+    return run_pipeline(
+        dry_run=False,
+        data_lake=data_lake,
+        force=force,
+        force_only_missing=skip_existing,
+        specific_source_id=source_id,
+        out_stream=out_stream,
+    )
+
+
 def _format_stage_summary(stages: dict[str, str]) -> str:
     """Render a compact one-line summary of pipeline_stages for a transcript."""
     if not stages:
@@ -4025,6 +4157,62 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    lsi = sub.add_parser(
+        "list-source-ids",
+        help="Phase Perf: emit transcript source_ids for the GitHub Actions matrix.",
+        description=(
+            "Walks <data-lake>/store/raw/transcripts/ and emits the slugified "
+            "source_id of every .docx/.txt file (skipping any filename that "
+            "contains 'minutes', mirroring PipelineOrchestrator.scan()). The "
+            "JSON output is the format consumed by GitHub Actions matrix "
+            "fromJson(). Re-uses pipeline_orchestrator._slugify so emitted "
+            "ids match what ingestion / extract-typed actually use."
+        ),
+    )
+    lsi.add_argument(
+        "--data-lake",
+        default=None,
+        help="Data lake root. Overrides DATA_LAKE_PATH when provided.",
+    )
+    lsi.add_argument(
+        "--format",
+        dest="fmt",
+        default="text",
+        choices=["text", "json"],
+        help="Output format. 'json' is required for matrix consumption.",
+    )
+
+    rs = sub.add_parser(
+        "run-single",
+        help="Phase Perf: run the full pipeline for one source_id.",
+        description=(
+            "Per-transcript wrapper over run-pipeline. Equivalent to "
+            "'run-pipeline --specific-source-id <sid>'. Used by the "
+            "GitHub Actions matrix where each job processes exactly one "
+            "transcript in parallel. ``--skip-existing`` maps to "
+            "``--force-only-missing``."
+        ),
+    )
+    rs.add_argument("--source-id", required=True, help="Slugified source_id.")
+    rs.add_argument(
+        "--data-lake",
+        default=None,
+        help="Data lake root. Overrides DATA_LAKE_PATH when provided.",
+    )
+    rs.add_argument(
+        "--force",
+        action="store_true",
+        help="Bypass idempotency and re-run every stage for this source_id.",
+    )
+    rs.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help=(
+            "Combine with --force to skip this source_id when it already "
+            "has a meeting_extraction artifact. Maps to --force-only-missing."
+        ),
+    )
+
     et = sub.add_parser(
         "extract-typed",
         help="Phase M3: run typed extraction (decision/claim/action_item).",
@@ -4398,6 +4586,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             force=args.force,
             force_only_missing=args.force_only_missing,
             specific_source_id=args.specific_source_id,
+        )
+    if args.command == "list-source-ids":
+        return list_source_ids(
+            data_lake=args.data_lake,
+            fmt=args.fmt,
+        )
+    if args.command == "run-single":
+        return run_single(
+            source_id=args.source_id,
+            data_lake=args.data_lake,
+            force=args.force,
+            skip_existing=args.skip_existing,
         )
     if args.command == "extract-typed":
         return extract_typed(

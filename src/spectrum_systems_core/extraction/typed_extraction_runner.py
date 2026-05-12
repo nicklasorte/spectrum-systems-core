@@ -16,17 +16,19 @@ with a ``reason`` field; never raises.
 """
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Set
 
 from .action_item_extractor import ActionItemExtractor
 from .chunk_classifier import ChunkClassifier
 from .claim_extractor import ClaimExtractor
+from .classification_cache import ClassificationCache
 from .decision_extractor import DecisionExtractor
 from .extraction_merger import ExtractionMerger
 from .glossary_manager import GlossaryManager
@@ -130,6 +132,85 @@ def _build_anthropic_caller(
     return _call
 
 
+def _build_anthropic_batch_classifier_caller(
+    model: str, max_tokens: int = 400,
+) -> Callable[[str], Dict[str, Any]]:
+    """Sync caller for the batch classifier.
+
+    Differs from ``_build_anthropic_caller`` in two ways:
+    1. Returns ``{"text": <raw response>}`` (no JSON parsing) -- the
+       batch response is line-delimited, not JSON.
+    2. Uses a smaller ``max_tokens`` because the batch response is
+       always a few lines per chunk (one classification per line).
+
+    Falls back to ``{"text": ""}`` on any error so the classifier's
+    fallback path triggers and per-chunk classify() runs.
+    """
+    import anthropic
+
+    client = anthropic.Anthropic()
+
+    def _call(prompt: str) -> Dict[str, Any]:
+        try:
+            message = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                temperature=0,
+                messages=[{"role": "user", "content": prompt}],
+            )
+        except Exception as exc:
+            _LOG.warning(
+                "typed_extraction_batch_classifier_call_failed: %s: %s",
+                type(exc).__name__, exc,
+            )
+            return {"text": ""}
+        parts: List[str] = []
+        for block in getattr(message, "content", []) or []:
+            text = getattr(block, "text", None)
+            if isinstance(text, str):
+                parts.append(text)
+        return {"text": "\n".join(parts)}
+
+    return _call
+
+
+def _build_anthropic_async_batch_classifier_caller(
+    model: str, max_tokens: int = 400,
+) -> Callable[[str], Awaitable[Dict[str, Any]]]:
+    """Async caller for the batch classifier (uses AsyncAnthropic).
+
+    The returned coroutine accepts a prompt string and returns
+    ``{"text": <response>}``. Errors degrade to ``{"text": ""}`` so the
+    batch classifier triggers its per-chunk fallback path.
+    """
+    import anthropic
+
+    client = anthropic.AsyncAnthropic()
+
+    async def _acall(prompt: str) -> Dict[str, Any]:
+        try:
+            message = await client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                temperature=0,
+                messages=[{"role": "user", "content": prompt}],
+            )
+        except Exception as exc:
+            _LOG.warning(
+                "typed_extraction_async_batch_classifier_call_failed: %s: %s",
+                type(exc).__name__, exc,
+            )
+            return {"text": ""}
+        parts: List[str] = []
+        for block in getattr(message, "content", []) or []:
+            text = getattr(block, "text", None)
+            if isinstance(text, str):
+                parts.append(text)
+        return {"text": "\n".join(parts)}
+
+    return _acall
+
+
 def _resolve_api_callers(
     injected: Optional[Dict[str, Callable[[str], Dict[str, Any]]]],
 ) -> Dict[str, Callable[[str], Dict[str, Any]]]:
@@ -138,6 +219,9 @@ def _resolve_api_callers(
     - Injected callers are preserved (so unit tests are unaffected).
     - Missing keys are lazy-built against ``ChunkClassifier.MODEL_ID``
       (all four components share the same Haiku model id).
+    - The ``classifier`` key gets a *batch* caller that returns the raw
+      response text (not parsed JSON) -- ``ChunkClassifier.batch_classify``
+      expects ``{"text": ...}``.
     - If ``ANTHROPIC_API_KEY`` is unset or the SDK is missing, the missing
       keys are left absent and each component falls back to its offline
       ``_default_api_caller``. A warning is logged so the run records the
@@ -154,16 +238,59 @@ def _resolve_api_callers(
             missing,
         )
         return callers
+    # Build per-component callers. ``_build_anthropic_caller`` is invoked
+    # for every non-classifier missing key, matching the legacy behaviour.
+    # The classifier gets a batch caller (raw text response) instead.
+    # An ImportError from ANY builder causes us to drop the partially
+    # built dict and return only the injected callers, preserving the
+    # "SDK missing -> all components offline" invariant.
     try:
+        new_callers: Dict[str, Callable[[str], Dict[str, Any]]] = {}
         for key in missing:
-            callers[key] = _build_anthropic_caller(ChunkClassifier.MODEL_ID)
+            if key == "classifier":
+                new_callers[key] = _build_anthropic_batch_classifier_caller(
+                    ChunkClassifier.MODEL_ID
+                )
+            else:
+                new_callers[key] = _build_anthropic_caller(
+                    ChunkClassifier.MODEL_ID
+                )
     except ImportError as exc:
         _LOG.warning(
             "typed_extraction_anthropic_sdk_missing: %s -- "
             "continuing with offline defaults",
             exc,
         )
+        return callers
+    callers.update(new_callers)
     return callers
+
+
+def _resolve_async_classifier_caller(
+    injected: Optional[Callable[[str], Awaitable[Dict[str, Any]]]],
+) -> Optional[Callable[[str], Awaitable[Dict[str, Any]]]]:
+    """Build an async classifier caller for the batch path.
+
+    Returns None when ``ANTHROPIC_API_KEY`` is unset or the anthropic SDK
+    is missing. In that case the runner falls back to the synchronous
+    classifier path (which itself falls back to per-chunk and ultimately
+    the offline ``off_topic`` default).
+    """
+    if injected is not None:
+        return injected
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return None
+    try:
+        return _build_anthropic_async_batch_classifier_caller(
+            ChunkClassifier.MODEL_ID
+        )
+    except ImportError as exc:
+        _LOG.warning(
+            "typed_extraction_async_anthropic_sdk_missing: %s -- "
+            "falling back to sync classifier path",
+            exc,
+        )
+        return None
 
 
 def _now_iso() -> str:
@@ -251,8 +378,13 @@ def run_typed_extraction(
     data_lake: Optional[str] = None,
     force: bool = False,
     api_callers: Optional[Dict[str, Callable[[str], Dict[str, Any]]]] = None,
+    async_classifier_caller: Optional[
+        Callable[[str], Awaitable[Dict[str, Any]]]
+    ] = None,
     glossary_manager: Optional[GlossaryManager] = None,
     max_chunks: Optional[int] = None,
+    use_classification_cache: bool = True,
+    max_concurrent_classifier_batches: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Run the typed-extraction pipeline for one source_id.
 
@@ -333,13 +465,70 @@ def run_typed_extraction(
     claim_x = ClaimExtractor(api_caller=api_callers.get("claim"))
     action_x = ActionItemExtractor(api_caller=api_callers.get("action_item"))
 
-    classifications: List[Dict[str, Any]] = []
+    cache: Optional[ClassificationCache] = None
+    if use_classification_cache and sdl_root is not None:
+        try:
+            cache = ClassificationCache(str(sdl_root))
+            cache.load(source_id)
+        except Exception as exc:  # pragma: no cover -- never raise out
+            _LOG.warning(
+                "typed_extraction_classification_cache_init_failed: %s",
+                exc,
+            )
+            cache = None
+
+    async_caller = _resolve_async_classifier_caller(async_classifier_caller)
+
+    classifications: List[Dict[str, Any]]
+    try:
+        classifications = asyncio.run(
+            classifier.batch_classify_async(
+                chunks,
+                source_id,
+                max_concurrent=max_concurrent_classifier_batches,
+                async_caller=async_caller,
+                cache=cache,
+            )
+        )
+    except RuntimeError as exc:
+        # Already inside an event loop (e.g. Jupyter or PipelineOrchestrator
+        # being driven from another async context). Run on a fresh loop in
+        # a worker thread instead.
+        _LOG.info(
+            "typed_extraction_async_loop_in_use: %s -- using thread-bound loop",
+            exc,
+        )
+        import threading
+
+        result_box: Dict[str, Any] = {}
+
+        def _runner() -> None:
+            loop = asyncio.new_event_loop()
+            try:
+                result_box["value"] = loop.run_until_complete(
+                    classifier.batch_classify_async(
+                        chunks,
+                        source_id,
+                        max_concurrent=max_concurrent_classifier_batches,
+                        async_caller=async_caller,
+                        cache=cache,
+                    )
+                )
+            finally:
+                loop.close()
+
+        t = threading.Thread(target=_runner, daemon=True)
+        t.start()
+        t.join()
+        classifications = result_box.get("value", [])  # type: ignore[assignment]
+
+    if cache is not None:
+        cache.save(source_id)
+
     bucket: Dict[str, List[Dict[str, Any]]] = {
         "decision": [], "claim": [], "action_item": [], "off_topic": [],
     }
-    for chunk in chunks:
-        cls = classifier.classify(chunk, source_id)
-        classifications.append(cls)
+    for chunk, cls in zip(chunks, classifications):
         bucket[cls["classification"]].append(chunk)
 
     # Glossary context block is rebuilt per group (cheap; one call per
