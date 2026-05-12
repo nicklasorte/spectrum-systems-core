@@ -163,6 +163,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # Strip whitespace from every string CLI arg. Mobile workflow_dispatch
+    # inputs frequently arrive with a trailing space pasted from a phone
+    # keyboard; an unstripped example_id then fails exact-string matches
+    # against the artifact's example_id field.
+    for _attr in vars(args):
+        _val = getattr(args, _attr)
+        if isinstance(_val, str):
+            setattr(args, _attr, _val.strip())
+
     refusal = _refuse_in_ci(args.force)
     if refusal:
         print(f"error: {refusal}", file=sys.stderr)

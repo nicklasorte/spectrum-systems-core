@@ -237,6 +237,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # Strip whitespace from every string CLI arg. Mobile workflow_dispatch
+    # inputs frequently arrive with a trailing space pasted from a phone
+    # keyboard; an unstripped source_id then fails exact-string matches
+    # against artifacts on disk.
+    for _attr in vars(args):
+        _val = getattr(args, _attr)
+        if isinstance(_val, str):
+            setattr(args, _attr, _val.strip())
+
     data_lake = Path(args.data_lake).resolve()
     if not data_lake.is_dir():
         print(f"error: --data-lake does not exist: {data_lake}", file=sys.stderr)

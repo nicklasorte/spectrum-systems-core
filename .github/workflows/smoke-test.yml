@@ -62,7 +62,7 @@ jobs:
           SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
         run: |
           python -m spectrum_systems_core.cli extract-typed \
-            --source-id 7-ghz-downlink-tig-meeting---transcript-2-19-26 \
+            --source-id 7-ghz-downlink-tig-meeting-kickoff---transcript-20251218 \
             --data-lake "${{ github.workspace }}/data-lake" \
             --force \
             --max-chunks 20

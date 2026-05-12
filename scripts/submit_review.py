@@ -189,6 +189,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--data-lake", required=True)
     args = parser.parse_args(argv)
 
+    # Strip whitespace from every string CLI arg. Mobile workflow_dispatch
+    # inputs frequently arrive with a trailing space pasted from a phone
+    # keyboard; an unstripped candidate_id then fails exact-string matches
+    # against the correction_candidate's correction_candidate_id field.
+    for _attr in vars(args):
+        _val = getattr(args, _attr)
+        if isinstance(_val, str):
+            setattr(args, _attr, _val.strip())
+
     data_lake = Path(args.data_lake).resolve()
     if not data_lake.is_dir():
         print(f"error: data-lake does not exist: {data_lake}", file=sys.stderr)
