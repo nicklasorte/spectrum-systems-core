@@ -21,7 +21,7 @@ on:
       source_id:
         description: 'Source id to annotate'
         required: true
-        default: '7-ghz-downlink-tig-meeting---transcript-2-19-26'
+        default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
       limit:
         description: 'Max pairs to annotate (default 20)'
         required: false

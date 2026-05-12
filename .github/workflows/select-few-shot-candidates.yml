@@ -17,7 +17,7 @@ on:
       source_id:
         description: 'Source id (meeting_id) to mine for candidates'
         required: true
-        default: '7-ghz-downlink-tig-meeting---transcript-2-19-26'
+        default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
       max_candidates:
         description: 'Cap on candidates written (1..3)'
         required: false
