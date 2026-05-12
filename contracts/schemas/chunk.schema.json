@@ -43,6 +43,10 @@
     },
     "char_count": { "type": "integer", "minimum": 0 },
     "speaker": { "type": "string", "minLength": 1 },
-    "timestamp": { "type": ["string", "null"] }
+    "timestamp": { "type": ["string", "null"] },
+    "agenda_item_id": {
+      "type": ["string", "null"],
+      "description": "Phase W (schema 1.1.0): UUID of the agenda_item artifact this chunk belongs to. Optional. Null when Phase W disabled or detection failed for this transcript."
+    }
   }
 }

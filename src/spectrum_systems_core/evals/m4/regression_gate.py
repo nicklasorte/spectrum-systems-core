@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import datetime
 import uuid
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 
@@ -55,6 +56,23 @@ GATE_ACTIVE_FROM_RUN = 3
 SPURIOUS_ADD_TOLERANCE = 0.15  # 15% rise vs baseline
 SPURIOUS_ADD_ABSOLUTE_CEILING = 0.30
 
+# Phase W.6: agenda_detection_rate gate.
+#
+# Three-state model (Attack 13):
+#   * agenda_detection_attempted: bool   -- flag-on?
+#   * agenda_detection_succeeded: bool   -- did detection pass validation?
+#   * agenda_items_detected_count: int   -- evidence count
+#
+# The gate only fires when Phase W is enabled (attempted == True). When
+# Phase W is off the gate is intentionally a no-op so a rollback never
+# blocks a build.
+#
+# Sanity floor (Attack 3): regardless of baseline, a current detection
+# rate below 0.60 blocks. This stops a first bad run from baselining a
+# permanently broken classifier.
+AGENDA_DETECTION_TOLERANCE = 0.15  # 15-point drop vs baseline
+AGENDA_DETECTION_ABSOLUTE_FLOOR = 0.60
+
 SCHEMA_VERSION = "1.0.0"
 PRODUCED_BY = "RegressionGate"
 
@@ -66,6 +84,22 @@ def _now_iso() -> str:
     )
 
 
+@dataclass
+class AgendaDetectionMetrics:
+    """Phase W.6 three-state tracker (Attack 13).
+
+    ``agenda_detection_succeeded_count`` and ``agenda_detection_attempted_count``
+    are pipeline-run totals (summed across all transcripts). Per-pair
+    detail lives in the agenda_item artifacts.
+    """
+    agenda_detection_attempted: bool
+    agenda_detection_succeeded: bool
+    agenda_items_detected_count: int
+    # Pipeline-run aggregates used for the rate.
+    agenda_detection_attempted_count: int = 0
+    agenda_detection_succeeded_count: int = 0
+
+
 class RegressionGate:
     """Compare a current eval_summary against the baseline summary."""
 
@@ -75,8 +109,64 @@ class RegressionGate:
     SPURIOUS_ADD_TOLERANCE = SPURIOUS_ADD_TOLERANCE
     SPURIOUS_ADD_ABSOLUTE_CEILING = SPURIOUS_ADD_ABSOLUTE_CEILING
 
+    AGENDA_DETECTION_TOLERANCE = AGENDA_DETECTION_TOLERANCE
+    AGENDA_DETECTION_ABSOLUTE_FLOOR = AGENDA_DETECTION_ABSOLUTE_FLOOR
+
     SCHEMA_VERSION = SCHEMA_VERSION
     PRODUCED_BY = PRODUCED_BY
+
+    # ----- Phase W agenda_detection_rate -----
+
+    def check_agenda_detection_regression(
+        self,
+        current_metrics: AgendaDetectionMetrics,
+        baseline_metrics: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Return True if PASS, False if BLOCK.
+
+        Attack 13 three-state contract:
+          * ``agenda_detection_attempted == False`` (Phase W off):
+            the gate is a no-op -- always PASS.
+          * ``attempted == True`` and rate < AGENDA_DETECTION_ABSOLUTE_FLOOR
+            (Attack 3 sanity floor): always BLOCK regardless of baseline.
+          * Otherwise:
+              - no baseline -> PASS (sanity floor was met; nothing to
+                compare against).
+              - baseline available -> BLOCK if
+                ``current_rate < baseline_rate - AGENDA_DETECTION_TOLERANCE``.
+
+        ``current_metrics.agenda_detection_attempted_count`` is the
+        denominator; a zero denominator with attempted=True is treated
+        as a degenerate "no transcripts run" case and PASSES (you cannot
+        regress over zero transcripts).
+        """
+        if not current_metrics.agenda_detection_attempted:
+            return True
+
+        denom = max(0, int(current_metrics.agenda_detection_attempted_count))
+        if denom <= 0:
+            return True
+        numerator = max(0, int(
+            current_metrics.agenda_detection_succeeded_count
+        ))
+        current_rate = numerator / denom
+
+        # Attack 3: absolute sanity floor takes priority over baseline
+        # comparison. Block any run with <60% success regardless of
+        # whether baseline accepted it.
+        if current_rate < self.AGENDA_DETECTION_ABSOLUTE_FLOOR:
+            return False
+
+        if not baseline_metrics:
+            return True
+
+        try:
+            baseline_rate = float(
+                baseline_metrics.get("agenda_detection_rate", 0.0) or 0.0
+            )
+        except (TypeError, ValueError):
+            baseline_rate = 0.0
+        return current_rate >= (baseline_rate - self.AGENDA_DETECTION_TOLERANCE)
 
     # ----- Phase V spurious_add_rate (single source of truth) -----
 

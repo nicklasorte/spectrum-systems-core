@@ -32,6 +32,11 @@ from .classification_cache import ClassificationCache
 from .decision_extractor import DecisionExtractor
 from .extraction_merger import ExtractionMerger
 from .glossary_manager import GlossaryManager
+from ..agenda import (
+    AgendaReferenceError,
+    apply_phase_w_if_enabled,
+    make_phase_w_agenda_resolver,
+)
 from ..verification.pipeline_integration import (
     VerificationIncompleteError,
     apply_phase_v_if_enabled,
@@ -456,6 +461,44 @@ def run_typed_extraction(
         if isinstance(cid, str) and cid:
             available_turn_ids.add(cid)
 
+    # Phase W: agenda detection + chunk annotation.
+    # The classifier reads ``chunk["agenda_item_id"]`` when Phase W is
+    # on. Per Attack 12 (RT1) this runs synchronously and writes all
+    # agenda_item artifacts BEFORE annotating chunks so a downstream
+    # reference cannot dangle. Flag-off path is a no-op (chunks
+    # unchanged).
+    pipeline_run_id = str(uuid.uuid4())
+    data_lake_root: Optional[Path] = None
+    if store_root is not None:
+        # data_lake_path = store_root parent (``store/`` lives under it).
+        data_lake_root = store_root.parent
+    phase_w_metrics: Dict[str, Any]
+    if data_lake_root is None or sdl_root is None:
+        phase_w_metrics = {
+            "agenda_detection_attempted": False,
+            "agenda_detection_succeeded": False,
+            "agenda_items_detected_count": 0,
+            "detection_method": "disabled",
+            "detection_duration_seconds": 0.0,
+            "detector_model_used": "",
+        }
+    else:
+        try:
+            phase_w_metrics = apply_phase_w_if_enabled(
+                chunks,
+                source_id=source_id,
+                data_lake_path=data_lake_root,
+                sdl_root=sdl_root,
+                pipeline_run_id=pipeline_run_id,
+                api_caller=(api_callers or {}).get("agenda"),
+            )
+        except AgendaReferenceError as exc:
+            _LOG.error("phase_w_pre_flight_failed: %s", exc)
+            return {
+                "status": "failure",
+                "reason": f"agenda_reference_error:{exc}",
+            }
+
     # Glossary
     if glossary_manager is None:
         glossary_root = _resolve_glossary_root(sdl_root)
@@ -464,7 +507,15 @@ def run_typed_extraction(
         )
 
     api_callers = _resolve_api_callers(api_callers)
-    classifier = ChunkClassifier(api_caller=api_callers.get("classifier"))
+    agenda_resolver = None
+    if data_lake_root is not None and sdl_root is not None:
+        agenda_resolver = make_phase_w_agenda_resolver(
+            data_lake_root, sdl_root, source_id,
+        )
+    classifier = ChunkClassifier(
+        api_caller=api_callers.get("classifier"),
+        agenda_resolver=agenda_resolver,
+    )
     decision_x = DecisionExtractor(api_caller=api_callers.get("decision"))
     claim_x = ClaimExtractor(api_caller=api_callers.get("claim"))
     action_x = ActionItemExtractor(api_caller=api_callers.get("action_item"))
@@ -638,6 +689,7 @@ def run_typed_extraction(
         "few_shot_injected": artifact["few_shot_injected"],
         "few_shot_example_count": artifact["few_shot_example_count"],
         "low_confidence_item_count": artifact["low_confidence_item_count"],
+        "phase_w": phase_w_metrics,
     }
 
 

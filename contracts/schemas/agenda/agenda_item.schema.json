@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/agenda/agenda_item.schema.json",
+  "title": "agenda_item",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "agenda_item_id",
+    "artifact_type",
+    "schema_version",
+    "created_at",
+    "trace_id",
+    "pipeline_run_id",
+    "source_id",
+    "ordinal",
+    "label",
+    "start_turn_id",
+    "end_turn_id",
+    "detection_method",
+    "detection_confidence",
+    "detector_model_used",
+    "provenance"
+  ],
+  "properties": {
+    "agenda_item_id": { "type": "string", "format": "uuid" },
+    "artifact_type": { "type": "string", "const": "agenda_item" },
+    "schema_version": { "type": "string", "const": "1.0.0" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "trace_id": { "type": ["string", "null"], "format": "uuid" },
+    "pipeline_run_id": { "type": "string", "format": "uuid" },
+    "source_id": { "type": "string", "minLength": 1 },
+    "ordinal": { "type": "integer", "minimum": 1 },
+    "label": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "start_turn_id": { "type": "string", "minLength": 1 },
+    "end_turn_id": { "type": "string", "minLength": 1 },
+    "detection_method": {
+      "type": "string",
+      "enum": ["llm_detected", "single_default", "undetected"]
+    },
+    "detection_confidence": {
+      "type": ["number", "null"],
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "detector_model_used": { "type": "string", "minLength": 1 },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by", "detected_from"],
+      "properties": {
+        "produced_by": { "type": "string", "const": "AgendaDetector" },
+        "detected_from": {
+          "type": "string",
+          "enum": [
+            "first_20_percent_of_turns",
+            "explicit_agenda_section",
+            "fallback_all_chunks"
+          ]
+        }
+      }
+    }
+  }
+}

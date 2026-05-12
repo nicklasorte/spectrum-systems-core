@@ -33,12 +33,27 @@ the runner can still write a partial summary.
 from __future__ import annotations
 
 import datetime
+import math
 import re
 import uuid
-from typing import Any, Dict, List, Optional, Sequence
+from collections import Counter
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+
+
+# Phase W.5: minimum chunks per agenda for the per-slice metric to be
+# reported. Smaller agendas are still COUNTED (in
+# ``excluded_small_agenda_count``) but excluded from the metric dict
+# itself. This is the Attack 10 minimum-size policy: a 1-chunk agenda
+# can have precision=0.0 or 1.0 from a single data point and would
+# dominate a std-deviation across agendas.
+MIN_CHUNKS_PER_AGENDA = 5
+
+# Phase W.5: std-deviation threshold above which an
+# ``eval_summary`` raises the ``flag_hidden_stratification`` warning.
+HIDDEN_STRATIFICATION_STD_THRESHOLD = 0.20
 
 # Minimal stopword list. We keep this explicit (rather than pulling from
 # nltk / scikit-learn's default English list) so deterministic behaviour
@@ -542,3 +557,188 @@ def _is_anchor(token: str) -> bool:
     if any(ch.isdigit() for ch in token):
         return True
     return False
+
+
+# -----------------------------------------------------------------------------
+# Phase W.5: per-agenda-item slice metrics
+# -----------------------------------------------------------------------------
+
+
+_AgendaMetric = Union[float, str]  # number or "excluded_small"
+
+
+def _agenda_for_turns(
+    turn_ids: Sequence[str],
+    chunk_to_agenda: Dict[str, str],
+) -> Optional[str]:
+    """Pick the most common agenda id across ``turn_ids``.
+
+    Returns ``None`` when none of the turns resolve to an agenda. Ties
+    are broken by the first agenda seen (Counter.most_common preserves
+    insertion order for equal counts in Python 3.7+).
+    """
+    agendas = [chunk_to_agenda.get(t) for t in turn_ids or []]
+    agendas = [a for a in agendas if isinstance(a, str) and a]
+    if not agendas:
+        return None
+    return Counter(agendas).most_common(1)[0][0]
+
+
+def compute_per_agenda_item_metrics(
+    alignment_result: Dict[str, Any],
+    chunks: Sequence[Dict[str, Any]],
+    agenda_items: Sequence[Dict[str, Any]],
+    *,
+    min_chunks_per_agenda: int = MIN_CHUNKS_PER_AGENDA,
+) -> Dict[str, Any]:
+    """Slice ``alignment_result`` by agenda_item.
+
+    Used by the eval pipeline to expose hidden stratification: per-
+    agenda coverage / precision spread is the signal to look for.
+
+    Per Attack 10 (RT1), agendas with fewer than ``min_chunks_per_agenda``
+    chunks attached are reported as ``"excluded_small"`` rather than
+    given a fragile single-data-point metric. They are still counted in
+    ``excluded_small_agenda_count`` so an operator can spot a transcript
+    that produced lots of tiny agendas (a detection-quality failure mode).
+
+    Returns::
+
+        {
+          "coverage_by_agenda_item":  {agenda_id: float | "excluded_small"},
+          "precision_by_agenda_item": {agenda_id: float | "excluded_small"},
+          "excluded_small_agenda_count": int,
+          "agenda_items_evaluated_count": int,
+        }
+    """
+    chunk_to_agenda: Dict[str, str] = {}
+    agenda_chunk_counts: Dict[str, int] = {}
+    for chunk in chunks or []:
+        if not isinstance(chunk, dict):
+            continue
+        cid = chunk.get("chunk_id") or chunk.get("id")
+        aid = chunk.get("agenda_item_id")
+        if not (isinstance(cid, str) and cid and isinstance(aid, str) and aid):
+            continue
+        chunk_to_agenda[cid] = aid
+        agenda_chunk_counts[aid] = agenda_chunk_counts.get(aid, 0) + 1
+
+    review_alignments = (alignment_result or {}).get("review_alignments") or []
+    coverage_alignments = (
+        (alignment_result or {}).get("coverage_alignments") or []
+    )
+
+    # Build extracted_item_id -> source_turn_ids map from review_alignments
+    # so coverage_alignments (which only know matched_extracted_item_id)
+    # can resolve to an agenda.
+    ext_id_to_turns: Dict[str, List[str]] = {}
+    for ra in review_alignments:
+        eid = ra.get("extracted_item_id")
+        if isinstance(eid, str) and eid:
+            ext_id_to_turns[eid] = list(ra.get("source_turn_ids") or [])
+
+    # Group review_alignments by agenda.
+    review_buckets: Dict[str, Tuple[int, int]] = {}
+    for ra in review_alignments:
+        agenda_id = _agenda_for_turns(
+            ra.get("source_turn_ids") or [], chunk_to_agenda,
+        )
+        if agenda_id is None:
+            continue
+        matched, total = review_buckets.get(agenda_id, (0, 0))
+        total += 1
+        if ra.get("alignment_status") == "matched":
+            matched += 1
+        review_buckets[agenda_id] = (matched, total)
+
+    # Group coverage_alignments by agenda via matched_extracted_item_id.
+    cov_buckets: Dict[str, Tuple[int, int]] = {}
+    for ca in coverage_alignments:
+        ext_id = ca.get("matched_extracted_item_id")
+        if isinstance(ext_id, str) and ext_id:
+            agenda_id = _agenda_for_turns(
+                ext_id_to_turns.get(ext_id) or [], chunk_to_agenda,
+            )
+        else:
+            agenda_id = None
+        if agenda_id is None:
+            continue
+        matched, total = cov_buckets.get(agenda_id, (0, 0))
+        total += 1
+        if ca.get("alignment_status") == "matched":
+            matched += 1
+        cov_buckets[agenda_id] = (matched, total)
+
+    out_coverage: Dict[str, _AgendaMetric] = {}
+    out_precision: Dict[str, _AgendaMetric] = {}
+    excluded = 0
+    evaluated = 0
+    for item in agenda_items or []:
+        aid = item.get("agenda_item_id") if isinstance(item, dict) else None
+        if not isinstance(aid, str) or not aid:
+            continue
+        if agenda_chunk_counts.get(aid, 0) < min_chunks_per_agenda:
+            out_coverage[aid] = "excluded_small"
+            out_precision[aid] = "excluded_small"
+            excluded += 1
+            continue
+        evaluated += 1
+        cm, ct = cov_buckets.get(aid, (0, 0))
+        rm, rt = review_buckets.get(aid, (0, 0))
+        out_coverage[aid] = (cm / ct) if ct > 0 else 0.0
+        out_precision[aid] = (rm / rt) if rt > 0 else 0.0
+
+    return {
+        "coverage_by_agenda_item": out_coverage,
+        "precision_by_agenda_item": out_precision,
+        "excluded_small_agenda_count": excluded,
+        "agenda_items_evaluated_count": evaluated,
+    }
+
+
+def _numeric_values(d: Dict[str, _AgendaMetric]) -> List[float]:
+    return [v for v in (d or {}).values() if isinstance(v, (int, float))]
+
+
+def _population_std_dev(values: Sequence[float]) -> float:
+    """Population std-dev. ``len(values) < 2`` -> 0.0 (no spread to
+    measure).
+    """
+    if not values or len(values) < 2:
+        return 0.0
+    mean = sum(values) / len(values)
+    var = sum((v - mean) ** 2 for v in values) / len(values)
+    return math.sqrt(var)
+
+
+def compute_agenda_stratification(
+    per_agenda_metrics: Dict[str, Any],
+    *,
+    threshold: float = HIDDEN_STRATIFICATION_STD_THRESHOLD,
+) -> Dict[str, Any]:
+    """Aggregate per-agenda metrics into an eval_summary fragment.
+
+    Returns::
+
+        {
+          "agenda_coverage_std_deviation": float,
+          "agenda_precision_std_deviation": float,
+          "flag_hidden_stratification": bool,
+        }
+
+    ``flag_hidden_stratification`` is True if either std-deviation
+    exceeds ``threshold``. Per Attack 10, requires at least two
+    non-excluded agendas to report a meaningful number; below that the
+    std-dev is 0.0 and the flag is False.
+    """
+    cov_vals = _numeric_values(per_agenda_metrics.get("coverage_by_agenda_item") or {})
+    prec_vals = _numeric_values(per_agenda_metrics.get("precision_by_agenda_item") or {})
+    cov_std = _population_std_dev(cov_vals)
+    prec_std = _population_std_dev(prec_vals)
+    return {
+        "agenda_coverage_std_deviation": float(cov_std),
+        "agenda_precision_std_deviation": float(prec_std),
+        "flag_hidden_stratification": bool(
+            cov_std > threshold or prec_std > threshold
+        ),
+    }
