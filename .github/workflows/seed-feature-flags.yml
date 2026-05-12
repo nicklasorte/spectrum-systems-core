@@ -1,0 +1,103 @@
+name: Seed feature flags
+
+# Writes feature-flag artifacts to the data-lake under
+# store/artifacts/config/. Run manually after merge to unblock the pipeline.
+#
+# phase_v_post_hoc_verification_enabled.json -> enabled: true
+#   Without this flag, artifacts are not promoted as eligible for synthesis
+#   bundle assembly, which produced eval scores of 0.000/0.000 in pipeline #20.
+#
+# phase_w_agenda_detection_enabled.json -> enabled: false
+#   Placeholder for the unmerged Phase W. Flip to true after the Phase W PR
+#   merges.
+#
+# Re-running is idempotent: flag artifacts are simple JSON and overwriting
+# is safe. Pushes directly to data-lake main (additive config data).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  seed-feature-flags:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout data-lake
+        uses: actions/checkout@v4
+        with:
+          repository: nicklasorte/data-lake
+          path: data-lake
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Write feature flag artifacts
+        env:
+          CONFIG_DIR: ${{ github.workspace }}/data-lake/store/artifacts/config
+        run: |
+          mkdir -p "$CONFIG_DIR"
+
+          cat > "$CONFIG_DIR/phase_v_post_hoc_verification_enabled.json" <<'EOF'
+          {
+            "artifact_type": "feature_flag",
+            "schema_version": "1.0.0",
+            "flag_name": "phase_v_post_hoc_verification_enabled",
+            "enabled": true,
+            "set_by": "seed-feature-flags workflow",
+            "note": "Enables Phase V post-hoc source verification and spurious-add gate"
+          }
+          EOF
+
+          cat > "$CONFIG_DIR/phase_w_agenda_detection_enabled.json" <<'EOF'
+          {
+            "artifact_type": "feature_flag",
+            "schema_version": "1.0.0",
+            "flag_name": "phase_w_agenda_detection_enabled",
+            "enabled": false,
+            "set_by": "seed-feature-flags workflow",
+            "note": "Placeholder — set enabled:true after Phase W PR merges"
+          }
+          EOF
+
+      - name: Commit flags to data-lake
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          cd "${{ github.workspace }}/data-lake"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "No feature flag changes to commit."
+            exit 0
+          fi
+          git add -A
+          git commit -m "seed: write feature flag artifacts"
+          git push
+
+      - name: Post seed summary
+        env:
+          CONFIG_DIR: ${{ github.workspace }}/data-lake/store/artifacts/config
+        run: |
+          python - <<'EOF'
+          import json
+          import os
+          import pathlib
+
+          config_dir = pathlib.Path(os.environ["CONFIG_DIR"])
+          flag_files = [
+              "phase_v_post_hoc_verification_enabled.json",
+              "phase_w_agenda_detection_enabled.json",
+          ]
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
+          with open(summary_path, "a") as f:
+              f.write("## Feature Flag Seed\n\n")
+              f.write("| Flag | Enabled |\n")
+              f.write("| --- | --- |\n")
+              for name in flag_files:
+                  path = config_dir / name
+                  if not path.exists():
+                      f.write(f"| {name} | (missing) |\n")
+                      continue
+                  data = json.loads(path.read_text())
+                  flag_name = data.get("flag_name", name)
+                  enabled = data.get("enabled")
+                  f.write(f"| `{flag_name}` | `{enabled}` |\n")
+          EOF
