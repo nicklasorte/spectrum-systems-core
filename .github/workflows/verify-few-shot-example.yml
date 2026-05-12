@@ -1,0 +1,157 @@
+name: Verify few-shot example
+
+# Phase X2 follow-up — mobile workflow (step 2 of 5).
+# Promotes a single decision_examples_v1.json entry to verified=true
+# after a human review. The reviewer paste the example_id printed by
+# the "Select few-shot candidates" workflow, their reviewer_id, the
+# decision (approve / reject), and free-text notes.
+#
+# Why --force: verify_example.py refuses to run when ANTHROPIC_API_KEY
+# is set in the environment, because Claude Code (or any LLM agent) must
+# not self-verify the examples it generated. In a GitHub Actions context
+# the secret is always exported, but the workflow itself is the human's
+# approved action — so we pass --force to bypass the CI-refusal guard.
+# The --force flag is documented as "for use in controlled GitHub
+# Actions contexts only" in scripts/verify_example.py.
+
+on:
+  workflow_dispatch:
+    inputs:
+      example_id:
+        description: 'example_id to verify (paste from select workflow)'
+        required: true
+      reviewer_id:
+        description: 'Reviewer (your name)'
+        required: true
+      decision:
+        description: 'Verify or reject this candidate'
+        required: true
+        default: 'approve'
+        type: choice
+        options:
+          - approve
+          - reject
+      notes:
+        description: 'Free-text review notes (optional)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  verify-few-shot-example:
+    runs-on: ubuntu-latest
+    # NB: this workflow deliberately does NOT export the API-key secret
+    # into the job env. verify_example.py refuses to run when the key
+    # IS set unless --force is also passed; we pass --force from the
+    # workflow as the human-approved override, so the secret never
+    # needs to be on the job's environment.
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Checkout data-lake
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.DATA_LAKE_REPO }}
+          token: ${{ secrets.GH_PAT }}
+          path: data-lake
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Verify example
+        if: ${{ github.event.inputs.decision == 'approve' }}
+        run: |
+          python scripts/verify_example.py \
+            --example-id "${{ github.event.inputs.example_id }}" \
+            --reviewer-id "${{ github.event.inputs.reviewer_id }}" \
+            --notes "${{ github.event.inputs.notes }}" \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            --force
+
+      - name: Record rejection in audit_log
+        if: ${{ github.event.inputs.decision == 'reject' }}
+        run: |
+          python - <<'EOF'
+          import json, os, pathlib, datetime
+
+          artifact = pathlib.Path(
+              "data-lake/store/artifacts/evals/few_shot/decision_examples_v1.json"
+          )
+          if not artifact.is_file():
+              raise SystemExit("error: no decision_examples_v1.json to update")
+          doc = json.loads(artifact.read_text(encoding="utf-8"))
+          audit = list(doc.get("audit_log") or [])
+          audit.append({
+              "action": "rejected",
+              "example_id": os.environ["EXAMPLE_ID"],
+              "at": datetime.datetime.now(datetime.timezone.utc)
+                  .strftime("%Y-%m-%dT%H:%M:%S+00:00"),
+              "actor": os.environ["REVIEWER_ID"],
+              "notes": os.environ.get("NOTES") or None,
+          })
+          doc["audit_log"] = audit
+          artifact.write_text(
+              json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          EOF
+        env:
+          EXAMPLE_ID: ${{ github.event.inputs.example_id }}
+          REVIEWER_ID: ${{ github.event.inputs.reviewer_id }}
+          NOTES: ${{ github.event.inputs.notes }}
+
+      - name: Commit verification to data-lake
+        run: |
+          cd "${{ github.workspace }}/data-lake"
+          git config user.name "spectrum-pipeline[bot]"
+          git config user.email "spectrum-pipeline[bot]@users.noreply.github.com"
+          git add store/artifacts/evals/few_shot/
+          if git diff --staged --quiet; then
+            echo "No verification updates to commit."
+          else
+            git commit -m "chore: verify few-shot example ${{ github.event.inputs.example_id }} by ${{ github.event.inputs.reviewer_id }} (${{ github.event.inputs.decision }}) [skip ci]"
+            git push
+          fi
+
+      - name: Post verification summary
+        if: always()
+        run: |
+          python - <<'EOF'
+          import json, os, pathlib
+
+          artifact = pathlib.Path(
+              "data-lake/store/artifacts/evals/few_shot/decision_examples_v1.json"
+          )
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
+          with open(summary_path, "a") as f:
+              f.write("## Verify few-shot example\n\n")
+              if not artifact.is_file():
+                  f.write("Artifact missing.\n")
+                  raise SystemExit(0)
+              doc = json.loads(artifact.read_text(encoding="utf-8"))
+              examples = doc.get("examples") or []
+              verified = sum(1 for ex in examples if ex.get("verified"))
+              total = len(examples)
+              target_id = os.environ.get("EXAMPLE_ID", "")
+              hit = next(
+                  (ex for ex in examples if ex.get("example_id") == target_id),
+                  None,
+              )
+              decision = os.environ.get("DECISION", "")
+              f.write(f"- example_id: `{target_id}`\n")
+              f.write(f"- decision: **{decision}**\n")
+              if hit is not None:
+                  f.write(f"- verified now: `{hit.get('verified')}`\n")
+                  f.write(f"- verified_by: `{hit.get('verified_by')}`\n")
+              f.write(f"- total verified / total examples: **{verified} / {total}**\n")
+          EOF
+        env:
+          EXAMPLE_ID: ${{ github.event.inputs.example_id }}
+          DECISION: ${{ github.event.inputs.decision }}

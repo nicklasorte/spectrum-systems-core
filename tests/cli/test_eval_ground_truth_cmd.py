@@ -246,3 +246,82 @@ def test_second_set_baseline_overwrites_first(tmp_path: Path) -> None:
     )
     # The most recent run's summary is the baseline now.
     assert baseline["pipeline_run_id"] == "run-X2-8b"
+
+
+# ---- Codex P2: baseline_type preserved across non-baseline runs ----
+
+
+def test_baseline_type_null_before_any_baseline(tmp_path: Path) -> None:
+    """Before any baseline is installed, a non-baseline run should
+    report ``baseline_type: null`` -- there is no baseline to label."""
+    data_lake = _make_data_lake(tmp_path)
+    # Wipe out any auto-installed baseline by NOT running set_baseline
+    # and ensuring no baseline file exists yet. The first run installs
+    # an implicit baseline (run_count==1), so we ratchet run_count by
+    # writing a non-zero count up front.
+    sdl_root = data_lake / "store" / "artifacts"
+    (sdl_root / "evals").mkdir(parents=True, exist_ok=True)
+    (sdl_root / "evals" / "eval_run_count.json").write_text(
+        json.dumps({"count": 5}), encoding="utf-8"
+    )
+    rc = eval_ground_truth(
+        data_lake=str(data_lake),
+        pipeline_run_id="run-X2-9",
+        out_stream=io.StringIO(),
+    )
+    assert rc == 0
+    gate = _read_gate_decision(sdl_root, "run-X2-9")
+    assert gate.get("baseline_type") is None
+
+
+def test_development_baseline_type_preserved_on_followup_runs(
+    tmp_path: Path,
+) -> None:
+    """After --set-baseline --specific-source-id installs a development
+    baseline, a subsequent non-baseline run must continue to report
+    ``baseline_type: development`` so an operator reading gate_decision
+    alone can answer 'what baseline are we comparing against?'.
+    Regression test for the Codex P2 finding."""
+    data_lake = _make_data_lake(tmp_path)
+    sdl_root = data_lake / "store" / "artifacts"
+    rc1 = eval_ground_truth(
+        data_lake=str(data_lake),
+        pipeline_run_id="run-X2-10a",
+        set_baseline=True,
+        specific_source_id="fixture-meeting-001",
+        out_stream=io.StringIO(),
+    )
+    rc2 = eval_ground_truth(
+        data_lake=str(data_lake),
+        pipeline_run_id="run-X2-10b",
+        out_stream=io.StringIO(),
+    )
+    assert rc1 == 0 and rc2 == 0
+    gate1 = _read_gate_decision(sdl_root, "run-X2-10a")
+    gate2 = _read_gate_decision(sdl_root, "run-X2-10b")
+    assert gate1["baseline_type"] == "development"
+    # The follow-up run must preserve the development label.
+    assert gate2["baseline_type"] == "development"
+
+
+def test_production_baseline_type_preserved_on_followup_runs(
+    tmp_path: Path,
+) -> None:
+    """After a full-corpus baseline is set, follow-up runs must report
+    ``baseline_type: production``."""
+    data_lake = _make_data_lake(tmp_path)
+    sdl_root = data_lake / "store" / "artifacts"
+    eval_ground_truth(
+        data_lake=str(data_lake),
+        pipeline_run_id="run-X2-11a",
+        set_baseline=True,
+        out_stream=io.StringIO(),
+    )
+    rc = eval_ground_truth(
+        data_lake=str(data_lake),
+        pipeline_run_id="run-X2-11b",
+        out_stream=io.StringIO(),
+    )
+    assert rc == 0
+    gate = _read_gate_decision(sdl_root, "run-X2-11b")
+    assert gate["baseline_type"] == "production"

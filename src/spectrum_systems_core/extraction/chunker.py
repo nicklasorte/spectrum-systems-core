@@ -38,6 +38,12 @@ import jsonschema
 from ..glossary.chunk_position import assign_chunk_positions
 from ..ingestion._paths import schema_path
 from ._paths import find_processed_dir
+from .heuristic_agenda_detector import (
+    agenda_items_to_artifact_list,
+    assign_agenda_item_ids,
+    detect_agenda_items,
+    detection_enabled as _agenda_detection_enabled,
+)
 
 
 _LOG = logging.getLogger(__name__)
@@ -457,14 +463,39 @@ def _is_transcript(source_family: str, source_id: str) -> bool:
     return "transcript" in source_id.lower()
 
 
-def _update_source_record_chunking_strategy(
-    source_record_path: Path, chunking_strategy: str
-) -> None:
-    """Write ``payload.chunking_strategy`` into the on-disk source_record.
+def _reconstruct_source_text(units: List[Dict[str, Any]]) -> str:
+    """Rebuild the raw transcript text from ordered ``text_units``.
 
-    Phase M.4. Read-modify-write the source_record JSON to record which
-    chunking strategy this run produced. Non-fatal on every failure: the
-    chunker's primary output (chunks.jsonl) has already been written by the
+    Phase X2.1 wiring: the heuristic agenda detector inspects raw
+    transcript lines for agenda-style headers and uses a speaker-turn
+    lookahead to validate all-caps candidates. text_units already
+    preserve line boundaries (units chunk on paragraph breaks), so a
+    newline-joined concatenation is a faithful reconstruction for
+    detector purposes. Returns ``""`` when no units carry text.
+    """
+    parts: List[str] = []
+    for u in units:
+        text = u.get("text", "")
+        if not isinstance(text, str):
+            continue
+        parts.append(text)
+    return "\n".join(parts)
+
+
+def _update_source_record_chunking_strategy(
+    source_record_path: Path,
+    chunking_strategy: str,
+    *,
+    agenda_items: Optional[List[Dict[str, Any]]] = None,
+) -> None:
+    """Write ``payload.chunking_strategy`` (and optionally
+    ``payload.agenda_items``) into the on-disk source_record.
+
+    Phase M.4 sets ``chunking_strategy``. Phase X2 follow-up adds the
+    optional ``agenda_items`` field so downstream readers can map
+    chunk ``agenda_item_id`` values back to a human-readable title.
+    Read-modify-write; non-fatal on every failure: the chunker's
+    primary output (chunks.jsonl) has already been written by the
     caller, so any IO error here is logged and swallowed rather than
     failing the whole chunking step.
     """
@@ -483,9 +514,15 @@ def _update_source_record_chunking_strategy(
     payload = rec.get("payload")
     if not isinstance(payload, dict):
         return
-    if payload.get("chunking_strategy") == chunking_strategy:
+    dirty = False
+    if payload.get("chunking_strategy") != chunking_strategy:
+        payload["chunking_strategy"] = chunking_strategy
+        dirty = True
+    if agenda_items is not None and payload.get("agenda_items") != agenda_items:
+        payload["agenda_items"] = agenda_items
+        dirty = True
+    if not dirty:
         return
-    payload["chunking_strategy"] = chunking_strategy
     try:
         source_record_path.write_text(
             json.dumps(rec, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -607,6 +644,24 @@ class Chunker:
         # chunks.
         chunks = assign_chunk_positions(chunks)
 
+        # Phase X2.1 wiring: assign agenda_item_id to every chunk AFTER
+        # chunk_position so the position field is already on the chunk
+        # when the assignment runs. Order is mandatory:
+        #   merge_short_chunks -> split_oversized_chunks ->
+        #   merge_short_chunks (re-merge) -> assign_chunk_positions ->
+        #   assign_agenda_item_ids
+        # The detector returns [] when AGENDA_DETECTION_ENABLED=false;
+        # in that mode we preserve pre-X2 behaviour and leave
+        # agenda_item_id absent on the chunk (the field is optional in
+        # the chunk schema). When enabled, agenda_item_id is ALWAYS a
+        # non-empty string (per CLAUDE.md amendment).
+        agenda_artifact_list: Optional[List[Dict[str, Any]]] = None
+        if _agenda_detection_enabled():
+            source_text = _reconstruct_source_text(units)
+            agenda_items = detect_agenda_items(source_text)
+            chunks = assign_agenda_item_ids(chunks, agenda_items)
+            agenda_artifact_list = agenda_items_to_artifact_list(agenda_items)
+
         for chunk in chunks:
             try:
                 validator.validate(chunk)
@@ -657,7 +712,9 @@ class Chunker:
         # Failure to update the source_record is non-fatal: chunks.jsonl is
         # the canonical output of this step.
         _update_source_record_chunking_strategy(
-            processed_dir / "source_record.json", chunking_strategy
+            processed_dir / "source_record.json",
+            chunking_strategy,
+            agenda_items=agenda_artifact_list,
         )
 
         return {

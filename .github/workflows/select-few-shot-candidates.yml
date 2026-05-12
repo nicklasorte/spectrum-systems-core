@@ -1,0 +1,115 @@
+name: Select few-shot candidates
+
+# Phase X2 follow-up — mobile workflow (step 1 of 5).
+# Reads the most-recent meeting_extraction for a source_id and writes
+# up to N candidate decisions (one per outcome bucket) into
+# decision_examples_v1.json with verified=false. Each candidate's UUID
+# is rendered in the step summary so a phone reviewer can paste it
+# into the "Verify few-shot example" workflow without scrolling logs.
+#
+# Reads only; the verified=true promotion is owned by the next
+# workflow (verify-few-shot-example.yml). No ANTHROPIC_API_KEY usage
+# (selection is fully deterministic over existing artifacts).
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_id:
+        description: 'Source id (meeting_id) to mine for candidates'
+        required: true
+        default: '7-ghz-downlink-tig-meeting---transcript-2-19-26'
+      max_candidates:
+        description: 'Cap on candidates written (1..3)'
+        required: false
+        default: '3'
+
+permissions:
+  contents: write
+
+jobs:
+  select-few-shot-candidates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Checkout data-lake
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.DATA_LAKE_REPO }}
+          token: ${{ secrets.GH_PAT }}
+          path: data-lake
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Select few-shot candidates
+        id: select
+        run: |
+          python scripts/select_few_shot_examples.py \
+            --source-id "${{ github.event.inputs.source_id }}" \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            --max-examples "${{ github.event.inputs.max_candidates }}"
+
+      - name: Commit candidates to data-lake
+        run: |
+          cd "${{ github.workspace }}/data-lake"
+          git config user.name "spectrum-pipeline[bot]"
+          git config user.email "spectrum-pipeline[bot]@users.noreply.github.com"
+          git add store/artifacts/evals/few_shot/
+          if git diff --staged --quiet; then
+            echo "No few-shot updates to commit."
+          else
+            git commit -m "chore: select few-shot candidates for ${{ github.event.inputs.source_id }} [skip ci]"
+            git push
+          fi
+
+      - name: Post candidate table to step summary
+        if: always()
+        run: |
+          python - <<'EOF'
+          import json, os, pathlib
+
+          artifact = pathlib.Path(
+              "data-lake/store/artifacts/evals/few_shot/decision_examples_v1.json"
+          )
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
+          with open(summary_path, "a") as f:
+              f.write("## Few-shot candidates selected\n\n")
+              if not artifact.is_file():
+                  f.write("No candidate artifact found.\n")
+                  raise SystemExit(0)
+              doc = json.loads(artifact.read_text(encoding="utf-8"))
+              examples = doc.get("examples") or []
+              if not examples:
+                  f.write("No candidates were written.\n")
+                  raise SystemExit(0)
+              f.write("| example_id | outcome | confidence | source_turn_ids |\n")
+              f.write("|---|---|---|---|\n")
+              for ex in examples:
+                  eid = ex.get("example_id", "?")
+                  exp = ex.get("expected_output", {}) or {}
+                  outcome = exp.get("decision_outcome", "?")
+                  conf = exp.get("confidence", "?")
+                  turns = ex.get("source_turn_ids") or []
+                  turns_str = ",".join(map(str, turns))[:60]
+                  status = "[unverified]"
+                  f.write(f"| `{eid}` | {outcome} {status} | {conf} | {turns_str} |\n")
+              f.write("\n### Decision text\n\n")
+              for ex in examples:
+                  eid = ex.get("example_id", "?")
+                  exp = ex.get("expected_output", {}) or {}
+                  decision_text = exp.get("decision_text") or ex.get("input_text", "")
+                  f.write(f"**`{eid}`**\n\n> {decision_text}\n\n")
+              f.write("\n### Next step\n\n")
+              f.write(
+                  "Copy an `example_id` above and paste it into the "
+                  "**Verify few-shot example** workflow. "
+                  "Use this ID in the next workflow.\n"
+              )
+          EOF

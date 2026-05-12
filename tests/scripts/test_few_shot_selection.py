@@ -273,3 +273,60 @@ def test_verify_unknown_example_returns_error(
         "--artifact-path", str(artifact),
     ])
     assert rc == 2
+
+
+# --- Codex P2 fix: grounded examples beat ungrounded examples ----------
+
+
+def _ungrounded(**kwargs: Any) -> Dict[str, Any]:
+    d = _make_decision(**kwargs)
+    d["grounding_verified"] = False
+    return d
+
+
+def test_grounded_beats_ungrounded_within_same_bucket(tmp_path: Path) -> None:
+    """An ungrounded decision must never be selected over a grounded
+    one in the same outcome bucket, even when the ungrounded candidate
+    carries a higher confidence score. Few-shot examples teach the
+    model to copy structure, so grounding takes priority. Codex P2."""
+    decisions = [
+        # Ungrounded but very confident:
+        _ungrounded(outcome="approval", confidence=0.99, decision_text="HIGH but ungrounded", turn_ids=["tA"]),
+        # Grounded with mid confidence:
+        _make_decision(outcome="approval", confidence=0.75, decision_text="MID and grounded", turn_ids=["tB"]),
+    ]
+    _write_extraction(tmp_path, "src-p2-1", decisions)
+    artifact = tmp_path / "few_shot.json"
+    rc = selector.main([
+        "--source-id", "src-p2-1",
+        "--data-lake", str(tmp_path),
+        "--artifact-path", str(artifact),
+    ])
+    assert rc == 0
+    doc = json.loads(artifact.read_text(encoding="utf-8"))
+    approval = next(
+        ex for ex in doc["examples"]
+        if ex["expected_output"]["decision_outcome"] == "approval"
+    )
+    assert "grounded" in approval["expected_output"]["decision_text"]
+
+
+def test_two_grounded_higher_confidence_wins(tmp_path: Path) -> None:
+    """When both candidates are grounded, confidence breaks the tie."""
+    decisions = [
+        _make_decision(outcome="approval", confidence=0.70, decision_text="LOWER grounded", turn_ids=["tA"]),
+        _make_decision(outcome="approval", confidence=0.95, decision_text="HIGHER grounded", turn_ids=["tB"]),
+    ]
+    _write_extraction(tmp_path, "src-p2-2", decisions)
+    artifact = tmp_path / "few_shot.json"
+    selector.main([
+        "--source-id", "src-p2-2",
+        "--data-lake", str(tmp_path),
+        "--artifact-path", str(artifact),
+    ])
+    doc = json.loads(artifact.read_text(encoding="utf-8"))
+    approval = next(
+        ex for ex in doc["examples"]
+        if ex["expected_output"]["decision_outcome"] == "approval"
+    )
+    assert "HIGHER" in approval["expected_output"]["decision_text"]

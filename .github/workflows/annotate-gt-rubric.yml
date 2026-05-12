@@ -1,0 +1,175 @@
+name: Annotate GT rubric (auto-classify)
+
+# Phase X2 follow-up — mobile workflow (step 3 of 5).
+# Deterministically proposes a regulatory-verb classification for each
+# ground_truth pair under source_id and writes the proposals to an
+# annotations JSON file. The script annotate_rubric.py is then run
+# with --apply-from so the GT pairs gain rubric_notes.
+#
+# This workflow is the AUTO-classify step. A separate workflow,
+# confirm-rubric-annotations.yml, lets the reviewer override individual
+# pair_ids. The auto-classifier never sets verb_discrimination_example
+# to true by itself (that requires human judgement); the override
+# workflow can do that.
+#
+# No ANTHROPIC_API_KEY needed -- classification is keyword matching
+# against REGULATORY_VERBS from config/taxonomy.py.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_id:
+        description: 'Source id to annotate'
+        required: true
+        default: '7-ghz-downlink-tig-meeting---transcript-2-19-26'
+      limit:
+        description: 'Max pairs to annotate (default 20)'
+        required: false
+        default: '20'
+      batch_decision:
+        description: 'Default expected_decision_outcome when text is ambiguous'
+        required: false
+        default: 'noted'
+        type: choice
+        options:
+          - approval
+          - rejection
+          - deferral
+          - action_required
+          - noted
+          - question
+
+permissions:
+  contents: write
+
+jobs:
+  annotate-gt-rubric:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Checkout data-lake
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.DATA_LAKE_REPO }}
+          token: ${{ secrets.GH_PAT }}
+          path: data-lake
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Generate auto-classified annotations file
+        id: generate
+        run: |
+          python - <<'EOF'
+          import json, os, pathlib, sys
+
+          sys.path.insert(0, "scripts")
+          import annotate_rubric
+
+          from spectrum_systems_core.config.taxonomy import OUTCOME_TO_VERBS
+
+          data_lake = pathlib.Path("data-lake").resolve()
+          sdl_root = data_lake / "store" / "artifacts"
+          source_id = os.environ["SOURCE_ID"]
+          limit = int(os.environ["LIMIT"])
+          default_outcome = os.environ["DEFAULT_OUTCOME"]
+
+          pairs = annotate_rubric.list_candidates(
+              sdl_root, source_id=source_id, limit=limit,
+          )
+          if not pairs:
+              seen = annotate_rubric._all_source_ids_seen(sdl_root)
+              raise SystemExit(
+                  f"ERROR: source_id '{source_id}' matched 0 pairs. "
+                  f"Available identifiers (first 5): {seen[:5]}"
+              )
+
+          def classify(text: str) -> str:
+              t = (text or "").lower()
+              for outcome, verbs in OUTCOME_TO_VERBS.items():
+                  for verb in verbs:
+                      if verb in t:
+                          return outcome
+              return default_outcome
+
+          out = []
+          for p in pairs:
+              text = (
+                  p.get("ground_truth_text")
+                  or p.get("fixture_minutes_text")
+                  or ""
+              )
+              out.append({
+                  "pair_id": p.get("pair_id"),
+                  "expected_decision_outcome": classify(text),
+                  "verb_discrimination_example": False,
+                  "annotator_id": "auto-classifier",
+                  "notes": (
+                      f"auto-classified from text (default={default_outcome})"
+                  ),
+              })
+
+          pathlib.Path("annotations.json").write_text(
+              json.dumps(out, indent=2), encoding="utf-8"
+          )
+          print(f"wrote {len(out)} proposed annotations to annotations.json")
+          EOF
+        env:
+          SOURCE_ID: ${{ github.event.inputs.source_id }}
+          LIMIT: ${{ github.event.inputs.limit }}
+          DEFAULT_OUTCOME: ${{ github.event.inputs.batch_decision }}
+
+      - name: Apply auto-classified annotations
+        run: |
+          python scripts/annotate_rubric.py \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            --apply-from annotations.json
+
+      - name: Commit annotations to data-lake
+        run: |
+          cd "${{ github.workspace }}/data-lake"
+          git config user.name "spectrum-pipeline[bot]"
+          git config user.email "spectrum-pipeline[bot]@users.noreply.github.com"
+          git add store/artifacts/ground_truth/
+          if git diff --staged --quiet; then
+            echo "No rubric updates to commit."
+          else
+            git commit -m "chore: auto-classify rubric for ${{ github.event.inputs.source_id }} [skip ci]"
+            git push
+          fi
+
+      - name: Post proposals table to step summary
+        if: always()
+        run: |
+          python - <<'EOF'
+          import json, os, pathlib
+
+          path = pathlib.Path("annotations.json")
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
+          with open(summary_path, "a") as f:
+              f.write("## Proposed rubric annotations\n\n")
+              if not path.is_file():
+                  f.write("No annotations file produced.\n")
+                  raise SystemExit(0)
+              records = json.loads(path.read_text(encoding="utf-8"))
+              if not records:
+                  f.write("No pairs matched.\n")
+                  raise SystemExit(0)
+              f.write("| pair_id | proposed outcome |\n")
+              f.write("|---|---|\n")
+              for r in records:
+                  f.write(
+                      f"| `{r.get('pair_id')}` | "
+                      f"{r.get('expected_decision_outcome')} |\n"
+                  )
+              f.write("\n")
+              f.write("Disagree? Run **Confirm rubric annotations** with ")
+              f.write("`override_pair_id` and `override_outcome` set.\n")
+          EOF
