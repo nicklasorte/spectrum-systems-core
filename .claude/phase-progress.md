@@ -319,3 +319,38 @@ After `pip install anthropic`:
   This avoids duplicating orchestrator logic and guarantees identical behavior.
 - **Matrix workflow**: keep existing single-job flow as the post-pipeline path; split
   per-transcript work into the matrix.
+
+---
+
+# Phase Infra — Automated CI checks (branch: claude/automated-ci-checks-7oQIe)
+
+## Prerequisites (recorded 2026-05-12)
+
+1. `.claude/settings.json` has `dangerouslySkipPermissions: true` ✓
+2. pytest baseline: **1123 tests collected** (after `pip install -e ".[dev]"`).
+3. `grep -rn 'claude-sonnet-4-20250514' --include='*.py' .` — **9 hits, 5 files**:
+   - `src/spectrum_systems_core/synthesis/report_generator.py:28`
+   - `src/spectrum_systems_core/synthesis/keynote_generator.py:27`
+   - `src/spectrum_systems_core/paper/revision_workflow.py:3` (docstring)
+   - `src/spectrum_systems_core/paper/revision_workflow.py:29`
+   - `tests/synthesis/test_keynote_eval.py:39,174`
+   - `tests/synthesis/test_grounding_eval.py:57,132`
+   - `tests/synthesis/test_report_generator.py:135`
+4. `grep -rn '"artifact_kind"' contracts/schemas/` — **3 schemas**:
+   - `contracts/schemas/source_record.schema.json`
+   - `contracts/schemas/review_artifact.schema.json`
+   - `contracts/schemas/obsidian_input_artifact.schema.json`
+5. Workflow YAML validity: all 10 workflows parse OK.
+6. `grep -rn 'claude-' --include='*.yml' .github/workflows/` — **0 hits**.
+
+## Decisions
+
+- **Check 1**: Grandfather the 5 legacy files via `ALLOWED_LOCATIONS`
+  (user-approved). No `model_registry.py` exists yet, so it is NOT listed
+  as an allowed location. The check still blocks any NEW occurrence of a
+  deprecated string outside the grandfathered set. Migration of the legacy
+  files is tracked separately.
+- **Check 2**: Grandfather the 3 pre-migration schemas. New schemas using
+  `artifact_kind` will fail the check.
+- **Checks 3 & 4**: No violations — write tests directly.
+- **PyYAML**: already in main `dependencies` (`>=6.0`), not duplicated in dev.

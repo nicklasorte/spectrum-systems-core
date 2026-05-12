@@ -29,6 +29,14 @@ jobs:
           python -m pip install -e ".[dev]"
           python -m pip install anthropic  # explicit safety net
 
+      - name: Run CI automated checks
+        run: |
+          python -m pytest tests/ci/ -v --tb=short
+        # All checks are filesystem scans -- fast, no API calls.
+        # Fails the PR immediately if deprecated models, invalid YAML,
+        # legacy artifact_kind in schemas, or hardcoded model strings
+        # in workflows are introduced.
+
       - name: Fixture smoke test (fast, no data-lake)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
