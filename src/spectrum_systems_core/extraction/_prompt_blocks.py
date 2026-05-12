@@ -54,15 +54,17 @@ OMIT_INSTRUCTION_BLOCK: str = (
 
 CONFIDENCE_SCORING_BLOCK: str = (
     "CONFIDENCE SCORING:\n"
-    "For each item you extract, assign a confidence score (0.0-1.0):\n"
-    "  1.0 -- Explicitly stated in the transcript with clear attribution\n"
-    "  0.8 -- Clearly implied by direct statements, unambiguous\n"
-    "  0.5 -- Reasonably inferred from context; some ambiguity\n"
-    "  0.3 -- Weak grounding; possible but not certain from this text\n"
-    "  0.0 -- Should not be included (use this as a signal to omit instead)\n"
+    "For each extracted decision or claim, add a \"confidence\" field "
+    "(0.0 to 1.0):\n"
+    "  1.0     -- explicitly stated, unambiguous, speaker clearly committed\n"
+    "  0.7-0.9 -- clearly implied, strong evidence in source_turns\n"
+    "  0.4-0.6 -- inferred, indirect evidence, requires interpretation\n"
+    "  0.0-0.3 -- weak evidence, speculative\n"
     "\n"
+    "Briefly state your reasoning before assigning the score.\n"
     "If you would score an item below 0.5: OMIT it instead of including it\n"
-    "with a low confidence score. Low confidence is a reason to omit."
+    "with a low confidence score. Low confidence is a reason to omit.\n"
+    "If not in transcript, omit; do not infer."
 )
 
 

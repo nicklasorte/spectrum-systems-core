@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/model_registry.schema.json",
+  "title": "model_registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_type", "schema_version", "task_types"],
+  "properties": {
+    "artifact_type": { "const": "model_registry" },
+    "schema_version": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string" },
+    "task_types": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["model", "version"],
+        "properties": {
+          "model":    { "type": "string", "minLength": 1 },
+          "version":  { "type": "string", "minLength": 1 },
+          "notes":    { "type": "string" }
+        }
+      }
+    }
+  }
+}

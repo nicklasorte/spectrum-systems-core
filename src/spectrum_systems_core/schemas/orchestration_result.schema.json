@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/orchestration_result.schema.json",
+  "title": "orchestration_result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "run_id",
+    "source_id",
+    "chunks_attempted",
+    "chunks_succeeded",
+    "chunks_blocked",
+    "block_reasons",
+    "stage_status"
+  ],
+  "properties": {
+    "artifact_type": { "const": "orchestration_result" },
+    "schema_version": { "const": "1.0.0" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "source_id": { "type": "string", "minLength": 1 },
+    "chunks_attempted": { "type": "integer", "minimum": 0 },
+    "chunks_succeeded": { "type": "integer", "minimum": 0 },
+    "chunks_blocked": { "type": "integer", "minimum": 0 },
+    "block_reasons": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rate_limit_exhausted",
+        "empty_response",
+        "parse_error",
+        "other"
+      ],
+      "properties": {
+        "rate_limit_exhausted": { "type": "integer", "minimum": 0 },
+        "empty_response":       { "type": "integer", "minimum": 0 },
+        "parse_error":          { "type": "integer", "minimum": 0 },
+        "other":                { "type": "integer", "minimum": 0 }
+      }
+    },
+    "stage_status": { "enum": ["ok", "partial", "failed"] },
+    "created_at": { "type": "string" }
+  }
+}
