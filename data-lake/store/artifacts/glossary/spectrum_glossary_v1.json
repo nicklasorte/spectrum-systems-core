@@ -1,0 +1,303 @@
+{
+  "artifact_type": "spectrum_glossary",
+  "content_hash": "sha256:b4955675388e087ebe142abbc4084dec3e752164ce134822bc9a3a743123c91e",
+  "created_at": "1970-01-01T00:00:00+00:00",
+  "glossary_version": "1",
+  "schema_version": "1.0.0",
+  "term_count": 25,
+  "terms": [
+    {
+      "abbreviation": "FSS",
+      "authoritative_source": "ITU Radio Regulations No. 1.21",
+      "definition": "A radiocommunication service between earth stations at specified fixed points (ITU Radio Regulations No. 1.21). Satellite communications service in which Earth stations at fixed points communicate via a satellite.",
+      "domain_scope": "spectrum_allocation",
+      "related_term_ids": [
+        "mss",
+        "fss_protection_zone"
+      ],
+      "short_definition": "Satellite service between fixed earth stations (ITU RR No. 1.21).",
+      "term": "Fixed Satellite Service",
+      "term_id": "fss"
+    },
+    {
+      "abbreviation": "MSS",
+      "authoritative_source": "ITU Radio Regulations",
+      "definition": "Satellite radiocommunication service in which mobile earth stations communicate via satellite (ITU Radio Regulations).",
+      "domain_scope": "spectrum_allocation",
+      "related_term_ids": [
+        "fss"
+      ],
+      "short_definition": "Satellite service for mobile earth stations.",
+      "term": "Mobile Satellite Service",
+      "term_id": "mss"
+    },
+    {
+      "abbreviation": "NTIA",
+      "authoritative_source": "47 CFR Part 300 (NTIA Manual)",
+      "definition": "Agency in the US Department of Commerce that manages spectrum used by federal government agencies and advises the President on telecommunications policy.",
+      "domain_scope": "regulatory_body",
+      "related_term_ids": [
+        "fcc",
+        "dod"
+      ],
+      "short_definition": "US federal spectrum manager (Dept. of Commerce).",
+      "term": "National Telecommunications and Information Administration",
+      "term_id": "ntia"
+    },
+    {
+      "abbreviation": "FCC",
+      "authoritative_source": "47 U.S.C. \u00a7\u00a7 151-622",
+      "definition": "Independent US agency that regulates interstate communications and licenses non-federal spectrum use.",
+      "domain_scope": "regulatory_body",
+      "related_term_ids": [
+        "ntia"
+      ],
+      "short_definition": "US spectrum regulator for non-federal use.",
+      "term": "Federal Communications Commission",
+      "term_id": "fcc"
+    },
+    {
+      "abbreviation": "DoD",
+      "authoritative_source": "10 U.S.C. \u00a7 111",
+      "definition": "US executive department responsible for coordinating and supervising the federal armed forces; major incumbent operator of federal spectrum allocations including portions of the 7 GHz band.",
+      "domain_scope": "regulatory_body",
+      "related_term_ids": [
+        "ntia"
+      ],
+      "short_definition": "Incumbent operator of federal spectrum in many bands.",
+      "term": "Department of Defense",
+      "term_id": "dod"
+    },
+    {
+      "abbreviation": "TIG",
+      "authoritative_source": "NTIA",
+      "definition": "Working group of federal agency representatives tasked with technical analysis for a specific line of effort within an NTIA-led spectrum study.",
+      "domain_scope": "regulatory_process",
+      "related_term_ids": [
+        "wg"
+      ],
+      "short_definition": "Agency working group doing technical analysis (NTIA).",
+      "term": "Technical Interchange Group",
+      "term_id": "tig"
+    },
+    {
+      "abbreviation": "WG",
+      "authoritative_source": "NTIA",
+      "definition": "Parent body coordinating multiple TIGs in a spectrum study (e.g. the 7 GHz study).",
+      "domain_scope": "regulatory_process",
+      "related_term_ids": [
+        "tig"
+      ],
+      "short_definition": "Parent body coordinating multiple TIGs.",
+      "term": "Working Group",
+      "term_id": "wg"
+    },
+    {
+      "abbreviation": "TWG",
+      "authoritative_source": "NTIA",
+      "definition": "Subcommittee of subject-matter experts that performs detailed technical work in support of an interagency or international spectrum coordination process.",
+      "domain_scope": "regulatory_process",
+      "related_term_ids": [
+        "wg"
+      ],
+      "short_definition": "Subcommittee of technical SMEs supporting coordination.",
+      "term": "Technical Working Group",
+      "term_id": "twg"
+    },
+    {
+      "abbreviation": "RAN4",
+      "authoritative_source": "3GPP",
+      "definition": "3GPP working group 4 on Radio Access Network performance, responsible for RF requirements and coexistence studies. Frequent counterpart in spectrum coordination between mobile cellular standards and incumbent services.",
+      "domain_scope": "technical_standard",
+      "related_term_ids": [],
+      "short_definition": "3GPP working group on RF coexistence and RAN performance.",
+      "term": "3GPP RAN4",
+      "term_id": "ran4"
+    },
+    {
+      "abbreviation": "ITU",
+      "authoritative_source": "ITU Constitution",
+      "definition": "United Nations agency that coordinates global spectrum use through the Radio Regulations and study groups.",
+      "domain_scope": "regulatory_body",
+      "related_term_ids": [],
+      "short_definition": "UN agency coordinating global spectrum use.",
+      "term": "International Telecommunication Union",
+      "term_id": "itu"
+    },
+    {
+      "abbreviation": "COA",
+      "authoritative_source": "NTIA",
+      "definition": "Proposed approach for spectrum transition documented with feasibility and impact analysis. Comparable to an option in a decision memo.",
+      "domain_scope": "regulatory_process",
+      "related_term_ids": [
+        "study_plan"
+      ],
+      "short_definition": "Proposed spectrum-transition approach with analysis.",
+      "term": "Course of Action",
+      "term_id": "coa"
+    },
+    {
+      "abbreviation": null,
+      "authoritative_source": "NTIA",
+      "definition": "Governing document for an NTIA spectrum study defining scope, methodology, deliverables, and schedule.",
+      "domain_scope": "regulatory_process",
+      "related_term_ids": [
+        "coa"
+      ],
+      "short_definition": "Governing document for an NTIA spectrum study.",
+      "term": "study plan",
+      "term_id": "study_plan"
+    },
+    {
+      "abbreviation": null,
+      "authoritative_source": "ITU Radio Regulations",
+      "definition": "Geographic area in which new spectrum entrants must not cause harmful interference to FSS Earth stations. Distance based on link budget and interference threshold.",
+      "domain_scope": "spectrum_allocation",
+      "related_term_ids": [
+        "fss",
+        "protection_criterion"
+      ],
+      "short_definition": "Geographic area protecting FSS earth stations from new entrants.",
+      "term": "FSS protection zone",
+      "term_id": "fss_protection_zone"
+    },
+    {
+      "abbreviation": null,
+      "authoritative_source": "ITU-R Recommendation",
+      "definition": "Interference threshold that must not be exceeded to ensure acceptable performance of an incumbent service. In the 7 GHz downlink study: -10.5 dB I/N at 80th percentile and -6 dB at 0.03 percent.",
+      "domain_scope": "technical_standard",
+      "related_term_ids": [
+        "itu_two_point_criterion"
+      ],
+      "short_definition": "Interference threshold protecting an incumbent service.",
+      "term": "protection criterion",
+      "term_id": "protection_criterion"
+    },
+    {
+      "abbreviation": null,
+      "authoritative_source": "ITU-R",
+      "definition": "Protection standard requiring two separate exceedance thresholds: -10.5 dB not exceeded more than 20 percent of time AND -6 dB not exceeded more than 0.03 percent of time.",
+      "domain_scope": "technical_standard",
+      "related_term_ids": [
+        "protection_criterion"
+      ],
+      "short_definition": "ITU two-threshold interference protection rule.",
+      "term": "ITU two-point criterion",
+      "term_id": "itu_two_point_criterion"
+    },
+    {
+      "abbreviation": "ERP",
+      "authoritative_source": "FCC 47 CFR",
+      "definition": "Total power radiated by a transmitting antenna in a given direction, computed from transmitter power and antenna gain.",
+      "domain_scope": "technical_standard",
+      "related_term_ids": [],
+      "short_definition": "Total transmitter+antenna radiated power in a direction.",
+      "term": "Effective Radiated Power",
+      "term_id": "erp"
+    },
+    {
+      "abbreviation": "I/N",
+      "authoritative_source": "ITU-R",
+      "definition": "Ratio of received interference power to receiver noise power. Standard ITU metric used to evaluate the impact of one service on another.",
+      "domain_scope": "technical_standard",
+      "related_term_ids": [
+        "protection_criterion"
+      ],
+      "short_definition": "Ratio of interference to receiver noise (ITU metric).",
+      "term": "Interference-to-Noise ratio",
+      "term_id": "i_n"
+    },
+    {
+      "abbreviation": "CDF",
+      "authoritative_source": "ITU-R",
+      "definition": "Statistical function giving the probability that a random variable is less than or equal to a value. Used in ITU protection criteria to define percentile thresholds.",
+      "domain_scope": "technical_standard",
+      "related_term_ids": [
+        "itu_two_point_criterion"
+      ],
+      "short_definition": "Statistical CDF (used for ITU percentile thresholds).",
+      "term": "Cumulative Distribution Function",
+      "term_id": "cdf"
+    },
+    {
+      "abbreviation": "ITM",
+      "authoritative_source": "NTIA Tech Report",
+      "definition": "Propagation model that predicts long-term median attenuation over irregular terrain. Widely used in US interference analyses.",
+      "domain_scope": "technical_standard",
+      "related_term_ids": [],
+      "short_definition": "Long-term terrain propagation model used in interference analysis.",
+      "term": "Irregular Terrain Model",
+      "term_id": "itm"
+    },
+    {
+      "abbreviation": null,
+      "authoritative_source": "ITU-R",
+      "definition": "Combined interference from all sources affecting a receiver, as opposed to interference from a single transmitter.",
+      "domain_scope": "technical_standard",
+      "related_term_ids": [
+        "protection_criterion"
+      ],
+      "short_definition": "Combined interference from all sources at a receiver.",
+      "term": "aggregate interference",
+      "term_id": "aggregate_interference"
+    },
+    {
+      "abbreviation": null,
+      "authoritative_source": "ITU-R",
+      "definition": "Unused or restricted frequency separation between two adjacent frequency allocations or channels to limit interference.",
+      "domain_scope": "spectrum_allocation",
+      "related_term_ids": [],
+      "short_definition": "Frequency separation between adjacent spectrum users.",
+      "term": "guard band",
+      "term_id": "guard_band"
+    },
+    {
+      "abbreviation": null,
+      "authoritative_source": "ITU Radio Regulations",
+      "definition": "Highest protection status in a spectrum allocation; primary services may not be required to accept interference from secondary services.",
+      "domain_scope": "spectrum_allocation",
+      "related_term_ids": [
+        "secondary_status"
+      ],
+      "short_definition": "Highest-protection allocation status.",
+      "term": "primary status",
+      "term_id": "primary_status"
+    },
+    {
+      "abbreviation": null,
+      "authoritative_source": "ITU Radio Regulations",
+      "definition": "Lower protection status; secondary services must accept interference from primary services and may not cause harmful interference to primary services.",
+      "domain_scope": "spectrum_allocation",
+      "related_term_ids": [
+        "primary_status"
+      ],
+      "short_definition": "Lower-protection allocation status; must yield to primary.",
+      "term": "secondary status",
+      "term_id": "secondary_status"
+    },
+    {
+      "abbreviation": null,
+      "authoritative_source": "NTIA",
+      "definition": "Agency plan governing how operations move out of a spectrum band being reallocated to a new use.",
+      "domain_scope": "regulatory_process",
+      "related_term_ids": [
+        "relocation"
+      ],
+      "short_definition": "Plan for moving an agency out of a reallocated band.",
+      "term": "transition plan",
+      "term_id": "transition_plan"
+    },
+    {
+      "abbreviation": null,
+      "authoritative_source": "NTIA",
+      "definition": "Movement of a spectrum user from one frequency band to another, typically in response to a reallocation decision.",
+      "domain_scope": "regulatory_process",
+      "related_term_ids": [
+        "transition_plan"
+      ],
+      "short_definition": "Movement of a user from one frequency band to another.",
+      "term": "relocation",
+      "term_id": "relocation"
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/spectrum_glossary.schema.json",
+  "title": "spectrum_glossary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "glossary_version",
+    "term_count",
+    "content_hash",
+    "terms"
+  ],
+  "properties": {
+    "artifact_type": { "const": "spectrum_glossary" },
+    "schema_version": { "const": "1.0.0" },
+    "glossary_version": { "type": "string", "minLength": 1 },
+    "term_count": { "type": "integer", "minimum": 0 },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "created_at": { "type": "string" },
+    "terms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "term_id",
+          "term",
+          "abbreviation",
+          "definition",
+          "short_definition",
+          "authoritative_source",
+          "domain_scope",
+          "related_term_ids"
+        ],
+        "properties": {
+          "term_id": { "type": "string", "minLength": 1 },
+          "term": { "type": "string", "minLength": 1 },
+          "abbreviation": { "type": ["string", "null"] },
+          "definition": { "type": "string", "minLength": 1 },
+          "short_definition": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "authoritative_source": { "type": "string", "minLength": 1 },
+          "domain_scope": { "type": "string", "minLength": 1 },
+          "related_term_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -99,7 +99,19 @@
             "items": { "type": "string", "minLength": 1 },
             "description": "Phase T.7: atomic factual decomposition (feature-flagged)."
           },
-          "atomic_decomposition_model": { "type": ["string", "null"] }
+          "atomic_decomposition_model": { "type": ["string", "null"] },
+          "binding_tuple": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "description": "Phase V.5: multi-property binding tuple for decisions. Null when BINDING_TUPLE_ENABLED=false (default) or when the second-pass parse failed.",
+            "properties": {
+              "actor": { "type": ["string", "null"] },
+              "action_verb": { "type": ["string", "null"] },
+              "object_description": { "type": ["string", "null"] },
+              "band_or_spectrum_ref": { "type": ["string", "null"] },
+              "constraint_or_condition": { "type": ["string", "null"] }
+            }
+          }
         }
       }
     },

@@ -1,0 +1,55 @@
+{
+  "artifact_type": "decision_few_shot_examples",
+  "schema_version": "1.0.0",
+  "examples_version": "1",
+  "extraction_type": "decision",
+  "verified": false,
+  "created_at": "1970-01-01T00:00:00+00:00",
+  "examples": [
+    {
+      "example_id": "phase-v-placeholder-approval",
+      "source_meeting_id": "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
+      "source_turn_ids": ["turn_001", "turn_002"],
+      "input_text": "Chair Smith: 'On the basis of the analysis package, I propose we approve the 7 GHz downlink protection criterion of -10.5 dB I/N at the 80th percentile. Any objections?' (no objections) 'Approved.'",
+      "expected_output": {
+        "decision_text": "Approved the 7 GHz downlink protection criterion of -10.5 dB I/N at the 80th percentile.",
+        "decision_outcome": "approval",
+        "regulatory_verb": "approved",
+        "speaker": "Chair Smith",
+        "confidence": 0.95
+      },
+      "verified": false,
+      "verified_by": null
+    },
+    {
+      "example_id": "phase-v-placeholder-deferral",
+      "source_meeting_id": "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
+      "source_turn_ids": ["turn_010"],
+      "input_text": "NTIA Lead: 'We're going to defer the decision on aggregate interference methodology until TWG-B reports back next session. Let's not vote on this today.'",
+      "expected_output": {
+        "decision_text": "Deferred the decision on aggregate interference methodology pending TWG-B report.",
+        "decision_outcome": "deferral",
+        "regulatory_verb": "deferred",
+        "speaker": "NTIA Lead",
+        "confidence": 0.9
+      },
+      "verified": false,
+      "verified_by": null
+    },
+    {
+      "example_id": "phase-v-placeholder-action-required",
+      "source_meeting_id": "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
+      "source_turn_ids": ["turn_020"],
+      "input_text": "Chair Smith: 'DoD is required to submit revised ERP values for the candidate uplink scenario by the next plenary. Owner is the AFSMO representative.'",
+      "expected_output": {
+        "decision_text": "DoD required to submit revised ERP values for the candidate uplink scenario by next plenary. Owner: AFSMO representative.",
+        "decision_outcome": "action_required",
+        "regulatory_verb": "required",
+        "speaker": "Chair Smith",
+        "confidence": 0.92
+      },
+      "verified": false,
+      "verified_by": null
+    }
+  ]
+}
