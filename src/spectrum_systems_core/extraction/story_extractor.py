@@ -42,8 +42,7 @@ PROMPT_TEMPLATE = """You are a story extraction assistant. Your job is to find
 potential stories in source text that could be used in speeches, reports, or
 strategic narratives.
 
-Analyze the following text chunk and extract ONE story candidate if a strong
-candidate exists. If no strong candidate exists, return null for story_found.
+Analyze the following text chunk and extract zero or more story candidates.
 
 Source ID: {source_id}
 Chunk ID: {chunk_id}
@@ -53,22 +52,27 @@ Page numbers: {page_numbers}
 Text:
 {chunk_text}
 
-Return ONLY valid JSON matching this exact structure. No preamble, no markdown.
+Return a JSON array of story objects. If there are no stories, return an
+empty array []. Always use array format even for a single story.
+Do not return multiple separate JSON objects — wrap all stories in a
+single array. No preamble, no markdown.
+
+Each story object must match this exact structure:
 
 {{
-  "story_found": true or false,
-  "source_excerpt": "verbatim quote from the text above, minimum 10 chars, or null",
-  "story_summary": "one sentence summary of the story, or null",
-  "possible_theme": "one phrase theme label, or null",
-  "tier_guess": "tier_1 or tier_2 or tier_3, or null",
-  "why_it_might_work": "one sentence on why this story resonates, or null",
+  "story_found": true,
+  "source_excerpt": "verbatim quote from the text above, minimum 10 chars",
+  "story_summary": "one sentence summary of the story",
+  "possible_theme": "one phrase theme label",
+  "tier_guess": "tier_1 or tier_2 or tier_3",
+  "why_it_might_work": "one sentence on why this story resonates",
   "risk_flags": ["list of risk strings, can be empty array"],
-  "source_turn_ids": ["array containing the Chunk ID above; required if story_found is true"]
+  "source_turn_ids": ["array containing the Chunk ID above"]
 }}
 
 Rules:
 - source_excerpt must be copied VERBATIM from the text above. Do not paraphrase.
-- If no story exists in this chunk, return story_found: false and null for all other fields.
+- If no story exists in this chunk, return an empty array [].
 - tier_1 = has a clear human moment, stakes, and narrative tension.
 - tier_2 = interesting but needs development.
 - tier_3 = background/context only.
@@ -83,7 +87,7 @@ ID in the source_turn_ids array of the extracted item.
 
 Rules:
 - If you cannot identify which chunks support an item: DO NOT include
-  that item. Omit it entirely (set story_found: false).
+  that item. Omit it entirely from the array.
 - Never invent or guess chunk IDs.
 - A single item may cite multiple chunk_ids if it spans multiple turns.
 - source_turn_ids must contain at least one valid chunk_id.
@@ -108,6 +112,55 @@ def _execution_fingerprint(chunk_id: str, source_excerpt: str) -> str:
 
 def _failure(reason: str) -> Dict[str, Any]:
     return {"status": "failure", "candidates": [], "reason": reason}
+
+
+def _parse_story_response(raw: str) -> List[Dict[str, Any]]:
+    """Parse a story extraction response that may arrive in three shapes.
+
+    Format A — JSON array (correct):
+        [{"story_found": true, ...}, {"story_found": true, ...}]
+
+    Format B — single JSON object (one story, no array):
+        {"story_found": true, ...}
+
+    Format C — concatenated JSON objects (NDJSON-style, no separator):
+        {"story_found": true, ...}
+        {"story_found": true, ...}
+
+    Returns a list of parsed JSON values in all cases. Raises
+    ``json.JSONDecodeError`` if none of the formats yield any value.
+    """
+    stripped = raw.strip()
+
+    if stripped.startswith("["):
+        return json.loads(stripped)
+
+    if stripped.startswith("{"):
+        try:
+            obj = json.loads(stripped)
+            return [obj]
+        except json.JSONDecodeError:
+            pass
+
+        results: List[Dict[str, Any]] = []
+        decoder = json.JSONDecoder()
+        pos = 0
+        while pos < len(stripped):
+            stripped_from_pos = stripped[pos:].lstrip()
+            if not stripped_from_pos:
+                break
+            pos += len(stripped[pos:]) - len(stripped_from_pos)
+            try:
+                obj, end_pos = decoder.raw_decode(stripped, pos)
+            except json.JSONDecodeError:
+                break
+            results.append(obj)
+            pos = end_pos
+
+        if results:
+            return results
+
+    raise json.JSONDecodeError("Unrecognized story response format", stripped, 0)
 
 
 def _make_blocked_skeleton(
@@ -271,7 +324,7 @@ class StoryExtractor:
                 continue
 
             try:
-                parsed = json.loads(stripped)
+                parsed_list = _parse_story_response(stripped)
             except (TypeError, json.JSONDecodeError) as exc:
                 emit_story_parse_failed(
                     counters,
@@ -290,12 +343,12 @@ class StoryExtractor:
                 )
                 continue
 
-            if not isinstance(parsed, dict):
+            if not isinstance(parsed_list, list):
                 emit_story_parse_failed(
                     counters,
                     chunk_id=chunk_id_str,
                     source_id=source_id,
-                    detail="response was not a JSON object",
+                    detail="response was not a JSON array",
                     sdl_root=failure_sdl_root,
                 )
                 all_records.append(
@@ -303,67 +356,80 @@ class StoryExtractor:
                         chunk,
                         source_id=source_id,
                         source_family=source_family,
-                        block_reason="json_parse_error: response was not a JSON object",
+                        block_reason="json_parse_error: response was not a JSON array",
                     )
                 )
                 continue
 
-            if not parsed.get("story_found"):
-                # No story in this chunk — skip silently. Not an error.
-                continue
-
-            raw_turn_ids = parsed.get("source_turn_ids")
-            if not isinstance(raw_turn_ids, list) or not raw_turn_ids:
-                _LOG.warning(
-                    "extraction_missing_source_turns: story_candidate omitted "
-                    "(chunk_id=%s)",
-                    chunk.get("chunk_id"),
-                )
-                continue
-            turn_ids = [str(t) for t in raw_turn_ids if isinstance(t, str)]
-            if not turn_ids:
-                _LOG.warning(
-                    "extraction_missing_source_turns: story_candidate omitted "
-                    "(chunk_id=%s)",
-                    chunk.get("chunk_id"),
-                )
-                continue
-            invalid_turn_ids = [t for t in turn_ids if t not in valid_chunk_ids]
-            if invalid_turn_ids:
-                for bad in invalid_turn_ids:
+            chunk_produced_candidate = False
+            for parsed in parsed_list:
+                if not isinstance(parsed, dict):
                     _LOG.warning(
-                        "extraction_invalid_source_turns: %s not in chunks", bad
+                        "story_missing_required_fields: item is not a JSON "
+                        "object (chunk_id=%s)",
+                        chunk.get("chunk_id"),
                     )
-                source_turn_validation = "invalid"
-            else:
-                source_turn_validation = "verified"
+                    continue
 
-            candidate = self._assemble_candidate(
-                parsed,
-                chunk,
-                source_id=source_id,
-                source_family=source_family,
-                source_turn_ids=turn_ids,
-                source_turn_validation=source_turn_validation,
-            )
+                if not parsed.get("story_found"):
+                    # No story in this item — skip silently. Not an error.
+                    continue
 
-            try:
-                validator.validate(candidate)
-            except jsonschema.ValidationError as exc:
-                blocked = _make_blocked_skeleton(
+                raw_turn_ids = parsed.get("source_turn_ids")
+                if not isinstance(raw_turn_ids, list) or not raw_turn_ids:
+                    _LOG.warning(
+                        "story_missing_required_fields: source_turn_ids missing "
+                        "(chunk_id=%s)",
+                        chunk.get("chunk_id"),
+                    )
+                    continue
+                turn_ids = [str(t) for t in raw_turn_ids if isinstance(t, str)]
+                if not turn_ids:
+                    _LOG.warning(
+                        "story_missing_required_fields: source_turn_ids empty "
+                        "(chunk_id=%s)",
+                        chunk.get("chunk_id"),
+                    )
+                    continue
+                invalid_turn_ids = [t for t in turn_ids if t not in valid_chunk_ids]
+                if invalid_turn_ids:
+                    for bad in invalid_turn_ids:
+                        _LOG.warning(
+                            "extraction_invalid_source_turns: %s not in chunks", bad
+                        )
+                    source_turn_validation = "invalid"
+                else:
+                    source_turn_validation = "verified"
+
+                candidate = self._assemble_candidate(
+                    parsed,
                     chunk,
                     source_id=source_id,
                     source_family=source_family,
-                    block_reason=f"schema_violation: {exc.message}",
+                    source_turn_ids=turn_ids,
+                    source_turn_validation=source_turn_validation,
                 )
-                # Preserve raw fields so a human can debug what the model said.
-                blocked["raw_extraction"] = parsed
-                all_records.append(blocked)
-                continue
 
-            all_records.append(candidate)
-            ok_candidates.append(candidate)
-            counters.record_success(1)
+                try:
+                    validator.validate(candidate)
+                except jsonschema.ValidationError as exc:
+                    blocked = _make_blocked_skeleton(
+                        chunk,
+                        source_id=source_id,
+                        source_family=source_family,
+                        block_reason=f"schema_violation: {exc.message}",
+                    )
+                    # Preserve raw fields so a human can debug what the model said.
+                    blocked["raw_extraction"] = parsed
+                    all_records.append(blocked)
+                    continue
+
+                all_records.append(candidate)
+                ok_candidates.append(candidate)
+                chunk_produced_candidate = True
+
+            if chunk_produced_candidate:
+                counters.record_success(1)
 
         # Always overwrite (FINDING from RT2: appending produces duplicates).
         out_path = processed_dir / "stories" / "candidates.jsonl"
