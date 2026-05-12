@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/raw_api_response_log.schema.json",
+  "title": "raw_api_response_log",
+  "description": "Phase O.1 debug artifact: one row per model call when RAW_RESPONSE_LOG_ENABLED=true. Captures the raw model response (truncated) before any parsing, so a future debugger can tell empty / fenced / refusal / truncated apart from valid JSON.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "chunk_id",
+    "source_id",
+    "model",
+    "call_type",
+    "response_type",
+    "raw_response_chars",
+    "raw_response_preview",
+    "logged_at"
+  ],
+  "properties": {
+    "artifact_type": { "const": "raw_api_response_log" },
+    "schema_version": { "const": "1.0.0" },
+    "chunk_id": { "type": "string" },
+    "source_id": { "type": "string" },
+    "model": { "type": "string" },
+    "call_type": {
+      "type": "string",
+      "enum": [
+        "extraction",
+        "story",
+        "two_stage_stage1",
+        "two_stage_stage2",
+        "classifier",
+        "other"
+      ]
+    },
+    "response_type": {
+      "type": "string",
+      "enum": [
+        "empty",
+        "fence_only",
+        "valid_json",
+        "malformed_json",
+        "refusal",
+        "truncated"
+      ]
+    },
+    "raw_response_chars": { "type": "integer", "minimum": 0 },
+    "raw_response_preview": { "type": "string" },
+    "logged_at": { "type": "string" }
+  }
+}

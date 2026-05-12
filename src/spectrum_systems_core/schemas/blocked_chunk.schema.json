@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/blocked_chunk.schema.json",
+  "title": "blocked_chunk",
+  "description": "Phase O.2 unified blocked-chunk envelope. Carries chunk text + metadata so a human reviewer can see why a chunk was blocked without re-joining chunks.jsonl. Emitted alongside the existing typed failure artifacts (api_rate_limit_exhausted / extraction_empty_response / typed_extraction_llm_json_parse_failed / typed_extraction_empty_result).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "failure_id",
+    "chunk_id",
+    "source_id",
+    "block_reason",
+    "chunk_text",
+    "chunk_char_count",
+    "component",
+    "created_at"
+  ],
+  "properties": {
+    "artifact_type": { "const": "blocked_chunk" },
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0", "2.0.0"]
+    },
+    "failure_id": { "type": "string", "minLength": 1 },
+    "chunk_id": { "type": "string" },
+    "source_id": { "type": "string" },
+    "block_reason": {
+      "type": "string",
+      "enum": [
+        "rate_limit_exhausted",
+        "empty_response",
+        "parse_error",
+        "other"
+      ]
+    },
+    "chunk_text": { "type": "string" },
+    "chunk_char_count": { "type": ["integer", "null"], "minimum": 0 },
+    "chunk_speaker": { "type": ["string", "null"] },
+    "chunk_index": { "type": ["integer", "null"], "minimum": 0 },
+    "extraction_model": { "type": "string" },
+    "extraction_run_id": { "type": "string" },
+    "component": { "type": "string" },
+    "detail": { "type": "string" },
+    "created_at": { "type": "string" }
+  }
+}

@@ -52,8 +52,14 @@ from .regression_gate import RegressionGate
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION_SUMMARY = "1.1.0"
+SCHEMA_VERSION_SUMMARY = "2.0.0"
 PRODUCED_BY_SUMMARY = "EvalRunner"
+
+# Phase O.4: minimum distinct source_ids required to expose
+# per_source_metrics. With a single source the rollup would just
+# duplicate aggregate_coverage / aggregate_precision and add no
+# debugging signal.
+_PER_SOURCE_METRICS_MIN_SOURCES: int = 2
 
 
 def _now_iso() -> str:
@@ -192,10 +198,16 @@ class EvalRunner:
             }
 
         eval_results: List[Dict[str, Any]] = []
+        # Phase O.4: keep the (pair, eval_result) alignment so the
+        # summary can carry source_id / ground_truth_text provenance.
+        # _evaluate_pair returns None on schema-invalid eval_result; the
+        # paired entry is skipped here too.
+        evaluated_pairs: List[Dict[str, Any]] = []
         for pair in confirmed:
             er = self._evaluate_pair(pair)
             if er is not None:
                 eval_results.append(er)
+                evaluated_pairs.append(pair)
 
         run_count = self._bump_run_count()
         summary = self._build_summary(
@@ -206,6 +218,7 @@ class EvalRunner:
             ),
             partial_run_warning=partial_warning,
             partial_run_detail=partial_detail,
+            evaluated_pairs=evaluated_pairs,
         )
 
         # Load the baseline FIRST so the gate sees per-pair records
@@ -510,6 +523,7 @@ class EvalRunner:
         is_baseline: bool,
         partial_run_warning: bool = False,
         partial_run_detail: Optional[Dict[str, Any]] = None,
+        evaluated_pairs: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         n = len(eval_results)
         aggregate_coverage = (
@@ -553,6 +567,17 @@ class EvalRunner:
                 "pairs_count": cnt,
             }
 
+        # Phase O.4: pair_breakdown + per_source_metrics provenance.
+        # Pairs lacking a source_id field on the ground_truth_pair
+        # record emit ``eval_pair_missing_source_id`` (info severity)
+        # via ``_emit_missing_source_id_findings`` so a low-coverage
+        # run cannot quietly hide unprovenanced pairs.
+        pair_breakdown = self._build_pair_breakdown(
+            eval_results, evaluated_pairs or []
+        )
+        per_source_metrics = self._compute_per_source_metrics(pair_breakdown)
+        self._emit_missing_source_id_findings(pair_breakdown)
+
         return {
             "eval_summary_id": str(uuid.uuid4()),
             "pipeline_run_id": self.pipeline_run_id,
@@ -576,8 +601,150 @@ class EvalRunner:
             "regression_detail": [],
             "partial_run_warning": bool(partial_run_warning),
             "partial_run_detail": partial_run_detail,
+            "pair_breakdown": pair_breakdown,
+            "per_source_metrics": per_source_metrics,
             "provenance": {"produced_by": PRODUCED_BY_SUMMARY},
         }
+
+    # -- Phase O.4 pair_breakdown / per_source_metrics ---------------------
+
+    def _build_pair_breakdown(
+        self,
+        eval_results: List[Dict[str, Any]],
+        evaluated_pairs: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """One entry per (pair, eval_result). Pairs without a resolvable
+        source_id store ``source_id: None`` so the missing-provenance
+        signal stays visible in the artifact (and triggers an
+        ``eval_pair_missing_source_id`` info finding via
+        ``_emit_missing_source_id_findings``)."""
+        out: List[Dict[str, Any]] = []
+        for er, pair in zip(eval_results, evaluated_pairs):
+            pair_id = (
+                er.get("pair_id")
+                or (pair.get("pair_id") if isinstance(pair, dict) else "")
+                or ""
+            )
+            source_id = self._resolve_pair_source_id(pair) or None
+            agenda_item_id = (
+                pair.get("agenda_item_id")
+                if isinstance(pair, dict) and isinstance(pair.get("agenda_item_id"), str)
+                else None
+            )
+            ground_truth_text = ""
+            if isinstance(pair, dict):
+                gt = (
+                    pair.get("ground_truth_text")
+                    or pair.get("fixture_minutes_text")
+                    or ""
+                )
+                if isinstance(gt, str):
+                    ground_truth_text = gt[:500]
+            coverage = _safe_float(er.get("coverage"))
+            matched = coverage > 0.0
+            out.append(
+                {
+                    "pair_id": pair_id,
+                    "source_id": source_id,
+                    "agenda_item_id": agenda_item_id,
+                    "ground_truth_text": ground_truth_text,
+                    "matched": matched,
+                    "match_score": float(max(0.0, min(1.0, coverage))),
+                    "status": "matched" if matched else "unmatched",
+                }
+            )
+        return out
+
+    def _compute_per_source_metrics(
+        self,
+        pair_breakdown: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Dict[str, Any]]]:
+        """Aggregate match_score / coverage per source_id.
+
+        Suppressed (returns ``None``) when fewer than
+        ``_PER_SOURCE_METRICS_MIN_SOURCES`` distinct source_ids are
+        present so the rollup never duplicates the aggregate numbers.
+        """
+        buckets: Dict[str, Dict[str, float]] = {}
+        for entry in pair_breakdown:
+            sid = entry.get("source_id")
+            if not isinstance(sid, str) or not sid:
+                continue
+            b = buckets.setdefault(
+                sid,
+                {"pairs": 0, "matched": 0, "coverage_sum": 0.0, "precision_sum": 0.0},
+            )
+            b["pairs"] += 1
+            if entry.get("matched"):
+                b["matched"] += 1
+            b["coverage_sum"] += float(entry.get("match_score") or 0.0)
+            # Precision is per-eval_result; we approximate it via the
+            # match_score on the pair (precision == coverage when no
+            # extracted-side data is exposed at the pair level). The
+            # diff tool reads coverage primarily.
+            b["precision_sum"] += float(entry.get("match_score") or 0.0)
+        if len(buckets) < _PER_SOURCE_METRICS_MIN_SOURCES:
+            return None
+        out: Dict[str, Dict[str, Any]] = {}
+        for sid, b in buckets.items():
+            pairs = int(b["pairs"])
+            matched = int(b["matched"])
+            cov = b["coverage_sum"] / pairs if pairs > 0 else 0.0
+            prec = b["precision_sum"] / pairs if pairs > 0 else 0.0
+            out[sid] = {
+                "pairs": pairs,
+                "matched": matched,
+                "coverage": float(max(0.0, min(1.0, cov))),
+                "precision": float(max(0.0, min(1.0, prec))),
+            }
+        return out
+
+    def _emit_missing_source_id_findings(
+        self,
+        pair_breakdown: List[Dict[str, Any]],
+    ) -> None:
+        if self.sdl_root is None:
+            return
+        missing = [
+            entry for entry in pair_breakdown
+            if not entry.get("source_id")
+        ]
+        if not missing:
+            return
+        try:
+            from ...health.finding import HealthFinding, write_finding
+        except ImportError:
+            return
+        # The HealthFinding write site needs ``<data_lake>/`` (i.e. the
+        # repo root above ``store/``). ``self.sdl_root`` already points
+        # into ``store/artifacts``; back out to the data-lake root.
+        try:
+            data_lake_root = self.sdl_root.parent.parent
+        except (OSError, AttributeError):
+            return
+        for entry in missing:
+            try:
+                write_finding(
+                    HealthFinding(
+                        finding_code="eval_pair_missing_source_id",
+                        severity="info",
+                        pipeline_run_id=self.pipeline_run_id,
+                        context={
+                            "pair_id": str(entry.get("pair_id") or ""),
+                            "agenda_item_id": entry.get("agenda_item_id"),
+                        },
+                        remediation=(
+                            "Add a ``source_id`` (or ``fixture_source_id``) "
+                            "field to the ground_truth_pair record so the "
+                            "per_source_metrics rollup can include this pair."
+                        ),
+                    ),
+                    data_lake_path=data_lake_root,
+                )
+            except Exception as exc:  # never propagate
+                logger.warning(
+                    "eval_pair_missing_source_id_write_failed: %s", exc,
+                )
 
     # -- partial-run detection (Phase O.4) ---------------------------------
 

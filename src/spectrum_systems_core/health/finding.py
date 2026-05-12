@@ -42,6 +42,20 @@ ALL_FINDING_CODES: frozenset[str] = frozenset(
         # meeting_extraction artifact is missing the ``confidence`` field
         # on a decision or claim.
         "confidence_field_missing",
+        # Phase O.2: emitted by ``blocked_chunk_text_check`` when a
+        # legacy blocked_chunk artifact (v1.0.0) lacks chunk_text.
+        # Informational only -- the scanner reports, it does not
+        # force a migration.
+        "blocked_artifact_missing_chunk_text",
+        # Phase O.4: emitted by the eval runner when a ground_truth
+        # pair lacks a source_id field. Informational; the eval still
+        # produces a summary without per_source_metrics for that pair.
+        "eval_pair_missing_source_id",
+        # Phase O.5: emitted by the pipeline run diff tool when one
+        # of the requested pipeline_run_summary artifacts is absent.
+        # Used to halt the diff with a clear error rather than report
+        # bogus zero-deltas.
+        "pipeline_run_summary_missing",
     }
 )
 

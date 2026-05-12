@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/pipeline_run_diff.schema.json",
+  "title": "pipeline_run_diff",
+  "description": "Phase O.5: structured diff between two pipeline_run_summary artifacts. Computed by spectrum_systems_core.health.run_diff and surfaced via the diff-pipeline-runs.yml workflow.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "run_a_id",
+    "run_b_id",
+    "per_transcript_diff",
+    "totals_diff",
+    "block_reason_diff",
+    "new_findings_in_b",
+    "resolved_findings_in_b"
+  ],
+  "properties": {
+    "artifact_type": { "const": "pipeline_run_diff" },
+    "schema_version": { "const": "1.0.0" },
+    "run_a_id": { "type": "string", "minLength": 1 },
+    "run_b_id": { "type": "string", "minLength": 1 },
+    "run_a_timestamp": { "type": ["string", "null"] },
+    "run_b_timestamp": { "type": ["string", "null"] },
+    "per_transcript_diff": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source_id",
+          "chunks_attempted_delta",
+          "chunks_blocked_delta",
+          "stage_status_a",
+          "stage_status_b",
+          "stage_improved"
+        ],
+        "properties": {
+          "source_id": { "type": "string" },
+          "chunks_attempted_delta": { "type": "integer" },
+          "chunks_blocked_delta": { "type": "integer" },
+          "stage_status_a": { "type": ["string", "null"] },
+          "stage_status_b": { "type": ["string", "null"] },
+          "stage_improved": { "type": "boolean" },
+          "present_in_a": { "type": "boolean" },
+          "present_in_b": { "type": "boolean" }
+        }
+      }
+    },
+    "totals_diff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chunks_attempted_delta",
+        "chunks_blocked_delta",
+        "blocked_rate_a",
+        "blocked_rate_b"
+      ],
+      "properties": {
+        "chunks_attempted_delta": { "type": "integer" },
+        "chunks_blocked_delta": { "type": "integer" },
+        "blocked_rate_a": { "type": "number", "minimum": 0.0 },
+        "blocked_rate_b": { "type": "number", "minimum": 0.0 },
+        "blocked_rate_delta": { "type": "number" }
+      }
+    },
+    "block_reason_diff": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["run_a", "run_b", "delta"],
+        "properties": {
+          "run_a": { "type": "integer", "minimum": 0 },
+          "run_b": { "type": "integer", "minimum": 0 },
+          "delta": { "type": "integer" }
+        }
+      }
+    },
+    "new_findings_in_b": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "resolved_findings_in_b": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "eval_diff": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "coverage_a": { "type": ["number", "null"] },
+        "coverage_b": { "type": ["number", "null"] },
+        "coverage_delta": { "type": ["number", "null"] },
+        "precision_a": { "type": ["number", "null"] },
+        "precision_b": { "type": ["number", "null"] },
+        "precision_delta": { "type": ["number", "null"] }
+      }
+    }
+  }
+}

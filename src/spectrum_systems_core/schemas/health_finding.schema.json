@@ -34,7 +34,10 @@
         "model_registry_drift",
         "artifact_not_indexed",
         "no_prior_orchestration_artifact",
-        "confidence_field_missing"
+        "confidence_field_missing",
+        "blocked_artifact_missing_chunk_text",
+        "eval_pair_missing_source_id",
+        "pipeline_run_summary_missing"
       ]
     },
     "severity": { "enum": ["halt", "warn", "info"] },
