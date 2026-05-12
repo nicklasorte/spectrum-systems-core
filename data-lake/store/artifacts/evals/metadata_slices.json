@@ -1,0 +1,21 @@
+{
+  "artifact_type": "metadata_slices",
+  "schema_version": "1.0.0",
+  "description": "Phase X2 — slice definitions used by the eval rollup and the validate-and-baseline workflow. Each slice declares a predicate that, when applied to a source_record / orchestration_result / eval pair, decides slice membership. The agenda_detection slice is a catch-all so transcripts whose .docx has no detectable agenda headers do not gap the membership check.",
+  "slices": [
+    {
+      "slice_id": "agenda_detection:unclassified",
+      "description": "Transcripts where heuristic_agenda_detector found zero headers; every chunk has agenda_item_id == 'unclassified'.",
+      "predicate_field": "agenda_detection_status",
+      "predicate_value": "unclassified",
+      "severity": "info"
+    },
+    {
+      "slice_id": "agenda_detection:detected",
+      "description": "Transcripts with at least one detected agenda item.",
+      "predicate_field": "agenda_detection_status",
+      "predicate_value": "detected",
+      "severity": "info"
+    }
+  ]
+}

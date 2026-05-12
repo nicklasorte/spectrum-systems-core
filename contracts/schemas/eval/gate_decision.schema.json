@@ -52,6 +52,16 @@
       "properties": {
         "produced_by": { "const": "RegressionGate" }
       }
+    },
+    "baseline_type": {
+      "type": ["string", "null"],
+      "enum": ["development", "production", null],
+      "description": "Phase X2.4 / X2.7: 'development' when the baseline was set on a single transcript; 'production' when set on the full corpus. Null when no baseline is installed."
+    },
+    "baseline_scope": {
+      "type": ["string", "null"],
+      "enum": ["single_transcript", "full_corpus", null],
+      "description": "Phase X2.4: mirrors the eval_summary.baseline_scope on the installed baseline for at-a-glance diagnosis."
     }
   }
 }

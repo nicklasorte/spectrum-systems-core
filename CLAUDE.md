@@ -382,6 +382,254 @@ glossary directory still gets a working extraction run with
   in `ALL_FINDING_CODES`; not raised by the current runner because
   the field is always populated on writes since Phase W.
 
+## Phase X2 — closing the 10 research recommendations
+
+Phase X2 is the keystone phase that turns the eval infrastructure from
+"measuring but not gating" into "measuring AND gating", plus the
+remaining seams (agenda boundaries, few-shot verification, LLM judge,
+rubric annotation, HITL review, validate-and-baseline workflow). The
+work is in seven small modules; each is independently rollback-able.
+
+### X2.1 — Heuristic agenda boundary detector
+
+Module: `src/spectrum_systems_core/extraction/heuristic_agenda_detector.py`.
+Pure-regex deterministic detector — makes ZERO model calls. Distinct
+from `src/spectrum_systems_core/agenda/agenda_detector.py`, which is
+the LLM-based predecessor "Phase W" detector and is unrelated.
+
+- Detection rules (priority order): explicit prefix markers
+  (`agenda item`, `discussion:`, `topic:`), numbered formats
+  (`1. Title` / `2) Title`), all-caps headers ≤ 60 chars whose NEXT
+  non-blank line looks like a speaker turn.
+- When zero headers detected, callers MUST assign
+  `agenda_item_id = "unclassified"` to every chunk via
+  `assign_agenda_item_ids`. `agenda_item_id` is ALWAYS a non-empty
+  string after this function returns — NEVER None — per the Phase X2
+  amendment that prevents the slice-membership gap.
+- Rollback: `AGENDA_DETECTION_ENABLED=false` makes
+  `detect_agenda_items` return `[]` even on a transcript with valid
+  headers, so the caller falls back to `"unclassified"`.
+- Wiring scope: X2 SHIPS the module and the
+  `data-lake/store/artifacts/evals/metadata_slices.json` predicate
+  file. Live-pipeline integration (calling the detector from
+  `extraction/chunker.py` and writing `agenda_items` to
+  `source_record.json`) is intentionally NOT wired in this phase
+  because it would touch the chunker contract; a follow-up phase
+  performs the integration. The detector is callable from operator
+  scripts in the meantime.
+
+### X2.2 — Few-shot example selection + verification (human-only)
+
+Scripts:
+
+- `scripts/select_few_shot_examples.py` — reads the most recent
+  `meeting_extraction` artifact for a `--source-id`, selects one
+  candidate decision per outcome bucket (approval / deferral /
+  action_required), writes them to
+  `data-lake/store/artifacts/evals/few_shot/decision_examples_v1.json`
+  with `verified: false`. Also writes a `REVIEW_CHECKLIST.md` next
+  to the artifact so a human reviewer has a file-on-disk record of
+  what to inspect.
+- `scripts/verify_example.py` — sets `verified: true` on a single
+  example after a human review. Refuses to run with
+  `ANTHROPIC_API_KEY` set in the environment (unless `--force`) so
+  no LLM agent can self-verify its own examples.
+
+The `decision_examples_v1.json` schema gained optional `verified_at`,
+`selected_at`, `selection_reason`, and an artifact-level `audit_log`
+array that records every `selected` / `verified` / `force-verified`
+action.
+
+Reviewer policy: the reviewer MUST be a different person from the
+operator who ran the extraction. The system stores `reviewer_id` on
+the audit_log entry but cannot enforce identity uniqueness; the
+policy is the enforcement.
+
+### X2.3 — LLM-as-judge (qualitative eval layer)
+
+Modules: `src/spectrum_systems_core/evals/judge.py`,
+`src/spectrum_systems_core/evals/judge_calibration.py`.
+
+- 4 atomic boolean rubric checks per decision:
+  `decision_text_supported_by_source`,
+  `decision_outcome_matches_regulatory_verb`,
+  `speaker_attribution_correct`,
+  `no_hallucinated_constraints_or_actors`.
+- `JUDGE_ENABLED=false` (default) makes `run_judge` perform ZERO
+  model calls; `aggregate_pass_rate` is `None`.
+- `JUDGE_MODEL` defaults to `claude-sonnet-4-6` so the judge family
+  differs from the extraction Haiku family. When the families match,
+  a `judge_same_family` warn finding is emitted.
+- `JUDGE_STABILITY_CHECK_ENABLED=true` re-runs the judge per item;
+  verdict mismatches emit `judge_score_unstable` (warn).
+- Calibration thresholds: agreement ≥ 0.70 → `ok`; 0.60–0.70 → warn
+  (`judge_calibration_low`); <0.60 → halt (`judge_calibration_failed`).
+- `agreement_rate_verb_discrimination` is computed only over GT
+  pairs with `rubric_notes.verb_discrimination_example == true`;
+  None when no such pairs exist.
+
+### X2.4 — eval-ground-truth `--specific-source-id` + baseline_scope
+
+CLI: `eval-ground-truth --specific-source-id <id> [--set-baseline]`.
+
+- Filters ground_truth pairs to those whose resolved source_id
+  matches the filter (`fixture_source_id` first, then
+  `source_record.payload.source_id`).
+- `eval_summary.baseline_scope` is set to `"single_transcript"` when
+  the run installs a baseline AND `--specific-source-id` is provided;
+  otherwise `"full_corpus"` on the baseline, `None` on non-baseline
+  summaries.
+- `gate_decision.baseline_type` mirrors as `"development"` /
+  `"production"` for at-a-glance diagnosis.
+- A `baseline_set` info finding is emitted on every successful
+  `--set-baseline` run with `{coverage, precision, f1,
+  baseline_scope, pairs_count, eval_summary_id}` in `context`.
+- When `--specific-source-id` is provided AND `--set-baseline` is
+  used AND the last `orchestration_result` for the source has
+  `stage_status="failed"`, the runner refuses with
+  `baseline_requires_successful_run` (halt) and exit_code=1; no
+  eval_summary is written.
+
+Two-baseline model: the single-transcript baseline is the
+**development** baseline, useful for gating but not production-grade
+regression detection. The **production** baseline is set after all
+13 transcripts run with `--set-baseline` (no `--specific-source-id`).
+
+### X2.5 — Regulatory verb rubric annotation
+
+Schema: `contracts/schemas/ingestion/ground_truth_pair.schema.json`
+gained optional `rubric_notes`, `target_type`, `decision_id`, and
+`ground_truth_pass`. Existing pairs without `rubric_notes` continue
+to validate (schema_version stays `1.0.0`; the new properties are
+optional and `additionalProperties` was already false).
+
+Script: `scripts/annotate_rubric.py`.
+
+- `--apply-from <annotations.json>` non-interactively applies a
+  precomputed annotations file (the path used by tests and CI).
+- Default invocation prints candidate pair_ids + ground_truth_text
+  excerpts for an operator to author the annotations file.
+
+Judge calibration reads `rubric_notes.verb_discrimination_example`
+to compute `agreement_rate_verb_discrimination` separately from
+`agreement_rate_overall`; the per-rubric metric is the one that
+directly validates Rec 9 ("approved ≠ considered ≠ deferred").
+
+### X2.6 — Minimum-viable HITL review workflow
+
+Schema: `src/spectrum_systems_core/schemas/human_review_artifact.schema.json`.
+
+Script: `scripts/submit_review.py`.
+
+- Looks up the `correction_candidate` by id, writes a
+  `human_review_artifact` to
+  `<data-lake>/store/artifacts/human_reviews/<source_id>/`, and
+  updates `correction_candidate.review_status` to `reviewed` (or
+  `reviewed_after_expiry` when the candidate's `expires_at` is in
+  the past). Both review states are durable; the after-expiry
+  branch is preserved for audit.
+- `correction_candidate.schema.json` gained `review_status` and
+  `review_artifact_id` (both optional).
+- `orchestration_result.schema.json` gained
+  `correction_candidates_pending` and
+  `correction_candidates_reviewed` counters (both optional).
+- `human_review_artifact_missing` (info) is reserved in
+  `ALL_FINDING_CODES` for a future preflight scanner; not currently
+  emitted because the candidate-level state is for operator triage,
+  not the blocking gate.
+
+Reviewer policy (same as X2.2): the reviewer must be a different
+person from the operator who ran the extraction. The artifact
+stores `reviewer_id`; identity uniqueness is not enforced
+technically.
+
+### X2.7 — validate-and-baseline GitHub Actions workflow
+
+Workflow: `.github/workflows/validate-and-baseline.yml`.
+
+- Triggers: push to main touching extraction / glossary / evals /
+  agenda code, OR explicit workflow_dispatch with an optional
+  `source_id` input (default: the Dec 18 kickoff transcript).
+- Two jobs: `early-exit-check` (guard) and `validate-and-baseline`
+  (the work). The work job depends on the guard.
+- **Two-layer loop prevention**:
+  1. The baseline commit message contains `[skip ci]` (GitHub's
+     standard guard).
+  2. The commit also contains `[baseline-commit]`, which the
+     `early-exit-check` job inspects defensively in case GitHub's
+     skip-ci behavior changes.
+  3. The repository variable `SKIP_BASELINE_WORKFLOW=true` mutes
+     the workflow without editing the YAML.
+- Verifies 5 Phase W wiring signals before `--set-baseline` is
+  called: `agenda_item_id_nonnull`,
+  `few_shot_present_with_verified`,
+  `glossary_terms_injected_present`, `binding_taxonomy_present`,
+  `generalization_check_ran`. If ANY signal is missing the verify
+  step exits 1 and the baseline step never runs (the workflow's
+  default behavior aborts on the first failure).
+
+### Operator env vars introduced by Phase X2
+
+- `AGENDA_DETECTION_ENABLED=true` (default) — heuristic agenda
+  detector returns the detected items. Set to `false` to roll back
+  to pre-Phase-X2 behavior (every chunk gets `unclassified`).
+- `JUDGE_ENABLED=false` (default) — the LLM-as-judge module makes
+  zero model calls. Set to `true` to run the judge and emit
+  `judge_score` artifacts.
+- `JUDGE_MODEL=claude-sonnet-4-6` (default) — judge model id.
+  Choose a model from a different family than the extraction
+  model to keep the verdict independent.
+- `JUDGE_STABILITY_CHECK_ENABLED=false` (default) — re-run the
+  judge per item and emit `judge_score_unstable` on mismatches.
+- `SKIP_BASELINE_WORKFLOW=true` (repository variable; default
+  unset) — mute the validate-and-baseline workflow without
+  editing the YAML.
+
+### Findings introduced by Phase X2
+
+- `agenda_detection_failed` (info) — emitted when callers wire
+  the heuristic detector and detection found zero items.
+- `judge_calibration_low` (warn) — agreement in 0.60–0.70 band.
+- `judge_calibration_failed` (halt) — agreement < 0.60; gate
+  refuses `--set-baseline` until the judge prompt is fixed.
+- `judge_same_family` (warn) — judge model family matches the
+  extraction model family.
+- `judge_score_unstable` (warn) — per-item verdict differs across
+  re-runs when `JUDGE_STABILITY_CHECK_ENABLED=true`.
+- `baseline_set` (info) — `--set-baseline` succeeded; context
+  carries coverage / precision / f1 / baseline_scope / pairs_count.
+- `baseline_requires_successful_run` (halt) — `--set-baseline`
+  refused because the last `orchestration_result` for the source
+  had `stage_status="failed"`.
+- `human_review_artifact_missing` (info) — reserved for a future
+  preflight scan; not currently emitted by the runner.
+
+### Post-merge human-only steps
+
+After this PR lands the operator runs, in order:
+
+1. `python scripts/select_few_shot_examples.py
+     --source-id <dec18-source-id> --data-lake data-lake/`
+   then review each candidate and run
+   `python scripts/verify_example.py
+     --example-id <uuid> --reviewer-id <your-name>
+     --data-lake data-lake/`
+2. `python scripts/annotate_rubric.py
+     --source-id <dec18-source-id> --data-lake data-lake/
+     --limit 20` then author the annotations file and re-run with
+   `--apply-from annotations.json`.
+3. Push any code change to trigger the validate-and-baseline
+   workflow, OR run it via workflow_dispatch.
+4. Confirm the step-summary shows 5 green signals and the
+   `baseline_set` finding has been emitted with non-zero
+   `pairs_count`.
+
+These steps cannot be automated because each requires a human
+judgment: the few-shot review is an extraction-correctness check,
+the rubric annotation is a ground-truth labeling decision, and the
+operator running steps 3 + 4 needs to confirm the baseline matches
+expectations before promoting to production.
+
 ## Files worth reading before non-trivial changes
 
 - `docs/architecture/system_constitution.md` — binding; precedence over everything else.

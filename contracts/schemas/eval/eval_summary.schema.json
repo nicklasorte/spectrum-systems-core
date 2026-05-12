@@ -159,6 +159,11 @@
       "type": "number", "minimum": 0.0, "maximum": 1.0,
       "description": "Phase T.2: fraction of extracted items with grounding_verified=false across this run."
     },
+    "baseline_scope": {
+      "type": ["string", "null"],
+      "enum": ["single_transcript", "full_corpus", null],
+      "description": "Phase X2.4: tag on the eval_summary recording whether the baseline (if this summary is one) covers a single transcript or the full corpus. Null on non-baseline summaries."
+    },
     "grounding_overlap_p10": {
       "type": "number", "minimum": 0.0, "maximum": 1.0,
       "description": "Phase T.2: 10th percentile of grounding_overlap_score across extracted items."

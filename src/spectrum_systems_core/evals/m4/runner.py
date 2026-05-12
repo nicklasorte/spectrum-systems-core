@@ -142,6 +142,7 @@ class EvalRunner:
         pair_id_filter: Optional[str] = None,
         set_baseline: bool = False,
         is_dry_run: bool = False,
+        source_id_filter: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Run the eval and return a result dict.
 
@@ -149,6 +150,14 @@ class EvalRunner:
         artifacts written). This matches the orchestration_run_record
         contract: pipeline runs flagged dry_run=true did not produce
         the artifacts the eval would measure.
+
+        Phase X2.4: ``source_id_filter`` narrows the run to pairs
+        whose resolved source_id equals the filter. Used by the
+        validate-and-baseline workflow so the development baseline
+        covers only a single transcript. Carries through to
+        ``eval_summary.baseline_scope`` ("single_transcript" vs
+        "full_corpus") and ``gate_decision.baseline_type``
+        ("development" vs "production").
         """
         if self.sdl_root is None:
             return {
@@ -168,6 +177,14 @@ class EvalRunner:
         pairs = self._load_pairs()
         if pair_id_filter:
             pairs = [p for p in pairs if p.get("pair_id") == pair_id_filter]
+        # Phase X2.4: narrow to a single source_id. The resolver walks
+        # source_record.payload.source_id (and falls back to
+        # fixture_source_id) so fixture-driven pairs also work.
+        if source_id_filter:
+            pairs = [
+                p for p in pairs
+                if self._resolve_pair_source_id(p) == source_id_filter
+            ]
 
         confirmed = [p for p in pairs if p.get("status") == "confirmed"]
         pending = [p for p in pairs if p.get("status") == "pending_review"]
@@ -178,6 +195,27 @@ class EvalRunner:
         partial_warning, partial_detail = self._compute_partial_run_signal(
             confirmed
         )
+
+        # Phase X2.4: --set-baseline requires a successful prior
+        # extraction. Last orchestration_result for the source must NOT
+        # be stage_status="failed"; otherwise we would install a
+        # baseline measured against a broken run. Halt finding +
+        # exit_code=1 (no summary written).
+        if set_baseline and source_id_filter:
+            if self._last_run_failed_for_source(source_id_filter):
+                self._emit_baseline_requires_successful_run_finding(
+                    source_id_filter
+                )
+                return {
+                    "status": "failed",
+                    "reason": (
+                        "baseline_requires_successful_run: last "
+                        f"orchestration_result for source_id={source_id_filter} "
+                        "has stage_status=failed"
+                    ),
+                    "exit_code": 1,
+                    "pipeline_run_id": self.pipeline_run_id,
+                }
 
         # Refuse --set-baseline on partial runs. Returning exit_code=1
         # ensures CI gates fail closed even when the underlying eval
@@ -258,11 +296,30 @@ class EvalRunner:
         # Phase O.4 — partial runs must never install an implicit baseline
         # either; the explicit --set-baseline path has already returned
         # above with exit_code=1, but the implicit path runs here.
-        if (
+        becoming_baseline = (
             set_baseline
             or (baseline_summary is None and run_count == 1)
-        ) and not partial_warning:
+        ) and not partial_warning
+        if becoming_baseline:
             summary["is_baseline"] = True
+
+        # Phase X2.4: tag the baseline scope on both the summary and
+        # the gate_decision so a reader can answer "what does the
+        # baseline cover?" without walking the artifact graph.
+        baseline_scope: Optional[str] = (
+            "single_transcript" if source_id_filter else "full_corpus"
+        ) if becoming_baseline else None
+        summary["baseline_scope"] = baseline_scope
+
+        # The gate_decision schema (Phase X2.4) adds optional
+        # baseline_type + baseline_scope -- record them when we are
+        # installing a baseline so the operator can distinguish a
+        # development from a production baseline.
+        gate_decision["baseline_type"] = (
+            "development" if (becoming_baseline and source_id_filter)
+            else ("production" if becoming_baseline else None)
+        )
+        gate_decision["baseline_scope"] = baseline_scope
 
         # Single write of eval_summary, with the gate verdict baked in.
         self._validate_and_write(
@@ -282,6 +339,15 @@ class EvalRunner:
         # actually regressed (paranoid but cheap).
         if summary["is_baseline"]:
             self._write_baseline(summary)
+            # Phase X2.4: surface "what IS the baseline?" as a structured
+            # finding (info severity) so an operator reading the health
+            # report can see coverage / precision / f1 / scope without
+            # opening the eval_summary artifact.
+            if set_baseline:
+                self._emit_baseline_set_finding(
+                    summary=summary,
+                    baseline_scope=baseline_scope,
+                )
 
         return {
             "status": "completed",
@@ -615,6 +681,7 @@ class EvalRunner:
             "per_source_metrics": per_source_metrics,
             "per_type_metrics": per_type_metrics,
             "per_type_metrics_reason": per_type_metrics_reason,
+            "baseline_scope": None,
             "provenance": {"produced_by": PRODUCED_BY_SUMMARY},
         }
 
@@ -686,6 +753,139 @@ class EvalRunner:
                 "pairs_count": n,
             }
         return out, None
+
+    # -- Phase X2.4 baseline findings -------------------------------------
+
+    def _emit_baseline_set_finding(
+        self,
+        *,
+        summary: Dict[str, Any],
+        baseline_scope: Optional[str],
+    ) -> None:
+        """Emit ``baseline_set`` (info severity) after --set-baseline."""
+        if self.sdl_root is None:
+            return
+        try:
+            from ...health.finding import HealthFinding, write_finding
+        except ImportError:
+            return
+        try:
+            data_lake_root = self.sdl_root.parent.parent
+        except (OSError, AttributeError):
+            return
+
+        coverage = _safe_float(summary.get("aggregate_coverage"))
+        precision = _safe_float(summary.get("aggregate_precision"))
+        per_type = summary.get("per_type_metrics") or {}
+        decision_f1 = None
+        if isinstance(per_type, dict):
+            decision_bucket = per_type.get("decision")
+            if isinstance(decision_bucket, dict):
+                decision_f1 = _safe_float(decision_bucket.get("f1"))
+
+        try:
+            write_finding(
+                HealthFinding(
+                    finding_code="baseline_set",
+                    severity="info",
+                    pipeline_run_id=self.pipeline_run_id,
+                    context={
+                        "coverage": coverage,
+                        "precision": precision,
+                        "f1": decision_f1,
+                        "baseline_scope": baseline_scope,
+                        "pairs_count": int(summary.get("pairs_evaluated") or 0),
+                        "eval_summary_id": str(summary.get("eval_summary_id") or ""),
+                    },
+                    remediation=(
+                        "Baseline installed. Subsequent runs will be "
+                        "compared against this eval_summary. Re-run "
+                        "eval-ground-truth --set-baseline to overwrite."
+                    ),
+                ),
+                data_lake_path=data_lake_root,
+            )
+        except Exception as exc:  # never propagate
+            logger.warning("baseline_set_finding_failed: %s", exc)
+
+    def _emit_baseline_requires_successful_run_finding(
+        self, source_id: str
+    ) -> None:
+        if self.sdl_root is None:
+            return
+        try:
+            from ...health.finding import HealthFinding, write_finding
+        except ImportError:
+            return
+        try:
+            data_lake_root = self.sdl_root.parent.parent
+        except (OSError, AttributeError):
+            return
+        try:
+            write_finding(
+                HealthFinding(
+                    finding_code="baseline_requires_successful_run",
+                    severity="halt",
+                    pipeline_run_id=self.pipeline_run_id,
+                    context={
+                        "source_id": source_id,
+                        "last_run_stage_status": "failed",
+                    },
+                    remediation=(
+                        "Re-run the extraction for this source_id and "
+                        "confirm orchestration_result.stage_status='ok' "
+                        "before retrying --set-baseline."
+                    ),
+                ),
+                data_lake_path=data_lake_root,
+            )
+        except Exception as exc:  # never propagate
+            logger.warning(
+                "baseline_requires_successful_run_finding_failed: %s", exc,
+            )
+
+    def _last_run_failed_for_source(self, source_id: str) -> bool:
+        """Scan the last orchestration_result for ``source_id``.
+
+        Returns True only when an orchestration_result for the source
+        is present AND stage_status == "failed". Absence of an
+        artifact is treated as not-failed (the user may legitimately
+        be installing the very first baseline for a transcript before
+        a full pipeline run has been recorded). Phase X2 amendment:
+        false negatives are preferred to false positives because the
+        gate already blocks via partial_run_warning when no extraction
+        exists at all.
+        """
+        if self.sdl_root is None:
+            return False
+        candidates: List[Path] = []
+        for d in (
+            self.sdl_root / "orchestration",
+            self.sdl_root / "extractions",
+        ):
+            if d.is_dir():
+                candidates.extend(d.glob("*.json"))
+        latest_status: Optional[str] = None
+        latest_mtime: float = 0.0
+        for path in candidates:
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(doc, dict):
+                continue
+            if doc.get("source_id") != source_id:
+                continue
+            if doc.get("artifact_type") != "orchestration_result":
+                continue
+            status = doc.get("stage_status")
+            if not isinstance(status, str):
+                continue
+            mtime = path.stat().st_mtime
+            if mtime >= latest_mtime:
+                latest_status = status
+                latest_mtime = mtime
+        return latest_status == "failed"
 
     def _emit_ground_truth_missing_type_finding(self, count: int) -> None:
         """Emit a ``ground_truth_missing_type`` info finding."""

@@ -42,7 +42,26 @@
           "input_text": { "type": "string", "minLength": 1 },
           "expected_output": { "type": "object" },
           "verified": { "type": "boolean" },
-          "verified_by": { "type": ["string", "null"] }
+          "verified_by": { "type": ["string", "null"] },
+          "verified_at": { "type": ["string", "null"] },
+          "selected_at": { "type": ["string", "null"] },
+          "selection_reason": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "audit_log": {
+      "type": "array",
+      "description": "Phase X2.2: append-only audit trail. Every selection / verification produces one entry.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action", "example_id", "at"],
+        "properties": {
+          "action": { "enum": ["selected", "verified", "unverified", "force-verified"] },
+          "example_id": { "type": "string", "minLength": 1 },
+          "at": { "type": "string", "minLength": 1 },
+          "actor": { "type": ["string", "null"] },
+          "notes": { "type": ["string", "null"] }
         }
       }
     }

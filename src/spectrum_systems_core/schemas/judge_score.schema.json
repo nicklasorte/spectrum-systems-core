@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/judge_score.schema.json",
+  "title": "judge_score",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "judge_score_id",
+    "judge_run_id",
+    "source_id",
+    "judge_model",
+    "enabled",
+    "items_evaluated",
+    "aggregate_pass_rate",
+    "calibration_status",
+    "item_scores",
+    "provenance"
+  ],
+  "properties": {
+    "artifact_type": { "const": "judge_score" },
+    "schema_version": { "const": "1.0.0" },
+    "judge_score_id": { "type": "string", "minLength": 1 },
+    "judge_run_id": { "type": "string", "minLength": 1 },
+    "source_id": { "type": "string" },
+    "pipeline_run_id": { "type": ["string", "null"] },
+    "judge_model": { "type": "string" },
+    "enabled": { "type": "boolean" },
+    "items_evaluated": { "type": "integer", "minimum": 0 },
+    "aggregate_pass_rate": {
+      "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0
+    },
+    "calibration_status": {
+      "enum": ["unrun", "ok", "warn", "failed"]
+    },
+    "created_at": { "type": "string" },
+    "item_scores": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "item_id",
+          "decision_text",
+          "rubric_results",
+          "passed",
+          "failure_reasons",
+          "judge_decision"
+        ],
+        "properties": {
+          "item_id": { "type": "string", "minLength": 1 },
+          "decision_text": { "type": "string" },
+          "rubric_results": {
+            "type": "object",
+            "additionalProperties": { "type": ["boolean", "null"] }
+          },
+          "passed": { "type": "boolean" },
+          "failure_reasons": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "stability_match": { "type": ["boolean", "null"] },
+          "judge_decision": {
+            "enum": ["pass", "fail", "unparseable"]
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": { "const": "JudgeRunner" }
+      }
+    }
+  }
+}

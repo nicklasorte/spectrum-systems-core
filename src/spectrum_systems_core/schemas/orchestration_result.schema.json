@@ -65,6 +65,16 @@
       "type": "integer",
       "minimum": 0,
       "description": "Phase W (integration wiring): number of scope_overgeneralization findings emitted by generalization_checker.scan_items on this run."
+    },
+    "correction_candidates_pending": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Phase X2.6: number of correction_candidate artifacts under <sdl_root>/correction_candidates/ with review_status='pending' for this source."
+    },
+    "correction_candidates_reviewed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Phase X2.6: number of correction_candidate artifacts with review_status in ('reviewed', 'reviewed_after_expiry') for this source."
     }
   }
 }
