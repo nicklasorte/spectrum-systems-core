@@ -24,6 +24,18 @@ from .next_phase_handoff import (
     build_next_phase_briefing,
     write_next_phase_briefing,
 )
+from .post_hoc_verifier import (
+    EARLY_HALT_SAMPLE_SIZE,
+    EARLY_HALT_UNSUPPORTED_THRESHOLD,
+    PostHocVerifier,
+)
+from .model_registry import ModelRegistry, ModelRegistryError
+from .verification_gate import GateDecision, VerificationGate
+from .pipeline_integration import (
+    VerificationIncompleteError,
+    apply_phase_v_if_enabled,
+    write_verification_result,
+)
 
 __all__ = [
     "scan_pipeline_state",
@@ -34,4 +46,14 @@ __all__ = [
     "format_findings_markdown",
     "build_next_phase_briefing",
     "write_next_phase_briefing",
+    "PostHocVerifier",
+    "EARLY_HALT_SAMPLE_SIZE",
+    "EARLY_HALT_UNSUPPORTED_THRESHOLD",
+    "ModelRegistry",
+    "ModelRegistryError",
+    "GateDecision",
+    "VerificationGate",
+    "VerificationIncompleteError",
+    "apply_phase_v_if_enabled",
+    "write_verification_result",
 ]

@@ -43,6 +43,18 @@ REVIEW_RATE_RISE_THRESHOLD = 0.20
 # the baseline by hand before it can block a build.
 GATE_ACTIVE_FROM_RUN = 3
 
+# Phase V spurious-add gate.
+#
+# Two modes:
+#  * baseline available: block if current_rate > baseline_rate * (1 + tolerance).
+#  * no baseline available: block if current_rate > absolute_ceiling.
+#
+# The absolute ceiling is the Rec 8c bound -- 30% spurious-adds is "more
+# than one in three extracted items is unsupported", which is the rough
+# threshold at which the review queue stops being useful.
+SPURIOUS_ADD_TOLERANCE = 0.15  # 15% rise vs baseline
+SPURIOUS_ADD_ABSOLUTE_CEILING = 0.30
+
 SCHEMA_VERSION = "1.0.0"
 PRODUCED_BY = "RegressionGate"
 
@@ -60,9 +72,53 @@ class RegressionGate:
     COVERAGE_DROP_THRESHOLD = COVERAGE_DROP_THRESHOLD
     REVIEW_RATE_RISE_THRESHOLD = REVIEW_RATE_RISE_THRESHOLD
     GATE_ACTIVE_FROM_RUN = GATE_ACTIVE_FROM_RUN
+    SPURIOUS_ADD_TOLERANCE = SPURIOUS_ADD_TOLERANCE
+    SPURIOUS_ADD_ABSOLUTE_CEILING = SPURIOUS_ADD_ABSOLUTE_CEILING
 
     SCHEMA_VERSION = SCHEMA_VERSION
     PRODUCED_BY = PRODUCED_BY
+
+    # ----- Phase V spurious_add_rate (single source of truth) -----
+
+    def compute_spurious_add_rate(
+        self,
+        verification_result: Dict[str, Any],
+    ) -> float:
+        """Read ``summary.spurious_add_rate`` from the verification artifact.
+
+        We do not re-derive the metric here; the PostHocVerifier is the
+        single source of truth so a drift between callers is impossible.
+        Missing values resolve to 0.0 (i.e. "no spurious adds observed").
+        """
+        if not isinstance(verification_result, dict):
+            return 0.0
+        summary = verification_result.get("summary") or {}
+        try:
+            return float(summary.get("spurious_add_rate", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def check_spurious_add_regression(
+        self,
+        current_rate: float,
+        baseline_rate: Optional[float],
+    ) -> bool:
+        """Return True if PASS (no regression), False if BLOCK.
+
+        * baseline_rate is None: block iff current_rate > absolute ceiling.
+        * baseline_rate available: block iff current_rate > baseline * (1 + tol).
+        """
+        try:
+            cur = float(current_rate)
+        except (TypeError, ValueError):
+            cur = 0.0
+        if baseline_rate is None:
+            return cur <= self.SPURIOUS_ADD_ABSOLUTE_CEILING
+        try:
+            base = float(baseline_rate)
+        except (TypeError, ValueError):
+            base = 0.0
+        return cur <= base * (1.0 + self.SPURIOUS_ADD_TOLERANCE)
 
     def evaluate(
         self,

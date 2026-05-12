@@ -211,6 +211,13 @@ class ExtractionMerger:
         deprecation warning fires on every typed-extraction write path,
         not only on the legacy Promoter path. IO errors propagate to the
         caller; the pipeline wraps this in its own try/except.
+
+        Phase V additional guard: v2.0.0 artifacts MUST carry
+        verification_status on every item before they can land on disk.
+        This is defense-in-depth -- ``apply_phase_v_if_enabled`` already
+        runs the same validator, but a future caller that mutates an
+        artifact between validation and write would otherwise sneak
+        through.
         """
         # Local import keeps this module importable in tests that don't
         # need governance wiring.
@@ -218,6 +225,13 @@ class ExtractionMerger:
             validate_and_log,
         )
         validate_and_log(artifact, schema_path=str(path))
+
+        if artifact.get("schema_version") == "2.0.0":
+            # Phase V v2 schema check at the write boundary.
+            from spectrum_systems_core.verification._schemas import (
+                validate_meeting_extraction_v2,
+            )
+            validate_meeting_extraction_v2(artifact)
 
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")

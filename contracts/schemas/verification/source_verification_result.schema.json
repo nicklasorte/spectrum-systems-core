@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/verification/source_verification_result.schema.json",
+  "title": "source_verification_result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_verification_result_id",
+    "artifact_type",
+    "schema_version",
+    "created_at",
+    "trace_id",
+    "pipeline_run_id",
+    "meeting_extraction_artifact_id",
+    "source_id",
+    "item_verifications",
+    "summary",
+    "provenance"
+  ],
+  "properties": {
+    "source_verification_result_id": { "type": "string", "format": "uuid" },
+    "artifact_type": { "const": "source_verification_result" },
+    "schema_version": { "const": "1.0.0" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "trace_id": { "type": ["string", "null"], "format": "uuid" },
+    "pipeline_run_id": { "type": "string", "format": "uuid" },
+
+    "meeting_extraction_artifact_id": { "type": "string", "format": "uuid" },
+    "source_id": { "type": "string", "minLength": 1 },
+
+    "item_verifications": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "item_id",
+          "item_type",
+          "original_item_text",
+          "cited_source_turn_ids",
+          "verification_status",
+          "supporting_text_excerpts",
+          "verifier_confidence",
+          "verifier_rationale",
+          "verifier_model_version",
+          "verified_at"
+        ],
+        "properties": {
+          "item_id": { "type": "string", "format": "uuid" },
+          "item_type": { "enum": ["decision", "claim", "action_item"] },
+          "original_item_text": { "type": "string", "minLength": 1 },
+          "cited_source_turn_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "verification_status": {
+            "enum": [
+              "verified",
+              "unsupported",
+              "contradicted",
+              "insufficient_evidence",
+              "verification_failed"
+            ]
+          },
+          "supporting_text_excerpts": {
+            "type": "array",
+            "minItems": 0,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "verifier_confidence": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0
+          },
+          "verifier_rationale": { "type": "string" },
+          "verifier_model_version": { "type": "string", "minLength": 1 },
+          "verified_at": { "type": "string", "format": "date-time" }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "verification_status": { "const": "verified" } }
+            },
+            "then": {
+              "properties": {
+                "supporting_text_excerpts": { "minItems": 1 }
+              }
+            }
+          }
+        ]
+      }
+    },
+
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total_items_count",
+        "verified_count",
+        "unsupported_count",
+        "contradicted_count",
+        "insufficient_evidence_count",
+        "verification_failed_count",
+        "spurious_add_rate",
+        "status"
+      ],
+      "properties": {
+        "total_items_count": { "type": "integer", "minimum": 0 },
+        "verified_count": { "type": "integer", "minimum": 0 },
+        "unsupported_count": { "type": "integer", "minimum": 0 },
+        "contradicted_count": { "type": "integer", "minimum": 0 },
+        "insufficient_evidence_count": { "type": "integer", "minimum": 0 },
+        "verification_failed_count": { "type": "integer", "minimum": 0 },
+        "spurious_add_rate": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "status": { "enum": ["complete", "halted_sanity_check"] }
+      }
+    },
+
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": { "const": "PostHocVerifier" },
+        "phase": { "const": "V" }
+      }
+    }
+  }
+}
