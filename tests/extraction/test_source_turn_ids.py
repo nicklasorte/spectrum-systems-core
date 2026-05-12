@@ -292,7 +292,7 @@ class StoryExtractorSourceTurnIdsTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "success")
         self.assertEqual(len(result["candidates"]), 0)
-        self.assertIn("extraction_missing_source_turns", log_capture.getvalue())
+        self.assertIn("story_missing_required_fields", log_capture.getvalue())
 
     def test_extracted_item_with_invalid_turn_id_flagged(self) -> None:
         """Mock returns a chunk_id not in inputs — kept, flagged invalid."""
