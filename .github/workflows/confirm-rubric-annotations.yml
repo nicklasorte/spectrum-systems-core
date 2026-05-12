@@ -16,7 +16,7 @@ on:
       source_id:
         description: 'Source id whose rubric to confirm'
         required: true
-        default: '7-ghz-downlink-tig-meeting---transcript-2-19-26'
+        default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
       reviewer_id:
         description: 'Reviewer (your name)'
         required: true
