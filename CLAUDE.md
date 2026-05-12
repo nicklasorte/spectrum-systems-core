@@ -151,6 +151,42 @@ If the smoke test fails on your PR:
 4. Fix the root cause before requesting review
 5. Push a new commit — smoke test re-runs automatically
 
+## Taxonomy
+
+All domain taxonomy lists (regulatory verbs, decision outcome types, claim types)
+are defined in `src/spectrum_systems_core/config/taxonomy.py`. The extraction
+prompt builder and the binding validator both import from this module so the
+two cannot drift. Never define these lists inline in prompt templates or
+validators. Tests assert `id()` equality on the imported objects.
+
+## Operator env vars (Phase T — extraction quality)
+
+- `BINDING_VALIDATOR_HALT_ENABLED=true` (default `false`) — promote
+  `taxonomy_regulatory_verb_missing` health findings from `warn` to `halt`.
+  Off by default so existing pipelines keep their fail-OPEN behaviour.
+- `MAX_CHUNK_CHARS=2500` (default `2500`) — upper bound applied after the
+  Phase R merge pass. Chunks exceeding this budget are split at the nearest
+  speaker-turn boundary; if no boundary exists, split mid-turn and emit a
+  `chunk_split_mid_turn_detected` info finding. Set to a very large value
+  (e.g. `999999`) to disable the split pass without reverting code.
+- `LOW_CONFIDENCE_GATE_ENABLED=true` (default `true`) — gate that scans
+  extraction artifacts for high low-confidence-item rates and writes
+  `correction_candidate` artifacts under `<sdl_root>/correction_candidates/`.
+  Set to `false` to disable the correction-mining seed.
+- `LOW_CONF_CONFIDENCE_THRESHOLD=0.6` (default `0.6`) — confidence below this
+  counts as low-confidence for the gate.
+- `LOW_CONF_RATE_LIMIT=0.30` (default `0.30`) — rate at which the gate fires.
+- `SPURIOUS_ADD_RATE_BASELINE_BLOCK=0.25` (default `0.25`) — runs with
+  spurious-add-rate above this threshold block the regression-gate
+  `--set-baseline` action and emit a `spurious_add_rate_elevated` warn
+  finding. Does NOT halt the run.
+- `ATOMIC_DECOMPOSITION_ENABLED=true` (default `false`) — run a second
+  Haiku call per decision to produce `atomic_facts`. Cost-impacting; left
+  off until T.1–T.6 stabilise.
+- `CORRECTION_CANDIDATE_TTL_DAYS=30` (default `30`) — TTL for unresolved
+  correction candidates. The preflight scanner emits an info finding when
+  a candidate's `expires_at` falls in the past; no auto-deletion.
+
 ## Files worth reading before non-trivial changes
 
 - `docs/architecture/system_constitution.md` — binding; precedence over everything else.

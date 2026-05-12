@@ -12,13 +12,25 @@ Prompt order enforced by every extractor's ``_build_prompt``:
 
 1. Role / context
 2. OMIT_INSTRUCTION_BLOCK
-3. Glossary (terminology) block
-4. Few-shot examples block
-5. Chunk content
-6. Output schema description
-7. CONFIDENCE_SCORING_BLOCK
+3. REGULATORY_TAXONOMY_BLOCK (decision extractor only)
+4. Glossary (terminology) block
+5. Few-shot examples block
+6. Chunk content
+7. Output schema description
+8. CONFIDENCE_SCORING_BLOCK
+
+Phase T.1: the regulatory-verb taxonomy is now sourced from
+``spectrum_systems_core.config.taxonomy``. The block is built lazily so
+the same Python object backs both the prompt text and the binding
+validator -- drift between the two is structurally impossible.
 """
 from __future__ import annotations
+
+from ..config.taxonomy import (
+    DECISION_OUTCOME_TYPES,
+    OUTCOME_TO_VERBS,
+    REGULATORY_VERBS,
+)
 
 
 # Prompt-schema version the typed extractors expect from FewShotLoader.
@@ -66,6 +78,48 @@ CONFIDENCE_SCORING_BLOCK: str = (
     "with a low confidence score. Low confidence is a reason to omit.\n"
     "If not in transcript, omit; do not infer."
 )
+
+
+# ----------------------------------------------------------------------
+# Phase T.1: regulatory taxonomy injected into the decision prompt.
+# The block is built once at import time from the canonical lists so the
+# decision extractor cannot drift from the binding validator. We do NOT
+# rebuild on every prompt because the source lists are tuples (immutable
+# at the language level).
+# ----------------------------------------------------------------------
+
+def _build_regulatory_taxonomy_block() -> str:
+    parts: list = [
+        "===============================================================",
+        "DECISION CLASSIFICATION RULES (regulatory taxonomy):",
+        "",
+        "A decision MUST contain at least one of the following whole-word",
+        "outcome verbs. If none are present, extract as a claim instead.",
+        "",
+    ]
+    for outcome, verbs in OUTCOME_TO_VERBS.items():
+        parts.append(f"  {outcome}: {', '.join(verbs)}")
+    parts.append("")
+    parts.append(
+        "Attach a \"decision_outcome\" field to every extracted decision."
+    )
+    parts.append(
+        f"  decision_outcome must be one of: {', '.join(DECISION_OUTCOME_TYPES)}"
+    )
+    parts.append("")
+    parts.append(
+        "If the source text contains none of the listed verbs, do not"
+    )
+    parts.append(
+        "emit a decision. Re-classify the chunk as a procedural claim."
+    )
+    parts.append(
+        "==============================================================="
+    )
+    return "\n".join(parts)
+
+
+REGULATORY_TAXONOMY_BLOCK: str = _build_regulatory_taxonomy_block()
 
 
 def normalize_confidence(value: object) -> float:

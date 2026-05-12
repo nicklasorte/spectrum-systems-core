@@ -17,12 +17,28 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..config.taxonomy import REGULATORY_VERBS
+
 
 _LOG = logging.getLogger(__name__)
+
+
+# Phase T.1: When set to a truthy value, ``binding_no_regulatory_verb``
+# is escalated from warn to halt. Defaults to OFF so existing pipelines
+# keep their fail-OPEN behaviour. The rollback path is the env var
+# itself: setting it to "false" restores warn-only semantics.
+BINDING_VALIDATOR_HALT_ENABLED_ENV: str = "BINDING_VALIDATOR_HALT_ENABLED"
+_ENABLED_VALUES: frozenset = frozenset({"true", "1", "yes", "on"})
+
+
+def binding_validator_halt_enabled() -> bool:
+    raw = os.environ.get(BINDING_VALIDATOR_HALT_ENABLED_ENV, "").strip().lower()
+    return raw in _ENABLED_VALUES
 
 
 REQUIRED_DECISION_FIELDS: tuple = (
@@ -30,11 +46,6 @@ REQUIRED_DECISION_FIELDS: tuple = (
     "decision_type",
     "stakeholders",
     "source_turns",
-)
-
-REGULATORY_VERBS: tuple = (
-    "approved", "rejected", "deferred", "noted", "required",
-    "recommended", "prohibited", "authorized", "designated",
 )
 
 
@@ -259,11 +270,58 @@ def write_binding_warnings(
     return out
 
 
+def build_taxonomy_finding(
+    decision: Dict[str, Any],
+    result: Dict[str, Any],
+    *,
+    pipeline_run_id: Optional[str] = None,
+):
+    """Build a ``taxonomy_regulatory_verb_missing`` HealthFinding.
+
+    Returns the constructed :class:`HealthFinding` or ``None`` when the
+    decision had at least one regulatory verb. Severity is ``halt`` when
+    ``BINDING_VALIDATOR_HALT_ENABLED=true``, otherwise ``warn``. Callers
+    decide whether to write or simply collect the finding.
+    """
+    if not isinstance(result, dict):
+        return None
+    if not result.get("binding_weak"):
+        return None
+    # Local import keeps this module free of a circular at the
+    # validator <-> health layer.
+    from ..health.finding import HealthFinding
+
+    severity = "halt" if binding_validator_halt_enabled() else "warn"
+    decision_text = str(decision.get("decision_text") or "")[:400]
+    return HealthFinding(
+        finding_code="taxonomy_regulatory_verb_missing",
+        severity=severity,
+        pipeline_run_id=pipeline_run_id,
+        context={
+            "decision_text": decision_text,
+            "searched_verbs": list(REGULATORY_VERBS),
+            "regulatory_verb_count": int(
+                result.get("regulatory_verb_count", 0)
+            ),
+            "halt_enabled": binding_validator_halt_enabled(),
+        },
+        remediation=(
+            "Decision text contains no regulatory verb. Either the model "
+            "misclassified a claim as a decision, or the chunk extraction "
+            "lost the verb. Re-classify as a procedural claim, or correct "
+            "the source_turn citation."
+        ),
+    )
+
+
 __all__ = [
+    "BINDING_VALIDATOR_HALT_ENABLED_ENV",
     "REGULATORY_VERBS",
     "REQUIRED_DECISION_FIELDS",
     "annotate_and_collect_warnings",
+    "binding_validator_halt_enabled",
     "build_binding_warning",
+    "build_taxonomy_finding",
     "validate_decision_binding",
     "write_binding_warnings",
 ]

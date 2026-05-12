@@ -578,6 +578,16 @@ class EvalRunner:
         per_source_metrics = self._compute_per_source_metrics(pair_breakdown)
         self._emit_missing_source_id_findings(pair_breakdown)
 
+        # Phase T.5: per-entity-type F1. Computed only when every
+        # ground_truth pair carries a ``target_type`` field. Mixed
+        # presence is treated as missing -- per-type metrics fabricated
+        # from a partial signal would be more misleading than null.
+        per_type_metrics, per_type_metrics_reason = (
+            self._compute_per_type_metrics(
+                eval_results, evaluated_pairs or [],
+            )
+        )
+
         return {
             "eval_summary_id": str(uuid.uuid4()),
             "pipeline_run_id": self.pipeline_run_id,
@@ -603,8 +613,112 @@ class EvalRunner:
             "partial_run_detail": partial_run_detail,
             "pair_breakdown": pair_breakdown,
             "per_source_metrics": per_source_metrics,
+            "per_type_metrics": per_type_metrics,
+            "per_type_metrics_reason": per_type_metrics_reason,
             "provenance": {"produced_by": PRODUCED_BY_SUMMARY},
         }
+
+    def _compute_per_type_metrics(
+        self,
+        eval_results: List[Dict[str, Any]],
+        evaluated_pairs: List[Dict[str, Any]],
+    ) -> Tuple[Optional[Dict[str, Dict[str, float]]], Optional[str]]:
+        """Aggregate coverage/precision/F1 per ``target_type``.
+
+        Returns ``(metrics_or_none, reason_or_none)``. The metrics dict
+        maps every supported target_type (``decision``, ``claim``,
+        ``action_item``) to a ``{precision, recall, f1, pairs_count}``
+        bucket. When any ground_truth pair lacks ``target_type``, the
+        result is ``(None, "target_type_absent_on_N_pairs")``. A
+        ``ground_truth_missing_type`` info finding is also emitted.
+
+        F1 is computed from precision/recall via the harmonic mean.
+        Recall is sourced from the eval_result's ``coverage`` field
+        (this is the production convention: coverage is recall in the
+        F1 sense -- "did the extracted set hit the ground truth").
+        """
+        SUPPORTED_TYPES = ("decision", "claim", "action_item")
+
+        if not evaluated_pairs:
+            return None, "no_evaluated_pairs"
+
+        missing = [
+            pair for pair in evaluated_pairs
+            if not isinstance(pair, dict)
+            or not isinstance(pair.get("target_type"), str)
+            or pair.get("target_type") not in SUPPORTED_TYPES
+        ]
+        if missing:
+            self._emit_ground_truth_missing_type_finding(len(missing))
+            return None, f"target_type_absent_on_{len(missing)}_pairs"
+
+        buckets: Dict[str, Dict[str, float]] = {
+            t: {"prec_sum": 0.0, "rec_sum": 0.0, "pairs": 0}
+            for t in SUPPORTED_TYPES
+        }
+        for er, pair in zip(eval_results, evaluated_pairs):
+            t = pair.get("target_type")
+            if t not in buckets:
+                continue
+            buckets[t]["pairs"] += 1
+            buckets[t]["prec_sum"] += _safe_float(er.get("precision"))
+            buckets[t]["rec_sum"] += _safe_float(er.get("coverage"))
+
+        out: Dict[str, Dict[str, float]] = {}
+        for t in SUPPORTED_TYPES:
+            n = int(buckets[t]["pairs"])
+            if n == 0:
+                out[t] = {
+                    "precision": 0.0,
+                    "recall": 0.0,
+                    "f1": 0.0,
+                    "pairs_count": 0,
+                }
+                continue
+            p = buckets[t]["prec_sum"] / n
+            r = buckets[t]["rec_sum"] / n
+            denom = p + r
+            f1 = (2.0 * p * r / denom) if denom > 0 else 0.0
+            out[t] = {
+                "precision": round(p, 6),
+                "recall": round(r, 6),
+                "f1": round(f1, 6),
+                "pairs_count": n,
+            }
+        return out, None
+
+    def _emit_ground_truth_missing_type_finding(self, count: int) -> None:
+        """Emit a ``ground_truth_missing_type`` info finding."""
+        if self.sdl_root is None:
+            return
+        try:
+            from ...health.finding import HealthFinding, write_finding
+        except ImportError:
+            return
+        try:
+            data_lake_root = self.sdl_root.parent.parent
+        except (OSError, AttributeError):
+            return
+        try:
+            write_finding(
+                HealthFinding(
+                    finding_code="ground_truth_missing_type",
+                    severity="info",
+                    pipeline_run_id=self.pipeline_run_id,
+                    context={"pairs_missing_target_type": int(count)},
+                    remediation=(
+                        "Add a ``target_type`` field "
+                        "(decision|claim|action_item) to every "
+                        "ground_truth_pair record so per_type_metrics "
+                        "can be computed."
+                    ),
+                ),
+                data_lake_path=data_lake_root,
+            )
+        except Exception as exc:  # never propagate
+            logger.warning(
+                "ground_truth_missing_type_finding_failed: %s", exc,
+            )
 
     # -- Phase O.4 pair_breakdown / per_source_metrics ---------------------
 

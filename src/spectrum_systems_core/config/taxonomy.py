@@ -1,0 +1,89 @@
+"""Phase T.1: domain taxonomy for spectrum policy extraction.
+
+CANONICAL LOCATION. Every consumer of these lists MUST import them from
+this module; never redefine them inline. Tests assert that downstream
+modules (extraction prompt builder, binding validator) import the same
+object (``id()`` equality) so a future engineer cannot silently drift
+two copies.
+
+The motivation is the "considered vs approved vs deferred" error class:
+a meeting transcript where the FCC "considered" a band plan is not a
+decision artifact, but the upstream LLM has no domain signal to make
+that distinction without the taxonomy in its prompt. By keeping the
+prompt's vocabulary and the post-hoc binding validator's vocabulary in
+one place, drift is structurally impossible.
+"""
+from __future__ import annotations
+
+from typing import Tuple
+
+
+# Whole-word verbs that license classifying a chunk as a *decision*.
+# Order is preserved so the few-shot prompt section is stable across
+# runs (the prompt builder iterates this list and renders it verbatim).
+REGULATORY_VERBS: Tuple[str, ...] = (
+    "approved",
+    "rejected",
+    "deferred",
+    "noted",
+    "required",
+    "recommended",
+    "prohibited",
+    "authorized",
+    "designated",
+    "adopted",
+    "declined",
+    "tabled",
+    "withdrawn",
+    "accepted",
+    "denied",
+    "postponed",
+    "amended",
+    "ratified",
+    "revoked",
+)
+
+
+# Outcome classification for a decision. The extraction prompt instructs
+# the model to attach exactly one of these values to every decision via
+# the optional ``decision_outcome`` field. The binding validator can
+# downstream consult this enum to detect outcome/verb mismatch.
+DECISION_OUTCOME_TYPES: Tuple[str, ...] = (
+    "approval",
+    "rejection",
+    "deferral",
+    "action_required",
+    "noted",
+    "question",
+)
+
+
+# Claim types — identical to the existing claim_extractor enum but
+# hosted here so the prompt builder and the schema can both import from
+# a single source.
+CLAIM_TYPES: Tuple[str, ...] = (
+    "technical",
+    "procedural",
+    "regulatory",
+    "opinion",
+)
+
+
+# Pre-built mapping from outcome class to the verbs that license it.
+# Used by the prompt builder to render the "If the source contains X
+# verb, emit Y outcome" few-shot block.
+OUTCOME_TO_VERBS: dict = {
+    "approval": ("approved", "authorized", "adopted", "ratified", "accepted"),
+    "rejection": ("rejected", "denied", "declined", "withdrawn", "revoked"),
+    "deferral": ("deferred", "tabled", "postponed"),
+    "action_required": ("required", "recommended"),
+    "noted": ("noted", "designated", "amended"),
+}
+
+
+__all__ = [
+    "CLAIM_TYPES",
+    "DECISION_OUTCOME_TYPES",
+    "OUTCOME_TO_VERBS",
+    "REGULATORY_VERBS",
+]

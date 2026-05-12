@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/chunk_split_summary.schema.json",
+  "title": "chunk_split_summary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "source_id",
+    "max_chunk_chars",
+    "original_chunk_count",
+    "split_chunk_count",
+    "chunks_split",
+    "split_log",
+    "created_at"
+  ],
+  "properties": {
+    "artifact_type": { "const": "chunk_split_summary" },
+    "schema_version": { "const": "1.0.0" },
+    "source_id": { "type": "string", "minLength": 1 },
+    "max_chunk_chars": { "type": "integer", "minimum": 1 },
+    "original_chunk_count": { "type": "integer", "minimum": 0 },
+    "split_chunk_count": { "type": "integer", "minimum": 0 },
+    "chunks_split": { "type": "integer", "minimum": 0 },
+    "split_log": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "original_chunk_id",
+          "produced_chunk_ids",
+          "split_reason",
+          "chunk_split_mid_turn",
+          "original_char_count",
+          "max_chars"
+        ],
+        "properties": {
+          "original_chunk_id": { "type": "string" },
+          "produced_chunk_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "split_reason": { "type": "string", "minLength": 1 },
+          "chunk_split_mid_turn": { "type": "boolean" },
+          "original_char_count": { "type": "integer", "minimum": 0 },
+          "max_chars": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "created_at": { "type": "string", "minLength": 1 }
+  }
+}

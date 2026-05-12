@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/correction_candidate.schema.json",
+  "title": "correction_candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "correction_candidate_id",
+    "source_id",
+    "created_at",
+    "expires_at",
+    "low_confidence_decisions",
+    "low_confidence_claims",
+    "low_confidence_rate",
+    "status"
+  ],
+  "properties": {
+    "artifact_type": { "const": "correction_candidate" },
+    "schema_version": { "const": "1.0.0" },
+    "correction_candidate_id": { "type": "string", "minLength": 1 },
+    "source_id": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "minLength": 1 },
+    "expires_at": { "type": "string", "minLength": 1 },
+    "low_confidence_rate": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "low_confidence_threshold": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "rate_limit": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "low_confidence_decisions": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "low_confidence_claims": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "promoted", "discarded"]
+    },
+    "extraction_run_id": { "type": ["string", "null"] }
+  }
+}

@@ -37,11 +37,49 @@ POST_HOC_VERIFICATION_ENABLED_ENV: str = "POST_HOC_VERIFICATION_ENABLED"
 _DISABLED_VALUES: frozenset = frozenset({"false", "0", "no", "off"})
 
 # Threshold: 40% token overlap with the cited source chunk text. Below
-# this the item is marked spurious.
-SOURCE_GROUNDING_OVERLAP_THRESHOLD: float = 0.4
+# this the item is marked spurious. Set via env var so a future
+# experiment can tune the threshold without re-running extraction. Per
+# Phase T red-team pass: the 40% default is preserved -- the new field
+# ``grounding_overlap_score`` makes a later threshold change a config
+# operation, not a code operation.
+SOURCE_GROUNDING_OVERLAP_THRESHOLD_ENV: str = "GROUNDING_THRESHOLD"
+_DEFAULT_GROUNDING_THRESHOLD: float = 0.4
+SOURCE_GROUNDING_OVERLAP_THRESHOLD: float = _DEFAULT_GROUNDING_THRESHOLD
 
 # Transcript-level alarm threshold: > 30% of confirmed items spurious.
 SPURIOUS_ADD_RATE_THRESHOLD: float = 0.30
+
+# Phase T.2: separate threshold that blocks --set-baseline. Default
+# 0.25 -- a quarter of items being ungrounded is the bar at which we
+# stop trusting a run enough to bake it into the baseline.
+SPURIOUS_ADD_RATE_BASELINE_BLOCK_ENV: str = "SPURIOUS_ADD_RATE_BASELINE_BLOCK"
+_DEFAULT_SPURIOUS_ADD_BASELINE_BLOCK: float = 0.25
+
+
+def grounding_threshold() -> float:
+    raw = os.environ.get(SOURCE_GROUNDING_OVERLAP_THRESHOLD_ENV, "").strip()
+    if not raw:
+        return _DEFAULT_GROUNDING_THRESHOLD
+    try:
+        v = float(raw)
+    except ValueError:
+        return _DEFAULT_GROUNDING_THRESHOLD
+    if v < 0.0 or v > 1.0:
+        return _DEFAULT_GROUNDING_THRESHOLD
+    return v
+
+
+def spurious_add_baseline_block_threshold() -> float:
+    raw = os.environ.get(SPURIOUS_ADD_RATE_BASELINE_BLOCK_ENV, "").strip()
+    if not raw:
+        return _DEFAULT_SPURIOUS_ADD_BASELINE_BLOCK
+    try:
+        v = float(raw)
+    except ValueError:
+        return _DEFAULT_SPURIOUS_ADD_BASELINE_BLOCK
+    if v < 0.0 or v > 1.0:
+        return _DEFAULT_SPURIOUS_ADD_BASELINE_BLOCK
+    return v
 
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
@@ -256,8 +294,15 @@ def verify_extraction_grounding(
             item, chunks_by_id, threshold=threshold,
         )
         out = dict(item)
+        # Phase R.3 legacy fields preserved for backwards compat.
         out["grounded"] = bool(result["grounded"])
         out["grounding_overlap"] = float(result["overlap"])
+        # Phase T.2: per-item observable fields. ``grounding_verified``
+        # is the canonical boolean; ``grounding_overlap_score`` is the
+        # canonical observable score. Both are present on every item
+        # so downstream consumers do not have to switch on field names.
+        out["grounding_verified"] = bool(result["grounded"])
+        out["grounding_overlap_score"] = float(result["overlap"])
         annotated.append(out)
         if not result["grounded"]:
             spurious_count += 1
@@ -333,14 +378,72 @@ def write_grounding_artifacts(
     return out
 
 
+def grounding_overlap_percentiles(
+    scores: List[float],
+) -> Dict[str, float]:
+    """Compute p10/p50/p90 of a list of overlap scores.
+
+    Empty input returns zeros for all three percentiles. Single-value
+    input returns that value for all three. Linear interpolation is
+    intentionally NOT used (the inputs are already bounded to [0,1]
+    and the operator wants the nearest observation, not a model
+    fit). Results round to 4 decimals so the summary table is
+    legible.
+    """
+    if not scores:
+        return {"p10": 0.0, "p50": 0.0, "p90": 0.0}
+    s = sorted(float(x) for x in scores)
+
+    def _at(percentile: float) -> float:
+        if len(s) == 1:
+            return s[0]
+        idx = int(round((len(s) - 1) * percentile))
+        return s[max(0, min(len(s) - 1, idx))]
+
+    return {
+        "p10": round(_at(0.10), 4),
+        "p50": round(_at(0.50), 4),
+        "p90": round(_at(0.90), 4),
+    }
+
+
+def compute_spurious_add_rate(
+    items: List[Dict[str, Any]],
+) -> float:
+    """Fraction of items whose ``grounding_verified`` is explicitly False.
+
+    Items without a ``grounding_verified`` field are NOT counted as
+    spurious (and are NOT counted in the denominator either) -- only
+    items where the verifier produced a verdict contribute. This is
+    intentional: a pipeline that skipped the verifier is not
+    self-incriminating, but a pipeline that ran the verifier and
+    found ungrounded items is.
+    """
+    verdicts = [
+        bool(it.get("grounding_verified"))
+        for it in items
+        if isinstance(it, dict) and "grounding_verified" in it
+    ]
+    if not verdicts:
+        return 0.0
+    spurious = sum(1 for v in verdicts if not v)
+    return round(spurious / float(len(verdicts)), 6)
+
+
 __all__ = [
     "POST_HOC_VERIFICATION_ENABLED_ENV",
     "SOURCE_GROUNDING_OVERLAP_THRESHOLD",
+    "SOURCE_GROUNDING_OVERLAP_THRESHOLD_ENV",
+    "SPURIOUS_ADD_RATE_BASELINE_BLOCK_ENV",
     "SPURIOUS_ADD_RATE_THRESHOLD",
     "build_spurious_add_candidate",
     "build_spurious_add_warning",
+    "compute_spurious_add_rate",
     "compute_token_overlap",
+    "grounding_overlap_percentiles",
+    "grounding_threshold",
     "post_hoc_verification_enabled",
+    "spurious_add_baseline_block_threshold",
     "verify_extraction_grounding",
     "verify_source_grounding",
     "write_grounding_artifacts",
