@@ -28,13 +28,8 @@ jobs:
     steps:
       - name: Checkout spectrum-systems-core
         uses: actions/checkout@v4
-
-      - name: Checkout data-lake
-        uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.DATA_LAKE_REPO }}
           token: ${{ secrets.GH_PAT }}
-          path: data-lake
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
