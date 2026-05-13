@@ -12,6 +12,13 @@
   "provenance": {
     "produced_by": "GenerateGTPairs"
   },
+  "rubric_notes": {
+    "annotated_at": "2026-05-13T21:45:30+00:00",
+    "annotator_id": "auto-classifier",
+    "expected_decision_outcome": "deferral",
+    "notes": "auto-classified from text (default=noted)",
+    "verb_discrimination_example": false
+  },
   "schema_version": "1.0.0",
   "source_artifact_id": "7b474018-707a-4e81-a8ce-6100f4bf4dbf",
   "source_id": "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
