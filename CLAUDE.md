@@ -998,3 +998,5 @@ the secret into their job env.
 - `docs/contracts/data_lake_contract.md` — binding for `data_lake/`.
 - `src/spectrum_systems_core/workflows/_loop.py` — the loop in ~70 lines.
 - `src/spectrum_systems_core/data_lake/pipeline.py` — the only place data-lake I/O meets the core loop.
+- `docs/decisions/` — judgment records capturing why architectural decisions were made. Read all files here before any change that touches module structure, artifact types, or the core loop.
+- `docs/decisions/2026-05-13-skl-sequencing.judgment_record.json` — specifically: SKL trace extraction pre-conditions. Do not begin SKL trace extraction work without verifying these are met.

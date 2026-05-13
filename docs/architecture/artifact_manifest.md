@@ -118,6 +118,31 @@ synthetic strings into these placeholders before calling
 - **Git-tracked:** YES — required by per-slice eval reporting.
 - **Readers:** `evals.m4.runner` slice computation.
 
+### judgment_record
+- **Writer:** Human-authored via SKL-J workflow (not the core loop).
+- **Path template:** `docs/decisions/<datestamp>-<slug>.judgment_record.json`
+- **Schema:** one JSON object per file. Required fields:
+  `artifact_id`, `artifact_type`, `schema_version`, `created_at`,
+  `judgment_type`, `question_under_judgment`, `selected_outcome`,
+  `confidence`, `rationale`, `alternatives_rejected`, `assumptions`,
+  `consequences`.
+- **Git-tracked:** YES — judgment records are part of the repo's
+  permanent reasoning record.
+- **Loop involvement:** None — not produced by
+  `Produce → Evaluate → Decide → Promote`. Stored in `docs/`
+  alongside the constitution and contracts (same authority tier),
+  not under `data-lake/`.
+- **Purpose:** Captures architectural decisions made in chat
+  sessions before implementation. Provides institutional memory
+  queryable by future Claude Code sessions.
+- **Companion:** `docs/decisions/<datestamp>-<slug>.md` —
+  human-readable Markdown view. Not canonical; the `.judgment_record.json`
+  is the source of truth.
+- **Readers:** human reviewers; future Claude Code sessions
+  instructed via CLAUDE.md to read `docs/decisions/` before
+  architectural changes.
+- **First PR:** #96.
+
 ## Runtime / debug artifacts (intentionally NOT git-tracked)
 
 These are recorded here for completeness so future authors do not

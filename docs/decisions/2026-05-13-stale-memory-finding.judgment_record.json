@@ -1,0 +1,80 @@
+{
+  "alternatives_rejected": [
+    {
+      "alternative": "Run the cleanup prompt anyway and let Claude Code fail on missing files",
+      "rejection_reason": "Fail-closed means halt on stale information, not proceed and observe the failure. Running a prompt known to be based on incorrect assumptions wastes a Claude Code session and risks Claude Code inventing plausible-looking fixes to non-existent problems."
+    },
+    {
+      "alternative": "Update memory to reflect the correct repo state and continue without capturing this finding",
+      "rejection_reason": "The stale memory finding is itself a significant architectural decision: it establishes that repo state must be read directly before any Claude Code prompt is generated, not inferred from memory. That principle is worth capturing permanently."
+    }
+  ],
+  "artifact_id": "d4a7e923-8f2b-4c1d-b645-9e3a1f7d0b58",
+  "artifact_type": "judgment_record",
+  "assumptions": [
+    {
+      "assumption": "All future Claude Code prompts targeting spectrum-systems-core will read CLAUDE.md and the constitution before generating any fix or feature prompt.",
+      "falsification_signal": "A Claude Code prompt references TypeScript files, AEX/PQX/EVL/TPA/CDE/SEL terminology, or the closed spectrum-systems repo."
+    },
+    {
+      "assumption": "Memory summaries will be updated to remove stale references to the closed repo's cleanup items.",
+      "falsification_signal": "A future session generates a prompt based on the four stale cleanup items without first reading the actual repo."
+    }
+  ],
+  "candidate_outcomes": [
+    "approve",
+    "revise",
+    "block"
+  ],
+  "claims_considered": [
+    {
+      "claim_id": "CLAIM-001",
+      "claim_text": "The four cleanup items (pipeline-connector.ts artifact_kind remnants, MVP-3 eval_summary migration, TLC routing rule corrections, integration/e2e test rewrites) reference TypeScript files and subsystem terminology that do not exist in spectrum-systems-core.",
+      "materiality": "high"
+    },
+    {
+      "claim_id": "CLAIM-002",
+      "claim_text": "spectrum-systems-core is 100% Python. There is no pipeline-connector.ts, no TLC subsystem, no AEX/PQX/EVL/TPA/CDE/SEL terminology. The constitution explicitly rejects these.",
+      "materiality": "high"
+    },
+    {
+      "claim_id": "CLAIM-003",
+      "claim_text": "The predecessor spectrum-systems repo is closed. Its cleanup items are not inherited by spectrum-systems-core — the constitution states the old repo is a quarry, not a blueprint.",
+      "materiality": "high"
+    },
+    {
+      "claim_id": "CLAIM-004",
+      "claim_text": "Memory summaries carried forward from the old repo contained stale references to closed PRs, TypeScript modules, and governance subsystems that no longer exist.",
+      "materiality": "high"
+    }
+  ],
+  "confidence": 0.99,
+  "consequences": {
+    "expected_negative": [
+      "None — this is a pure information artifact with no implementation cost"
+    ],
+    "expected_positive": [
+      "Establishes a permanent record that the four cleanup items from the old repo do not apply here",
+      "Establishes the principle: read the actual repo before generating any prompt",
+      "Prevents future sessions from wasting time on non-existent cleanup items"
+    ],
+    "monitoring_plan": "If any future Claude Code prompt references pipeline-connector.ts, artifact_kind migration, TLC routing rules, or AEX/PQX/EVL terminology in the context of spectrum-systems-core, this judgment record has not been read. That is a retrieval failure."
+  },
+  "created_at": "2026-05-13T12:00:00Z",
+  "human_review_required": true,
+  "judgment_type": "risk_assessment",
+  "open_questions": [
+    "Whether there are other stale memory items from the predecessor repo that have not yet been identified and corrected."
+  ],
+  "question_under_judgment": "Do the four production readiness cleanup items from the predecessor spectrum-systems repo apply to spectrum-systems-core?",
+  "rationale": "A diagnostic session on 2026-05-13 revealed that memory carried forward from the predecessor spectrum-systems repo contained four cleanup items scoped to TypeScript files and subsystems that do not exist in spectrum-systems-core. Attempting to run a Claude Code prompt against these items would have produced either silent no-ops (files not found) or incorrect behavior (inventing files to match the prompt). The correct action was to read the actual repo — CLAUDE.md, the constitution, the PR list — before generating any fix prompt. The actual repo state: 0 open PRs, 60 closed, 100% Python, clean architecture. No cleanup items apply.",
+  "rules_applied": [
+    "SSC-DESIGN-001 section 11: the original spectrum-systems repo is a quarry, not a blueprint",
+    "SSC-DESIGN-001 section 3: reject AEX/PQX/EVL/TPA/CDE/SEL terminology",
+    "fail-closed: acting on stale information is equivalent to acting on missing information — halt and verify"
+  ],
+  "schema_version": "1.0.0",
+  "selected_outcome": "block",
+  "superseded_by": null,
+  "supersedes": null
+}
