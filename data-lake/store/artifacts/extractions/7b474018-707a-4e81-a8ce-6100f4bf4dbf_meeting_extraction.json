@@ -1,0 +1,151 @@
+{
+  "action_items": [
+    {
+      "action": "Circulate FSS protection zone working paper and draft analysis of 7125 to 7250 MHz band segment",
+      "confidence": 1.0,
+      "due": "2024-12-19",
+      "owner": "Nick LaSorte",
+      "source_turn_ids": [
+        "a3215fd6-5ac2-4f82-b16d-c380b307d4f4",
+        "a088e331-4f15-49a7-a536-14df0b331a79"
+      ],
+      "source_turn_validation": "verified"
+    },
+    {
+      "action": "Compile FSS earth station inventory for the 7125 to 7250 MHz segment",
+      "confidence": 1.0,
+      "due": null,
+      "owner": "Sandip",
+      "source_turn_ids": [
+        "a088e331-4f15-49a7-a536-14df0b331a79"
+      ],
+      "source_turn_validation": "verified"
+    },
+    {
+      "action": "Schedule next TIG meeting for second week of January and send Doodle poll to members",
+      "confidence": 1.0,
+      "due": null,
+      "owner": "Katrece",
+      "source_turn_ids": [
+        "a088e331-4f15-49a7-a536-14df0b331a79"
+      ],
+      "source_turn_validation": "verified"
+    }
+  ],
+  "artifact_type": "meeting_extraction",
+  "claims": [
+    {
+      "claim_text": "The band under discussion is 7125 to 8400 MHz, with primary focus on the 7125 to 7250 MHz segment where FSS earth stations are concentrated",
+      "claim_type": "technical",
+      "confidence": 1.0,
+      "source_turn_ids": [
+        "f4bc0567-c555-431c-aaa2-4e0302ad1e25"
+      ],
+      "source_turn_validation": "verified",
+      "speaker": "LaSorte, Nickolas"
+    },
+    {
+      "claim_text": "The TIG is chartered to evaluate downlink sharing options between proposed mobile broadband and incumbent FSS receivers",
+      "claim_type": "procedural",
+      "confidence": 1.0,
+      "source_turn_ids": [
+        "f4bc0567-c555-431c-aaa2-4e0302ad1e25"
+      ],
+      "source_turn_validation": "verified",
+      "speaker": "LaSorte, Nickolas"
+    },
+    {
+      "claim_text": "A single-point criterion of negative 10.5 dB at 0.03 percent would provide equivalent protection to the ITU two-point standard",
+      "claim_type": "technical",
+      "confidence": 1.0,
+      "source_turn_ids": [
+        "4602f8c5-7f60-4ea3-b4b8-e96b3e292310"
+      ],
+      "source_turn_validation": "verified",
+      "speaker": "Bhatt, Sandip"
+    },
+    {
+      "claim_text": "DoW course of action number three proposes reallocation of the 7125 to 7250 MHz band segment",
+      "claim_type": "regulatory",
+      "confidence": 1.0,
+      "source_turn_ids": [
+        "fe88a1a2-5f9b-4b11-8709-97554b7bb663"
+      ],
+      "source_turn_validation": "verified",
+      "speaker": "DiFrancisco, Michael"
+    },
+    {
+      "claim_text": "Approximately 847 FSS earth stations are currently operating under primary status in the 7125 to 7250 MHz band segment",
+      "claim_type": "technical",
+      "confidence": 1.0,
+      "source_turn_ids": [
+        "fe88a1a2-5f9b-4b11-8709-97554b7bb663"
+      ],
+      "source_turn_validation": "verified",
+      "speaker": "DiFrancisco, Michael"
+    }
+  ],
+  "confidence_threshold": 0.5,
+  "created_at": "2026-05-13T21:42:42+00:00",
+  "decisions": [
+    {
+      "confidence": 1.0,
+      "decision_outcome": "approval",
+      "decision_text": "Meeting agenda approved: scope confirmation, sharing-criteria approach, and action items for the next session",
+      "decision_type": "approved",
+      "rationale": "Speaker explicitly states 'the agenda is approved' after asking for objections and hearing none. Direct approval language present.",
+      "source_turn_ids": [
+        "74cfe301-2d9e-4177-ace1-21b6858b13cb"
+      ],
+      "source_turn_validation": "verified",
+      "stakeholders": [
+        "DiFrancisco, Michael"
+      ]
+    },
+    {
+      "confidence": 1.0,
+      "decision_outcome": "approval",
+      "decision_text": "Group approved application of ITU two-point criteria for FSS protection analysis: negative 10.5 dB at 80th percentile and negative 6 dB at 0.03 percent",
+      "decision_type": "approved",
+      "rationale": "Speaker explicitly states 'that is approved' after presenting the criteria and asking for objections. Direct approval language with specific numeric parameters stated.",
+      "source_turn_ids": [
+        "f7aed6cb-3153-4ada-b59a-33f28dd2e5e4"
+      ],
+      "source_turn_validation": "verified",
+      "stakeholders": [
+        "DiFrancisco, Michael"
+      ]
+    },
+    {
+      "confidence": 1.0,
+      "decision_outcome": "deferral",
+      "decision_text": "Decision on Course of Action (COA) selection deferred to the next working group meeting pending completion of working paper from Nick",
+      "decision_type": "deferred",
+      "rationale": "Speaker explicitly uses the word 'defer' and states the decision is postponed to the next meeting with a stated reason (insufficient information and pending working paper).",
+      "source_turn_ids": [
+        "027c1fa0-a210-4f50-9a6e-9fef2d9fa116"
+      ],
+      "source_turn_validation": "verified",
+      "stakeholders": [
+        "Bhatt, Sandip"
+      ]
+    }
+  ],
+  "extraction_run_id": "tex-f2e78f1fe1324209",
+  "few_shot_example_count": 3,
+  "few_shot_injected": true,
+  "few_shot_version": "1.0.0",
+  "low_confidence_item_count": 0,
+  "meeting_extraction_id": "ed8d50ae-8da7-48c9-9e55-9ab5c3e12300",
+  "off_topic_count": 0,
+  "omit_instruction_present": true,
+  "provenance": {
+    "produced_by": "ExtractionMerger"
+  },
+  "regulatory_verb_fallback_count": 0,
+  "requires_human_dedup_count": 0,
+  "routing_quality_warning": false,
+  "schema_version": "1.1.0",
+  "source_artifact_id": "7b474018-707a-4e81-a8ce-6100f4bf4dbf",
+  "total_chunks_classified": 8
+}
