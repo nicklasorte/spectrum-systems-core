@@ -187,7 +187,6 @@
 
     "provenance": {
       "type": "object",
-      "additionalProperties": false,
       "required": ["produced_by"],
       "properties": {
         "produced_by": { "const": "ExtractionMerger" },
