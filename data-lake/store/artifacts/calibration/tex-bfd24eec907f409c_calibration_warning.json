@@ -1,0 +1,12 @@
+{
+  "artifact_type": "calibration_warning",
+  "created_at": "2026-05-13T11:19:31+00:00",
+  "finding": "More than 80% of extracted items have confidence > 0.85. Model may not be discriminating.",
+  "high_confidence_cutoff": 0.85,
+  "high_confidence_rate": 1.0,
+  "items_above_high_confidence": 11,
+  "items_total": 11,
+  "run_id": "tex-bfd24eec907f409c",
+  "schema_version": "1.0.0",
+  "threshold": 0.8
+}
