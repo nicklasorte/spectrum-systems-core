@@ -35,6 +35,15 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from _artifact_validator import (  # noqa: E402
+    ArtifactValidationError,
+    validate_artifact,
+)
+
 # Outcomes we ALWAYS want representation for, in priority order.
 # Selecting balanced examples (5 per bucket by default) makes the
 # verb-discrimination metric meaningful.
@@ -137,6 +146,21 @@ def apply_annotations_from_file(
         pair = _load_pair(path)
         if pair is None:
             print(f"skip: pair_id={pair_id} not found at {path}", file=sys.stderr)
+            continue
+        # Integration-hardening gate: validate the pair against the
+        # ground_truth_pair contracts schema before annotating. The
+        # pair pre-dates the artifact_type convention so we pass
+        # ``require_artifact_type_field=False``; structural validity
+        # still surfaces any field-name drift.
+        try:
+            validate_artifact(
+                pair,
+                "ground_truth_pair",
+                str(path),
+                require_artifact_type_field=False,
+            )
+        except ArtifactValidationError as exc:
+            print(f"skip: pair_id={pair_id} failed schema: {exc}", file=sys.stderr)
             continue
         updated = annotate_pair(
             pair,

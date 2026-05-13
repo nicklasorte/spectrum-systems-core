@@ -31,6 +31,15 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from _artifact_validator import (  # noqa: E402
+    ArtifactValidationError,
+    validate_artifact,
+)
+
 CORRECTION_CANDIDATES_RELPATH = "store/artifacts/correction_candidates"
 HUMAN_REVIEWS_RELPATH = "store/artifacts/human_reviews"
 
@@ -105,6 +114,19 @@ def submit_review(
         return 1
 
     candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+    # Integration-hardening gate: validate the candidate against its
+    # schema before reading fields off it. A wrong artifact_type or
+    # missing required field surfaces here, not later when the review
+    # artifact is written referencing a malformed source.
+    try:
+        validate_artifact(
+            candidate,
+            "correction_candidate",
+            str(candidate_path),
+        )
+    except ArtifactValidationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     source_id = candidate.get("source_id") or "unknown"
     expired = _candidate_expired(candidate)
     if expired:
@@ -134,13 +156,17 @@ def submit_review(
     # Validate via the package validator so a malformed artifact never
     # lands on disk. Import lazily so the script still works when
     # invoked from a fresh checkout that hasn't installed the package.
+    # Local-bound names are prefixed (``_pkg_*``) so they do not shadow
+    # the module-level ``ArtifactValidationError`` / ``validate_artifact``
+    # imported from ``_artifact_validator``.
     try:
         from spectrum_systems_core.validation import (
-            ArtifactValidationError, validate_artifact,
+            ArtifactValidationError as _pkg_ArtifactValidationError,
+            validate_artifact as _pkg_validate_artifact,
         )
         try:
-            validate_artifact(artifact, "human_review_artifact")
-        except ArtifactValidationError as exc:
+            _pkg_validate_artifact(artifact, "human_review_artifact")
+        except _pkg_ArtifactValidationError as exc:
             print(f"error: artifact validation failed: {exc}", file=sys.stderr)
             return 1
     except ImportError:

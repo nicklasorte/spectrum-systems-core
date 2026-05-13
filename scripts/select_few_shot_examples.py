@@ -29,6 +29,16 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+# Ensure scripts/ is importable when invoked via ``python scripts/foo.py``.
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from _artifact_validator import (  # noqa: E402
+    ArtifactValidationError,
+    validate_artifact,
+)
+
 DEFAULT_FEW_SHOT_PATH = "store/artifacts/evals/few_shot/decision_examples_v1.json"
 REVIEW_CHECKLIST_RELPATH = "store/artifacts/evals/few_shot/REVIEW_CHECKLIST.md"
 NEEDS_REAL_EXAMPLES_RELPATH = (
@@ -139,6 +149,15 @@ def _load_meeting_extraction(
         if chosen_path is None or path.stat().st_mtime > chosen_path.stat().st_mtime:
             chosen = doc
             chosen_path = path
+
+    # Integration-hardening gate: validate the matched artifact against
+    # the meeting_extraction schema BEFORE the caller reads any field
+    # off of it. A field-name drift between writer and reader (e.g.
+    # ``source_id`` vs ``source_artifact_id``) now fails here with a
+    # message that names the failing field instead of silently producing
+    # an empty selection downstream.
+    if chosen is not None and chosen_path is not None:
+        validate_artifact(chosen, "meeting_extraction", str(chosen_path))
     return chosen
 
 
@@ -399,7 +418,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     existing = _existing_examples(artifact_path)
     only_placeholders = _has_only_placeholders(existing)
 
-    extraction = _load_meeting_extraction(data_lake, args.source_id)
+    try:
+        extraction = _load_meeting_extraction(data_lake, args.source_id)
+    except ArtifactValidationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     resolved = _resolve_source_artifact_id(data_lake, args.source_id)
     print(
         f"diag: source_id={args.source_id!r} "
