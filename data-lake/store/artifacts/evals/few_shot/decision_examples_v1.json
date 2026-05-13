@@ -1,55 +1,87 @@
 {
   "artifact_type": "decision_few_shot_examples",
-  "schema_version": "1.0.0",
-  "examples_version": "1",
-  "extraction_type": "decision",
-  "verified": false,
-  "created_at": "1970-01-01T00:00:00+00:00",
+  "audit_log": [
+    {
+      "action": "selected",
+      "actor": "scripts/select_few_shot_examples.py",
+      "at": "2026-05-13T18:35:10+00:00",
+      "example_id": "21f8b17f-0b9d-4dca-aa29-bc4ba9c4fde7",
+      "notes": "outcome=approval"
+    },
+    {
+      "action": "selected",
+      "actor": "scripts/select_few_shot_examples.py",
+      "at": "2026-05-13T18:35:10+00:00",
+      "example_id": "5d9a57fd-e8b1-4e57-90e1-2f767ef16130",
+      "notes": "outcome=deferral"
+    },
+    {
+      "action": "selected",
+      "actor": "scripts/select_few_shot_examples.py",
+      "at": "2026-05-13T18:35:10+00:00",
+      "example_id": "51424f03-7239-45d9-98e9-0724c54a7c5f",
+      "notes": "outcome=approval"
+    }
+  ],
+  "created_at": "2026-05-13T18:35:10+00:00",
   "examples": [
     {
-      "example_id": "phase-v-placeholder-approval",
-      "source_meeting_id": "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
-      "source_turn_ids": ["turn_001", "turn_002"],
-      "input_text": "Chair Smith: 'On the basis of the analysis package, I propose we approve the 7 GHz downlink protection criterion of -10.5 dB I/N at the 80th percentile. Any objections?' (no objections) 'Approved.'",
+      "example_id": "21f8b17f-0b9d-4dca-aa29-bc4ba9c4fde7",
       "expected_output": {
-        "decision_text": "Approved the 7 GHz downlink protection criterion of -10.5 dB I/N at the 80th percentile.",
+        "confidence": 1.0,
         "decision_outcome": "approval",
-        "regulatory_verb": "approved",
-        "speaker": "Chair Smith",
-        "confidence": 0.95
+        "decision_text": "Meeting agenda approved: scope confirmation, sharing-criteria approach, and action items for the next session"
       },
+      "input_text": "Meeting agenda approved: scope confirmation, sharing-criteria approach, and action items for the next session",
+      "selected_at": "2026-05-13T18:35:10+00:00",
+      "selection_reason": "highest_confidence_for_outcome=approval",
+      "source_meeting_id": "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
+      "source_turn_ids": [
+        "12aec35e-1ba1-4689-8d77-9c643cd5766c"
+      ],
       "verified": false,
+      "verified_at": null,
       "verified_by": null
     },
     {
-      "example_id": "phase-v-placeholder-deferral",
-      "source_meeting_id": "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
-      "source_turn_ids": ["turn_010"],
-      "input_text": "NTIA Lead: 'We're going to defer the decision on aggregate interference methodology until TWG-B reports back next session. Let's not vote on this today.'",
+      "example_id": "5d9a57fd-e8b1-4e57-90e1-2f767ef16130",
       "expected_output": {
-        "decision_text": "Deferred the decision on aggregate interference methodology pending TWG-B report.",
+        "confidence": 1.0,
         "decision_outcome": "deferral",
-        "regulatory_verb": "deferred",
-        "speaker": "NTIA Lead",
-        "confidence": 0.9
+        "decision_text": "Decision on Course of Action (COA) selection deferred to the next working group meeting pending completion of working paper from Nick"
       },
+      "input_text": "Decision on Course of Action (COA) selection deferred to the next working group meeting pending completion of working paper from Nick",
+      "selected_at": "2026-05-13T18:35:10+00:00",
+      "selection_reason": "highest_confidence_for_outcome=deferral",
+      "source_meeting_id": "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
+      "source_turn_ids": [
+        "fcb5679e-13f9-4e84-80e2-273f5f82a6e4"
+      ],
       "verified": false,
+      "verified_at": null,
       "verified_by": null
     },
     {
-      "example_id": "phase-v-placeholder-action-required",
-      "source_meeting_id": "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
-      "source_turn_ids": ["turn_020"],
-      "input_text": "Chair Smith: 'DoD is required to submit revised ERP values for the candidate uplink scenario by the next plenary. Owner is the AFSMO representative.'",
+      "example_id": "51424f03-7239-45d9-98e9-0724c54a7c5f",
       "expected_output": {
-        "decision_text": "DoD required to submit revised ERP values for the candidate uplink scenario by next plenary. Owner: AFSMO representative.",
-        "decision_outcome": "action_required",
-        "regulatory_verb": "required",
-        "speaker": "Chair Smith",
-        "confidence": 0.92
+        "confidence": 1.0,
+        "decision_outcome": "approval",
+        "decision_text": "Group approved application of ITU two-point criteria for FSS protection analysis: negative 10.5 dB at 80th percentile and negative 6 dB at 0.03 percent"
       },
+      "input_text": "Group approved application of ITU two-point criteria for FSS protection analysis: negative 10.5 dB at 80th percentile and negative 6 dB at 0.03 percent",
+      "selected_at": "2026-05-13T18:35:10+00:00",
+      "selection_reason": "highest_confidence_for_outcome=approval",
+      "source_meeting_id": "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
+      "source_turn_ids": [
+        "fcdf449e-ccdd-4a2c-84a3-b592cbcf5ae1"
+      ],
       "verified": false,
+      "verified_at": null,
       "verified_by": null
     }
-  ]
+  ],
+  "examples_version": "1",
+  "extraction_type": "decision",
+  "schema_version": "1.0.0",
+  "verified": false
 }
