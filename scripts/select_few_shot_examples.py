@@ -25,11 +25,16 @@ import datetime
 import json
 import sys
 import uuid
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 DEFAULT_FEW_SHOT_PATH = "store/artifacts/evals/few_shot/decision_examples_v1.json"
 REVIEW_CHECKLIST_RELPATH = "store/artifacts/evals/few_shot/REVIEW_CHECKLIST.md"
+NEEDS_REAL_EXAMPLES_RELPATH = (
+    "store/artifacts/evals/few_shot/NEEDS_REAL_EXAMPLES.md"
+)
+PLACEHOLDER_ID_PREFIX = "phase-v-placeholder"
 
 # Outcome types we target. One example per type, highest confidence first.
 TARGET_OUTCOMES: Tuple[str, ...] = ("approval", "deferral", "action_required")
@@ -266,6 +271,83 @@ def _write_review_checklist(
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _existing_examples(artifact_path: Path) -> List[Dict[str, Any]]:
+    if not artifact_path.is_file():
+        return []
+    try:
+        doc = json.loads(artifact_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(doc, dict):
+        return []
+    examples = doc.get("examples") or []
+    return [e for e in examples if isinstance(e, dict)]
+
+
+def _has_only_placeholders(examples: List[Dict[str, Any]]) -> bool:
+    if not examples:
+        return False
+    return all(
+        str(ex.get("example_id", "")).startswith(PLACEHOLDER_ID_PREFIX)
+        for ex in examples
+    )
+
+
+def _write_needs_real_examples(
+    path: Path, source_id: str, reason: str, diagnostics: List[str]
+) -> None:
+    """Drop a NEEDS_REAL_EXAMPLES.md marker next to the few-shot artifact.
+
+    The marker is written whenever the script cannot replace placeholder
+    examples with real ones (no extraction artifact, zero decisions,
+    zero target outcomes). It is the artifact-on-disk evidence the
+    operator needs when a mobile workflow runs to completion but the
+    placeholder file is still in place. The script ALSO exits non-zero;
+    the marker is durable in addition to the non-zero exit.
+    """
+    lines: List[str] = [
+        "# Few-shot examples still contain placeholders",
+        "",
+        f"- Source meeting: `{source_id}`",
+        f"- Generated at: `{_now_iso()}`",
+        f"- Reason: {reason}",
+        "",
+        "## What this means",
+        "",
+        "`decision_examples_v1.json` was NOT updated. The artifact still",
+        "contains `phase-v-placeholder-*` examples that ship with the",
+        "repo. The extraction prompt loader filters to `verified: true`",
+        "examples only, so placeholders never reach the model — but the",
+        "operator running the validate-and-baseline workflow MUST replace",
+        "them with real, reviewed decisions before that pipeline can",
+        "promote to a production baseline.",
+        "",
+        "## Diagnostics",
+        "",
+    ]
+    for line in diagnostics:
+        lines.append(f"- {line}")
+    lines.extend([
+        "",
+        "## Next steps",
+        "",
+        "1. Confirm a `meeting_extraction` artifact exists for this",
+        "   source id under `<data-lake>/store/artifacts/extractions/`.",
+        "2. If the extraction is missing, run the extraction pipeline",
+        "   for this source id first.",
+        "3. If the extraction exists but has zero decisions in the",
+        "   `approval` / `deferral` / `action_required` outcome buckets,",
+        "   inspect the extraction run for off-topic-rate spikes.",
+        "4. Re-run `scripts/select_few_shot_examples.py` once the",
+        "   extraction artifact carries real decisions.",
+        "",
+        "This file is overwritten on every run and removed when real",
+        "examples land.",
+    ])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def _refuse_when_run_in_ci() -> Optional[str]:
     """Returns a message when the env signals this is a CI / automated run.
 
@@ -305,20 +387,48 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"error: --data-lake does not exist: {data_lake}", file=sys.stderr)
         return 1
 
+    artifact_path = (
+        Path(args.artifact_path) if args.artifact_path
+        else data_lake / DEFAULT_FEW_SHOT_PATH
+    )
+    needs_real_path = (
+        Path(args.artifact_path).parent / "NEEDS_REAL_EXAMPLES.md"
+        if args.artifact_path
+        else data_lake / NEEDS_REAL_EXAMPLES_RELPATH
+    )
+    existing = _existing_examples(artifact_path)
+    only_placeholders = _has_only_placeholders(existing)
+
     extraction = _load_meeting_extraction(data_lake, args.source_id)
+    resolved = _resolve_source_artifact_id(data_lake, args.source_id)
+    print(
+        f"diag: source_id={args.source_id!r} "
+        f"resolved_source_artifact_id={resolved!r}"
+    )
     if extraction is None:
-        resolved = _resolve_source_artifact_id(data_lake, args.source_id)
         hint = (
             f" (resolved source_artifact_id={resolved})" if resolved
             else " (no source_record.json found under "
             f"{data_lake}/store/processed/<family>/{args.source_id}/)"
         )
-        print(
+        msg = (
             f"error: no meeting_extraction artifact found for "
             f"source_id={args.source_id}{hint} under {data_lake}. "
             f"Scanned {data_lake}/store/artifacts/extractions/ for files "
-            f"with matching source_id or source_artifact_id.",
-            file=sys.stderr,
+            f"with matching source_id or source_artifact_id."
+        )
+        print(msg, file=sys.stderr)
+        _write_needs_real_examples(
+            needs_real_path,
+            args.source_id,
+            reason="no meeting_extraction artifact found",
+            diagnostics=[
+                f"data-lake: `{data_lake}`",
+                f"resolved source_artifact_id: `{resolved}`",
+                f"existing_examples_are_placeholders: `{only_placeholders}`",
+                "scanned: `store/artifacts/extractions/*.json` and "
+                "`store/processed/meetings/<source_id>/`",
+            ],
         )
         return 1
 
@@ -326,21 +436,42 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not isinstance(decisions, list):
         decisions = []
 
+    outcome_counts = Counter(
+        d.get("decision_outcome") for d in decisions if isinstance(d, dict)
+    )
+    print(f"diag: extraction decisions={len(decisions)}")
+    print(f"diag: outcome distribution={dict(outcome_counts)}")
+
     chosen = _select_candidates_from_decisions(decisions)[: max(1, args.max_examples)]
     if not chosen:
-        print(
+        msg = (
             f"error: no decisions with target outcomes "
             f"({', '.join(TARGET_OUTCOMES)}) found in the extraction "
-            f"for source_id={args.source_id}",
-            file=sys.stderr,
+            f"for source_id={args.source_id}. "
+            f"Scanned {len(decisions)} decisions; "
+            f"outcome distribution: {dict(outcome_counts)}"
+        )
+        print(msg, file=sys.stderr)
+        _write_needs_real_examples(
+            needs_real_path,
+            args.source_id,
+            reason=(
+                "extraction artifact contains no decisions with target "
+                f"outcomes ({', '.join(TARGET_OUTCOMES)})"
+            ),
+            diagnostics=[
+                f"total decisions in extraction: `{len(decisions)}`",
+                f"outcome distribution: `{dict(outcome_counts)}`",
+                f"target outcomes: `{list(TARGET_OUTCOMES)}`",
+                f"existing_examples_are_placeholders: `{only_placeholders}`",
+            ],
         )
         return 2
 
     examples = [_decision_to_example(d, args.source_id, outcome) for outcome, d in chosen]
-
-    artifact_path = (
-        Path(args.artifact_path) if args.artifact_path
-        else data_lake / DEFAULT_FEW_SHOT_PATH
+    print(
+        f"diag: selected {len(examples)} candidates "
+        f"({[ex['expected_output'].get('decision_outcome') for ex in examples]})"
     )
     existing_audit: List[Dict[str, Any]] = []
     if artifact_path.is_file():
@@ -371,6 +502,39 @@ def main(argv: Optional[List[str]] = None) -> int:
         "audit_log": existing_audit,
     }
     _write_artifact(artifact_path, artifact)
+
+    # Final safety check: ensure no phase-v-placeholder ids leaked through.
+    # _decision_to_example mints fresh UUIDs so this should be impossible —
+    # but the script's contract is "NEVER exit 0 with placeholders intact",
+    # so verify directly off disk before returning success.
+    post_write = _existing_examples(artifact_path)
+    leftover_placeholders = [
+        ex.get("example_id") for ex in post_write
+        if str(ex.get("example_id", "")).startswith(PLACEHOLDER_ID_PREFIX)
+    ]
+    if leftover_placeholders:
+        msg = (
+            f"error: placeholders still present after write "
+            f"({leftover_placeholders}). Refusing to exit 0."
+        )
+        print(msg, file=sys.stderr)
+        _write_needs_real_examples(
+            needs_real_path,
+            args.source_id,
+            reason="placeholder ids survived the write step",
+            diagnostics=[
+                f"leftover_placeholders: `{leftover_placeholders}`",
+                f"selected_count: `{len(examples)}`",
+            ],
+        )
+        return 3
+
+    # Real examples landed — clear the durable warning marker if present.
+    if needs_real_path.is_file():
+        try:
+            needs_real_path.unlink()
+        except OSError:
+            pass
 
     checklist_path = (
         Path(args.artifact_path).parent / "REVIEW_CHECKLIST.md"

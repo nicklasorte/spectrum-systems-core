@@ -156,6 +156,102 @@ def test_selection_fails_when_no_target_outcomes(tmp_path: Path) -> None:
     assert rc == 2
 
 
+def test_needs_real_examples_marker_written_when_no_extraction(
+    tmp_path: Path,
+) -> None:
+    """Failure to find an extraction artifact must drop a durable
+    NEEDS_REAL_EXAMPLES.md marker next to the few-shot artifact so the
+    operator running a mobile workflow has artifact-on-disk evidence."""
+    artifact = tmp_path / "few_shot.json"
+    rc = selector.main([
+        "--source-id", "missing",
+        "--data-lake", str(tmp_path),
+        "--artifact-path", str(artifact),
+    ])
+    assert rc == 1
+    marker = tmp_path / "NEEDS_REAL_EXAMPLES.md"
+    assert marker.is_file(), "NEEDS_REAL_EXAMPLES.md must be written on rc=1"
+    body = marker.read_text(encoding="utf-8")
+    assert "no meeting_extraction artifact found" in body
+    assert "missing" in body
+
+
+def test_needs_real_examples_marker_written_when_no_target_outcomes(
+    tmp_path: Path,
+) -> None:
+    """Extraction artifact with zero target-outcome decisions must also
+    drop the marker so this failure mode is visible in the data-lake
+    commit even though the few-shot artifact is unchanged."""
+    _write_extraction(tmp_path, "src_no_outcomes", [
+        _make_decision(outcome="noted", confidence=0.99, decision_text="N", turn_ids=["t1"]),
+    ])
+    artifact = tmp_path / "few_shot.json"
+    rc = selector.main([
+        "--source-id", "src_no_outcomes",
+        "--data-lake", str(tmp_path),
+        "--artifact-path", str(artifact),
+    ])
+    assert rc == 2
+    marker = tmp_path / "NEEDS_REAL_EXAMPLES.md"
+    assert marker.is_file()
+    body = marker.read_text(encoding="utf-8")
+    assert "outcome distribution" in body
+    assert "noted" in body
+
+
+def test_placeholders_replaced_by_real_decisions(tmp_path: Path) -> None:
+    """When the few-shot artifact contains only placeholder examples and
+    real decisions are available, the script must overwrite them and
+    no `phase-v-placeholder` ids may remain."""
+    decisions = [
+        _make_decision(outcome="approval", confidence=0.92, decision_text="real approval", turn_ids=["real-t1"]),
+        _make_decision(outcome="deferral", confidence=0.88, decision_text="real deferral", turn_ids=["real-t2"]),
+    ]
+    _write_extraction(tmp_path, "src_placeholder_replace", decisions)
+    artifact = tmp_path / "few_shot.json"
+    # Pre-seed with placeholder-only content (mimics shipped state).
+    artifact.write_text(json.dumps({
+        "artifact_type": "decision_few_shot_examples",
+        "schema_version": "1.0.0",
+        "examples": [
+            {"example_id": "phase-v-placeholder-approval",
+             "verified": False,
+             "expected_output": {"decision_outcome": "approval"}},
+            {"example_id": "phase-v-placeholder-deferral",
+             "verified": False,
+             "expected_output": {"decision_outcome": "deferral"}},
+        ],
+    }), encoding="utf-8")
+    rc = selector.main([
+        "--source-id", "src_placeholder_replace",
+        "--data-lake", str(tmp_path),
+        "--artifact-path", str(artifact),
+    ])
+    assert rc == 0
+    doc = json.loads(artifact.read_text(encoding="utf-8"))
+    ids = [ex["example_id"] for ex in doc["examples"]]
+    assert not any(i.startswith("phase-v-placeholder") for i in ids)
+    assert all(len(i) > 10 for i in ids)  # real UUIDs
+
+
+def test_marker_removed_on_successful_overwrite(tmp_path: Path) -> None:
+    """A prior failure may have left NEEDS_REAL_EXAMPLES.md on disk.
+    A successful run that lands real examples must clear the marker."""
+    artifact = tmp_path / "few_shot.json"
+    marker = tmp_path / "NEEDS_REAL_EXAMPLES.md"
+    marker.write_text("stale marker from previous failed run\n", encoding="utf-8")
+    _write_extraction(tmp_path, "src_clear_marker", [
+        _make_decision(outcome="approval", confidence=0.9, decision_text="A", turn_ids=["t1"]),
+    ])
+    rc = selector.main([
+        "--source-id", "src_clear_marker",
+        "--data-lake", str(tmp_path),
+        "--artifact-path", str(artifact),
+    ])
+    assert rc == 0
+    assert not marker.is_file(), "marker must be removed when real examples land"
+
+
 # ----- verification ----------------------------------------------
 
 
