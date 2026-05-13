@@ -257,7 +257,8 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add store/artifacts/evals/ store/artifacts/health/
+          git add store/artifacts/evals/ 2>/dev/null || true
+          git add store/artifacts/health/ 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "No baseline artifact changes to commit."
             exit 0

@@ -176,7 +176,9 @@ jobs:
           cd "${{ github.workspace }}/data-lake"
           git config user.name "spectrum-pipeline[bot]"
           git config user.email "spectrum-pipeline[bot]@users.noreply.github.com"
-          git add store/artifacts/ store/processed/ store/raw/
+          git add store/artifacts/ 2>/dev/null || true
+          git add store/processed/ 2>/dev/null || true
+          git add store/raw/ 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "No artifact changes for ${{ matrix.source_id }}"
             exit 0
@@ -263,7 +265,9 @@ jobs:
           cd "${{ github.workspace }}/data-lake"
           git config user.name "spectrum-pipeline[bot]"
           git config user.email "spectrum-pipeline[bot]@users.noreply.github.com"
-          git add store/artifacts/ store/processed/ store/raw/
+          git add store/artifacts/ 2>/dev/null || true
+          git add store/processed/ 2>/dev/null || true
+          git add store/raw/ 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "No post-pipeline artifact changes."
             exit 0
