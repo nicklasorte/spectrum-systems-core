@@ -25,7 +25,16 @@ data-lake/store/governance/
 data-lake/store/artifacts/config/
 data-lake/store/artifacts/agenda/
 data-lake/store/artifacts/verifications/
-data-lake/store/artifacts/extractions/
+# NOTE: data-lake/store/artifacts/extractions/ is intentionally NOT
+# ignored. The debug-single-transcript workflow commits the
+# meeting_extraction artifact produced by typed_extraction_runner so
+# downstream workflows (select-few-shot-candidates,
+# eval-ground-truth, validate-and-baseline) can read it. The
+# preflight in scripts/_few_shot_preflight.py looks for files under
+# data-lake/store/artifacts/extractions/; gitignoring that path
+# silently blocked `git add store/artifacts/` in the debug
+# workflow's commit step and caused the preflight to fail with
+# exit code 2.
 
 # Pipeline runtime data — must live under DATA_LAKE_PATH, not the repo.
 raw/
