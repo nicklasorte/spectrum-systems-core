@@ -48,8 +48,34 @@
       "additionalProperties": false,
       "required": ["produced_by"],
       "properties": {
-        "produced_by": { "const": "GroundTruthLinker" }
+        "produced_by": {
+          "type": "string",
+          "enum": ["GroundTruthLinker", "GenerateGTPairs"],
+          "description": "Writer that produced this pair. GroundTruthLinker pairs come from transcript<->minutes date matching; GenerateGTPairs pairs are synthesized from an extraction's decisions for rubric annotation seeding."
+        }
       }
+    },
+    "source_id": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "description": "Optional human-readable transcript slug (e.g. '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'). Set by GenerateGTPairs so annotate_rubric's --source-id filter can match production pairs by slug as well as artifact id. Existing GroundTruthLinker pairs without this field continue to validate."
+    },
+    "ground_truth_text": {
+      "type": ["string", "null"],
+      "description": "Optional decision text used as the rubric-annotation review surface. Populated by GenerateGTPairs from the source extraction's decision_text; the human reviewer reads this field to author the rubric annotation. Existing GroundTruthLinker pairs without this field continue to validate."
+    },
+    "expected_decision_outcome": {
+      "type": ["string", "null"],
+      "enum": [
+        "approval",
+        "rejection",
+        "deferral",
+        "action_required",
+        "noted",
+        "question",
+        null
+      ],
+      "description": "Optional seed of the extraction's decision_outcome at GT-pair generation time. The final reviewed value lives under rubric_notes.expected_decision_outcome; this top-level field is the pre-review seed so the annotator can compare against the extractor's call."
     },
     "rubric_notes": {
       "type": "object",

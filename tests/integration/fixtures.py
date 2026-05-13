@@ -143,6 +143,51 @@ def make_source_record(source_id: str, artifact_id: str) -> Dict[str, Any]:
     }
 
 
+def make_ground_truth_pair_from_decision(
+    *,
+    source_id: str,
+    source_artifact_id: str,
+    minutes_artifact_id: str,
+    decision_text: str,
+    decision_outcome: str = "approval",
+    meeting_date: str = "2025-12-18",
+    meeting_name: str = "Phase X2 follow-up GT pair fixture",
+) -> Dict[str, Any]:
+    """Produce a ``ground_truth_pair`` via the real writer.
+
+    Calls ``scripts.generate_gt_pairs.build_pair`` so the output is
+    byte-shape identical to what the live ``generate_gt_pairs.py``
+    writes. If the writer ever renames a field, every test that
+    depends on this factory rebuilds against the new shape on the
+    next run — no per-test dict edits required.
+
+    Importing the script as a module is safe: ``generate_gt_pairs.py``
+    only adds ``scripts/`` to ``sys.path`` and pulls in
+    ``_artifact_validator``; no I/O happens at import.
+    """
+    import sys as _sys
+
+    scripts_dir = (
+        __import__("pathlib").Path(__file__).resolve().parents[2] / "scripts"
+    )
+    if str(scripts_dir) not in _sys.path:
+        _sys.path.insert(0, str(scripts_dir))
+
+    import generate_gt_pairs  # type: ignore  # noqa: WPS433
+
+    return generate_gt_pairs.build_pair(
+        source_id=source_id,
+        source_artifact_id=source_artifact_id,
+        minutes_artifact_id=minutes_artifact_id,
+        meeting_date=meeting_date,
+        meeting_name=meeting_name,
+        decision={
+            "decision_text": decision_text,
+            "decision_outcome": decision_outcome,
+        },
+    )
+
+
 def make_decision_few_shot_placeholder(
     extraction_type: str = "decision",
 ) -> Dict[str, Any]:

@@ -182,8 +182,14 @@ def apply_annotations_from_file(
 # (see contracts/schemas/ingestion/ground_truth_pair.schema.json);
 # ``fixture_source_id`` is set on test fixtures so fixture pairs can be
 # filtered by their human-readable meeting id rather than the opaque
-# artifact id.
-_SOURCE_ID_FIELDS: Tuple[str, ...] = ("source_artifact_id", "fixture_source_id")
+# artifact id. ``source_id`` is the optional top-level field GenerateGTPairs
+# sets on extraction-derived pairs so mobile workflows can filter by
+# transcript slug without having to look up the UUID.
+_SOURCE_ID_FIELDS: Tuple[str, ...] = (
+    "source_artifact_id",
+    "fixture_source_id",
+    "source_id",
+)
 
 
 def _pair_source_ids(pair: Dict[str, Any]) -> List[str]:
@@ -208,9 +214,11 @@ def list_candidates(
     across decision_outcome buckets per ``DEFAULT_BUCKET_LIMIT``.
 
     When ``source_id`` is given, a pair matches when ANY of its
-    ``_SOURCE_ID_FIELDS`` equals the filter. Production pairs only carry
-    ``source_artifact_id`` (per the schema); fixture pairs may also
-    carry ``fixture_source_id`` for human-readable filtering.
+    ``_SOURCE_ID_FIELDS`` equals the filter. GroundTruthLinker pairs
+    only carry ``source_artifact_id`` (per the schema); fixture pairs
+    may also carry ``fixture_source_id``; GenerateGTPairs pairs carry
+    a top-level ``source_id`` set to the human-readable transcript
+    slug so mobile workflow_dispatch inputs match without UUID lookup.
     """
     pairs_dir = sdl_root / "ground_truth"
     if not pairs_dir.is_dir():
