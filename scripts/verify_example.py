@@ -28,6 +28,15 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from _artifact_validator import (  # noqa: E402
+    ArtifactValidationError,
+    validate_artifact,
+)
+
 DEFAULT_FEW_SHOT_PATH = "store/artifacts/evals/few_shot/decision_examples_v1.json"
 
 
@@ -82,6 +91,16 @@ def verify_example(
             f"error: artifact not found or unreadable: {artifact_path}",
             file=sys.stderr,
         )
+        return 1
+
+    # Integration-hardening gate: validate the few-shot artifact shape
+    # before touching ``verified`` fields. A wrong artifact_type or
+    # missing ``examples_version`` / ``extraction_type`` field surfaces
+    # here with the failing field, not silently in downstream code.
+    try:
+        validate_artifact(doc, "decision_few_shot_examples", str(artifact_path))
+    except ArtifactValidationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
 
     examples = doc.get("examples")

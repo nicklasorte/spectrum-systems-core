@@ -1,8 +1,18 @@
-"""Phase X2.2 — few-shot example selection + verification tests."""
+"""Phase X2.2 — few-shot example selection + verification tests.
+
+Helper note (integration-hardening update): ``_make_decision`` and
+``_write_extraction`` produce artifacts via the real ``ExtractionMerger``
+factory in ``tests/integration/fixtures.py``. They are schema-valid
+under ``meeting_extraction.schema.json`` so the script-side validator
+in ``scripts/_artifact_validator.py`` accepts them. Any future change
+to the merger's output shape will surface here AND in the integration
+tests at the same time.
+"""
 from __future__ import annotations
 
 import json
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -18,6 +28,25 @@ import verify_example as verifier  # noqa: E402
 
 from spectrum_systems_core.validation import validate_artifact
 
+from tests.integration.fixtures import (
+    make_meeting_extraction_artifact,
+    make_source_record,
+)
+
+# Map the ``decision_outcome`` values the selector buckets on to the
+# ``decision_type`` enum values the meeting_extraction schema requires.
+# Defaults to ``"noted"`` so an unknown outcome still yields a
+# schema-valid decision (the script then routes it through the
+# non-target-outcome path).
+_DECISION_TYPE_BY_OUTCOME: Dict[str, str] = {
+    "approval": "approved",
+    "rejection": "rejected",
+    "deferral": "deferred",
+    "action_required": "action_required",
+    "noted": "noted",
+    "question": "open_question",
+}
+
 
 def _make_decision(
     *,
@@ -27,29 +56,49 @@ def _make_decision(
     turn_ids: List[str],
     speaker: str = "Chair",
 ) -> Dict[str, Any]:
+    """Build a meeting_extraction-schema-valid decision dict.
+
+    Only fields declared in ``meeting_extraction.schema.json`` are
+    included so the script-side validator accepts the artifact when
+    the script reads it back.
+    """
     return {
-        "decision_id": f"d_{outcome}_{int(confidence*100)}",
         "decision_text": decision_text,
+        "decision_type": _DECISION_TYPE_BY_OUTCOME.get(outcome, "noted"),
         "decision_outcome": outcome,
-        "regulatory_verb": outcome,
+        "stakeholders": [speaker],
+        "rationale": None,
         "speaker": speaker,
         "confidence": confidence,
         "grounding_verified": True,
         "source_turn_ids": turn_ids,
-        "source_text": decision_text,
+        "source_turn_validation": "verified",
     }
 
 
 def _write_extraction(data_lake: Path, source_id: str, decisions: List[Dict[str, Any]]) -> None:
+    """Seed a data-lake with a real-shape meeting_extraction artifact.
+
+    Writes both ``source_record.json`` (so the script's slug ->
+    artifact_id resolver matches) and the extraction artifact itself
+    (built via ``ExtractionMerger.merge`` so the output shape is
+    byte-identical to the live runner).
+    """
+    artifact_id = str(uuid.uuid4())
+    source_dir = data_lake / "store" / "processed" / "meetings" / source_id
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "source_record.json").write_text(
+        json.dumps(make_source_record(source_id, artifact_id)),
+        encoding="utf-8",
+    )
+
     target = data_lake / "store" / "artifacts" / "extractions"
     target.mkdir(parents=True, exist_ok=True)
-    artifact = {
-        "artifact_type": "meeting_extraction",
-        "schema_version": "1.0.0",
-        "source_id": source_id,
-        "decisions": decisions,
-    }
-    (target / f"{source_id}.json").write_text(
+    artifact = make_meeting_extraction_artifact(
+        source_artifact_id=artifact_id,
+        decisions=decisions,
+    )
+    (target / f"{artifact_id}_meeting_extraction.json").write_text(
         json.dumps(artifact, indent=2), encoding="utf-8"
     )
 

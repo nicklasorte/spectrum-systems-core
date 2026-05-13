@@ -133,6 +133,125 @@ to the fixed function and assert it succeeds.
 If a PR description is missing verification output, it must not be merged.
 The operator should request the missing verification before approving.
 
+### Integration test requirement (non-negotiable)
+
+Every Claude Code session that writes or modifies a script that reads a
+pipeline artifact MUST also write or update an integration test that:
+
+1. Uses `tests/integration/fixtures.py` factory functions to produce
+   artifacts — NEVER hand-rolled dicts. The factory must call the
+   actual writer (`ExtractionMerger.merge`, runner, etc.), not
+   construct a dict manually.
+2. Writes artifacts to a real temp directory (not mocked).
+3. Calls the script via `subprocess.run` against the temp directory.
+4. Asserts the correct output on disk (not just the return code).
+
+This rule exists because unit tests with synthetic fixtures do not catch
+field name mismatches between the writer and the reader — that is the
+exact bug class that produced PRs #77 / #78 / #79. Integration tests
+backed by `tests/integration/fixtures.py` catch the drift at the
+fixture factory level, before the script logic runs.
+
+Co-requirement: every script that reads a pipeline artifact MUST call
+`scripts/_artifact_validator.validate_artifact` on the loaded artifact
+before reading any field off it. This adds a second line of defence —
+the script refuses to run on an artifact whose `artifact_type` or
+schema shape has drifted, instead of failing mysteriously inside the
+script's logic.
+
+The canonical integration-contract file is
+`tests/integration/test_script_artifact_contracts.py`. New per-script
+contract tests should either land there as additional functions or in
+a sibling `tests/integration/test_<script_stem>_contract.py` file.
+
+**How to check compliance before opening a PR:**
+
+```bash
+python - <<'PY'
+import pathlib, re, subprocess, sys
+
+scripts_dir = pathlib.Path("scripts")
+test_dirs = [
+    pathlib.Path("tests/integration"),
+    pathlib.Path("tests/scripts"),
+]
+
+ARTIFACT_TYPE_PATTERN = re.compile(
+    r"validate_artifact|meeting_extraction|"
+    r"correction_candidate|ground_truth_pair|human_review|"
+    r"decision_few_shot_examples"
+)
+# A script "reads an artifact" only when it both references a known
+# pipeline artifact type AND actually parses JSON off disk. Pure
+# seeders/migrators that emit ``artifact_type`` strings without
+# reading existing files are excluded.
+READS_JSON_PATTERN = re.compile(r"json\.loads?\b|json\.load\(|read_text\(")
+
+# Scope to scripts touched in the current PR. Pre-existing scripts that
+# never had integration tests are tech debt; this rule applies to
+# scripts the current session is writing or modifying.
+try:
+    # ``origin/main`` (no ``...HEAD``) compares the working tree against
+    # main so the check catches uncommitted changes pre-PR.
+    diff = subprocess.check_output(
+        ["git", "diff", "--name-only", "origin/main", "--", "scripts/"],
+        text=True,
+    )
+    touched = {pathlib.Path(p).name for p in diff.splitlines() if p.endswith(".py")}
+    # Untracked new scripts also count as touched.
+    untracked = subprocess.check_output(
+        ["git", "ls-files", "--others", "--exclude-standard", "scripts/"],
+        text=True,
+    )
+    touched.update(
+        pathlib.Path(p).name for p in untracked.splitlines() if p.endswith(".py")
+    )
+except subprocess.CalledProcessError:
+    # Fall back to all scripts when origin/main is unavailable.
+    touched = {p.name for p in scripts_dir.glob("*.py")}
+
+coverage_text_parts = []
+for d in test_dirs:
+    if d.is_dir():
+        for p in d.glob("test_*.py"):
+            coverage_text_parts.append(p.read_text(encoding="utf-8"))
+coverage_text = "\n".join(coverage_text_parts)
+
+missing = []
+for script in sorted(scripts_dir.glob("*.py")):
+    if script.name.startswith("_") or script.name not in touched:
+        continue
+    content = script.read_text(encoding="utf-8")
+    if not (
+        ARTIFACT_TYPE_PATTERN.search(content)
+        and READS_JSON_PATTERN.search(content)
+    ):
+        continue
+    if script.stem in coverage_text:
+        continue
+    missing.append(script.name)
+
+if missing:
+    print(f"MISSING integration tests for: {missing}")
+    print("Add contract tests under tests/integration/ before opening PR.")
+    sys.exit(1)
+print("OK: all artifact-reading scripts touched in this PR have integration tests")
+PY
+```
+
+The check is scoped to scripts touched in the current PR (via `git diff
+origin/main...HEAD`) so it does not block on pre-existing scripts that
+never had integration-test coverage. Coverage is accepted under either
+`tests/integration/` (preferred for new scripts; the contract tests
+there use the `tests/integration/fixtures.py` factories per the rule
+above) OR `tests/scripts/` (historical location). New contract tests
+MUST go under `tests/integration/` to satisfy the fixture-factory
+clause.
+
+Run this check as part of the pre-PR verification loop. The script is
+intentionally short and shells out from a HEREDOC so it works in any
+checkout without installing extra tooling.
+
 ### Commit message hygiene — never spell out CI skip tokens
 
 GitHub Actions silently skips ALL workflows on the head commit of a push
