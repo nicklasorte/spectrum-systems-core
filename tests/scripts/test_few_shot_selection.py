@@ -283,6 +283,135 @@ def test_placeholders_replaced_by_real_decisions(tmp_path: Path) -> None:
     assert all(len(i) > 10 for i in ids)  # real UUIDs
 
 
+def test_sparse_outcome_coverage_fills_from_available(tmp_path: Path) -> None:
+    """When a transcript carries only one outcome type, the selector
+    must fill up to max_examples slots from the available decisions
+    rather than returning one and leaving the budget empty. The bug
+    that motivated this test: the Dec 18 kickoff transcript produced
+    2 action_required decisions; the prior selector chose 1 and wrote
+    a single example, hiding the other available real candidate."""
+    decisions = [
+        _make_decision(outcome="action_required", confidence=0.92,
+                       decision_text="DoD ERP submission", turn_ids=["t1"]),
+        _make_decision(outcome="action_required", confidence=0.88,
+                       decision_text="NTIA interference data", turn_ids=["t2"]),
+    ]
+    _write_extraction(tmp_path, "src_sparse", decisions)
+    artifact = tmp_path / "few_shot.json"
+    # Pre-seed with the shipped placeholder content so we exercise the
+    # sparse-coverage + placeholder-replacement path together.
+    artifact.write_text(json.dumps({
+        "artifact_type": "decision_few_shot_examples",
+        "schema_version": "1.0.0",
+        "examples": [
+            {"example_id": "phase-v-placeholder-approval", "verified": False,
+             "expected_output": {"decision_outcome": "approval"}},
+            {"example_id": "phase-v-placeholder-deferral", "verified": False,
+             "expected_output": {"decision_outcome": "deferral"}},
+            {"example_id": "phase-v-placeholder-action-required", "verified": False,
+             "expected_output": {"decision_outcome": "action_required"}},
+        ],
+    }), encoding="utf-8")
+    rc = selector.main([
+        "--source-id", "src_sparse",
+        "--data-lake", str(tmp_path),
+        "--artifact-path", str(artifact),
+        "--max-examples", "3",
+    ])
+    assert rc == 0
+    doc = json.loads(artifact.read_text(encoding="utf-8"))
+    ids = [ex["example_id"] for ex in doc["examples"]]
+    # No placeholders survived.
+    assert not any(i.startswith("phase-v-placeholder") for i in ids)
+    # Both action_required decisions were promoted into the budget.
+    assert len(doc["examples"]) == 2
+    outcomes = [ex["expected_output"]["decision_outcome"] for ex in doc["examples"]]
+    assert outcomes == ["action_required", "action_required"]
+
+
+def test_sparse_coverage_respects_max_examples(tmp_path: Path) -> None:
+    """When more decisions exist than max_examples, the selector must
+    cap the output at max_examples (not write all available)."""
+    decisions = [
+        _make_decision(outcome="action_required", confidence=0.99,
+                       decision_text="d1", turn_ids=["t1"]),
+        _make_decision(outcome="action_required", confidence=0.80,
+                       decision_text="d2", turn_ids=["t2"]),
+        _make_decision(outcome="action_required", confidence=0.70,
+                       decision_text="d3", turn_ids=["t3"]),
+        _make_decision(outcome="action_required", confidence=0.60,
+                       decision_text="d4", turn_ids=["t4"]),
+    ]
+    _write_extraction(tmp_path, "src_max_cap", decisions)
+    artifact = tmp_path / "few_shot.json"
+    rc = selector.main([
+        "--source-id", "src_max_cap",
+        "--data-lake", str(tmp_path),
+        "--artifact-path", str(artifact),
+        "--max-examples", "2",
+    ])
+    assert rc == 0
+    doc = json.loads(artifact.read_text(encoding="utf-8"))
+    assert len(doc["examples"]) == 2
+    # Highest confidence wins in pass 2.
+    texts = sorted(ex["expected_output"]["decision_text"] for ex in doc["examples"])
+    assert texts == ["d1", "d2"]
+
+
+def test_verified_existing_preserved_across_merge(tmp_path: Path) -> None:
+    """A verified=True example landed by a prior reviewer must NEVER be
+    overwritten by an automated re-run. New candidates append; verified
+    rows persist."""
+    decisions = [
+        _make_decision(outcome="action_required", confidence=0.92,
+                       decision_text="new AR", turn_ids=["new-t1"]),
+    ]
+    _write_extraction(tmp_path, "src_keep_verified", decisions)
+    artifact = tmp_path / "few_shot.json"
+    artifact.write_text(json.dumps({
+        "artifact_type": "decision_few_shot_examples",
+        "schema_version": "1.0.0",
+        "examples": [
+            # Operator-verified — must survive.
+            {"example_id": "human-verified-001",
+             "verified": True,
+             "verified_by": "alice",
+             "verified_at": "2026-04-01T00:00:00+00:00",
+             "source_meeting_id": "old_src",
+             "source_turn_ids": ["old-t"],
+             "input_text": "old text",
+             "expected_output": {"decision_outcome": "approval",
+                                 "decision_text": "old approval"}},
+            # Unverified — must be dropped.
+            {"example_id": "unverified-002",
+             "verified": False,
+             "expected_output": {"decision_outcome": "deferral"}},
+            # Placeholder — always dropped, even if flag were True.
+            {"example_id": "phase-v-placeholder-approval",
+             "verified": True,
+             "expected_output": {"decision_outcome": "approval"}},
+        ],
+    }), encoding="utf-8")
+    rc = selector.main([
+        "--source-id", "src_keep_verified",
+        "--data-lake", str(tmp_path),
+        "--artifact-path", str(artifact),
+    ])
+    assert rc == 0
+    doc = json.loads(artifact.read_text(encoding="utf-8"))
+    ids = [ex["example_id"] for ex in doc["examples"]]
+    # Verified one survived.
+    assert "human-verified-001" in ids
+    # Unverified dropped.
+    assert "unverified-002" not in ids
+    # Placeholder dropped even with verified=True flag.
+    assert not any(i.startswith("phase-v-placeholder") for i in ids)
+    # New real candidate appended.
+    new_ids = [i for i in ids if i != "human-verified-001"]
+    assert len(new_ids) == 1
+    assert len(new_ids[0]) > 10  # real UUID
+
+
 def test_marker_removed_on_successful_overwrite(tmp_path: Path) -> None:
     """A prior failure may have left NEEDS_REAL_EXAMPLES.md on disk.
     A successful run that lands real examples must clear the marker."""

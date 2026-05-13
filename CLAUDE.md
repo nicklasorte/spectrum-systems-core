@@ -133,6 +133,21 @@ to the fixed function and assert it succeeds.
 If a PR description is missing verification output, it must not be merged.
 The operator should request the missing verification before approving.
 
+### Auto-debug rule (non-negotiable)
+
+When a workflow or script produces an unexpected result (wrong output,
+silent success with bad data, missing marker files), Claude Code must:
+
+1. Read the actual artifacts from the data-lake directly
+2. Run a simulation that reproduces the exact failure state
+3. Identify the root cause from the simulation output
+4. Fix the root cause
+5. Prove the fix with the same simulation
+
+The operator must never need to manually click through Actions logs
+or browse data-lake files to diagnose a failure. The Claude Code
+session is the debugger.
+
 ### Integration test requirement (non-negotiable)
 
 Every Claude Code session that writes or modifies a script that reads a
