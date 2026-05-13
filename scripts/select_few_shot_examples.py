@@ -161,22 +161,42 @@ def _load_meeting_extraction(
     return chosen
 
 
+def _decision_sort_key(d: Dict[str, Any]) -> Tuple[Any, ...]:
+    """Sort key — grounded first, then confidence desc, then turn_ids for stability.
+
+    Codex P2 fix: grounded examples are always preferred over ungrounded
+    ones even when the ungrounded candidate has higher confidence.
+    Few-shot examples MUST prioritise grounding because the prompt
+    teaches the model to copy structure, not to invent it.
+    """
+    return (
+        0 if d.get("grounding_verified") is True else 1,
+        -float(d.get("confidence") or 0.0),
+        ",".join(sorted(str(s) for s in (d.get("source_turn_ids") or []))),
+    )
+
+
 def _select_candidates_from_decisions(
     decisions: List[Dict[str, Any]],
+    max_examples: int = 3,
 ) -> List[Tuple[str, Dict[str, Any]]]:
-    """Return up to 3 (outcome, decision) tuples — one per outcome.
+    """Return up to ``max_examples`` (outcome, decision) tuples.
 
-    Within each outcome bucket we choose the GROUNDED decision with the
-    highest confidence (grounded examples are always preferred over
-    ungrounded ones even when the ungrounded candidate has higher
-    confidence). Ties are broken by source_turn_ids (lexicographic) for
-    determinism.
+    Strategy (sparse-coverage tolerant):
 
-    Codex P2 fix: the previous key ordered by confidence first, so an
-    ungrounded high-confidence decision could beat a grounded
-    lower-confidence one. Few-shot examples MUST prioritise grounding
-    because the prompt teaches the model to copy structure, not to
-    invent it.
+    1. Try to fill one slot per target outcome bucket
+       (``approval`` / ``deferral`` / ``action_required``), choosing the
+       grounded-then-highest-confidence decision in each bucket.
+    2. Fill any remaining slots with the next-best decisions from any
+       target-outcome bucket, regardless of outcome (no duplicates).
+    3. Returns fewer than ``max_examples`` only when fewer decisions
+       with target outcomes exist on disk.
+
+    A transcript that only produced ``action_required`` decisions now
+    yields multiple action_required candidates (up to ``max_examples``)
+    rather than a single candidate plus two empty buckets. The caller
+    is responsible for surfacing which buckets are missing — this
+    function never pads with placeholders.
     """
     buckets: Dict[str, List[Dict[str, Any]]] = {o: [] for o in TARGET_OUTCOMES}
     for d in decisions or []:
@@ -185,21 +205,35 @@ def _select_candidates_from_decisions(
         outcome = d.get("decision_outcome")
         if outcome in buckets:
             buckets[outcome].append(d)
+    for outcome in TARGET_OUTCOMES:
+        buckets[outcome].sort(key=_decision_sort_key)
 
-    out: List[Tuple[str, Dict[str, Any]]] = []
+    selected: List[Tuple[str, Dict[str, Any]]] = []
+    used_ids: set[int] = set()
+
+    # Pass 1: one per bucket.
     for outcome in TARGET_OUTCOMES:
         items = buckets[outcome]
-        if not items:
-            continue
-        items.sort(
-            key=lambda d: (
-                0 if d.get("grounding_verified") is True else 1,
-                -float(d.get("confidence") or 0.0),
-                ",".join(sorted(str(s) for s in (d.get("source_turn_ids") or []))),
-            )
-        )
-        out.append((outcome, items[0]))
-    return out
+        if items:
+            chosen = items[0]
+            selected.append((outcome, chosen))
+            used_ids.add(id(chosen))
+        if len(selected) >= max_examples:
+            return selected[:max_examples]
+
+    # Pass 2: fill remaining slots with best available regardless of bucket.
+    remaining = max_examples - len(selected)
+    if remaining > 0:
+        leftover: List[Tuple[str, Dict[str, Any]]] = []
+        for outcome in TARGET_OUTCOMES:
+            for d in buckets[outcome]:
+                if id(d) in used_ids:
+                    continue
+                leftover.append((outcome, d))
+        leftover.sort(key=lambda t: _decision_sort_key(t[1]))
+        selected.extend(leftover[:remaining])
+
+    return selected
 
 
 def _decision_to_example(
@@ -312,6 +346,36 @@ def _has_only_placeholders(examples: List[Dict[str, Any]]) -> bool:
     )
 
 
+def _merge_with_existing(
+    new_candidates: List[Dict[str, Any]],
+    existing_examples: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Merge new candidates with existing verified examples.
+
+    Rules:
+
+    - Keep ALL existing examples where ``verified=True`` (operator
+      approved — must never be overwritten by an automated run).
+    - Drop ALL existing examples where ``verified`` is anything else
+      (False, missing, or any non-True value).
+    - Placeholders (``phase-v-placeholder-*``) are always treated as
+      unverified, regardless of their flag.
+    - Result is ``[verified_existing] + [new_real_candidates]``.
+
+    The output list NEVER contains placeholder ids. If any survive the
+    caller MUST refuse to exit 0 and write the NEEDS_REAL_EXAMPLES
+    marker — this function does not assert it because callers may
+    legitimately invoke it with an empty new_candidates list and let
+    the post-write safety check catch the leak.
+    """
+    verified_existing = [
+        e for e in existing_examples
+        if e.get("verified") is True
+        and not str(e.get("example_id", "")).startswith(PLACEHOLDER_ID_PREFIX)
+    ]
+    return verified_existing + list(new_candidates)
+
+
 def _write_needs_real_examples(
     path: Path, source_id: str, reason: str, diagnostics: List[str]
 ) -> None:
@@ -422,6 +486,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         extraction = _load_meeting_extraction(data_lake, args.source_id)
     except ArtifactValidationError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        _write_needs_real_examples(
+            needs_real_path,
+            args.source_id,
+            reason=f"meeting_extraction artifact failed schema validation: {exc}",
+            diagnostics=[
+                f"data-lake: `{data_lake}`",
+                f"existing_examples_are_placeholders: `{only_placeholders}`",
+                "remediation: re-run extraction with `force=true` so the "
+                "writer regenerates the artifact against the current schema.",
+            ],
+        )
         return 1
     resolved = _resolve_source_artifact_id(data_lake, args.source_id)
     print(
@@ -465,7 +540,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"diag: extraction decisions={len(decisions)}")
     print(f"diag: outcome distribution={dict(outcome_counts)}")
 
-    chosen = _select_candidates_from_decisions(decisions)[: max(1, args.max_examples)]
+    chosen = _select_candidates_from_decisions(
+        decisions, max_examples=max(1, args.max_examples)
+    )
     if not chosen:
         msg = (
             f"error: no decisions with target outcomes "
@@ -491,11 +568,32 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         return 2
 
-    examples = [_decision_to_example(d, args.source_id, outcome) for outcome, d in chosen]
-    print(
-        f"diag: selected {len(examples)} candidates "
-        f"({[ex['expected_output'].get('decision_outcome') for ex in examples]})"
-    )
+    new_examples = [
+        _decision_to_example(d, args.source_id, outcome) for outcome, d in chosen
+    ]
+    selected_outcomes = [
+        ex["expected_output"].get("decision_outcome") for ex in new_examples
+    ]
+    print(f"diag: selected {len(new_examples)} candidates ({selected_outcomes})")
+
+    # Sparse-coverage diagnostic: callers running on a single transcript
+    # often see only one or two outcome buckets populated. Surface which
+    # buckets are missing so the operator knows the file is incomplete
+    # even though the script succeeded.
+    filled_buckets = {outcome for outcome, _ in chosen}
+    missing_buckets = set(TARGET_OUTCOMES) - filled_buckets
+    if missing_buckets:
+        print(
+            f"diag: missing outcome buckets (no decisions in extraction): "
+            f"{sorted(missing_buckets)}"
+        )
+        print(
+            f"diag: filled {len(new_examples)} slot(s) from available decisions"
+        )
+
+    # Merge with verified-existing — preserves operator-approved examples
+    # but never preserves placeholders or unverified rows.
+    examples = _merge_with_existing(new_examples, existing)
     existing_audit: List[Dict[str, Any]] = []
     if artifact_path.is_file():
         try:
@@ -505,7 +603,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         except (OSError, json.JSONDecodeError):
             existing_audit = []
 
-    for ex in examples:
+    # Only audit the NEW selections — verified-existing examples already
+    # have their own audit_log entries from prior runs.
+    for ex in new_examples:
         existing_audit.append({
             "action": "selected",
             "example_id": ex["example_id"],
@@ -514,12 +614,18 @@ def main(argv: Optional[List[str]] = None) -> int:
             "notes": f"outcome={ex['expected_output'].get('decision_outcome')}",
         })
 
+    # Artifact-level verified flag: true iff every example is verified.
+    # Matches verify_example.py's roll-up so the two scripts agree.
+    artifact_verified = bool(examples) and all(
+        ex.get("verified") is True for ex in examples
+    )
+
     artifact = {
         "artifact_type": "decision_few_shot_examples",
         "schema_version": "1.0.0",
         "examples_version": "1",
         "extraction_type": "decision",
-        "verified": False,
+        "verified": artifact_verified,
         "created_at": _now_iso(),
         "examples": examples,
         "audit_log": existing_audit,
@@ -567,14 +673,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     _write_review_checklist(
         checklist_path,
         args.source_id,
-        examples,
+        new_examples,
         transcript_hint=str(
             data_lake / "store" / "processed" / "meetings" / args.source_id
         ),
     )
 
+    preserved_count = len(examples) - len(new_examples)
     print(
-        f"wrote {len(examples)} candidate(s) -> {artifact_path}\n"
+        f"wrote {len(new_examples)} new candidate(s) "
+        f"(+ {preserved_count} verified-existing preserved) "
+        f"-> {artifact_path}\n"
         f"checklist -> {checklist_path}\n"
         "NEXT: review each example, then run scripts/verify_example.py "
         "to mark verified=true.",
