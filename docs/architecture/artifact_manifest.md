@@ -67,12 +67,17 @@ synthetic strings into these placeholders before calling
 ### ground_truth_pair
 - **Writer:** `scripts/annotate_rubric.py`,
   `scripts/confirm_pairs.py`,
-  `scripts/confirm_rubric_annotations.py` (when present).
+  `scripts/confirm_rubric_annotations.py` (when present),
+  `scripts/generate_gt_pairs.py` (Phase X2 follow-up: synthesizes
+  decision-derived pairs from a `meeting_extraction` so the
+  annotate-gt-rubric mobile workflow has input to operate on after a
+  single-transcript debug run).
 - **Path template:** `data-lake/store/artifacts/ground_truth/<artifact_id>.json`
 - **Schema:** `contracts/schemas/ingestion/ground_truth_pair.schema.json`
 - **Git-tracked:** YES — the eval-ground-truth CLI reads every pair
   in this directory.
-- **Readers:** `evals.m4.runner` via `eval-ground-truth` CLI.
+- **Readers:** `evals.m4.runner` via `eval-ground-truth` CLI,
+  `scripts/annotate_rubric.py`.
 
 ### eval_summary (incl. baseline)
 - **Writer:** `evals/m4/runner.py` via `eval-ground-truth` CLI,
