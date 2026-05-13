@@ -32,7 +32,7 @@ on:
           - 'true'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   eval-ground-truth:
@@ -50,7 +50,7 @@ jobs:
       - name: Checkout spectrum-systems-core
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GH_PAT }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Wait for data-lake artifacts to propagate
         run: sleep 30

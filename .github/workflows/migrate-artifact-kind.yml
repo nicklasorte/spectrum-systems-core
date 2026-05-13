@@ -32,7 +32,7 @@ jobs:
           repository: nicklasorte/data-lake
           ref: ${{ github.event.inputs.data_lake_ref }}
           path: data-lake
-          token: ${{ secrets.GH_PAT }}
+          token: ${{ secrets.GITHUB_TOKEN }}
         
 
       - name: Set up Python 3.11
@@ -62,7 +62,7 @@ jobs:
       - name: Commit changes to data-lake
         if: ${{ github.event.inputs.confirm == 'yes' }}
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd "${{ github.workspace }}/data-lake"
           if [[ -z "$(git status --porcelain)" ]]; then
