@@ -1,0 +1,30 @@
+{
+  "alignment_result_id": "aa6dc5d6-dd6c-417b-89e3-8c2bc67154cd",
+  "artifact_source": "story_artifacts",
+  "artifact_type": "alignment_result",
+  "chunking_strategy": "unknown",
+  "coverage_alignments": [],
+  "created_at": "2026-05-13T23:34:21+00:00",
+  "eval_input_warning": false,
+  "minutes_artifact_id": "synthesized-from-extraction:7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
+  "pair_id": "b850616a-dc71-5729-b430-39f23f7db57e",
+  "provenance": {
+    "produced_by": "EvalAligner"
+  },
+  "review_alignments": [
+    {
+      "alignment_status": "requires_review",
+      "extracted_item_id": "a164d7f4-60aa-4822-a54a-2ebff692e1da",
+      "extracted_item_text": "A regulatory decision to reallocate a critical frequency band would disrupt operations for nearly 850 existing satellite earth stations with primary operating rights.",
+      "low_confidence_flagged": false,
+      "matched_minutes_text": null,
+      "semantic_similarity": 0.0,
+      "source_turn_ids": [
+        "6feb39fa-2411-4c07-9f4e-0bdd9bc332a7"
+      ],
+      "source_turn_validation": "verified"
+    }
+  ],
+  "schema_version": "1.0.0",
+  "source_artifact_id": "7b474018-707a-4e81-a8ce-6100f4bf4dbf"
+}

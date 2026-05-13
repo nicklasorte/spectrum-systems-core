@@ -1,0 +1,22 @@
+{
+  "alignment_result_id": "50a45d96-025a-41f1-8a23-43f77518ec03",
+  "artifact_type": "eval_result",
+  "chunking_strategy": "unknown",
+  "coverage": 0.0,
+  "created_at": "2026-05-13T23:34:21+00:00",
+  "eval_result_id": "3e5b4d37-405f-4099-9796-d9f0b0359f51",
+  "items_requiring_review": 1,
+  "items_requiring_review_rate": 1.0,
+  "minutes_artifact_id": "synthesized-from-extraction:7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
+  "pair_id": "31a562b1-1697-5338-9382-b7ffc60d5a68",
+  "pipeline_run_id": "tex-59ef7b65eb284f4a",
+  "precision": 0.0,
+  "prompt_version": "unspecified",
+  "provenance": {
+    "produced_by": "EvalMetrics"
+  },
+  "schema_version": "1.0.0",
+  "source_artifact_id": "7b474018-707a-4e81-a8ce-6100f4bf4dbf",
+  "total_extracted_items": 1,
+  "total_minutes_items": 0
+}
