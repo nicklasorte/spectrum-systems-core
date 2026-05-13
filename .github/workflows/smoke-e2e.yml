@@ -1,0 +1,52 @@
+name: Phase R smoke (e2e)
+
+# Phase R resilience — runs on every PR. No API key, no live extraction.
+#
+# Asserts the bug classes Phase R was designed to prevent:
+#   1. gitignored artifact paths (read by scripts/) — caught by the
+#      gitignore audit against the live repo.
+#   2. workspace drift that breaks the preflight + few-shot selector
+#      chain — caught by the e2e smoke test that exercises the real
+#      scripts against a seeded temp data-lake.
+#   3. dangling runbook references — caught by the runbook validator.
+#
+# Budgeted at <2 minutes wall clock. No network calls.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Gitignore audit (manifest contract)
+        # Pure-stdlib. Reads docs/architecture/artifact_manifest.md and
+        # asserts every git-tracked artifact path is un-ignored. Runs
+        # BEFORE pip install so a broken environment cannot mask the
+        # check.
+        run: python scripts/_gitignore_audit.py
+
+      - name: Runbook validator
+        # Pure-stdlib. Asserts every workflow file referenced from
+        # docs/runbooks/first_run.md still exists.
+        run: python scripts/_validate_runbook.py
+
+      - name: Install package with dev extras
+        run: python -m pip install -e ".[dev]"
+
+      - name: End-to-end pipeline smoke test
+        # Uses tests/integration/fixtures.py factories — real merger,
+        # mocked-by-construction model output, real scripts. No API
+        # key required.
+        run: python -m pytest tests/e2e/ -v --tb=short
