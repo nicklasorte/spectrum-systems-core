@@ -28,6 +28,13 @@
       "at": "2026-05-13T18:40:05+00:00",
       "example_id": "21f8b17f-0b9d-4dca-aa29-bc4ba9c4fde7",
       "notes": ""
+    },
+    {
+      "action": "verified",
+      "actor": "nicklasorte",
+      "at": "2026-05-13T18:43:32+00:00",
+      "example_id": "5d9a57fd-e8b1-4e57-90e1-2f767ef16130",
+      "notes": ""
     }
   ],
   "created_at": "2026-05-13T18:35:10+00:00",
@@ -64,9 +71,9 @@
       "source_turn_ids": [
         "fcb5679e-13f9-4e84-80e2-273f5f82a6e4"
       ],
-      "verified": false,
-      "verified_at": null,
-      "verified_by": null
+      "verified": true,
+      "verified_at": "2026-05-13T18:43:32+00:00",
+      "verified_by": "nicklasorte"
     },
     {
       "example_id": "51424f03-7239-45d9-98e9-0724c54a7c5f",
