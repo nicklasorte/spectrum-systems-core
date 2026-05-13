@@ -40,6 +40,15 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Preflight — confirm extraction artifact exists
+        # Pure-stdlib check that runs BEFORE pip install so a missing
+        # extraction artifact short-circuits with a clear step-summary
+        # message a mobile operator can read without scrolling logs.
+        run: |
+          python scripts/_few_shot_preflight.py \
+            --source-id "${{ github.event.inputs.source_id }}" \
+            --data-lake "${{ github.workspace }}/data-lake"
+
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
@@ -126,8 +135,18 @@ jobs:
           artifact = pathlib.Path(
               "data-lake/store/artifacts/evals/few_shot/decision_examples_v1.json"
           )
+          needs_real = pathlib.Path(
+              "data-lake/store/artifacts/evals/few_shot/NEEDS_REAL_EXAMPLES.md"
+          )
           summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
           with open(summary_path, "a") as f:
+              # Surface the NEEDS_REAL_EXAMPLES marker first when present so a
+              # mobile operator sees the diagnostic at the top of the summary
+              # instead of having to scroll past a stale placeholder table.
+              if needs_real.is_file():
+                  f.write("## [BLOCKED] NEEDS_REAL_EXAMPLES.md present\n\n")
+                  f.write(needs_real.read_text(encoding="utf-8"))
+                  f.write("\n\n---\n\n")
               f.write("## Few-shot candidates selected\n\n")
               if not artifact.is_file():
                   f.write("No candidate artifact found.\n")
