@@ -1,0 +1,32 @@
+{
+  "artifact_type": "orchestration_result",
+  "binding_tuple_call_count": 0,
+  "block_reasons": {
+    "empty_response": 0,
+    "other": 0,
+    "parse_error": 0,
+    "rate_limit_exhausted": 0
+  },
+  "chunks_attempted": 8,
+  "chunks_blocked": 0,
+  "chunks_succeeded": 8,
+  "created_at": "2026-05-13T18:33:22+00:00",
+  "glossary_injection_summary": {
+    "chunks_with_matches": 7,
+    "chunks_with_no_matches": 1,
+    "most_injected_terms": [
+      "fss",
+      "tig",
+      "itu",
+      "fss_protection_zone",
+      "coa"
+    ],
+    "stale_records_count": 0,
+    "total_term_injections": 15
+  },
+  "run_id": "tex-cb0187031a334332",
+  "schema_version": "1.0.0",
+  "scope_overgeneralization_count": 0,
+  "source_id": "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
+  "stage_status": "ok"
+}

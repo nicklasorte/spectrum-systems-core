@@ -1,0 +1,61 @@
+{
+  "artifact_id": "fa538a08-8980-49ff-849a-25c648c2094e",
+  "artifact_kind": "source_record",
+  "artifact_type": "source_record",
+  "created_at": "2026-05-13T18:32:09+00:00",
+  "payload": {
+    "agenda_items": [
+      {
+        "agenda_item_id": "AI-001",
+        "end_turn_index": 8,
+        "start_turn_index": 4,
+        "title": "sharing-criteria approach. The group has agreed to apply the ITU two-point criteria for the FSS protection analysis. We will use negative 10.5 dB at the 80th percentile and negative 6 dB at 0.03 perce"
+      },
+      {
+        "agenda_item_id": "AI-002",
+        "end_turn_index": 13,
+        "start_turn_index": 9,
+        "title": "course of action selection. The DoW course of action number three proposes reallocation of the 7125 to 7250 MHz band segment. This would affect approximately 847 FSS earth stations currently operating"
+      }
+    ],
+    "chunking_strategy": "speaker_turn",
+    "metadata": {
+      "author": "",
+      "date": "1970-01-01",
+      "description": "",
+      "private_use_only": false,
+      "raw_format": "txt",
+      "source_family": "meetings",
+      "source_id": "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
+      "source_type": "meeting_transcript",
+      "tags": [],
+      "title": "7 GHz Downlink TIG Meeting Kickoff - transcript 20251218"
+    },
+    "processed_path": "processed/meetings/7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
+    "raw_hash": "sha256:93f2db9daed2a4ddbb7562f156a189f8e80377b8d6263df6538daca73f07aff7",
+    "raw_path": "raw/meetings/7-ghz-downlink-tig-meeting-kickoff---transcript-20251218/source.txt",
+    "source_family": "meetings",
+    "source_id": "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
+    "source_type": "meeting_transcript",
+    "text_unit_count": 12,
+    "title": "7 GHz Downlink TIG Meeting Kickoff - transcript 20251218"
+  },
+  "provenance": {
+    "execution_fingerprint_hash": "sha256:676d64eddbce8fceb204d843214c6e32e6dc507ada4b99f39d9cc0edb6f45426",
+    "input_artifact_ids": [],
+    "produced_by": {
+      "component": "source_loader",
+      "version": "1.0.0"
+    }
+  },
+  "schema_ref": {
+    "digest": "sha256:5e6be5dc3f3c7acc389573411596b67956be9a12ea0153949bf84434c796968f",
+    "name": "source_record",
+    "version": "1.2.0"
+  },
+  "trace": {
+    "parent_span_id": null,
+    "span_id": "0a2fd28aa6af4b46",
+    "trace_id": "c008ce6bbf1d4a1d9d8b4494ba4935bd"
+  }
+}
