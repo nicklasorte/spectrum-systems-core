@@ -36,6 +36,16 @@ data-lake/store/artifacts/verifications/
 # workflow's commit step and caused the preflight to fail with
 # exit code 2.
 
-# Pipeline runtime data — must live under DATA_LAKE_PATH, not the repo.
+# Pipeline runtime data — bulk pipeline data lives under DATA_LAKE_PATH,
+# not the repo. Bulk processed/ contents (text_units.jsonl, chunks.jsonl,
+# stories/, etc.) stay ignored, but the small source_record.json metadata
+# file is un-ignored so the few-shot preflight in
+# scripts/_few_shot_preflight.py can map a slug source_id (e.g.
+# "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218") to the UUID
+# source_artifact_id used as the meeting_extraction filename prefix. The
+# debug-single-transcript workflow's `git add store/processed/` step relies
+# on this negation to commit source_record.json after each run.
 raw/
-processed/
+**/processed/**
+!**/processed/**/
+!**/processed/**/source_record.json
