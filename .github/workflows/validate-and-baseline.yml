@@ -58,7 +58,7 @@ on:
           - 'true'
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   TARGET_SOURCE_ID: ${{ github.event.inputs.source_id || '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218' }}
@@ -108,7 +108,7 @@ jobs:
       - name: Checkout spectrum-systems-core
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GH_PAT }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5

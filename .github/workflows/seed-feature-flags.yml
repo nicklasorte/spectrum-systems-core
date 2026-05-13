@@ -17,16 +17,15 @@ name: Seed feature flags
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   seed-feature-flags:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout data-lake
+      - name: Checkout spectrum-systems-core
         uses: actions/checkout@v4
-        with:
-          repository: nicklasorte/data-lake
-          path: data-lake
-          token: ${{ secrets.GH_PAT }}
 
       - name: Write feature flag artifacts
         env:
@@ -58,16 +57,16 @@ jobs:
 
       - name: Commit flags to data-lake
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cd "${{ github.workspace }}/data-lake"
+          cd "${{ github.workspace }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [[ -z "$(git status --porcelain)" ]]; then
+          if [[ -z "$(git status --porcelain data-lake/)" ]]; then
             echo "No feature flag changes to commit."
             exit 0
           fi
-          git add -A
+          git add data-lake/
           git commit -m "seed: write feature flag artifacts"
           git push
 
