@@ -363,11 +363,14 @@ jobs:
           while [ $attempt -lt 5 ]; do
             attempt=$((attempt+1))
             git rebase --abort 2>/dev/null || true
+            git stash --include-untracked 2>/dev/null || true
             git fetch origin main
             if git pull --rebase origin main && git push origin HEAD:main; then
+              git stash pop 2>/dev/null || true
               echo "Push succeeded on attempt $attempt"
               exit 0
             fi
+            git stash pop 2>/dev/null || true
             echo "Push attempt $attempt failed; sleeping ${delay}s..."
             sleep $delay
             delay=$((delay*2))
