@@ -13,10 +13,10 @@
     "produced_by": "GenerateGTPairs"
   },
   "rubric_notes": {
-    "annotated_at": "2026-05-13T21:45:30+00:00",
-    "annotator_id": "auto-classifier",
+    "annotated_at": "2026-05-13T21:48:38+00:00",
+    "annotator_id": "nicklasorte",
     "expected_decision_outcome": "deferral",
-    "notes": "auto-classified from text (default=noted)",
+    "notes": "confirmed by reviewer",
     "verb_discrimination_example": false
   },
   "schema_version": "1.0.0",
