@@ -1,0 +1,34 @@
+7 GHz Downlink TIG Meeting Kickoff - 18 December 2025
+
+DiFrancisco, Michael   1:02
+Welcome everyone to the kickoff meeting of the 7 GHz Downlink Technical Interference Group. Today's agenda has three items: scope confirmation, sharing-criteria approach, and action items for the next session. Are there any objections to that agenda? Hearing none, the agenda is approved.
+
+LaSorte, Nickolas   1:48
+For the record, the band under discussion is 7125 to 8400 MHz, with primary focus on the 7125 to 7250 MHz segment where FSS earth stations are concentrated. The TIG is chartered to evaluate downlink sharing options between proposed mobile broadband and incumbent FSS receivers.
+
+DiFrancisco, Michael   2:30
+Topic: sharing-criteria approach. The group has agreed to apply the ITU two-point criteria for the FSS protection analysis. We will use negative 10.5 dB at the 80th percentile and negative 6 dB at 0.03 percent. Are there any objections? Hearing none, that is approved.
+
+Bhatt, Sandip   3:15
+I want to note that the single-point criterion of negative 10.5 dB at 0.03 percent would provide equivalent protection to the ITU two-point standard. This is a technical claim based on the mathematical relationship between the two thresholds.
+
+Nolen, Katrece - Contractor   4:02
+Nick, can you send the FSS protection zone working paper to the group by Friday? We need it before the next meeting so members can review the methodology before we proceed.
+
+LaSorte, Nickolas   4:30
+Yes, I will circulate the working paper by end of day Friday. I will also include a draft analysis of the 7125 to 7250 MHz band segment.
+
+DiFrancisco, Michael   5:10
+Topic: course of action selection. The DoW course of action number three proposes reallocation of the 7125 to 7250 MHz band segment. This would affect approximately 847 FSS earth stations currently operating under primary status.
+
+Bhatt, Sandip   5:55
+We will defer the decision on COA selection to the next working group meeting. There is not enough information available today to make that determination, and the working paper from Nick will inform the choice.
+
+DiFrancisco, Michael   6:40
+Action items roundup. Action one: Nick LaSorte to circulate the FSS protection zone working paper by Friday December 19. Action two: Sandip to compile the FSS earth station inventory for the 7125 to 7250 MHz segment. Action three: Katrece to schedule the next TIG meeting for the second week of January.
+
+Nolen, Katrece - Contractor   7:20
+Confirmed on the scheduling action. I will send a Doodle poll to members by end of week.
+
+DiFrancisco, Michael   7:45
+Any other business? Hearing none, this kickoff meeting is adjourned. Thank you all for attending.
