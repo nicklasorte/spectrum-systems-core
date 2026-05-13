@@ -150,6 +150,27 @@ jobs:
               "generalization_check_ran": False,
           }
 
+          # Resolve slug source_id -> UUID source_artifact_id via source_record.json.
+          # Extraction artifacts are written with ``source_artifact_id`` (UUID) and
+          # ``source_id`` left absent, so a slug-only filter on the extraction
+          # artifact silently skips every file. Mirror the resolver pattern from
+          # ``scripts/_few_shot_preflight.resolve_source_artifact_id``.
+          source_artifact_id = None
+          processed_root = sdl.parent.parent / "store" / "processed"
+          if processed_root.is_dir():
+              for family_dir in processed_root.iterdir():
+                  sr = family_dir / source / "source_record.json"
+                  if sr.is_file():
+                      try:
+                          sr_doc = json.loads(sr.read_text())
+                      except Exception:
+                          sr_doc = None
+                      if isinstance(sr_doc, dict):
+                          aid = sr_doc.get("artifact_id")
+                          if isinstance(aid, str) and aid:
+                              source_artifact_id = aid
+                      break
+
           # 1) agenda_item_id non-null on chunks.jsonl
           chunks_path = sdl.parent.parent / "store" / "processed" / "meetings" / source / "stories" / "chunks.jsonl"
           if chunks_path.is_file():
@@ -171,7 +192,42 @@ jobs:
               if any(isinstance(ex, dict) and ex.get("verified") is True for ex in examples):
                   report["few_shot_present_with_verified"] = True
 
-          # 3) glossary_terms_injected on at least one chunk record
+          def _matches_source(doc):
+              # Match either field for forward compat. Extraction artifacts
+              # use source_artifact_id (UUID); orchestration_result uses
+              # source_id (slug). Either match counts.
+              if not isinstance(doc, dict):
+                  return False
+              if source_artifact_id and doc.get("source_artifact_id") == source_artifact_id:
+                  return True
+              if doc.get("source_id") == source:
+                  return True
+              return False
+
+          # 3) glossary injection ran with >=1 term injected. The persisted
+          # location is ``orchestration_result.glossary_injection_summary``;
+          # ``chunk_extraction_records`` only lives in the runtime result dict
+          # (typed_extraction_runner.py:1524) and is NEVER written to disk by
+          # ExtractionMerger.write_to. Reading the orchestration_result rollup
+          # is the only way to verify the W.1 wiring on disk.
+          orch_dir = sdl / "orchestration"
+          if orch_dir.is_dir():
+              for path in orch_dir.glob("*.json"):
+                  try:
+                      doc = json.loads(path.read_text())
+                  except Exception:
+                      continue
+                  if not _matches_source(doc):
+                      continue
+                  summary_obj = doc.get("glossary_injection_summary")
+                  if isinstance(summary_obj, dict):
+                      injected = summary_obj.get("total_term_injections") or 0
+                      matches = summary_obj.get("chunks_with_matches") or 0
+                      if injected > 0 or matches > 0:
+                          report["glossary_terms_injected_present"] = True
+                          break
+
+          # 4) regulatory_verb (or decision_outcome) present on >=1 decision
           extr_dir = sdl / "extractions"
           if extr_dir.is_dir():
               for path in extr_dir.glob("*.json"):
@@ -179,21 +235,7 @@ jobs:
                       doc = json.loads(path.read_text())
                   except Exception:
                       continue
-                  if doc.get("source_id") != source:
-                      continue
-                  for rec in doc.get("chunk_extraction_records") or []:
-                      if isinstance(rec, dict) and isinstance(rec.get("glossary_terms_injected"), list):
-                          report["glossary_terms_injected_present"] = True
-                          break
-
-          # 4) regulatory_verb (or decision_outcome) present on >=1 decision
-          if extr_dir.is_dir():
-              for path in extr_dir.glob("*.json"):
-                  try:
-                      doc = json.loads(path.read_text())
-                  except Exception:
-                      continue
-                  if doc.get("source_id") != source:
+                  if not _matches_source(doc):
                       continue
                   for d in doc.get("decisions") or []:
                       if isinstance(d, dict) and (
@@ -204,14 +246,13 @@ jobs:
                           break
 
           # 5) scope_overgeneralization_count present on orchestration_result
-          orch_dir = sdl / "orchestration"
           if orch_dir.is_dir():
               for path in orch_dir.glob("*.json"):
                   try:
                       doc = json.loads(path.read_text())
                   except Exception:
                       continue
-                  if doc.get("source_id") != source:
+                  if not _matches_source(doc):
                       continue
                   if "scope_overgeneralization_count" in doc:
                       report["generalization_check_ran"] = True
@@ -221,12 +262,14 @@ jobs:
           summary = "\n".join(f"- {k}: {'OK' if v else 'MISSING'}" for k, v in report.items())
           print("Phase W wiring signals:")
           print(summary)
+          print(f"resolved source_artifact_id: {source_artifact_id}")
           gh_summary = os.environ.get("GITHUB_STEP_SUMMARY")
           if gh_summary:
               with open(gh_summary, "a") as fh:
                   fh.write("## Phase W wiring signals\n\n")
                   fh.write(summary)
                   fh.write("\n")
+                  fh.write(f"\nresolved source_artifact_id: `{source_artifact_id}`\n")
           if not all_green and os.environ.get("FORCE_BASELINE") != "true":
               sys.exit(1)
           if not all_green:
