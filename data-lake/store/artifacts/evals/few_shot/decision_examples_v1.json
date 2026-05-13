@@ -35,6 +35,13 @@
       "at": "2026-05-13T18:43:32+00:00",
       "example_id": "5d9a57fd-e8b1-4e57-90e1-2f767ef16130",
       "notes": ""
+    },
+    {
+      "action": "verified",
+      "actor": "nicklasorte",
+      "at": "2026-05-13T18:45:55+00:00",
+      "example_id": "51424f03-7239-45d9-98e9-0724c54a7c5f",
+      "notes": ""
     }
   ],
   "created_at": "2026-05-13T18:35:10+00:00",
@@ -89,13 +96,13 @@
       "source_turn_ids": [
         "fcdf449e-ccdd-4a2c-84a3-b592cbcf5ae1"
       ],
-      "verified": false,
-      "verified_at": null,
-      "verified_by": null
+      "verified": true,
+      "verified_at": "2026-05-13T18:45:55+00:00",
+      "verified_by": "nicklasorte"
     }
   ],
   "examples_version": "1",
   "extraction_type": "decision",
   "schema_version": "1.0.0",
-  "verified": false
+  "verified": true
 }
