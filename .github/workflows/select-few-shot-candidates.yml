@@ -72,6 +72,43 @@ jobs:
             --data-lake "${{ github.workspace }}/data-lake" \
             --max-examples "${{ github.event.inputs.max_candidates }}"
 
+      - name: Verify no placeholders remain
+        if: success()
+        run: |
+          python - <<'PY'
+          import json, sys, pathlib
+
+          path = pathlib.Path(
+              "data-lake/store/artifacts/evals/few_shot/decision_examples_v1.json"
+          )
+          if not path.exists():
+              print("ERROR: decision_examples_v1.json not found")
+              sys.exit(1)
+
+          doc = json.loads(path.read_text(encoding="utf-8"))
+          examples = doc.get("examples", []) or []
+          placeholders = [
+              e for e in examples
+              if str(e.get("example_id", "")).startswith("phase-v-placeholder")
+          ]
+
+          if placeholders:
+              print(f"FAIL: {len(placeholders)} placeholder(s) still in artifact:")
+              for p in placeholders:
+                  print(f"  {p.get('example_id')}")
+              print(
+                  "The commit step will not run. Check the "
+                  "'Select few-shot candidates' step log."
+              )
+              sys.exit(1)
+
+          real = [
+              e for e in examples
+              if not str(e.get("example_id", "")).startswith("phase-v-placeholder")
+          ]
+          print(f"OK: {len(real)} real example(s), 0 placeholders")
+          PY
+
       - name: Commit candidates to data-lake
         run: |
           cd "${{ github.workspace }}/data-lake"
