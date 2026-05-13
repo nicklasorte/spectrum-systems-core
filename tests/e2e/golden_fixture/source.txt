@@ -1,0 +1,9 @@
+Speaker A (NTIA Lead): Welcome everyone. Today we're discussing the proposed 7 GHz downlink threshold and the aggregate interference methodology. Let's start with the threshold.
+
+Speaker B (DoD): NTIA's threshold of -109 dBm/MHz looks consistent with prior cycles. The DoD recommends approval as proposed.
+
+Speaker A (NTIA Lead): Approved. We'll record the 7 GHz downlink threshold at -109 dBm/MHz as decided. Moving on to interference methodology.
+
+Speaker C (Chair Smith): The aggregate interference methodology raised several open questions. Given the unresolved modeling assumptions, I move to defer the interference methodology decision to the next session. Let's circle back once we have the revised aggregation curves from DoD.
+
+Speaker B (DoD): Agreed. DoD will submit revised ERP values for the 7 GHz band before the next session, addressing the outstanding requirement from the prior session.

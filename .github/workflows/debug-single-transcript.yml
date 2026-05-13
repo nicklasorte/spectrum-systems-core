@@ -37,6 +37,14 @@ jobs:
           python -m pip install -e ".[dev]"
           python -m pip install anthropic
 
+      - name: Validate environment (Phase R)
+        # Asserts data-lake/ is well-formed, ANTHROPIC_API_KEY is set,
+        # and every git-tracked artifact path in the manifest is
+        # un-ignored. Fails fast (<1s) so a misconfigured workspace
+        # cannot waste a 4-minute extraction.
+        run: |
+          python scripts/_env_validate.py --data-lake "$DATA_LAKE_PATH"
+
       - name: Seed transcript into data-lake
         # The repo's data-lake/ ships only store/artifacts/* — raw/ and
         # processed/ are .gitignore'd, so a fresh checkout has zero

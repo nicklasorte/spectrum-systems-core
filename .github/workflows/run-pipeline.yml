@@ -139,6 +139,14 @@ jobs:
           python -m pip install -e ".[dev]"
           python -m pip install anthropic
 
+      - name: Validate environment (Phase R)
+        # Asserts data-lake/ shape, ANTHROPIC_API_KEY presence, and
+        # the gitignore-audit invariant before extraction starts.
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python scripts/_env_validate.py --data-lake "${{ github.workspace }}/data-lake"
+
       - name: Run pipeline for this transcript
         run: |
           FORCE_FLAG=""
