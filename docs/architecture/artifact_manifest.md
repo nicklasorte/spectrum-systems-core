@@ -27,6 +27,31 @@ synthetic strings into these placeholders before calling
     prompt template (`extraction/_prompt_blocks.py::compute_prompt_version`).
     Format `sha256:<12 hex chars>`. Optional so artifacts written
     before Phase P2-B still validate.
+  - `extraction_mode` (Phase P3-A): `"two_stage"` (default) or
+    `"single_pass"`. Stamped from the `EXTRACTION_MODE` env var so
+    a regression triage can confirm which prompt path produced the
+    artifact. Operator rollback path: set `EXTRACTION_MODE=single_pass`
+    to revert to the pre-P3 single-prompt extraction.
+  - `glossary_version` (Phase P3-A): integer version of the
+    versioned glossary artifact that was injected into prompts
+    during this run. Distinct from `prompt_version` so a glossary
+    edit (no prompt template change) is still traceable.
+  - `off_topic_rate` (Phase P3-A): float in `[0,1]`, fraction of
+    classifier output that came back as `off_topic`.
+  - `extraction_path_breakdown` (Phase P3-A): map of classification
+    label to count.
+  - `source_turn_orphan_rate` (Phase P3-A): float in `[0,1]`,
+    fraction of extracted items whose `source_turn_ids` reference
+    chunk ids not present in `chunks.jsonl`.
+  - `source_turn_diversity_rate` (Phase P3-A): float in `[0,1]`,
+    unique-turn / total-turn ratio computed across all extracted
+    items. A low value means the model is over-citing a tiny
+    cluster of chunks.
+  - `stakeholders_populated_rate`, `rationale_populated_rate`,
+    `claim_type_populated_rate` (Phase P3-A): per-field
+    population rates surfaced into the post-extraction eval_summary
+    so prompt tuning needs are visible. Rates < 0.8 emit a warn
+    finding (`low_field_population_rate`) but never halt the run.
 - **Git-tracked:** YES — required by `select_few_shot_examples.py`,
   `_few_shot_preflight.py`, the validate-and-baseline gate, and the
   evals runner.
@@ -144,13 +169,39 @@ synthetic strings into these placeholders before calling
 
 ### spectrum_glossary
 - **Writer:** `scripts/seed_glossary.py`,
+  `scripts/update_glossary.py` (Phase P3-A operator script),
   `glossary.glossary_builder`.
 - **Path template:** `data-lake/store/artifacts/glossary/spectrum_glossary_v1.json`
+- **Additional version-pinned templates (Phase P3-A):**
+  - `data-lake/store/artifacts/glossary/spectrum_glossary_v<N>.json`
+    where `<N>` is the integer `glossary_version`. The runner
+    resolves the active version via the `GLOSSARY_VERSION` env var
+    (`latest` reads the highest-numbered file; `<N>` pins to that
+    file so a regression can be bisected against a prior glossary).
 - **Schema:** `src/spectrum_systems_core/schemas/spectrum_glossary.schema.json`
 - **Git-tracked:** YES — the term-injector reads this versioned
   artifact on every extraction run.
 - **Readers:** `glossary.glossary_builder.load_versioned_glossary`,
-  `glossary.term_injector`.
+  `glossary.term_injector`,
+  `extraction.typed_extraction_runner` (stamps `glossary_version`
+  on every `meeting_extraction` artifact).
+
+### chunk_classifications
+- **Writer:** `extraction/typed_extraction_runner.py`
+  (Phase P3-A aggregate write, one file per source_artifact_id).
+- **Path template:** `data-lake/store/artifacts/extractions/<source_artifact_id>_chunk_classifications.json`
+- **Schema:** `src/spectrum_systems_core/schemas/chunk_classifications.schema.json`
+- **Git-tracked:** YES — required for extraction-path auditing and
+  for diagnosing off-topic rate regressions when an eval_summary
+  reports a drop in coverage.
+- **Readers:** diagnostic scripts; `evals.m4.runner` reads
+  `extraction_path_breakdown` and `off_topic_rate` from the
+  companion `meeting_extraction` field set instead of re-deriving
+  from this aggregate. The aggregate is forensic provenance.
+- **Skipped when:** `EXTRACTION_MODE=single_pass` — the aggregate
+  is a record of the routing step, so single-pass runs produce no
+  classifications artifact (operator can grep the absence to
+  confirm rollback took effect).
 
 ### metadata_slices (eval slice predicates)
 - **Writer:** committed by hand / Phase X2 seed.

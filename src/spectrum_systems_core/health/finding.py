@@ -113,6 +113,25 @@ ALL_FINDING_CODES: frozenset[str] = frozenset(
         # wired per-chunk injection. Remediation: re-run extraction
         # with force=true. severity info -- never blocks the run.
         "glossary_injection_field_absent",
+        # Phase P3-A T-1: emitted by the chunk-metadata gate when one
+        # or more required fields (chunk_id/turn_id, speaker,
+        # agenda_item_id) are missing or null on any chunk. Default
+        # severity warn so a degraded transcript still produces an
+        # extraction; promoted to halt when STRICT_CHUNK_METADATA=true.
+        "chunk_metadata_contract_violation",
+        # Phase P3-A T-1: emitted when any extracted item references a
+        # chunk_id that does not exist in the live chunks.jsonl. The
+        # validity eval is a fail-closed gate; this finding is a
+        # rate-tracker surfaced into eval_summary. severity warn.
+        "source_turn_orphan_detected",
+        # Phase P3-A T-1: emitted when the model over-cites a tiny
+        # cluster of chunks. severity info -- diagnostic signal only.
+        "source_turn_low_diversity",
+        # Phase P3-A T-3: emitted when one of the per-field population
+        # rates (stakeholders / rationale / claim_type) falls below
+        # RATE_WARN_THRESHOLD. severity warn; never halts. Prompts the
+        # operator to tune the extraction prompt.
+        "low_field_population_rate",
         # Phase X2.1: emitted when heuristic_agenda_detector scanned
         # the transcript and found zero agenda headers. severity info.
         # Context: source_id, lines_scanned. Caller assigns
@@ -200,6 +219,9 @@ HALT_FINDING_CODES: frozenset[str] = frozenset(
         # Phase P1: gate refuses to score a pair whose review rejected
         # the outcome.
         "gt_pair_outcome_rejected",
+        # Phase P3-A T-1: chunk-metadata gate promoted to halt when
+        # STRICT_CHUNK_METADATA=true. Default severity is warn.
+        "chunk_metadata_contract_violation",
     }
 )
 

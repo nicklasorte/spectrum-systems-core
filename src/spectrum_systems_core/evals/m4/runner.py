@@ -1062,6 +1062,26 @@ class EvalRunner:
             if isinstance(pv, str) and pv:
                 prompt_version = pv
 
+        # Phase P3-A: mirror the rollup fields the runner stamped on
+        # the meeting_extraction so the eval_summary carries them
+        # through. Missing fields stay None so artifacts written
+        # before Phase P3-A still flow through.
+        p3a_passthrough: Dict[str, Any] = {}
+        if isinstance(extraction, dict):
+            for key in (
+                "extraction_mode",
+                "glossary_version",
+                "off_topic_rate",
+                "extraction_path_breakdown",
+                "source_turn_orphan_rate",
+                "source_turn_diversity_rate",
+                "stakeholders_populated_rate",
+                "rationale_populated_rate",
+                "claim_type_populated_rate",
+            ):
+                if key in extraction and extraction[key] is not None:
+                    p3a_passthrough[key] = extraction[key]
+
         # Phase P2-A: per-decision calibration data, stamped with
         # ``source_id`` so a multi-source summary preserves provenance.
         calibration_data: List[Dict[str, Any]] = []
@@ -1095,6 +1115,7 @@ class EvalRunner:
             "chunking_strategy": chunking_strategy,
             "prompt_version": prompt_version,
             "calibration_data": calibration_data,
+            "p3a_passthrough": p3a_passthrough,
         }
 
     # -- summary ----------------------------------------------------------
@@ -1228,6 +1249,26 @@ class EvalRunner:
                 "calibration_note"
             )
 
+        # Phase P3-A: roll up the meeting_extraction passthrough fields
+        # into the eval_summary. Strategy:
+        #   - extraction_mode and glossary_version: take the value from
+        #     the first source that has it. A multi-source baseline with
+        #     mixed values would carry the FIRST source's stamp; the
+        #     intent is that the validate-and-baseline workflow does
+        #     not mix modes, so a mismatch surfaces as a CI signal.
+        #   - off_topic_rate, source_turn_orphan_rate,
+        #     source_turn_diversity_rate, population rates: arithmetic
+        #     mean across sources that report the field. None when no
+        #     source reports it. extraction_path_breakdown sums.
+        p3a_sources = [
+            er.get("p3a_passthrough") or {} for er in eval_results
+            if isinstance(er.get("p3a_passthrough"), dict)
+        ]
+        p3a_summary = self._aggregate_p3a_passthrough(p3a_sources)
+        for key, value in p3a_summary.items():
+            if value is not None:
+                summary[key] = value
+
         # Phase P2-C: judge_human_agreement / judge_pass_rate are computed
         # from on-disk judge_score artifacts and the gt_pair pool. When
         # no judge_score artifact exists (JUDGE_ENABLED was off when the
@@ -1248,6 +1289,121 @@ class EvalRunner:
         ]
 
         return summary
+
+    @staticmethod
+    def _aggregate_p3a_passthrough(
+        p3a_sources: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Aggregate the meeting_extraction passthrough fields across sources.
+
+        - ``extraction_mode`` / ``glossary_version``: first non-null
+          value observed; emits a warn-shaped note when sources
+          disagree. The intent is that a validate-and-baseline run
+          covers ONE mode and ONE glossary version; a mixed run is a
+          smoke for misconfiguration.
+        - ``off_topic_rate`` / ``source_turn_orphan_rate`` /
+          ``source_turn_diversity_rate`` / population rates:
+          arithmetic mean across sources that reported the field.
+        - ``extraction_path_breakdown``: summed counts across sources.
+        - ``population_rate_note``: human-readable rate summary
+          surfaced only when at least one field is below
+          ``RATE_WARN_THRESHOLD``.
+        """
+        from ...extraction.population_rates import RATE_WARN_THRESHOLD
+
+        if not p3a_sources:
+            return {
+                "extraction_mode": None,
+                "glossary_version": None,
+                "off_topic_rate": None,
+                "extraction_path_breakdown": None,
+                "source_turn_orphan_rate": None,
+                "source_turn_diversity_rate": None,
+                "stakeholders_populated_rate": None,
+                "rationale_populated_rate": None,
+                "claim_type_populated_rate": None,
+                "population_rate_note": None,
+            }
+
+        def _mean(values: List[float]) -> Optional[float]:
+            if not values:
+                return None
+            return sum(values) / len(values)
+
+        def _first_non_null(key: str) -> Any:
+            for src in p3a_sources:
+                if src.get(key) is not None:
+                    return src[key]
+            return None
+
+        def _collect_floats(key: str) -> List[float]:
+            out: List[float] = []
+            for src in p3a_sources:
+                v = src.get(key)
+                if isinstance(v, (int, float)):
+                    out.append(float(v))
+            return out
+
+        breakdown_sum: Dict[str, int] = {
+            "decision": 0, "claim": 0, "action_item": 0, "off_topic": 0,
+        }
+        any_breakdown = False
+        for src in p3a_sources:
+            bd = src.get("extraction_path_breakdown")
+            if isinstance(bd, dict):
+                any_breakdown = True
+                for k in breakdown_sum:
+                    raw = bd.get(k)
+                    if isinstance(raw, int):
+                        breakdown_sum[k] += raw
+
+        rates = {
+            "off_topic_rate": _mean(_collect_floats("off_topic_rate")),
+            "source_turn_orphan_rate": _mean(
+                _collect_floats("source_turn_orphan_rate")
+            ),
+            "source_turn_diversity_rate": _mean(
+                _collect_floats("source_turn_diversity_rate")
+            ),
+            "stakeholders_populated_rate": _mean(
+                _collect_floats("stakeholders_populated_rate")
+            ),
+            "rationale_populated_rate": _mean(
+                _collect_floats("rationale_populated_rate")
+            ),
+            "claim_type_populated_rate": _mean(
+                _collect_floats("claim_type_populated_rate")
+            ),
+        }
+
+        # Build the population_rate_note when at least one of the three
+        # extended-field rates is reported AND any is below threshold.
+        below: List[str] = []
+        for key in (
+            "stakeholders_populated_rate",
+            "rationale_populated_rate",
+            "claim_type_populated_rate",
+        ):
+            value = rates.get(key)
+            if isinstance(value, float) and value < RATE_WARN_THRESHOLD:
+                below.append(f"{key}={value:.2f}")
+        pop_note: Optional[str] = None
+        if below:
+            pop_note = (
+                "rates < {threshold:.2f} indicate prompt tuning needed: "
+                + ", ".join(below)
+            ).format(threshold=RATE_WARN_THRESHOLD)
+
+        out: Dict[str, Any] = {
+            "extraction_mode": _first_non_null("extraction_mode"),
+            "glossary_version": _first_non_null("glossary_version"),
+            "extraction_path_breakdown": (
+                breakdown_sum if any_breakdown else None
+            ),
+            "population_rate_note": pop_note,
+        }
+        out.update(rates)
+        return out
 
     def _compute_p1_aggregates(
         self, eval_results: List[Dict[str, Any]]

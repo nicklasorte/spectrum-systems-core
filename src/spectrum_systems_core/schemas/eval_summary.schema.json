@@ -34,6 +34,16 @@
     "eval_results": {
       "type": "array",
       "items": { "type": "string" }
-    }
+    },
+    "off_topic_rate": { "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0 },
+    "extraction_path_breakdown": { "type": ["object", "null"] },
+    "source_turn_orphan_rate": { "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0 },
+    "source_turn_diversity_rate": { "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0 },
+    "glossary_version": { "type": ["integer", "null"], "minimum": 1 },
+    "extraction_mode": { "type": ["string", "null"], "enum": ["two_stage", "single_pass", null] },
+    "stakeholders_populated_rate": { "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0 },
+    "rationale_populated_rate": { "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0 },
+    "claim_type_populated_rate": { "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0 },
+    "population_rate_note": { "type": ["string", "null"] }
   }
 }

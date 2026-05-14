@@ -231,6 +231,54 @@
     "judge_calibration_note": {
       "type": ["string", "null"],
       "description": "Phase P2-C: human-readable summary of the judge calibration step (e.g. 'no judge_score artifact', 'no GT pairs with ground_truth_pass')."
+    },
+    "off_topic_rate": {
+      "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase P3-A T-2: fraction of classifier output that came back as off_topic. Null when no meeting_extraction was loaded."
+    },
+    "extraction_path_breakdown": {
+      "type": ["object", "null"],
+      "description": "Phase P3-A T-2: per-classification chunk counts.",
+      "additionalProperties": false,
+      "properties": {
+        "decision": { "type": "integer", "minimum": 0 },
+        "claim": { "type": "integer", "minimum": 0 },
+        "action_item": { "type": "integer", "minimum": 0 },
+        "off_topic": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "source_turn_orphan_rate": {
+      "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase P3-A T-1: fraction of extracted items citing chunk_ids that do not appear in chunks.jsonl."
+    },
+    "source_turn_diversity_rate": {
+      "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase P3-A T-1: distinct turns cited / total available turns."
+    },
+    "glossary_version": {
+      "type": ["integer", "null"], "minimum": 1,
+      "description": "Phase P3-A T-3: integer version of the glossary artifact the extraction run loaded."
+    },
+    "extraction_mode": {
+      "type": ["string", "null"],
+      "enum": ["two_stage", "single_pass", null],
+      "description": "Phase P3-A T-2: extraction_mode stamped on the meeting_extraction this summary scored."
+    },
+    "stakeholders_populated_rate": {
+      "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase P3-A T-3: fraction of decisions with non-empty stakeholders list."
+    },
+    "rationale_populated_rate": {
+      "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase P3-A T-3: fraction of decisions with non-empty rationale."
+    },
+    "claim_type_populated_rate": {
+      "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase P3-A T-3: fraction of claims with non-empty claim_type."
+    },
+    "population_rate_note": {
+      "type": ["string", "null"],
+      "description": "Phase P3-A T-3: human-readable note on per-field population rates (rates < 0.8 indicate prompt tuning needed)."
     }
   },
   "$defs": {

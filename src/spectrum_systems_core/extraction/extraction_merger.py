@@ -122,6 +122,8 @@ class ExtractionMerger:
         claims: Sequence[Dict[str, Any]],
         action_items: Sequence[Dict[str, Any]],
         run_metadata: Optional[Sequence[Dict[str, Any]]] = None,
+        *,
+        p3a_fields: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Return a meeting_extraction artifact dict. Never raises.
 
@@ -179,7 +181,7 @@ class ExtractionMerger:
 
         run_fields = _merge_run_metadata(run_metadata)
 
-        return {
+        artifact: Dict[str, Any] = {
             "meeting_extraction_id": str(uuid.uuid4()),
             "source_artifact_id": source_artifact_id,
             "artifact_type": "meeting_extraction",
@@ -203,6 +205,27 @@ class ExtractionMerger:
             "low_confidence_item_count": run_fields["low_confidence_item_count"],
             "provenance": {"produced_by": "ExtractionMerger"},
         }
+
+        # Phase P3-A: optional rollup fields. Stamped only when the
+        # runner provides them so legacy callers / tests that pass no
+        # p3a_fields still produce schema-valid output (the schema
+        # declares every key as optional via additionalProperties=false
+        # plus the absence of the key in the required[] list).
+        if p3a_fields:
+            for key in (
+                "extraction_mode",
+                "glossary_version",
+                "off_topic_rate",
+                "extraction_path_breakdown",
+                "source_turn_orphan_rate",
+                "source_turn_diversity_rate",
+                "stakeholders_populated_rate",
+                "rationale_populated_rate",
+                "claim_type_populated_rate",
+            ):
+                if key in p3a_fields and p3a_fields[key] is not None:
+                    artifact[key] = p3a_fields[key]
+        return artifact
 
     @staticmethod
     def write_to(artifact: Dict[str, Any], path: Path) -> None:

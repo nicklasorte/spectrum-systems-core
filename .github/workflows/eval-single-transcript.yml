@@ -87,12 +87,45 @@ jobs:
                   gate = doc.get("gate_decision", "?")
                   f1_by_outcome = doc.get("per_outcome_f1", {})
 
+                  # Phase P3-A T-4: pull the new rollup fields. ``?`` is
+                  # rendered when the field is null or absent so an
+                  # operator can recognise pre-P3-A artifacts at a glance.
+                  off_topic_rate = doc.get("off_topic_rate", "?")
+                  extraction_path_breakdown = doc.get("extraction_path_breakdown", {})
+                  source_turn_orphan_rate = doc.get("source_turn_orphan_rate", "?")
+                  source_turn_diversity_rate = doc.get("source_turn_diversity_rate", "?")
+                  glossary_version = doc.get("glossary_version", "?")
+                  extraction_mode = doc.get("extraction_mode", "?")
+                  stakeholders_populated_rate = doc.get("stakeholders_populated_rate", "?")
+                  rationale_populated_rate = doc.get("rationale_populated_rate", "?")
+                  claim_type_populated_rate = doc.get("claim_type_populated_rate", "?")
+                  population_rate_note = doc.get("population_rate_note")
+
                   f.write(f"| Metric | Value |\n")
                   f.write(f"|--------|-------|\n")
                   f.write(f"| Coverage | `{coverage}` |\n")
                   f.write(f"| Precision | `{precision}` |\n")
                   f.write(f"| Spurious-add rate | `{spurious}` |\n")
                   f.write(f"| Gate decision | `{gate}` |\n")
+                  f.write(f"| Extraction mode | `{extraction_mode}` |\n")
+                  f.write(f"| Glossary version | `{glossary_version}` |\n")
+                  f.write(f"| Off-topic rate | `{off_topic_rate}` |\n")
+                  f.write(f"| Source-turn orphan rate | `{source_turn_orphan_rate}` |\n")
+                  f.write(f"| Source-turn diversity rate | `{source_turn_diversity_rate}` |\n")
+                  f.write(f"| Stakeholders populated | `{stakeholders_populated_rate}` |\n")
+                  f.write(f"| Rationale populated | `{rationale_populated_rate}` |\n")
+                  f.write(f"| Claim_type populated | `{claim_type_populated_rate}` |\n")
+
+                  if isinstance(extraction_path_breakdown, dict) and extraction_path_breakdown:
+                      f.write(f"\n### Extraction path breakdown\n\n")
+                      f.write(f"| Label | Chunks |\n")
+                      f.write(f"|-------|--------|\n")
+                      for label in ("decision", "claim", "action_item", "off_topic"):
+                          count = extraction_path_breakdown.get(label, 0)
+                          f.write(f"| {label} | `{count}` |\n")
+
+                  if population_rate_note:
+                      f.write(f"\n> {population_rate_note}\n")
 
                   if f1_by_outcome:
                       f.write(f"\n### F1 by outcome type\n\n")

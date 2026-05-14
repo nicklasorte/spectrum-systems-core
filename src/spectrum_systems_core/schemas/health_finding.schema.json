@@ -61,7 +61,11 @@
         "baseline_requires_successful_run",
         "human_review_artifact_missing",
         "gt_pair_not_reviewed",
-        "gt_pair_outcome_rejected"
+        "gt_pair_outcome_rejected",
+        "chunk_metadata_contract_violation",
+        "source_turn_orphan_detected",
+        "source_turn_low_diversity",
+        "low_field_population_rate"
       ]
     },
     "severity": { "enum": ["halt", "warn", "info"] },

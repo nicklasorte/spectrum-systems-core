@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/chunk_classifications.schema.json",
+  "title": "chunk_classifications",
+  "description": "Phase P3-A T-2 aggregate artifact: one file per source_artifact_id capturing every chunk classification produced by the two-stage routing step. The runner uses the existing ChunkClassifier output (4 labels: decision/claim/action_item/off_topic) plus the regulatory-verb fallback flag. The aggregate carries the extraction_path_breakdown counts so a downstream eval_summary reader does not need to scan every per-chunk entry.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "source_artifact_id",
+    "source_id",
+    "extraction_run_id",
+    "created_at",
+    "extraction_mode",
+    "chunk_count",
+    "classifications",
+    "extraction_path_breakdown",
+    "off_topic_skip_count",
+    "off_topic_rate",
+    "router_model"
+  ],
+  "properties": {
+    "artifact_type": { "const": "chunk_classifications" },
+    "schema_version": { "const": "1.0.0" },
+    "source_artifact_id": { "type": "string", "minLength": 1 },
+    "source_id": { "type": "string", "minLength": 1 },
+    "extraction_run_id": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "minLength": 1 },
+    "extraction_mode": {
+      "type": "string",
+      "enum": ["two_stage", "single_pass"]
+    },
+    "chunk_count": { "type": "integer", "minimum": 0 },
+    "classifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "chunk_id",
+          "classification",
+          "regulatory_verb_fallback_applied"
+        ],
+        "properties": {
+          "chunk_id": { "type": "string", "minLength": 1 },
+          "classification": {
+            "type": "string",
+            "enum": ["decision", "claim", "action_item", "off_topic"]
+          },
+          "confidence": { "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0 },
+          "regulatory_verb_fallback_applied": { "type": "boolean" }
+        }
+      }
+    },
+    "extraction_path_breakdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "claim", "action_item", "off_topic"],
+      "properties": {
+        "decision": { "type": "integer", "minimum": 0 },
+        "claim": { "type": "integer", "minimum": 0 },
+        "action_item": { "type": "integer", "minimum": 0 },
+        "off_topic": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "off_topic_skip_count": { "type": "integer", "minimum": 0 },
+    "off_topic_rate": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "router_model": { "type": "string", "minLength": 1 }
+  }
+}
