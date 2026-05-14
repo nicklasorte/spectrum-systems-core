@@ -178,3 +178,116 @@ def test_zero_confirmed_pairs_does_not_divide_by_zero(tmp_path: Path) -> None:
         "actual": 0,
         "missing_source_ids": [],
     }
+
+
+def _write_production_pair(
+    sdl_root: Path, source_id: str, source_artifact_id: str
+) -> Dict[str, Any]:
+    """A confirmed production-style pair: no fixture_extracted_items;
+    carries the slug source_id field plus a per-run source_artifact_id.
+    Returns the pair dict so the test can inspect it."""
+    pair = {
+        "pair_id": str(uuid.uuid4()),
+        "status": "confirmed",
+        "source_artifact_id": source_artifact_id,
+        "minutes_artifact_id": str(uuid.uuid4()),
+        "source_id": source_id,
+    }
+    _write_pair(sdl_root, pair)
+    return pair
+
+
+def _seed_source_record(
+    data_lake: Path, source_id: str, source_artifact_id: str
+) -> None:
+    """Write a processed-tree source_record.json so the eval gate's
+    canonical resolution can find the *current* source_artifact_id."""
+    target = data_lake / "store" / "processed" / "meetings" / source_id
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "source_record.json").write_text(
+        json.dumps(
+            {
+                "artifact_id": source_artifact_id,
+                "artifact_type": "source_record",
+                "payload": {"source_id": source_id},
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_set_baseline_allows_stale_pair_sa_ids_when_extraction_present(
+    tmp_path: Path,
+) -> None:
+    """Regression: PR #114 / fix-eval-ground-truth-gate.
+
+    Reproduces ``partial_run_warning_blocks_set_baseline: expected=10
+    actual=8 missing=[slug, slug]`` — every ``run-pipeline --force``
+    mints a fresh ``source_record.artifact_id``; ground_truth_pairs
+    generated against older extractions freeze the older
+    ``source_artifact_id``. The eval gate must still recognise the
+    current on-disk extraction (matched via the source_record's current
+    artifact_id) and must not double-count the same source_id slug in
+    the missing list.
+    """
+    data_lake = tmp_path
+    sdl = data_lake / "store" / "artifacts"
+    sdl.mkdir(parents=True)
+    (sdl / "extractions").mkdir()
+
+    source_id = "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218"
+    current_sa = str(uuid.uuid4())
+    _seed_source_record(data_lake, source_id, current_sa)
+    _seed_meeting_extraction(sdl, current_sa)
+
+    # 10 pairs, each frozen to a different older source_artifact_id;
+    # only 8 of those legacy sa_ids still have an extraction file on
+    # disk (the other 2 sa_ids were superseded by re-runs).
+    legacy_sa_ids = [str(uuid.uuid4()) for _ in range(10)]
+    for i, sa in enumerate(legacy_sa_ids):
+        _write_production_pair(sdl, source_id, sa)
+        if i < 8:
+            _seed_meeting_extraction(sdl, sa)
+
+    runner = EvalRunner(
+        data_lake_path=str(data_lake),
+        sdl_root=str(sdl),
+        pipeline_run_id="run-stale-sa-ids",
+    )
+    result = runner.run(set_baseline=True, source_id_filter=source_id)
+    assert result["exit_code"] == 0, result
+    summary = result["summary"]
+    assert summary["partial_run_warning"] is False
+    detail = summary["partial_run_detail"]
+    assert detail["expected"] == 10
+    assert detail["actual"] == 10
+    assert detail["missing_source_ids"] == []
+
+
+def test_missing_source_ids_is_deduplicated_per_source(tmp_path: Path) -> None:
+    """When a source has multiple pairs and zero extractions, the slug
+    must appear at most once in ``missing_source_ids``."""
+    data_lake = tmp_path
+    sdl = data_lake / "store" / "artifacts"
+    sdl.mkdir(parents=True)
+    (sdl / "extractions").mkdir()
+    source_id = "src-with-no-extraction"
+    # No source_record, no extraction file. Three pairs all sharing
+    # the same source_id slug.
+    for _ in range(3):
+        _write_production_pair(sdl, source_id, str(uuid.uuid4()))
+    runner = EvalRunner(
+        data_lake_path=str(data_lake),
+        sdl_root=str(sdl),
+        pipeline_run_id="run-dedup",
+    )
+    result = runner.run(set_baseline=True, source_id_filter=source_id)
+    assert result["exit_code"] == 1
+    detail = result["partial_run_detail"]
+    # Three pairs all share the slug — but the slug must appear once.
+    assert detail["expected"] == 3
+    assert detail["actual"] == 0
+    assert detail["missing_source_ids"] == [source_id]
