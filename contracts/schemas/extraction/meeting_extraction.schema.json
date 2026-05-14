@@ -32,6 +32,11 @@
     "source_artifact_id": { "type": "string", "format": "uuid" },
     "artifact_type": { "const": "meeting_extraction" },
     "schema_version": { "const": "1.1.0" },
+    "prompt_version": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{12}$",
+      "description": "Phase P2-B: SHA-256 digest of the extraction prompt template. Changes when the prompt changes. Optional so meeting_extraction artifacts written before Phase P2-B still validate."
+    },
     "created_at": { "type": "string", "format": "date-time" },
 
     "decisions": {
