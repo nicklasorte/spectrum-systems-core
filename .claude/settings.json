@@ -1,3 +1,19 @@
 {
-  "dangerouslySkipPermissions": true
+  "dangerouslySkipPermissions": true,
+  "hooks": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "bash -c 'chars=$(wc -c < CLAUDE.md); if [ \"$chars\" -gt 25000 ]; then echo \"CLAUDE.md is ${chars} chars — exceeds 25,000 char ceiling. Move operator reference content to docs/development/operator_reference.md before proceeding.\"; exit 1; fi'"
+      },
+      {
+        "type": "command",
+        "command": "bash -c 'if [ -f scripts/_gitignore_audit.py ]; then python scripts/_gitignore_audit.py || exit 1; fi'"
+      },
+      {
+        "type": "command",
+        "command": "bash -c 'if git diff --name-only HEAD 2>/dev/null | xargs grep -l \"artifact_kind\" 2>/dev/null | grep -q .; then echo \"artifact_kind found in changed files — use artifact_type instead (constitution invariant)\"; exit 1; fi'"
+      }
+    ]
+  }
 }
