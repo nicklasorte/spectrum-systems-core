@@ -1,0 +1,8 @@
+ALICE: Welcome everyone, let's start the Q3 spectrum coordination sync.
+BOB: I move that we adopt the SAS-only sharing model for Phase 1.
+DECISION: Adopt the SAS-only sharing model for Phase 1.
+ALICE: Bob, can you draft the FCC response by Friday?
+BOB: I will draft the FCC response by Friday.
+ACTION: Bob drafts the FCC response by Friday.
+CAROL: When does the coordination window close?
+QUESTION: When does the coordination window close?

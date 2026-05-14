@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 from ..artifacts import Artifact, ArtifactStore
 from ._loop import run_governed_loop
+from .extraction import find_source_turns
 
 
 @dataclass
@@ -16,7 +17,7 @@ class MeetingActionLogResult:
     store: ArtifactStore = field(default_factory=ArtifactStore)
 
 
-def _extract_meeting_action_log(input_text: str) -> dict:
+def _build_base_payload(input_text: str) -> dict:
     lines = [ln.strip() for ln in input_text.splitlines() if ln.strip()]
     title = lines[0] if lines else "Untitled action log"
 
@@ -38,11 +39,53 @@ def _extract_meeting_action_log(input_text: str) -> dict:
     }
 
 
-def run_meeting_action_log_workflow(input_text: str) -> MeetingActionLogResult:
+def _build_grounding_entries(
+    payload: dict, chunks: list[dict]
+) -> list[dict]:
+    entries: list[dict] = []
+    if payload["meeting_ref"]:
+        entries.append(
+            {
+                "kind": "meeting_ref",
+                "text": payload["meeting_ref"],
+                "source_turns": find_source_turns(
+                    payload["meeting_ref"], chunks
+                ),
+            }
+        )
+    for action_text in payload["actions"]:
+        entries.append(
+            {
+                "kind": "action_item",
+                "text": action_text,
+                "source_turns": find_source_turns(action_text, chunks),
+            }
+        )
+    return entries
+
+
+def _extract_meeting_action_log(
+    input_text: str, chunks: list[dict] | None = None
+) -> dict:
+    """Phase Y: chunks=None → schema_version="1.0.0" (no source_turns);
+    chunks provided → schema_version="1.1.0" with a grounding list."""
+    payload = _build_base_payload(input_text)
+    if chunks is None:
+        payload["schema_version"] = "1.0.0"
+        return payload
+    payload["schema_version"] = "1.1.0"
+    payload["grounding"] = _build_grounding_entries(payload, chunks)
+    return payload
+
+
+def run_meeting_action_log_workflow(
+    input_text: str, *, chunks: list[dict] | None = None
+) -> MeetingActionLogResult:
     run = run_governed_loop(
         input_text=input_text,
         artifact_type="meeting_action_log",
         extract=_extract_meeting_action_log,
+        chunks=chunks,
     )
     return MeetingActionLogResult(
         context_bundle=run.context_bundle,

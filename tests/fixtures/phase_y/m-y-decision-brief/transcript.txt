@@ -1,0 +1,8 @@
+CHAIR: Brief for the 3.5 GHz licensing decision.
+CONTEXT: The current sharing model is under review.
+ALICE: We have several options on the table.
+OPTION: Continue with SAS-only sharing.
+OPTION: Move to a hybrid SAS plus incumbent model.
+BOB: My recommendation is the hybrid model.
+RECOMMENDATION: Move to the hybrid SAS plus incumbent model.
+RATIONALE: Hybrid provides better protection for incumbents while preserving SAS flexibility.

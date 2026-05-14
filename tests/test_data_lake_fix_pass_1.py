@@ -26,7 +26,14 @@ OK_TRANSCRIPT = (
     "QUESTION: Reviewer?\n"
 )
 
-EMPTY_HEADER_TRANSCRIPT = "Just a header line\nMore prose without prefixes.\n"
+# Speaker-labelled transcript with no DECISION/ACTION/QUESTION prefixes
+# so it gets past the Phase Y chunker gate (which blocks 100%-null-speaker
+# transcripts) and still triggers ``transcript_evidence`` because no
+# grounded spans are produced.
+EMPTY_HEADER_TRANSCRIPT = (
+    "ALICE: Just a header line\n"
+    "BOB: More prose without prefixes.\n"
+)
 
 
 def _setup(tmp_path, transcript=OK_TRANSCRIPT, metadata=None):

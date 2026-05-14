@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 from ..artifacts import Artifact, ArtifactStore
 from ._loop import run_governed_loop
+from .extraction import find_source_turns
 
 
 @dataclass
@@ -16,7 +17,7 @@ class DecisionBriefResult:
     store: ArtifactStore = field(default_factory=ArtifactStore)
 
 
-def _extract_decision_brief(input_text: str) -> dict:
+def _build_base_payload(input_text: str) -> dict:
     lines = [ln.strip() for ln in input_text.splitlines() if ln.strip()]
     title = lines[0] if lines else "Untitled brief"
 
@@ -45,11 +46,69 @@ def _extract_decision_brief(input_text: str) -> dict:
     }
 
 
-def run_decision_brief_workflow(input_text: str) -> DecisionBriefResult:
+def _build_grounding_entries(
+    payload: dict, chunks: list[dict]
+) -> list[dict]:
+    entries: list[dict] = []
+    if payload["context"]:
+        entries.append(
+            {
+                "kind": "context",
+                "text": payload["context"],
+                "source_turns": find_source_turns(payload["context"], chunks),
+            }
+        )
+    for option_text in payload["options"]:
+        entries.append(
+            {
+                "kind": "option",
+                "text": option_text,
+                "source_turns": find_source_turns(option_text, chunks),
+            }
+        )
+    if payload["recommendation"]:
+        entries.append(
+            {
+                "kind": "recommendation",
+                "text": payload["recommendation"],
+                "source_turns": find_source_turns(
+                    payload["recommendation"], chunks
+                ),
+            }
+        )
+    if payload["rationale"]:
+        entries.append(
+            {
+                "kind": "rationale",
+                "text": payload["rationale"],
+                "source_turns": find_source_turns(payload["rationale"], chunks),
+            }
+        )
+    return entries
+
+
+def _extract_decision_brief(
+    input_text: str, chunks: list[dict] | None = None
+) -> dict:
+    """Phase Y: chunks=None → schema_version="1.0.0" (no source_turns);
+    chunks provided → schema_version="1.1.0" with a grounding list."""
+    payload = _build_base_payload(input_text)
+    if chunks is None:
+        payload["schema_version"] = "1.0.0"
+        return payload
+    payload["schema_version"] = "1.1.0"
+    payload["grounding"] = _build_grounding_entries(payload, chunks)
+    return payload
+
+
+def run_decision_brief_workflow(
+    input_text: str, *, chunks: list[dict] | None = None
+) -> DecisionBriefResult:
     run = run_governed_loop(
         input_text=input_text,
         artifact_type="decision_brief",
         extract=_extract_decision_brief,
+        chunks=chunks,
     )
     return DecisionBriefResult(
         context_bundle=run.context_bundle,

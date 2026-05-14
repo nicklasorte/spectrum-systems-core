@@ -26,13 +26,36 @@ def derive_trace_id(input_text: str) -> str:
     return f"trace-{digest[:16]}"
 
 
+def _call_extract(
+    extract: Callable, input_text: str, chunks: list[dict] | None
+) -> dict:
+    """Call ``extract`` with chunks only when chunks is non-None.
+
+    Phase Y adds an optional ``chunks`` argument to extract functions.
+    Existing test helpers monkeypatch single-arg ``extract`` callables;
+    those still work because we only pass chunks when we have them.
+    """
+    if chunks is None:
+        return extract(input_text)
+    return extract(input_text, chunks)
+
+
 def run_governed_loop(
     *,
     input_text: str,
     artifact_type: str,
-    extract: Callable[[str], dict],
+    extract: Callable,
+    chunks: list[dict] | None = None,
 ) -> GovernedRun:
-    """One Produce -> Evaluate -> Decide -> Promote pass for any artifact_type."""
+    """One Produce -> Evaluate -> Decide -> Promote pass for any artifact_type.
+
+    ``chunks`` is the optional Phase Y turn-chunked transcript. When
+    provided, the extract function is called with ``(input_text, chunks)``
+    and is expected to emit a ``schema_version`` 1.1.0 payload with
+    ``source_turns`` on every extracted item. When omitted, the extract
+    function is called with ``(input_text,)`` and emits the original
+    1.0.0-style payload (backward-compatible — see runner.py).
+    """
     store = ArtifactStore()
     trace_id = derive_trace_id(input_text)
 
@@ -45,7 +68,7 @@ def run_governed_loop(
 
     target = new_artifact(
         artifact_type=artifact_type,
-        payload=extract(input_text),
+        payload=_call_extract(extract, input_text, chunks),
         trace_id=trace_id,
         status="draft",
         input_refs=[context_bundle.artifact_id],
