@@ -98,9 +98,34 @@ OVERGENERALIZATION_MARKERS: Tuple[str, ...] = (
 )
 
 
+# Phase Z.2: canonical decision-licensing verbs for the
+# ``regulatory_verb`` eval. This set is narrower than ``REGULATORY_VERBS``
+# above because the eval needs an authoritative "pass" classification:
+# a transcript using one of these verbs on a decision item is a
+# decision in the regulatory sense and no ambiguity finding is emitted.
+# Kept as ``frozenset`` so a typo in a consumer fails at import-time
+# instead of mutating the shared list at runtime.
+DECISION_VERBS: frozenset = frozenset({
+    "approved", "rejected", "deferred", "noted", "directed", "considered",
+})
+
+
+# Phase Z.2: verbs the regulatory_verb eval treats as "informal" — the
+# decision item exists, but the verb does not by itself license a
+# regulatory classification. Spectrum policy transcripts mix informal
+# and formal language; the eval warns on these (does NOT block) so an
+# operator can see the ambiguity without halting the loop.
+AMBIGUOUS_VERBS: frozenset = frozenset({
+    "discussed", "mentioned", "raised", "indicated", "suggested",
+    "proposed", "recommended",
+})
+
+
 __all__ = [
+    "AMBIGUOUS_VERBS",
     "CLAIM_TYPES",
     "DECISION_OUTCOME_TYPES",
+    "DECISION_VERBS",
     "OUTCOME_TO_VERBS",
     "OVERGENERALIZATION_MARKERS",
     "REGULATORY_VERBS",

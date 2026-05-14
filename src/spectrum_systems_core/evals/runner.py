@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from ..artifacts import Artifact, new_artifact
+from .regulatory_verb import (
+    DECISION_BEARING_ARTIFACT_TYPES as _VERB_GUARD_TYPES,
+    run_regulatory_verb_eval,
+)
 
 REQUIRED_MEETING_MINUTES_FIELDS: tuple[str, ...] = (
     "title",
@@ -252,4 +256,10 @@ def run_required_evals(artifact: Artifact) -> list[Artifact]:
                 per_item_keys=spec["per_item_keys"],
             )
         )
+    # Phase Z.2: regulatory verb guard for decision-bearing artifacts.
+    # Non decision-bearing types short-circuit to pass inside the eval,
+    # so calling it unconditionally is safe — but we gate here so the
+    # eval list stays tight for non-decision artifacts.
+    if artifact.artifact_type in _VERB_GUARD_TYPES:
+        results.append(run_regulatory_verb_eval(artifact))
     return results

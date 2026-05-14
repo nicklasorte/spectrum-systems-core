@@ -1,0 +1,9 @@
+CHAIR: This special session reviews the FCC inquiry on 6 GHz interference.
+ALICE: Item 1: petition response timeline.
+BOB: The FCC noted the petition for reconsideration and assigned it to docket 24-101.
+ALICE: The commission directed staff to prepare a technical analysis within thirty days.
+CHAIR: Item 2: coordination updates.
+ALICE: Erin will compile the comment summary by next Tuesday.
+BOB: Frank notifies the licensees once the docket opens.
+CHAIR: Should incumbents receive advance notice before the comment window opens?
+ALICE: The chair mentioned a possible workshop in the spring.

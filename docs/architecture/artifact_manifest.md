@@ -260,6 +260,24 @@ accidentally git-track them. They are produced by the pipeline as
 debug or runtime state and live under `data-lake/` only when
 `DATA_LAKE_PATH` is set; they are not part of the repo baseline.
 
+### regulatory_verb_result (eval sub-type)
+- Phase Z.2 eval, runs over decision-bearing artifacts
+  (`meeting_minutes`, `decision_brief`) inside the core eval runner.
+- Surfaced as the `payload.eval_type = "regulatory_verb"` value on
+  the normal `eval_result` envelope; not a separate file on disk.
+- Git-tracked: NO — eval results live only inside the run manifest
+  and the per-meeting debug report (see contract §6.2). The
+  promotion gate applies to product artifacts, not eval sub-types.
+
+### extraction_precision_result (eval sub-type)
+- Phase Z.3 eval, runs alongside `source_turn_validity` inside the
+  transcript pipeline. Surfaced as
+  `payload.eval_type = "extraction_precision"` on the normal
+  `eval_result` envelope.
+- Git-tracked: NO — same reasoning as
+  `regulatory_verb_result`. Eval results are run-level provenance,
+  not promoted product artifacts.
+
 ### feature_flag (config)
 - Path: `data-lake/store/artifacts/config/<flag_name>.json`
 - Writer: `scripts/seed_phase_v_flag.py`, `scripts/seed_phase_w_flag.py`
