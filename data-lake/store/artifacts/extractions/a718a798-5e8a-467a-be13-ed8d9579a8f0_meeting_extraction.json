@@ -1,0 +1,176 @@
+{
+  "action_items": [
+    {
+      "action": "Circulate FSS protection zone working paper and draft analysis of 7125 to 7250 MHz band segment",
+      "confidence": 1.0,
+      "due": "2024-12-19",
+      "owner": "Nick LaSorte",
+      "source_turn_ids": [
+        "0bbe6c09-6a76-403e-833a-71ff035ef1d6",
+        "2d27345d-61a6-4f8d-bbae-3a68323e5953"
+      ],
+      "source_turn_validation": "verified"
+    },
+    {
+      "action": "Compile FSS earth station inventory for the 7125 to 7250 MHz segment",
+      "confidence": 1.0,
+      "due": null,
+      "owner": "Sandip",
+      "source_turn_ids": [
+        "2d27345d-61a6-4f8d-bbae-3a68323e5953"
+      ],
+      "source_turn_validation": "verified"
+    },
+    {
+      "action": "Schedule next TIG meeting for the second week of January",
+      "confidence": 1.0,
+      "due": null,
+      "owner": "Katrece",
+      "source_turn_ids": [
+        "2d27345d-61a6-4f8d-bbae-3a68323e5953"
+      ],
+      "source_turn_validation": "verified"
+    },
+    {
+      "action": "Send Doodle poll to TIG members for next meeting scheduling",
+      "confidence": 1.0,
+      "due": null,
+      "owner": "Katrece",
+      "source_turn_ids": [
+        "2d27345d-61a6-4f8d-bbae-3a68323e5953"
+      ],
+      "source_turn_validation": "verified"
+    }
+  ],
+  "artifact_type": "meeting_extraction",
+  "claim_type_populated_rate": 1.0,
+  "claims": [
+    {
+      "claim_text": "The band under discussion is 7125 to 8400 MHz, with primary focus on the 7125 to 7250 MHz segment where FSS earth stations are concentrated",
+      "claim_type": "technical",
+      "confidence": 1.0,
+      "source_turn_ids": [
+        "a3748ed4-7050-49b1-8e53-80c25e9cf04c"
+      ],
+      "source_turn_validation": "verified",
+      "speaker": "LaSorte, Nickolas"
+    },
+    {
+      "claim_text": "The TIG is chartered to evaluate downlink sharing options between proposed mobile broadband and incumbent FSS receivers",
+      "claim_type": "procedural",
+      "confidence": 1.0,
+      "source_turn_ids": [
+        "a3748ed4-7050-49b1-8e53-80c25e9cf04c"
+      ],
+      "source_turn_validation": "verified",
+      "speaker": "LaSorte, Nickolas"
+    },
+    {
+      "claim_text": "A single-point criterion of negative 10.5 dB at 0.03 percent would provide equivalent protection to the ITU two-point standard",
+      "claim_type": "technical",
+      "confidence": 0.95,
+      "source_turn_ids": [
+        "26af42fd-7cc3-4ceb-ac8c-804330e6034f"
+      ],
+      "source_turn_validation": "verified",
+      "speaker": "Bhatt, Sandip"
+    },
+    {
+      "claim_text": "DoW course of action number three proposes reallocation of the 7125 to 7250 MHz band segment",
+      "claim_type": "procedural",
+      "confidence": 1.0,
+      "source_turn_ids": [
+        "2616b1e4-396b-49a4-8b7b-5426fc4906a7"
+      ],
+      "source_turn_validation": "verified",
+      "speaker": "DiFrancisco, Michael"
+    },
+    {
+      "claim_text": "Approximately 847 FSS earth stations are currently operating under primary status in the 7125 to 7250 MHz band segment",
+      "claim_type": "technical",
+      "confidence": 0.95,
+      "source_turn_ids": [
+        "2616b1e4-396b-49a4-8b7b-5426fc4906a7"
+      ],
+      "source_turn_validation": "verified",
+      "speaker": "DiFrancisco, Michael"
+    }
+  ],
+  "confidence_threshold": 0.5,
+  "created_at": "2026-05-14T02:28:56+00:00",
+  "decisions": [
+    {
+      "confidence": 1.0,
+      "decision_outcome": "approval",
+      "decision_text": "Meeting agenda approved: scope confirmation, sharing-criteria approach, and action items for the next session",
+      "decision_type": "approved",
+      "rationale": "Speaker explicitly states 'the agenda is approved' after asking for objections and hearing none. Direct commitment with approval verb.",
+      "source_turn_ids": [
+        "a0878f78-4b8d-423d-895b-ed49c948a9f3"
+      ],
+      "source_turn_validation": "verified",
+      "stakeholders": [
+        "DiFrancisco, Michael"
+      ]
+    },
+    {
+      "confidence": 1.0,
+      "decision_outcome": "approval",
+      "decision_text": "Group approved application of ITU two-point criteria for FSS protection analysis: negative 10.5 dB at 80th percentile and negative 6 dB at 0.03 percent",
+      "decision_type": "approved",
+      "rationale": "Speaker explicitly states 'that is approved' after presenting the criteria and asking for objections. Direct commitment with approval verb and specific numeric parameters.",
+      "source_turn_ids": [
+        "98df92bb-5106-46d5-b662-a4c145c4187a"
+      ],
+      "source_turn_validation": "verified",
+      "stakeholders": [
+        "DiFrancisco, Michael"
+      ]
+    },
+    {
+      "confidence": 1.0,
+      "decision_outcome": "deferral",
+      "decision_text": "Decision on Course of Action (COA) selection deferred to the next working group meeting pending completion of working paper from Nick",
+      "decision_type": "deferred",
+      "rationale": "Speaker explicitly states 'We will defer the decision on COA selection to the next working group meeting' with clear rationale. Direct commitment with deferral verb.",
+      "source_turn_ids": [
+        "a0edfa03-7af9-41ff-aac6-ad4b2b19b4ed"
+      ],
+      "source_turn_validation": "verified",
+      "stakeholders": [
+        "Bhatt, Sandip"
+      ]
+    }
+  ],
+  "extraction_mode": "two_stage",
+  "extraction_path_breakdown": {
+    "action_item": 2,
+    "claim": 3,
+    "decision": 3,
+    "off_topic": 0
+  },
+  "extraction_run_id": "tex-a53ebc5bd0374653",
+  "few_shot_example_count": 3,
+  "few_shot_injected": true,
+  "few_shot_version": "1.0.0",
+  "glossary_version": 1,
+  "low_confidence_item_count": 0,
+  "meeting_extraction_id": "8ed173d5-3fff-46c0-b6a7-a358b12b7ca8",
+  "off_topic_count": 0,
+  "off_topic_rate": 0.0,
+  "omit_instruction_present": true,
+  "prompt_version": "sha256:ed520d096574",
+  "provenance": {
+    "produced_by": "ExtractionMerger"
+  },
+  "rationale_populated_rate": 1.0,
+  "regulatory_verb_fallback_count": 0,
+  "requires_human_dedup_count": 0,
+  "routing_quality_warning": false,
+  "schema_version": "1.1.0",
+  "source_artifact_id": "a718a798-5e8a-467a-be13-ed8d9579a8f0",
+  "source_turn_diversity_rate": 1.0,
+  "source_turn_orphan_rate": 0.0,
+  "stakeholders_populated_rate": 1.0,
+  "total_chunks_classified": 8
+}

@@ -4,21 +4,6 @@
   "artifact_type": "source_record",
   "created_at": "2026-05-14T02:27:39+00:00",
   "payload": {
-    "agenda_items": [
-      {
-        "agenda_item_id": "AI-001",
-        "end_turn_index": 8,
-        "start_turn_index": 4,
-        "title": "sharing-criteria approach. The group has agreed to apply the ITU two-point criteria for the FSS protection analysis. We will use negative 10.5 dB at the 80th percentile and negative 6 dB at 0.03 perce"
-      },
-      {
-        "agenda_item_id": "AI-002",
-        "end_turn_index": 13,
-        "start_turn_index": 9,
-        "title": "course of action selection. The DoW course of action number three proposes reallocation of the 7125 to 7250 MHz band segment. This would affect approximately 847 FSS earth stations currently operating"
-      }
-    ],
-    "chunking_strategy": "speaker_turn",
     "metadata": {
       "author": "",
       "date": "1970-01-01",
@@ -37,6 +22,7 @@
     "source_family": "meetings",
     "source_id": "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
     "source_type": "meeting_transcript",
+    "summary": "7 GHz Downlink TIG Meeting Kickoff - transcript 20251218 \u2014 meetings source with 12 text units ingested 1970-01-01",
     "text_unit_count": 12,
     "title": "7 GHz Downlink TIG Meeting Kickoff - transcript 20251218"
   },
