@@ -1,0 +1,80 @@
+name: Wipe eval artifacts (complete recursive)
+
+# One-shot workflow_dispatch: complete recursive wipe of every eval
+# artifact in nicklasorte/data-lake that references one source_id, plus
+# the global baseline_eval_summary.json and eval_run_count.json at any
+# depth under store/artifacts/evals/.
+#
+# Unlike reset-stale-baseline.yml, this scan is recursive (rglob) and
+# matches source_id with substring containment, so artifacts written
+# under new subdirectories (e.g. evals/baseline_history/) or with
+# source_id embedded in pair_id are removed too.
+#
+# Use this when reset-stale-baseline runs but eval-ground-truth still
+# trips partial_run_warning_blocks_set_baseline because newer artifacts
+# leaked in under paths the legacy reset never scanned.
+#
+# After it runs, validate-and-baseline emits gate=skip_no_baseline and
+# sets a fresh baseline with run_count=1.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_id:
+        description: 'source_id whose eval artifacts should be wiped'
+        required: false
+        default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
+      dry_run:
+        description: 'Dry run only (show what would be deleted)'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  contents: read
+
+jobs:
+  wipe-eval-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      - name: Diagnose + plan (dry run)
+        run: |
+          python scripts/wipe_eval_artifacts.py \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            --source-id "${{ github.event.inputs.source_id }}" \
+            --dry-run
+
+      - name: Execute wipe
+        if: ${{ github.event.inputs.dry_run == 'false' }}
+        run: |
+          python scripts/wipe_eval_artifacts.py \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            --source-id "${{ github.event.inputs.source_id }}"
+
+      - name: Push deletions to nicklasorte/data-lake
+        if: ${{ github.event.inputs.dry_run == 'false' }}
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            fix: complete eval artifact wipe for Dec 18 transcript --
+            fresh baseline start (source_id=${{ github.event.inputs.source_id }},
+            run ${{ github.run_id }}) [skip ci] [baseline-commit]
+          add_paths: |
+            store/artifacts/evals
