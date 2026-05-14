@@ -35,6 +35,7 @@ from ..artifacts import Artifact, ArtifactStore, compute_content_hash, new_artif
 from ..context import build_context_bundle
 from ..control import decide_control
 from ..evals import (
+    run_extraction_precision_eval,
     run_required_evals,
     run_source_turn_validity_eval,
     SOURCE_TURN_VALIDITY_EVAL_TYPE,
@@ -444,11 +445,17 @@ def run_transcript_pipeline(
     evidence_eval = _transcript_evidence_eval(target, transcript_input)
     content_eval = _content_signal_eval(target, transcript_input)
     turn_validity_eval = run_source_turn_validity_eval(target, sr_path)
+    # Phase Z.3: extraction precision runs AFTER source_turn_validity
+    # so an unresolved turn_id is reported by both — the explicit
+    # source_record_missing path proves the eval also catches a missing
+    # record (defence in depth).
+    precision_eval = run_extraction_precision_eval(target, sr_path)
     eval_results = base_evals + [
         grounding_eval,
         evidence_eval,
         content_eval,
         turn_validity_eval,
+        precision_eval,
     ]
     eval_results = [_stabilize(r, "evl") for r in eval_results]
     for r in eval_results:

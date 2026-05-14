@@ -39,6 +39,47 @@ SPEAKER_LABEL_RE = re.compile(r"^([A-Z][A-Z\s\-\.]{1,40}):\s(.*)$")
 NO_SPEAKER_DETECTED_FINDING = "no_speaker_detected"
 NO_SPEAKER_STRUCTURE_FINDING = "no_speaker_structure"
 
+# Phase Z.4: deterministic agenda-item markers. The detector runs on a
+# turn's text AFTER speaker-label stripping. Only the first pattern
+# carries a capturing group; the other two intentionally do not, so
+# the detector emits ``item-<digit>`` only when the marker is a
+# numbered "Item N" form. Other agenda markers degrade to
+# ``item-unknown`` rather than embedding free-form text into an id.
+AGENDA_ITEM_NUMBER_RE = re.compile(
+    r"^(?:agenda\s+)?item\s+(\d+)[:\.]", re.IGNORECASE
+)
+AGENDA_NUMBER_DOT_RE = re.compile(
+    r"^\d+\.\s+(?!\d)"
+)
+AGENDA_TOPIC_RE = re.compile(
+    r"^(?:topic|agenda)[:\s]+(?:.+)", re.IGNORECASE
+)
+
+AGENDA_PATTERNS = (
+    AGENDA_ITEM_NUMBER_RE,
+    AGENDA_NUMBER_DOT_RE,
+    AGENDA_TOPIC_RE,
+)
+
+
+def _detect_agenda_item(turn_text: str) -> str | None:
+    """Return ``item-<n>`` when the text begins with a numbered agenda
+    marker, ``"item-unknown"`` when a non-numbered marker is present,
+    or ``None`` when no marker fires. Never raises; never reads any
+    state outside ``turn_text``."""
+    if not isinstance(turn_text, str):
+        return None
+    text = turn_text.strip()
+    if not text:
+        return None
+    m = AGENDA_ITEM_NUMBER_RE.match(text)
+    if m is not None:
+        return f"item-{m.group(1)}"
+    for pattern in AGENDA_PATTERNS[1:]:
+        if pattern.match(text):
+            return "item-unknown"
+    return None
+
 
 @dataclass(frozen=True)
 class ChunkerHealth:
@@ -62,6 +103,7 @@ def _make_chunk(
     text: str,
     line_start: int,
     line_end: int,
+    agenda_item_id: str | None = None,
 ) -> dict:
     return {
         "turn_id": f"t{index:04d}",
@@ -69,7 +111,28 @@ def _make_chunk(
         "text": text,
         "line_start": line_start,
         "line_end": line_end,
+        "agenda_item_id": agenda_item_id,
     }
+
+
+def _propagate_agenda_ids(chunks: list[dict]) -> list[dict]:
+    """Detect and propagate agenda_item_id across chunks.
+
+    Rule: a chunk whose text starts with an agenda marker gets the
+    detected id; every subsequent chunk inherits that id until a new
+    marker is detected. Chunks that precede the first marker have
+    ``agenda_item_id: None``.
+
+    Returns a new list of chunk dicts; never mutates the input
+    chunks in place beyond setting the agenda_item_id field.
+    """
+    current: str | None = None
+    for chunk in chunks:
+        detected = _detect_agenda_item(chunk.get("text", ""))
+        if detected is not None:
+            current = detected
+        chunk["agenda_item_id"] = current
+    return chunks
 
 
 def _split_on_speaker_labels(
@@ -196,15 +259,15 @@ def chunk_transcript(transcript_text: str) -> list[dict]:
 
     by_speaker = _split_on_speaker_labels(lines)
     if by_speaker is not None:
-        return by_speaker
+        return _propagate_agenda_ids(by_speaker)
 
     by_blank = _split_on_blank_lines(lines)
     if by_blank is not None:
-        return by_blank
+        return _propagate_agenda_ids(by_blank)
 
     # Fallback: whole transcript is one chunk.
     text = transcript_text.rstrip("\n")
-    return [
+    return _propagate_agenda_ids([
         _make_chunk(
             index=0,
             speaker=None,
@@ -212,7 +275,7 @@ def chunk_transcript(transcript_text: str) -> list[dict]:
             line_start=1,
             line_end=max(1, len(lines)),
         )
-    ]
+    ])
 
 
 def speaker_null_rate(chunks: list[dict]) -> float:

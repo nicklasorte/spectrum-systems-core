@@ -13,6 +13,21 @@ from .source_turn_validity import (
     SOURCE_RECORD_INVALID,
     SOURCE_TURN_UNRESOLVED_PREFIX,
 )
+from .regulatory_verb import (
+    run_regulatory_verb_eval,
+    EVAL_TYPE as REGULATORY_VERB_EVAL_TYPE,
+    DECISIONS_FIELD_MISSING,
+    VERB_AMBIGUOUS_PREFIX,
+    VERB_NOT_CLASSIFIED_PREFIX,
+)
+from .extraction_precision import (
+    run_extraction_precision_eval,
+    EVAL_TYPE as EXTRACTION_PRECISION_EVAL_TYPE,
+    LCS_THRESHOLD,
+    SOURCE_RECORD_MISSING,
+    SOURCE_TEXT_NOT_GROUNDED_PREFIX,
+    TURN_ID_NOT_FOUND_PREFIX,
+)
 
 __all__ = [
     "run_required_evals",
@@ -26,4 +41,15 @@ __all__ = [
     "SOURCE_TURN_VALIDITY_EVAL_TYPE",
     "SOURCE_RECORD_INVALID",
     "SOURCE_TURN_UNRESOLVED_PREFIX",
+    "run_regulatory_verb_eval",
+    "REGULATORY_VERB_EVAL_TYPE",
+    "DECISIONS_FIELD_MISSING",
+    "VERB_AMBIGUOUS_PREFIX",
+    "VERB_NOT_CLASSIFIED_PREFIX",
+    "run_extraction_precision_eval",
+    "EXTRACTION_PRECISION_EVAL_TYPE",
+    "LCS_THRESHOLD",
+    "SOURCE_RECORD_MISSING",
+    "SOURCE_TEXT_NOT_GROUNDED_PREFIX",
+    "TURN_ID_NOT_FOUND_PREFIX",
 ]

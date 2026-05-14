@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0.0",
+  "fixture_id": "gm-002-fcc-inquiry",
+  "decisions": [
+    {
+      "text": "The FCC noted the petition for reconsideration and assigned it to docket 24-101.",
+      "verb": "noted",
+      "source_turns": ["t0002"]
+    },
+    {
+      "text": "The commission directed staff to prepare a technical analysis within thirty days.",
+      "verb": "directed",
+      "source_turns": ["t0003"]
+    }
+  ],
+  "actions": [
+    {
+      "text": "Erin will compile the comment summary by next Tuesday.",
+      "owner": "Erin",
+      "source_turns": ["t0005"]
+    },
+    {
+      "text": "Frank notifies the licensees once the docket opens.",
+      "owner": "Frank",
+      "source_turns": ["t0006"]
+    }
+  ],
+  "questions": [
+    {
+      "text": "Should incumbents receive advance notice before the comment window opens?",
+      "source_turns": ["t0007"]
+    }
+  ]
+}

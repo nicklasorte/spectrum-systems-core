@@ -1,0 +1,22 @@
+CHAIR: I call this meeting to order. Today we have two agenda items.
+CHAIR: Item 1: 3.5 GHz band sharing proposal.
+ALICE: The FCC approved the SAS-only sharing framework for Phase 1.
+BOB: NTIA deferred the technical specification review until next quarter.
+CHAIR: Item 2: action items and follow-ups.
+ALICE: Carol will draft the FCC response document by Friday.
+BOB: Dan coordinates with NTIA on the testing schedule next week.
+CHAIR: Do we need a separate eval for ambiguous sharing rules?
+ALICE: The committee discussed the proposed amendment to the coordination window.
+DECISION: Approved the SAS-only sharing framework for Phase 1.
+DECISION: Deferred the technical specification review until next quarter.
+ACTION: Carol drafts the FCC response document by Friday.
+ACTION: Dan coordinates with NTIA on the testing schedule next week.
+QUESTION: Do we need a separate eval for ambiguous sharing rules?
+CONTEXT: Item 1 covers the 3.5 GHz band sharing proposal.
+OPTION: Continue the current SAS-only sharing arrangement.
+OPTION: Move to a hybrid SAS plus incumbent coordination framework.
+RECOMMENDATION: Adopt the hybrid SAS plus incumbent coordination framework.
+RATIONALE: Hybrid coordination preserves SAS flexibility while protecting incumbents.
+AGENCY: FCC
+CITATION: 47 CFR 96 Subpart F
+MEETING_REF: Q2-2026 spectrum coordination sync
