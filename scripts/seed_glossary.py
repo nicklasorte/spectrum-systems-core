@@ -1,8 +1,20 @@
 """Seed the glossary with 40+ spectrum-domain terms.
 
-Writes one ``glossary_term`` artifact per term to
-``<SDL_ROOT>/glossary/<slug>.json`` (or ``--out`` if provided). The
-output is deterministic: the same term name produces the same
+Writes two complementary glossary artifact layouts under
+``<SDL_ROOT>/glossary/`` (or ``--out`` if provided):
+
+  1. One legacy ``glossary_term`` artifact per term at
+     ``<out>/<slug>.json`` (consumed by the legacy GlossaryManager).
+  2. The versioned aggregate at ``<out>/spectrum_glossary_v1.json``
+     (consumed by ``typed_extraction_runner._resolve_versioned_glossary_artifact``
+     for per-chunk injection). The aggregate is the file the wiring
+     signal ``glossary_terms_injected_present`` indirectly depends on:
+     when this file is missing, the runner loads an empty term list,
+     ``total_term_injections == 0``, and the wiring signal flips to
+     MISSING. Seeding both shapes from the same source list keeps the
+     two consumers in sync by construction.
+
+The output is deterministic: the same term name produces the same
 ``glossary_term_id`` (a sha1 over the term text, formatted as a UUID).
 
 This is a one-time seed. Re-running it overwrites existing files in
@@ -309,6 +321,65 @@ def _build_artifact(
     }
 
 
+_VERSIONED_GLOSSARY_FILENAME: str = "spectrum_glossary_v1.json"
+_VERSIONED_GLOSSARY_VERSION: str = "1"
+
+
+def _build_versioned_term(
+    term: str,
+    definition: str,
+    authoritative_source: str,
+    related_terms: List[str],
+) -> Dict[str, Any]:
+    short = definition[:200]
+    related_ids = [_stable_uuid(rt) for rt in related_terms]
+    return {
+        "term_id": _stable_uuid(term),
+        "term": term,
+        "abbreviation": term if term.isupper() and len(term) <= 8 else None,
+        "definition": definition,
+        "short_definition": short,
+        "authoritative_source": authoritative_source or "unknown",
+        "domain_scope": "spectrum",
+        "related_term_ids": related_ids,
+    }
+
+
+def _compute_glossary_content_hash(
+    glossary_version: str, terms: List[Dict[str, Any]]
+) -> str:
+    payload = {"glossary_version": glossary_version, "terms": terms}
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _build_versioned_aggregate(now: str) -> Dict[str, Any]:
+    """Build the spectrum_glossary_v1 aggregate from the _TERMS table.
+
+    The aggregate must validate against
+    ``spectrum_glossary.schema.json``. The runner's
+    ``find_matching_terms`` reads ``term`` and ``abbreviation`` for
+    lexical match, so both fields must be populated correctly.
+    """
+    terms_built: List[Dict[str, Any]] = []
+    for entry in _TERMS:
+        term, definition, source, related, _is_verb, _verb_def = entry
+        terms_built.append(
+            _build_versioned_term(term, definition, source, related)
+        )
+    return {
+        "artifact_type": "spectrum_glossary",
+        "schema_version": "1.0.0",
+        "glossary_version": _VERSIONED_GLOSSARY_VERSION,
+        "term_count": len(terms_built),
+        "content_hash": _compute_glossary_content_hash(
+            _VERSIONED_GLOSSARY_VERSION, terms_built,
+        ),
+        "created_at": now,
+        "terms": terms_built,
+    }
+
+
 def main(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(description="Seed the spectrum glossary.")
     parser.add_argument(
@@ -357,7 +428,23 @@ def main(argv: List[str]) -> int:
         )
         written += 1
 
-    print(f"seed_glossary: wrote {written} terms to {out_root}")
+    # Versioned aggregate: the file the typed_extraction_runner actually
+    # loads. Without it, per-chunk injection produces zero matches and
+    # the ``glossary_terms_injected_present`` wiring signal flips to
+    # MISSING. Built deterministically from the same _TERMS table so
+    # the two outputs cannot drift.
+    aggregate = _build_versioned_aggregate(now)
+    aggregate_path = out_root / _VERSIONED_GLOSSARY_FILENAME
+    aggregate_path.write_text(
+        json.dumps(aggregate, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    print(
+        f"seed_glossary: wrote {written} per-term files + "
+        f"{_VERSIONED_GLOSSARY_FILENAME} ({aggregate['term_count']} terms) "
+        f"to {out_root}"
+    )
     return 0
 
 

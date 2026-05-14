@@ -91,6 +91,48 @@ def test_workflow_verifies_five_wiring_signals() -> None:
 
 
 @pytest.mark.skipif(not YAML_AVAILABLE, reason="PyYAML required")
+def test_workflow_ensures_versioned_glossary_before_extraction() -> None:
+    """The runner loads ``spectrum_glossary_v1.json``; if absent, every
+    chunk records zero glossary injections and the
+    ``glossary_terms_injected_present`` wiring signal flips to MISSING.
+    The workflow MUST ensure the aggregate exists BEFORE running
+    ``extract-typed`` so the run produces a non-zero injection summary.
+    """
+    _skip_if_missing()
+    body = WORKFLOW_PATH.read_text(encoding="utf-8")
+    ensure_idx = body.find("Ensure versioned glossary aggregate exists")
+    extract_idx = body.find("Run typed extraction for target transcript")
+    verify_idx = body.find("Verify Phase W wiring signals")
+    assert ensure_idx != -1, (
+        "missing ensure-versioned-glossary step in validate-and-baseline.yml"
+    )
+    assert extract_idx != -1
+    assert verify_idx != -1
+    assert ensure_idx < extract_idx, (
+        "ensure-glossary step must run BEFORE extract-typed so terms "
+        "are present during extraction"
+    )
+    assert ensure_idx < verify_idx
+
+
+@pytest.mark.skipif(not YAML_AVAILABLE, reason="PyYAML required")
+def test_workflow_pushes_glossary_aggregate_back_to_data_lake() -> None:
+    """If the self-heal step had to build the aggregate, the push step
+    must include ``store/artifacts/glossary/`` so subsequent runs do
+    not have to re-build it. This makes the fix durable across runs."""
+    _skip_if_missing()
+    body = WORKFLOW_PATH.read_text(encoding="utf-8")
+    push_section_start = body.find("Push baseline artifacts")
+    assert push_section_start != -1
+    push_section = body[push_section_start:]
+    # The add_paths list is YAML; look for the line within the push step.
+    assert "store/artifacts/glossary/" in push_section, (
+        "Push baseline artifacts step must include store/artifacts/glossary/ "
+        "in add_paths so the self-healed aggregate persists in the data-lake."
+    )
+
+
+@pytest.mark.skipif(not YAML_AVAILABLE, reason="PyYAML required")
 def test_workflow_set_baseline_only_runs_when_signals_green() -> None:
     """The 'Set development baseline' step runs AFTER 'Verify Phase W
     wiring signals'. If verify fails (exit 1) the baseline step is
