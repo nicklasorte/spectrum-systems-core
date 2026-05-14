@@ -4,13 +4,17 @@ name: Phase R smoke (e2e)
 #
 # Asserts the bug classes Phase R was designed to prevent:
 #   1. gitignored artifact paths (read by scripts/) — caught by the
-#      gitignore audit against the live repo.
+#      gitignore audit against the data-lake repo's gitignore (when a
+#      clone is present) plus the spectrum-systems-core data-lake/
+#      separation rule.
 #   2. workspace drift that breaks the preflight + few-shot selector
 #      chain — caught by the e2e smoke test that exercises the real
 #      scripts against a seeded temp data-lake.
 #   3. dangling runbook references — caught by the runbook validator.
 #
-# Budgeted at <2 minutes wall clock. No network calls.
+# Budgeted at <2 minutes wall clock. Clones nicklasorte/data-lake
+# (read-only) so the manifest-vs-gitignore audit can see the real
+# gitignore that owns the data-lake paths.
 
 on:
   pull_request:
@@ -30,11 +34,22 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Clone nicklasorte/data-lake (read-only)
+        # Audit + smoke benefit from the real data-lake gitignore being
+        # on disk. Token is optional here: when it's missing (e.g. a
+        # forked PR), the audit falls back to verifying only the
+        # spectrum-systems-core separation rule.
+        if: ${{ secrets.DATA_LAKE_TOKEN != '' }}
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
       - name: Gitignore audit (manifest contract)
         # Pure-stdlib. Reads docs/architecture/artifact_manifest.md and
-        # asserts every git-tracked artifact path is un-ignored. Runs
-        # BEFORE pip install so a broken environment cannot mask the
-        # check.
+        # asserts (a) the data-lake/ rule is present in
+        # spectrum-systems-core .gitignore, and (b) every git-tracked
+        # data-lake path is un-ignored inside the data-lake repo (when
+        # the clone is present).
         run: python scripts/_gitignore_audit.py
 
       - name: Runbook validator

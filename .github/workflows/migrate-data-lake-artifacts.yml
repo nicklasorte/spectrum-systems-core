@@ -1,0 +1,98 @@
+name: Migrate data-lake artifacts to nicklasorte/data-lake
+
+# ONE-SHOT migration. Run this BEFORE merging the
+# "migrate-data-lake-repo" PR to move every committed artifact under
+# data-lake/store/ into the nicklasorte/data-lake repository.
+#
+# Important: this workflow MUST read the data-lake/ tree from
+# spectrum-systems-core's `main` branch (where it is still committed),
+# NOT from the PR branch (where data-lake/ is gitignored and absent
+# from the working tree after `actions/checkout`). The "Fetch data-lake
+# tree from main" step below uses `git checkout origin/main -- data-lake/`
+# to materialise the main-branch contents on top of the PR branch's
+# code (which holds the migration script).
+#
+# Re-running is safe: the migration script never overwrites existing
+# data-lake artifacts and is idempotent.
+#
+# Trigger: Actions tab -> "Migrate data-lake artifacts to
+# nicklasorte/data-lake" -> Run workflow -> pick the PR branch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run only (clone + copy locally, no push)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    env:
+      DATA_LAKE_TOKEN: ${{ secrets.DATA_LAKE_TOKEN }}
+    steps:
+      - name: Checkout spectrum-systems-core (PR branch — has migration script)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so we can checkout origin/main paths
+
+      - name: Materialise data-lake/ tree from origin/main
+        # The migration script reads from ./data-lake/. The PR branch
+        # removes data-lake/ from tracking, so we have to pull the
+        # tree from main where it is still committed. This step is a
+        # no-op when main no longer carries the data-lake/ tree (e.g.
+        # the migration has already run and been merged).
+        run: |
+          set -euo pipefail
+          git fetch origin main --depth=1 || true
+          if git cat-file -e origin/main:data-lake 2>/dev/null; then
+            git checkout origin/main -- data-lake
+            echo "data-lake/ tree pulled from origin/main"
+            ls data-lake/store 2>/dev/null || true
+          else
+            echo "::notice::origin/main no longer carries data-lake/; nothing to materialise."
+          fi
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Assert DATA_LAKE_TOKEN is present
+        run: |
+          if [ -z "${DATA_LAKE_TOKEN}" ]; then
+            echo "::error::DATA_LAKE_TOKEN is not configured in repo secrets."
+            exit 1
+          fi
+          echo "OK: DATA_LAKE_TOKEN present"
+
+      - name: Run migration
+        run: |
+          DRY_FLAG=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            DRY_FLAG="--dry-run"
+          fi
+          python scripts/_migrate_artifacts_to_data_lake_repo.py $DRY_FLAG
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Data-lake migration"
+            echo ""
+            echo "- Dry run: \`${{ github.event.inputs.dry_run }}\`"
+            echo ""
+            echo "After this workflow succeeds, every artifact under"
+            echo "\`spectrum-systems-core/data-lake/store/artifacts/\` and"
+            echo "\`spectrum-systems-core/data-lake/store/processed/\` lives"
+            echo "in \`nicklasorte/data-lake\`. The migration PR can then"
+            echo "be merged to remove the in-repo \`data-lake/\` tree."
+          } >> "$GITHUB_STEP_SUMMARY"

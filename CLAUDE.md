@@ -277,6 +277,46 @@ pushing a follow-up commit whose message omits the token (the new HEAD
 re-triggers via the `synchronize` event) or by amending the commit
 message and force-pushing the branch.
 
+## Data-lake separation (non-negotiable)
+
+All pipeline artifacts, transcripts, minutes, and other data files live
+in the **`nicklasorte/data-lake`** repository. `spectrum-systems-core`
+is code only.
+
+Workflows access the data-lake by cloning it via the
+`./.github/actions/clone-data-lake` composite action, which uses the
+`DATA_LAKE_TOKEN` PAT to run:
+
+```
+git clone https://x-access-token:${DATA_LAKE_TOKEN}@github.com/nicklasorte/data-lake.git data-lake
+```
+
+Pushes back to the data-lake go through
+`./.github/actions/push-data-lake`. Both actions live under
+`.github/actions/` and are versioned with this repo.
+
+Rules:
+
+* **NEVER commit data into spectrum-systems-core.** The repo-root
+  `.gitignore` carries `data-lake/` so a stray `git add data-lake` is a
+  no-op. The pre-PR `_gitignore_audit.py` script asserts that rule is
+  present.
+* **NEVER reference `DATA_LAKE_TOKEN` outside the secret context.** The
+  PAT must only appear as `${{ secrets.DATA_LAKE_TOKEN }}` (in `with:`
+  blocks for composite actions) or in `env:` blocks. Never echo it,
+  never embed it in a commit message, never write it to disk.
+* **NEVER push to spectrum-systems-core from a pipeline workflow.**
+  Workflows that produce pipeline artifacts push to
+  `nicklasorte/data-lake`, never to spectrum-systems-core's `main`.
+* When the data-lake is not on disk (e.g. forked PR, dev checkout
+  without the token), tests and audits that depend on live data-lake
+  files skip cleanly. The contract still binds; it is just verified at
+  a different time.
+
+If a new workflow needs to touch artifacts, use the two composite
+actions above. Do not hand-write `git clone …data-lake.git` or
+`git push` of data into spectrum-systems-core.
+
 ## Control is fail-closed
 
 `control/decision.py` is the only place decisions come from. Rules:

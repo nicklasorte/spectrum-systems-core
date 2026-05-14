@@ -1,5 +1,14 @@
 name: Run pipeline
 
+# Production pipeline: scans nicklasorte/data-lake for unprocessed
+# transcripts and runs the full pipeline (chunking → typed extraction →
+# orchestration) for each one in parallel.
+#
+# Data-lake architecture (post-migration): every job clones
+# nicklasorte/data-lake into ./data-lake via DATA_LAKE_TOKEN. The
+# transcripts already live in that repo under store/raw/transcripts/;
+# artifacts are committed back to nicklasorte/data-lake.
+
 on:
   workflow_dispatch:
     inputs:
@@ -35,7 +44,7 @@ on:
     types: [transcript-added]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # ------------------------------------------------------------------
@@ -49,8 +58,6 @@ jobs:
     steps:
       - name: Checkout spectrum-systems-core
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -61,6 +68,11 @@ jobs:
         run: |
           python -m pip install -e ".[dev]"
           python -m pip install anthropic  # explicit safety net
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
 
       - name: Pre-flight verification
         if: ${{ github.event.inputs.dry_run != 'true' && (github.event.inputs.force == 'true' || github.event.inputs.force_only_missing == 'true') }}
@@ -126,8 +138,6 @@ jobs:
     steps:
       - name: Checkout spectrum-systems-core
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -139,9 +149,15 @@ jobs:
           python -m pip install -e ".[dev]"
           python -m pip install anthropic
 
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
       - name: Validate environment (Phase R)
-        # Asserts data-lake/ shape, ANTHROPIC_API_KEY presence, and
-        # the gitignore-audit invariant before extraction starts.
+        # Asserts data-lake/ is a clone of nicklasorte/data-lake,
+        # ANTHROPIC_API_KEY is present, and the gitignore-audit
+        # invariant holds before extraction starts.
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -177,42 +193,15 @@ jobs:
             $FORCE_FLAG \
             || echo "extract-typed completed with warnings"
 
-      - name: Commit and push artifacts for this transcript
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          cd "${{ github.workspace }}/data-lake"
-          git config user.name "spectrum-pipeline[bot]"
-          git config user.email "spectrum-pipeline[bot]@users.noreply.github.com"
-          git add store/artifacts/ 2>/dev/null || true
-          git add store/processed/ 2>/dev/null || true
-          git add store/raw/ 2>/dev/null || true
-          if git diff --staged --quiet; then
-            echo "No artifact changes for ${{ matrix.source_id }}"
-            exit 0
-          fi
-          git commit -m "pipeline: artifacts for ${{ matrix.source_id }} (run ${{ github.run_id }})"
-          # Concurrent matrix jobs all push to the same branch. Retry with
-          # exponential backoff and a fresh rebase between attempts.
-          attempt=0
-          delay=2
-          while [ $attempt -lt 5 ]; do
-            attempt=$((attempt+1))
-            # Clear any half-rebase state from a previous failed attempt so
-            # the next `git pull --rebase` doesn't error out with
-            # "rebase in progress". Safe no-op when no rebase is active.
-            git rebase --abort 2>/dev/null || true
-            git fetch origin main
-            if git pull --rebase origin main && git push origin HEAD:main; then
-              echo "Push succeeded on attempt $attempt"
-              exit 0
-            fi
-            echo "Push attempt $attempt failed; sleeping ${delay}s..."
-            sleep $delay
-            delay=$((delay*2))
-          done
-          echo "::error::Failed to push artifacts for ${{ matrix.source_id }} after 5 attempts"
-          exit 1
+      - name: Push artifacts for this transcript
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            pipeline: artifacts for ${{ matrix.source_id }} (run ${{ github.run_id }}) [skip ci]
+          add_paths: |
+            store/artifacts/
+            store/processed/
 
   # ------------------------------------------------------------------
   # post-pipeline: aggregations that must run AFTER every transcript.
@@ -228,8 +217,6 @@ jobs:
     steps:
       - name: Checkout spectrum-systems-core
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -240,6 +227,11 @@ jobs:
         run: |
           python -m pip install -e ".[dev]"
           python -m pip install anthropic
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
 
       - name: Link ground truth pairs (minutes + transcripts)
         run: |
@@ -266,40 +258,15 @@ jobs:
             --pipeline-run-id "${{ github.run_id }}" \
             --output-format github_actions_summary
 
-      - name: Commit and push post-pipeline artifacts
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          cd "${{ github.workspace }}/data-lake"
-          git config user.name "spectrum-pipeline[bot]"
-          git config user.email "spectrum-pipeline[bot]@users.noreply.github.com"
-          git add store/artifacts/ 2>/dev/null || true
-          git add store/processed/ 2>/dev/null || true
-          git add store/raw/ 2>/dev/null || true
-          if git diff --staged --quiet; then
-            echo "No post-pipeline artifact changes."
-            exit 0
-          fi
-          git commit -m "pipeline: post-pipeline artifacts (run ${{ github.run_id }})"
-          attempt=0
-          delay=2
-          while [ $attempt -lt 5 ]; do
-            attempt=$((attempt+1))
-            # Clear any half-rebase state from a previous failed attempt so
-            # the next `git pull --rebase` doesn't error out with
-            # "rebase in progress". Safe no-op when no rebase is active.
-            git rebase --abort 2>/dev/null || true
-            git fetch origin main
-            if git pull --rebase origin main && git push origin HEAD:main; then
-              echo "Push succeeded on attempt $attempt"
-              exit 0
-            fi
-            echo "Push attempt $attempt failed; sleeping ${delay}s..."
-            sleep $delay
-            delay=$((delay*2))
-          done
-          echo "::error::Failed to push post-pipeline artifacts after 5 attempts"
-          exit 1
+      - name: Push post-pipeline artifacts
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            pipeline: post-pipeline artifacts (run ${{ github.run_id }}) [skip ci]
+          add_paths: |
+            store/artifacts/
+            store/processed/
 
   # ------------------------------------------------------------------
   # dry-run: same scan-and-report behavior as before, single job.
@@ -313,8 +280,6 @@ jobs:
     steps:
       - name: Checkout spectrum-systems-core
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -325,6 +290,11 @@ jobs:
         run: |
           python -m pip install -e ".[dev]"
           python -m pip install anthropic
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
 
       - name: Run dry-run scan
         run: |

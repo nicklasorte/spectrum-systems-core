@@ -1,15 +1,16 @@
 name: Eval ground truth
 
 # Phase M.4. Runs after every successful `Run pipeline` workflow.
-# Loads confirmed ground_truth_pair artifacts from the data lake,
-# evaluates the pipeline output against them, writes alignment_result,
-# eval_result, eval_summary, and gate_decision artifacts back into the
-# data lake under store/artifacts/evals/, and commits.
+# Clones nicklasorte/data-lake, loads confirmed ground_truth_pair
+# artifacts, evaluates the pipeline output against them, writes
+# alignment_result / eval_result / eval_summary / gate_decision
+# artifacts back into the data lake under store/artifacts/evals/, and
+# pushes back to nicklasorte/data-lake.
 #
-# A 30-second wait before fetching the data lake gives the
-# Run-pipeline workflow's push enough time to propagate so we are
-# always evaluating the freshest artifacts. (TimeStampEval finding:
-# stale artifacts produce false regressions.)
+# A 30-second wait before processing gives the upstream pipeline's push
+# enough time to propagate so we are always evaluating the freshest
+# artifacts. (TimeStampEval finding: stale artifacts produce false
+# regressions.)
 
 on:
   workflow_run:
@@ -32,7 +33,7 @@ on:
           - 'true'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   eval-ground-truth:
@@ -49,11 +50,14 @@ jobs:
     steps:
       - name: Checkout spectrum-systems-core
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Wait for data-lake artifacts to propagate
+      - name: Wait for upstream data-lake push to propagate
         run: sleep 30
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
 
       - name: Detect upstream dry-run pipeline
         id: upstream
@@ -135,21 +139,15 @@ jobs:
             $SET_BASELINE_FLAG $PIPELINE_RUN_ID_FLAG \
             --data-lake "${{ github.workspace }}/data-lake"
 
-      - name: Commit eval results to data-lake
+      - name: Push eval results to nicklasorte/data-lake
         if: steps.upstream.outputs.is_dry_run != 'true'
-        run: |
-          cd "${{ github.workspace }}/data-lake"
-          git config user.name "spectrum-pipeline[bot]"
-          git config user.email "spectrum-pipeline[bot]@users.noreply.github.com"
-          git add store/artifacts/evals/
-          if git diff --staged --quiet; then
-            echo "No eval results to commit."
-          else
-            git commit -m "chore: add eval results for pipeline run
-
-          Workflow run: ${{ github.run_id }}"
-            git push
-          fi
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            chore: add eval results for pipeline run ${{ github.run_id }} [skip ci]
+          add_paths: |
+            store/artifacts/evals/
 
       - name: Post eval summary
         if: always()
@@ -196,12 +194,12 @@ jobs:
                       f.write(f"| Aggregate precision | {precision} |\n")
                   f.write(f"| Items requiring review | {review_items} |\n")
                   f.write(
-                      f"| Baseline set | {'✅ Yes' if baseline_set else '❌ No'} |\n"
+                      f"| Baseline set | {'Yes' if baseline_set else 'No'} |\n"
                   )
 
                   if partial:
                       f.write(
-                          "\n⚠️ **Partial run warning**: Not all transcripts have "
+                          "\n**Partial run warning**: Not all transcripts have "
                           "extractions.\n"
                       )
                       f.write(

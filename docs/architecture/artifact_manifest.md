@@ -6,14 +6,32 @@ CLAUDE.md enforcement: every PR that adds, removes, or changes an artifact
 type — including renaming its on-disk path, changing its schema, or
 flipping its git-tracked status — must update this file. The
 `scripts/_gitignore_audit.py` script reads this manifest and asserts every
-"Git-tracked: YES" path is NOT gitignored.
+"Git-tracked: YES" path is NOT gitignored in the repo that owns it.
 
-The single absolute root referenced in the templates below is
-`data-lake/` (set via `DATA_LAKE_PATH`). Templates use the placeholders
-`<artifact_id>` (UUID), `<source_id>` (transcript slug), `<run_id>`,
-`<failure_id>`, and `<source_artifact_id>`. The audit substitutes
-synthetic strings into these placeholders before calling
-`git check-ignore`.
+## Data-lake separation
+
+All pipeline artifacts live in the **`nicklasorte/data-lake`** repository,
+not in `spectrum-systems-core`. Workflows clone `nicklasorte/data-lake`
+into `./data-lake` at run time via the `DATA_LAKE_TOKEN` PAT (see
+`.github/actions/clone-data-lake`). The directory `data-lake/` is
+gitignored at the spectrum-systems-core repo root so the artifacts can
+never be re-committed into spectrum-systems-core.
+
+Path templates below carry the `data-lake/` prefix as a documentation
+convenience — it is the path the local clone occupies in every workflow.
+For artifacts in this manifest, "Git-tracked: YES" means **tracked inside
+`nicklasorte/data-lake`**. The audit script strips the `data-lake/`
+prefix and runs `git check-ignore` inside the data-lake clone when one is
+present locally.
+
+Judgment records under `docs/decisions/` are an exception: they live in
+spectrum-systems-core (they document architectural reasoning that
+belongs alongside the constitution).
+
+Templates use the placeholders `<artifact_id>` (UUID), `<source_id>`
+(transcript slug), `<run_id>`, `<failure_id>`, and `<source_artifact_id>`.
+The audit substitutes synthetic strings into these placeholders before
+calling `git check-ignore`.
 
 ## Artifact Types
 
@@ -309,16 +327,30 @@ Every path listed above as **Git-tracked: YES** must satisfy:
 git check-ignore -v <instantiated_path> → returncode != 0
 ```
 
-That is: the path MUST NOT be ignored by any rule in any
-`.gitignore` reachable from the repo root. The
-`scripts/_gitignore_audit.py` script enforces this on every PR by
-parsing this file, instantiating each path template with synthetic
-ids, and shelling out to `git check-ignore`.
+That is: the path MUST NOT be ignored by any rule in the
+`.gitignore` of the repo that owns it (spectrum-systems-core for
+paths under `docs/decisions/`, nicklasorte/data-lake for paths
+under `data-lake/`). The `scripts/_gitignore_audit.py` script
+enforces this on every PR by parsing this file, instantiating each
+path template with synthetic ids, and shelling out to
+`git check-ignore` against the appropriate repo:
+
+* Paths whose template begins with `data-lake/` are audited against
+  the data-lake repo's gitignore (when a local clone is present
+  under `./data-lake/`). When the clone is absent (e.g. forked PR
+  without `DATA_LAKE_TOKEN`), the audit reports the data-lake
+  paths as "SKIP" and exits 0 — the remaining checks still bind.
+* All other paths are audited against the spectrum-systems-core
+  gitignore as before.
+
+The audit also asserts spectrum-systems-core's `.gitignore` carries
+the `data-lake/` rule so the separate data-lake repo cannot
+accidentally be re-committed into spectrum-systems-core.
 
 If the audit fails on a `Git-tracked: YES` artifact, the fix is
 either:
 
-1. Add an explicit un-ignore (`!<path>`) to the appropriate
+1. Add an explicit un-ignore (`!<path>`) to the **owning repo's**
    `.gitignore`, OR
 2. Move the artifact to a different on-disk path that is not
    shadowed by a broader rule, OR

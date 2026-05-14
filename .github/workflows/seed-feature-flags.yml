@@ -1,24 +1,26 @@
 name: Seed feature flags
 
-# Writes feature-flag artifacts to the data-lake under
-# store/artifacts/config/. Run manually after merge to unblock the pipeline.
+# Writes feature-flag artifacts to nicklasorte/data-lake under
+# store/artifacts/config/. Run manually after merge to unblock the
+# pipeline.
 #
 # phase_v_post_hoc_verification_enabled.json -> enabled: true
-#   Without this flag, artifacts are not promoted as eligible for synthesis
-#   bundle assembly, which produced eval scores of 0.000/0.000 in pipeline #20.
+#   Without this flag, artifacts are not promoted as eligible for
+#   synthesis bundle assembly, which produced eval scores of 0.000/0.000
+#   in pipeline #20.
 #
 # phase_w_agenda_detection_enabled.json -> enabled: false
-#   Placeholder for the unmerged Phase W. Flip to true after the Phase W PR
-#   merges.
+#   Placeholder for the unmerged Phase W. Flip to true after the Phase W
+#   PR merges.
 #
-# Re-running is idempotent: flag artifacts are simple JSON and overwriting
-# is safe. Pushes directly to data-lake main (additive config data).
+# Re-running is idempotent: flag artifacts are simple JSON and
+# overwriting is safe.
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   seed-feature-flags:
@@ -26,6 +28,11 @@ jobs:
     steps:
       - name: Checkout spectrum-systems-core
         uses: actions/checkout@v4
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
 
       - name: Write feature flag artifacts
         env:
@@ -51,24 +58,17 @@ jobs:
             "flag_name": "phase_w_agenda_detection_enabled",
             "enabled": false,
             "set_by": "seed-feature-flags workflow",
-            "note": "Placeholder — set enabled:true after Phase W PR merges"
+            "note": "Placeholder -- set enabled:true after Phase W PR merges"
           }
           EOF
 
-      - name: Commit flags to data-lake
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          cd "${{ github.workspace }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [[ -z "$(git status --porcelain data-lake/)" ]]; then
-            echo "No feature flag changes to commit."
-            exit 0
-          fi
-          git add data-lake/
-          git commit -m "seed: write feature flag artifacts"
-          git push
+      - name: Push flags to nicklasorte/data-lake
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: "seed: write feature flag artifacts [skip ci]"
+          add_paths: |
+            store/artifacts/config/
 
       - name: Post seed summary
         env:
