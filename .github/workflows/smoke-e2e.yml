@@ -28,6 +28,12 @@ jobs:
   smoke-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      # Evaluating ``secrets.X`` happens at the job-env scope (a
+      # documented-safe place for the secrets context) and exposes a
+      # non-empty marker the step-level ``if:`` can compare against
+      # without touching the secrets context itself.
+      DATA_LAKE_TOKEN_PRESENT: ${{ secrets.DATA_LAKE_TOKEN != '' && 'yes' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -39,7 +45,7 @@ jobs:
         # on disk. Token is optional here: when it's missing (e.g. a
         # forked PR), the audit falls back to verifying only the
         # spectrum-systems-core separation rule.
-        if: ${{ secrets.DATA_LAKE_TOKEN != '' }}
+        if: env.DATA_LAKE_TOKEN_PRESENT == 'yes'
         uses: ./.github/actions/clone-data-lake
         with:
           data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}

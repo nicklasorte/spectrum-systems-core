@@ -18,6 +18,12 @@ permissions:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    env:
+      # Evaluating ``secrets.X`` happens at the job-env scope (a
+      # documented-safe place for the secrets context) and exposes
+      # a non-empty marker the step-level ``if:`` can compare without
+      # touching the secrets context itself.
+      DATA_LAKE_TOKEN_PRESENT: ${{ secrets.DATA_LAKE_TOKEN != '' && 'yes' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,7 +34,7 @@ jobs:
         # Forked PRs do not have access to repo secrets. Tests that
         # depend on the live glossary artifact pytest.skip() when the
         # clone is absent, so this step is opportunistic.
-        if: ${{ secrets.DATA_LAKE_TOKEN != '' }}
+        if: env.DATA_LAKE_TOKEN_PRESENT == 'yes'
         uses: ./.github/actions/clone-data-lake
         with:
           data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
