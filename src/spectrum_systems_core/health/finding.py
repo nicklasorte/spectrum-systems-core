@@ -157,6 +157,17 @@ ALL_FINDING_CODES: frozenset[str] = frozenset(
         # candidate-level state is for operator triage, not the
         # blocking gate.
         "human_review_artifact_missing",
+        # Phase P1: emitted by the eval runner when the new
+        # deterministic alignment path encounters a ground_truth_pair
+        # with no sibling ``<pair_id>_review.json`` confirming the
+        # expected_decision_outcome. severity halt; the pair is
+        # skipped and the gate refuses to score it.
+        "gt_pair_not_reviewed",
+        # Phase P1: emitted by the eval runner when the pair's
+        # review record carries ``outcome_confirmed: false``. severity
+        # halt; the pair is skipped because the human reviewer rejected
+        # the outcome assignment.
+        "gt_pair_outcome_rejected",
     }
 )
 
@@ -184,6 +195,11 @@ HALT_FINDING_CODES: frozenset[str] = frozenset(
         "judge_calibration_failed",
         # Phase X2.4: gate refuses --set-baseline on a failed run.
         "baseline_requires_successful_run",
+        # Phase P1: gate refuses to score a pair with no review record.
+        "gt_pair_not_reviewed",
+        # Phase P1: gate refuses to score a pair whose review rejected
+        # the outcome.
+        "gt_pair_outcome_rejected",
     }
 )
 

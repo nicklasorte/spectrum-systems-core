@@ -188,6 +188,40 @@ def make_ground_truth_pair_from_decision(
     )
 
 
+def make_gt_pair_review(
+    *,
+    pair_id: str,
+    reviewer_id: str = "fixture-reviewer",
+    outcome_confirmed: bool = True,
+    expected_decision_outcome: Optional[str] = "approval",
+    notes: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Produce a ``gt_pair_review`` via the real script's writer.
+
+    Calls ``scripts.review_gt_pairs.build_review`` so the output stays
+    byte-shape identical to what the production review script writes.
+    Used by integration tests that wire a GT pair review on disk to
+    satisfy the Phase P1 eval gate.
+    """
+    import sys as _sys
+
+    scripts_dir = (
+        __import__("pathlib").Path(__file__).resolve().parents[2] / "scripts"
+    )
+    if str(scripts_dir) not in _sys.path:
+        _sys.path.insert(0, str(scripts_dir))
+
+    import review_gt_pairs  # type: ignore  # noqa: WPS433
+
+    return review_gt_pairs.build_review(
+        pair_id=pair_id,
+        reviewer_id=reviewer_id,
+        outcome_confirmed=outcome_confirmed,
+        expected_decision_outcome=expected_decision_outcome,
+        notes=notes,
+    )
+
+
 def make_decision_few_shot_placeholder(
     extraction_type: str = "decision",
 ) -> Dict[str, Any]:

@@ -1,0 +1,10 @@
+{
+  "artifact_type": "gt_pair_review",
+  "expected_decision_outcome": "deferral",
+  "notes": "confirmed from Dec 18 transcript",
+  "outcome_confirmed": true,
+  "pair_id": "a020e03c-696c-5bc9-b463-a8bcfb5b4954",
+  "reviewed_at": "2026-05-14T00:37:45+00:00",
+  "reviewer_id": "nicklasorte",
+  "schema_version": "1.0.0"
+}
