@@ -22,6 +22,11 @@ synthetic strings into these placeholders before calling
   `extraction/extraction_merger.py::ExtractionMerger.write_to`
 - **Path template:** `data-lake/store/artifacts/extractions/<source_artifact_id>_meeting_extraction.json`
 - **Schema:** `src/spectrum_systems_core/schemas/meeting_extraction.schema.json`
+- **Optional top-level fields:**
+  - `prompt_version` (Phase P2-B): SHA-256 digest of the canonical
+    prompt template (`extraction/_prompt_blocks.py::compute_prompt_version`).
+    Format `sha256:<12 hex chars>`. Optional so artifacts written
+    before Phase P2-B still validate.
 - **Git-tracked:** YES — required by `select_few_shot_examples.py`,
   `_few_shot_preflight.py`, the validate-and-baseline gate, and the
   evals runner.
@@ -103,6 +108,27 @@ synthetic strings into these placeholders before calling
   - `data-lake/store/artifacts/evals/eval_summary_<run_id>.json`
     (per-run summary)
 - **Schema:** `src/spectrum_systems_core/schemas/eval_summary.schema.json`
+  (mirror copy: `contracts/schemas/eval/eval_summary.schema.json`).
+- **Optional top-level fields (Phase P2):**
+  - `prompt_version` — mirrors the field from the
+    `meeting_extraction` artifact this summary scored. Enables
+    regression triage when a coverage drop coincides with a prompt
+    edit.
+  - `calibration_data` — list of per-decision
+    `(decision_index, confidence, aligned, outcome, source_id)`
+    records. Seeds future Expected-Calibration-Error computation
+    once the corpus crosses ~30 decisions.
+  - `calibration_note` — human-readable summary of the calibration
+    sample size.
+  - `judge_human_agreement_rate` — fraction of judged decisions
+    whose verdict matches the human-confirmed ground-truth outcome.
+    Null when no `judge_score` artifact is on disk for this run.
+  - `judge_pass_rate` — aggregate fraction of decisions that
+    passed the judge rubric (mirrors `judge_score.aggregate_pass_rate`).
+  - `judge_evaluated_count` — number of decisions the judge
+    scored.
+  - `judge_calibration_note` — human-readable explanation when
+    one of the judge metrics is null.
 - **Git-tracked:** YES — the baseline file IS the regression gate;
   per-run summaries are kept for diff context.
 - **Readers:** `evals.m4.runner` (regression check),

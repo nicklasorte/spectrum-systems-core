@@ -29,7 +29,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from ._prompt_blocks import CONFIDENCE_THRESHOLD
+from ._prompt_blocks import CONFIDENCE_THRESHOLD, PROMPT_VERSION
 
 
 _ROUTING_QUALITY_THRESHOLD = 0.20  # >20% off_topic -> warning fires
@@ -184,6 +184,7 @@ class ExtractionMerger:
             "source_artifact_id": source_artifact_id,
             "artifact_type": "meeting_extraction",
             "schema_version": self.SCHEMA_VERSION,
+            "prompt_version": PROMPT_VERSION,
             "created_at": _now_iso(),
             "decisions": decisions_d,
             "claims": claims_d,

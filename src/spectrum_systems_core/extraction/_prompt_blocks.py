@@ -26,6 +26,8 @@ validator -- drift between the two is structurally impossible.
 """
 from __future__ import annotations
 
+import hashlib
+
 from ..config.taxonomy import (
     DECISION_OUTCOME_TYPES,
     OUTCOME_TO_VERBS,
@@ -164,3 +166,62 @@ def apply_confidence_threshold(
             item["review_reason"] = "low_confidence"
             count += 1
     return count
+
+
+# ----------------------------------------------------------------------
+# Phase P2-B: prompt_version derivation.
+#
+# Stamped on every meeting_extraction artifact so a regression after a
+# prompt edit can be traced to the change. The version is derived from
+# the concatenated stable prompt fragments + the OUTPUT SCHEMA literal
+# from decision_extractor._build_prompt -- the same bytes the model
+# actually sees. Anything else (chunk content, glossary, few-shot,
+# attention block) varies per-run and would defeat the rollback signal.
+# ----------------------------------------------------------------------
+
+_DECISION_OUTPUT_SCHEMA_LITERAL: str = (
+    "OUTPUT SCHEMA:\n"
+    "Return JSON {\"items\": [{\"decision_text\": <str>, "
+    "\"decision_type\": <one of approved/rejected/deferred/noted/"
+    "considered/action_required/open_question/to_be_determined>, "
+    "\"decision_outcome\": <one of approval/rejection/deferral/"
+    "action_required/noted/question>, "
+    "\"stakeholders\": [<str>...], \"rationale\": <str or null>, "
+    "\"source_turn_ids\": [<chunk_id>...], "
+    "\"confidence\": <number 0.0-1.0>}]}. "
+    "Every item MUST cite at least one source_turn_id. Use the "
+    "controlled vocabulary exactly."
+)
+
+
+def _canonical_prompt_template() -> str:
+    """Return the byte-stable concatenation of the run-invariant prompt parts.
+
+    Excludes chunk text, glossary, few-shot content, and attention
+    blocks because those vary per chunk / per run. Includes the
+    PROMPT_SCHEMA_VERSION literal so a few-shot schema bump also bumps
+    prompt_version.
+    """
+    return "\n\n".join((
+        f"PROMPT_SCHEMA_VERSION={PROMPT_SCHEMA_VERSION}",
+        OMIT_INSTRUCTION_BLOCK,
+        REGULATORY_TAXONOMY_BLOCK,
+        CONFIDENCE_SCORING_BLOCK,
+        _DECISION_OUTPUT_SCHEMA_LITERAL,
+    ))
+
+
+def compute_prompt_version(prompt_template: str) -> str:
+    """Deterministic version string for an extraction prompt template.
+
+    Same input bytes => same version; one-byte change => different
+    version. Format: ``sha256:<first 12 chars of hex digest>``. The
+    12-char prefix is enough to keep a unique value across the small
+    universe of prompt versions this repo ships while keeping the
+    artifact field human-readable in step summaries.
+    """
+    digest = hashlib.sha256(prompt_template.encode("utf-8")).hexdigest()
+    return "sha256:" + digest[:12]
+
+
+PROMPT_VERSION: str = compute_prompt_version(_canonical_prompt_template())

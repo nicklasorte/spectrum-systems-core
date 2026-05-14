@@ -190,6 +190,47 @@
     "alignment_threshold": {
       "type": "number", "minimum": 0.0, "maximum": 1.0,
       "description": "Phase P1: the bidirectional similarity threshold used to gate matched/review_queue across the run."
+    },
+    "prompt_version": {
+      "type": ["string", "null"],
+      "description": "Phase P2-B: SHA-256 digest of the extraction prompt template used by the meeting_extraction this summary scored. Null when no extraction artifact was loaded (legacy fixture path)."
+    },
+    "calibration_data": {
+      "type": "array",
+      "description": "Phase P2-A: per-decision (confidence, aligned) records seeded for future ECE computation. With <30 decisions, ECE is not meaningful; the data is accumulated across runs.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decision_index", "confidence", "aligned"],
+        "properties": {
+          "decision_index": { "type": "integer", "minimum": 0 },
+          "decision_id": { "type": ["string", "null"] },
+          "confidence": { "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0 },
+          "aligned": { "type": "boolean" },
+          "outcome": { "type": ["string", "null"] },
+          "source_id": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "calibration_note": {
+      "type": ["string", "null"],
+      "description": "Phase P2-A: human-readable summary of calibration_data: count and ECE-readiness."
+    },
+    "judge_human_agreement_rate": {
+      "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase P2-C: fraction of decisions where judge verdict agrees with the human-confirmed GT outcome. Null when no judge_score artifact is present or no GT pairs carry ground_truth_pass."
+    },
+    "judge_pass_rate": {
+      "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase P2-C: fraction of evaluated decisions that passed the judge (aggregate_pass_rate from the judge_score artifact). Null when no judge_score artifact is present."
+    },
+    "judge_evaluated_count": {
+      "type": "integer", "minimum": 0,
+      "description": "Phase P2-C: count of decisions the judge scored. Zero when no judge_score artifact is present."
+    },
+    "judge_calibration_note": {
+      "type": ["string", "null"],
+      "description": "Phase P2-C: human-readable summary of the judge calibration step (e.g. 'no judge_score artifact', 'no GT pairs with ground_truth_pass')."
     }
   },
   "$defs": {

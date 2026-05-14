@@ -1054,6 +1054,29 @@ class EvalRunner:
                     }
                 )
 
+        # Phase P2-B: stamp the extraction's prompt_version on the
+        # source aggregates so the summary can carry it through.
+        prompt_version = None
+        if isinstance(extraction, dict):
+            pv = extraction.get("prompt_version")
+            if isinstance(pv, str) and pv:
+                prompt_version = pv
+
+        # Phase P2-A: per-decision calibration data, stamped with
+        # ``source_id`` so a multi-source summary preserves provenance.
+        calibration_data: List[Dict[str, Any]] = []
+        for entry in alignment.get("calibration_data") or []:
+            if not isinstance(entry, dict):
+                continue
+            calibration_data.append({
+                "decision_index": int(entry.get("decision_index", 0)),
+                "decision_id": entry.get("decision_id"),
+                "confidence": entry.get("confidence"),
+                "aligned": bool(entry.get("aligned", False)),
+                "outcome": entry.get("outcome"),
+                "source_id": source_id,
+            })
+
         return {
             "source_id": source_id,
             "coverage": float(alignment["coverage"]),
@@ -1070,6 +1093,8 @@ class EvalRunner:
             "decision_texts": decision_texts,
             "decision_turns": decision_turns,
             "chunking_strategy": chunking_strategy,
+            "prompt_version": prompt_version,
+            "calibration_data": calibration_data,
         }
 
     # -- summary ----------------------------------------------------------
@@ -1190,6 +1215,38 @@ class EvalRunner:
             summary["per_outcome_f1"] = dict(p1_aggregates["per_outcome_f1"])
             summary["review_queue_count"] = int(p1_aggregates["review_queue_count"])
             summary["alignment_threshold"] = float(p1_aggregates["threshold"])
+
+        # Phase P2-A / P2-B: surface prompt_version + calibration_data on
+        # every P1 summary so the regression triage signal lands without
+        # walking the per-pair eval_result graph.
+        if p1_aggregates["covered_p1_pairs"] > 0:
+            summary["prompt_version"] = p1_aggregates.get("prompt_version")
+            summary["calibration_data"] = list(
+                p1_aggregates.get("calibration_data") or []
+            )
+            summary["calibration_note"] = p1_aggregates.get(
+                "calibration_note"
+            )
+
+        # Phase P2-C: judge_human_agreement / judge_pass_rate are computed
+        # from on-disk judge_score artifacts and the gt_pair pool. When
+        # no judge_score artifact exists (JUDGE_ENABLED was off when the
+        # extraction ran), every field collapses to null with a non-null
+        # note so the operator can see why.
+        judge_metrics = self._compute_judge_metrics(
+            evaluated_pairs or []
+        )
+        summary["judge_human_agreement_rate"] = judge_metrics[
+            "judge_human_agreement_rate"
+        ]
+        summary["judge_pass_rate"] = judge_metrics["judge_pass_rate"]
+        summary["judge_evaluated_count"] = judge_metrics[
+            "judge_evaluated_count"
+        ]
+        summary["judge_calibration_note"] = judge_metrics[
+            "judge_calibration_note"
+        ]
+
         return summary
 
     def _compute_p1_aggregates(
@@ -1226,6 +1283,14 @@ class EvalRunner:
         outcome_f1_buckets: Dict[str, List[float]] = {}
         review_queue_total = 0
         threshold_seen: Optional[float] = None
+        # Phase P2: roll up prompt_version + calibration_data across the
+        # set of source aggregates this run touched. prompt_version is
+        # collapsed to a single string when all sources agree; otherwise
+        # null with a comma-joined sorted list of seen versions stashed
+        # on calibration_note (a multi-version mix is a red flag the
+        # operator should see).
+        prompt_versions_seen: set = set()
+        calibration_records: List[Dict[str, Any]] = []
         for aggregates in self._p1_source_aggregates.values():
             if aggregates.get("source_id") not in sources_in_run and \
                     not any(
@@ -1247,6 +1312,12 @@ class EvalRunner:
                 threshold_seen = float(t)
             for outcome, f1 in (aggregates.get("per_outcome_f1") or {}).items():
                 outcome_f1_buckets.setdefault(outcome, []).append(float(f1))
+            pv = aggregates.get("prompt_version")
+            if isinstance(pv, str) and pv:
+                prompt_versions_seen.add(pv)
+            for cal in aggregates.get("calibration_data") or []:
+                if isinstance(cal, dict):
+                    calibration_records.append(cal)
         per_outcome_f1 = {
             outcome: round(sum(vals) / len(vals), 6) if vals else 0.0
             for outcome, vals in outcome_f1_buckets.items()
@@ -1256,12 +1327,185 @@ class EvalRunner:
             if total_extracted_global > 0
             else 0.0
         )
+
+        prompt_version: Optional[str]
+        if len(prompt_versions_seen) == 1:
+            prompt_version = next(iter(prompt_versions_seen))
+        else:
+            prompt_version = None
+
+        if calibration_records:
+            n = len(calibration_records)
+            if n >= 30:
+                calibration_note = f"{n} decisions — ECE computable"
+            else:
+                calibration_note = (
+                    f"{n} decisions — insufficient for ECE; "
+                    "accumulate across transcripts"
+                )
+        else:
+            calibration_note = "no decisions scored"
+        if len(prompt_versions_seen) > 1:
+            calibration_note += (
+                f" (mixed prompt_versions: "
+                f"{','.join(sorted(prompt_versions_seen))})"
+            )
+
         return {
             "covered_p1_pairs": covered_p1_pairs,
             "spurious_add_rate": float(spurious_add_rate),
             "per_outcome_f1": per_outcome_f1,
             "review_queue_count": int(review_queue_total),
             "threshold": float(threshold_seen) if threshold_seen is not None else float(ALIGNMENT_THRESHOLD),
+            "prompt_version": prompt_version,
+            "calibration_data": calibration_records,
+            "calibration_note": calibration_note,
+        }
+
+    # -- Phase P2-C judge calibration ------------------------------------
+
+    def _load_judge_scores_for_sources(
+        self, source_ids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """Load every ``judge_score`` artifact tied to ``source_ids``.
+
+        The runner does not currently invoke the judge in-line, so this
+        list is typically empty. The function exists so when a future
+        wiring change starts emitting judge_score artifacts, the eval
+        summary picks them up without any further code change.
+
+        Lookup convention:
+          * ``<sdl_root>/judge_scores/*.json`` (preferred)
+          * ``<sdl_root>/judge/*.json`` (fallback for older layouts)
+
+        Files whose ``source_id`` does not match any entry in
+        ``source_ids`` are skipped. Files that fail JSON-decode return
+        nothing -- a malformed judge_score must never poison the eval
+        summary with junk.
+        """
+        if self.sdl_root is None or not source_ids:
+            return []
+        wanted = {sid for sid in source_ids if isinstance(sid, str) and sid}
+        if not wanted:
+            return []
+        candidates: List[Path] = []
+        for sub in ("judge_scores", "judge"):
+            d = self.sdl_root / sub
+            if d.is_dir():
+                candidates.extend(p for p in d.glob("*.json") if p.is_file())
+        out: List[Dict[str, Any]] = []
+        for path in candidates:
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(doc, dict):
+                continue
+            if doc.get("artifact_type") != "judge_score":
+                continue
+            sid = doc.get("source_id")
+            if isinstance(sid, str) and sid in wanted:
+                out.append(doc)
+        return out
+
+    def _compute_judge_metrics(
+        self,
+        evaluated_pairs: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Phase P2-C: judge_human_agreement / judge_pass_rate.
+
+        Returns a dict with keys
+        ``judge_human_agreement_rate``, ``judge_pass_rate``,
+        ``judge_evaluated_count``, ``judge_calibration_note``. Every
+        metric is null when the upstream data is missing; the note
+        records why so a reader of the eval_summary does not have to
+        guess.
+        """
+        source_ids: List[str] = []
+        seen: set = set()
+        for pair in evaluated_pairs:
+            if not isinstance(pair, dict):
+                continue
+            sid = self._resolve_pair_source_id(pair)
+            if isinstance(sid, str) and sid and sid not in seen:
+                seen.add(sid)
+                source_ids.append(sid)
+        judge_artifacts = self._load_judge_scores_for_sources(source_ids)
+        if not judge_artifacts:
+            return {
+                "judge_human_agreement_rate": None,
+                "judge_pass_rate": None,
+                "judge_evaluated_count": 0,
+                "judge_calibration_note": (
+                    "no judge_score artifact for this run "
+                    "(JUDGE_ENABLED=false or judge_score not written)"
+                ),
+            }
+        # judge_pass_rate: weighted average of aggregate_pass_rate by
+        # items_evaluated so a single big run dominates a tiny stale one.
+        weighted_pass = 0.0
+        total_evaluated = 0
+        items_index: Dict[str, Dict[str, Any]] = {}
+        for art in judge_artifacts:
+            n = int(art.get("items_evaluated") or 0)
+            rate = art.get("aggregate_pass_rate")
+            if isinstance(rate, (int, float)) and n > 0:
+                weighted_pass += float(rate) * n
+                total_evaluated += n
+            for item in art.get("item_scores") or []:
+                if not isinstance(item, dict):
+                    continue
+                iid = item.get("item_id")
+                if isinstance(iid, str) and iid:
+                    items_index[iid] = item
+
+        judge_pass_rate: Optional[float] = (
+            (weighted_pass / total_evaluated) if total_evaluated > 0 else None
+        )
+
+        # judge_human_agreement_rate: fraction of (gt_pair, judge_item)
+        # pairs that agree on pass/fail. Requires both ``ground_truth_pass``
+        # on the gt_pair AND a matching ``decision_id`` / ``item_id`` in
+        # the judge artifact's ``item_scores``.
+        matches: List[bool] = []
+        for pair in evaluated_pairs:
+            if not isinstance(pair, dict):
+                continue
+            if pair.get("target_type") != "decision":
+                continue
+            gt_pass = pair.get("ground_truth_pass")
+            if not isinstance(gt_pass, bool):
+                continue
+            decision_id = pair.get("decision_id") or pair.get("item_id")
+            if not isinstance(decision_id, str) or not decision_id:
+                continue
+            judge_item = items_index.get(decision_id)
+            if not isinstance(judge_item, dict):
+                continue
+            verdict = judge_item.get("judge_decision")
+            if verdict == "unparseable":
+                continue
+            judge_passed = bool(judge_item.get("passed"))
+            matches.append(gt_pass == judge_passed)
+
+        if not matches:
+            return {
+                "judge_human_agreement_rate": None,
+                "judge_pass_rate": judge_pass_rate,
+                "judge_evaluated_count": int(total_evaluated),
+                "judge_calibration_note": (
+                    "no GT pairs with ground_truth_pass matching a "
+                    "judged decision_id; agreement rate not computable"
+                ),
+            }
+        agreement = sum(1 for m in matches if m) / float(len(matches))
+        return {
+            "judge_human_agreement_rate": float(agreement),
+            "judge_pass_rate": judge_pass_rate,
+            "judge_evaluated_count": int(total_evaluated),
+            "judge_calibration_note": (
+                f"agreement computed on {len(matches)} GT/judge pairs"
+            ),
         }
 
     def _compute_per_type_metrics(

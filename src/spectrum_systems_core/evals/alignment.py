@@ -317,6 +317,53 @@ def compute_alignment(
             }
         )
 
+    # Phase P2-A: per-decision calibration data. Seeded for future
+    # Expected-Calibration-Error computation; on a 3-decision run ECE
+    # is not meaningful, but accumulating across the corpus is. An
+    # ``aligned`` flag tracks whether the decision matched ANY GT pair
+    # bidirectionally, so a spurious decision (no GT pair matched)
+    # surfaces here as aligned=false rather than being silently absent.
+    calibration_data: List[Dict[str, Any]] = []
+    for ext_idx, decision in enumerate(extracted_decisions):
+        if not isinstance(decision, Mapping):
+            # Keep position parity with extracted_decisions so a
+            # downstream index lookup is meaningful.
+            calibration_data.append({
+                "decision_index": int(ext_idx),
+                "decision_id": None,
+                "confidence": None,
+                "aligned": False,
+                "outcome": None,
+            })
+            continue
+        conf = decision.get("confidence")
+        if isinstance(conf, bool) or not isinstance(conf, (int, float)):
+            conf_value: Any = None
+        else:
+            c = float(conf)
+            conf_value = c if 0.0 <= c <= 1.0 else None
+        outcome = decision.get("decision_outcome")
+        outcome_value = outcome if isinstance(outcome, str) and outcome else None
+        decision_id = decision.get("decision_id") or decision.get("item_id")
+        if not isinstance(decision_id, str) or not decision_id:
+            decision_id = None
+        calibration_data.append({
+            "decision_index": int(ext_idx),
+            "decision_id": decision_id,
+            "confidence": conf_value,
+            "aligned": ext_idx in matched_extracted_indices,
+            "outcome": outcome_value,
+        })
+    if n_extracted >= 30:
+        calibration_note = (
+            f"{n_extracted} decisions — ECE computable"
+        )
+    else:
+        calibration_note = (
+            f"{n_extracted} decisions — insufficient for ECE; "
+            "accumulate across transcripts"
+        )
+
     return {
         "coverage": float(coverage),
         "precision": float(precision),
@@ -329,6 +376,8 @@ def compute_alignment(
         "total_gt_pairs": int(n_pairs),
         "matched_pair_count": int(len(matched_pair_ids)),
         "matched_extracted_count": int(len(matched_extracted_indices)),
+        "calibration_data": calibration_data,
+        "calibration_note": calibration_note,
     }
 
 
