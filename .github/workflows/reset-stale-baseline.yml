@@ -1,0 +1,71 @@
+name: Reset stale baseline artifacts
+
+# One-shot workflow_dispatch: deletes the stale
+# baseline_eval_summary.json, eval_run_count.json, and any eval
+# summary / gate decision / result / alignment artifacts that
+# reference the target source_id from nicklasorte/data-lake.
+#
+# After it runs, validate-and-baseline emits gate=skip_no_baseline
+# and sets a fresh baseline with run_count=1.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_id:
+        description: 'source_id whose stale eval artifacts should be removed'
+        required: false
+        default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
+      dry_run:
+        description: 'Dry run only (show what would be deleted)'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  contents: read
+
+jobs:
+  reset-stale-baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      - name: Diagnose + plan (dry run)
+        run: |
+          python scripts/reset_stale_baseline.py \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            --source-id "${{ github.event.inputs.source_id }}" \
+            --dry-run
+
+      - name: Delete stale baseline artifacts
+        if: ${{ github.event.inputs.dry_run == 'false' }}
+        run: |
+          python scripts/reset_stale_baseline.py \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            --source-id "${{ github.event.inputs.source_id }}"
+
+      - name: Push deletions to nicklasorte/data-lake
+        if: ${{ github.event.inputs.dry_run == 'false' }}
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            fix: reset stale baseline artifacts -- fresh start after
+            data-lake migration (source_id=${{ github.event.inputs.source_id }},
+            run ${{ github.run_id }}) [skip ci] [baseline-commit]
+          add_paths: |
+            store/artifacts/evals
