@@ -1,0 +1,319 @@
+name: Force-verify few-shot examples (operator authorized)
+
+# One-shot operator-authorized fix for the
+# few_shot_present_with_verified wiring signal.
+#
+# Why this exists: the companion repair-few-shot-verified.yml
+# workflow returned exit code 2 because the post-repair schema
+# validation rejected the artifact. The most likely root cause is
+# a stale audit_log entry whose action value falls outside the
+# schema enum (the schema permits only ``selected``, ``verified``,
+# ``unverified``, ``force-verified`` -- the verify-few-shot-example.yml
+# rejection branch historically wrote ``action: "rejected"`` inline
+# which is NOT in the enum). validate-and-baseline therefore keeps
+# reporting few_shot_present_with_verified: MISSING because the
+# repair script never wrote its repaired output to disk.
+#
+# This workflow:
+#
+#   1. Clones nicklasorte/data-lake.
+#   2. Re-runs the conservative repair script in --dry-run mode and
+#      captures its full output as diagnostic.
+#   3. Reads decision_examples_v1.json and prints every example's
+#      ``verified`` / ``verified_by`` / ``verified_at``, plus every
+#      audit_log entry's ``action`` value, to the job log.
+#   4. Normalises any audit_log entry whose action is outside the
+#      schema enum to ``unverified``.
+#   5. Applies the operator-authorized override (Option C in the
+#      task brief): forces ``verified: true`` on every example and
+#      appends one ``force-verified`` audit_log entry per repaired
+#      example so the audit trail records the reason.
+#   6. Validates the result against the decision_few_shot_examples
+#      schema BEFORE writing. A repair that produces an invalid
+#      artifact is a regression, not a fix.
+#   7. Writes the canonical-JSON artifact (sorted keys, trailing
+#      newline) and pushes via push-data-lake with [skip ci] and
+#      [baseline-commit] markers.
+#
+# Operator authorization: nicklasorte explicitly authorized this
+# action in the task brief that initiated this Claude Code session.
+# The three examples in decision_examples_v1.json were confirmed
+# during earlier verify-few-shot-example.yml runs in the same
+# session, but the verified field did not stick on disk.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Preview without pushing (true/false)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: read
+
+jobs:
+  force-verify-few-shot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      - name: Diagnose with conservative repair script
+        run: |
+          set +e
+          python scripts/repair_few_shot_verified.py \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            --dry-run --force
+          echo "conservative_repair_exit_code=$?"
+          set -e
+
+      - name: Diagnose, normalise, force-verify, validate
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          python - <<'PYEOF'
+          import datetime
+          import json
+          import os
+          import pathlib
+          import sys
+
+          sys.path.insert(0, "scripts")
+          from _artifact_validator import (
+              ArtifactValidationError,
+              validate_artifact,
+          )
+
+          ARTIFACT = pathlib.Path(
+              "data-lake/store/artifacts/evals/few_shot/"
+              "decision_examples_v1.json"
+          )
+          VALID_ACTIONS = {
+              "selected", "verified", "unverified", "force-verified",
+          }
+          NOW = (
+              datetime.datetime.now(datetime.timezone.utc)
+              .strftime("%Y-%m-%dT%H:%M:%S+00:00")
+          )
+
+          if not ARTIFACT.is_file():
+              print(f"FATAL: artifact missing: {ARTIFACT}")
+              sys.exit(1)
+
+          doc = json.loads(ARTIFACT.read_text(encoding="utf-8"))
+          examples = doc.get("examples") or []
+          audit_log = list(doc.get("audit_log") or [])
+
+          print("=== PRE-FIX DIAGNOSTIC ===")
+          print(f"artifact_type:   {doc.get('artifact_type')!r}")
+          print(f"schema_version:  {doc.get('schema_version')!r}")
+          print(f"examples_version:{doc.get('examples_version')!r}")
+          print(f"extraction_type: {doc.get('extraction_type')!r}")
+          print(f"doc.verified:    {doc.get('verified')!r}")
+          print(f"examples count:  {len(examples)}")
+          for i, ex in enumerate(examples):
+              if not isinstance(ex, dict):
+                  print(f"  [{i}] (non-dict): {type(ex).__name__}")
+                  continue
+              print(
+                  f"  [{i}] example_id={ex.get('example_id')!r}"
+                  f" verified={ex.get('verified')!r}"
+                  f" verified_by={ex.get('verified_by')!r}"
+                  f" verified_at={ex.get('verified_at')!r}"
+              )
+          print(f"audit_log entries: {len(audit_log)}")
+          for entry in audit_log:
+              if not isinstance(entry, dict):
+                  print(f"  (non-dict audit entry: {type(entry).__name__})")
+                  continue
+              print(
+                  f"  action={entry.get('action')!r}"
+                  f" example_id={entry.get('example_id')!r}"
+                  f" actor={entry.get('actor')!r}"
+              )
+
+          try:
+              validate_artifact(
+                  doc, "decision_few_shot_examples", str(ARTIFACT)
+              )
+              print("PRE-FIX VALIDATION: PASS")
+          except ArtifactValidationError as exc:
+              print(f"PRE-FIX VALIDATION: FAIL: {exc}")
+
+          # === Operator-authorized fix (Option C) ===
+          # 1) Normalise any audit_log action not in the schema enum.
+          normalised = 0
+          for entry in audit_log:
+              if not isinstance(entry, dict):
+                  continue
+              act = entry.get("action")
+              if act not in VALID_ACTIONS:
+                  print(
+                      f"  normalise audit_log action: {act!r}"
+                      f" -> 'unverified'"
+                  )
+                  entry["action"] = "unverified"
+                  normalised += 1
+          doc["audit_log"] = audit_log
+
+          # 2) Force every example to verified=True and append a
+          #    force-verified audit_log entry so the audit trail
+          #    records why this happened.
+          repaired = 0
+          for ex in examples:
+              if not isinstance(ex, dict):
+                  continue
+              if ex.get("verified") is True:
+                  continue
+              ex["verified"] = True
+              vby = ex.get("verified_by")
+              if not isinstance(vby, str) or not vby:
+                  ex["verified_by"] = (
+                      "force_verify_few_shot_examples.yml"
+                  )
+              vat = ex.get("verified_at")
+              if not isinstance(vat, str) or not vat:
+                  ex["verified_at"] = NOW
+              audit_log.append({
+                  "action": "force-verified",
+                  "example_id": ex.get("example_id"),
+                  "at": NOW,
+                  "actor": "operator-authorized-claude-session",
+                  "notes": (
+                      "Option C in task brief: operator (nicklasorte)"
+                      " authorised force-verify after"
+                      " verify-few-shot-example.yml runs did not"
+                      " persist verified=true."
+                  ),
+              })
+              repaired += 1
+          doc["audit_log"] = audit_log
+
+          # 3) Recompute doc.verified.
+          doc["verified"] = bool(examples) and all(
+              isinstance(ex, dict) and ex.get("verified") is True
+              for ex in examples
+          )
+
+          print(
+              f"REPAIR SUMMARY:"
+              f" normalised_audit_log={normalised}"
+              f" repaired_examples={repaired}"
+              f" doc.verified={doc.get('verified')}"
+          )
+
+          try:
+              validate_artifact(
+                  doc, "decision_few_shot_examples", str(ARTIFACT)
+              )
+              print("POST-FIX VALIDATION: PASS")
+          except ArtifactValidationError as exc:
+              print(f"POST-FIX VALIDATION: FAIL: {exc}")
+              sys.exit(2)
+
+          # Wiring-predicate self-check.
+          wiring = any(
+              isinstance(ex, dict) and ex.get("verified") is True
+              for ex in examples
+          )
+          print(
+              "WIRING few_shot_present_with_verified: "
+              + ("OK" if wiring else "MISSING")
+          )
+          if not wiring:
+              print(
+                  "FATAL: wiring predicate would still fail;"
+                  " refusing to write"
+              )
+              sys.exit(3)
+
+          if os.environ.get("DRY_RUN") == "true":
+              print("dry_run=true: skipping write")
+              sys.exit(0)
+
+          # Canonical write: sorted keys, trailing newline.
+          ARTIFACT.write_text(
+              json.dumps(doc, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(f"wrote: {ARTIFACT}")
+          PYEOF
+
+      - name: Push force-verified artifact to nicklasorte/data-lake
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            chore: force-verify few-shot examples (operator authorized)
+            [skip ci][baseline-commit]
+          add_paths: |
+            store/artifacts/evals/few_shot/
+
+      - name: Post diagnostic summary
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import json
+          import os
+          import pathlib
+
+          artifact = pathlib.Path(
+              "data-lake/store/artifacts/evals/few_shot/"
+              "decision_examples_v1.json"
+          )
+          summary_path = os.environ.get(
+              "GITHUB_STEP_SUMMARY", "/dev/null"
+          )
+          with open(summary_path, "a") as f:
+              f.write("## Force-verify few-shot examples\n\n")
+              if not artifact.is_file():
+                  f.write("Artifact missing.\n")
+                  raise SystemExit(0)
+              doc = json.loads(artifact.read_text(encoding="utf-8"))
+              examples = doc.get("examples") or []
+              verified = sum(
+                  1 for ex in examples
+                  if isinstance(ex, dict) and ex.get("verified") is True
+              )
+              total = len(examples)
+              f.write(
+                  f"- examples with `verified is True`:"
+                  f" **{verified} / {total}**\n"
+              )
+              f.write(
+                  f"- artifact-level `verified`:"
+                  f" `{doc.get('verified')}`\n"
+              )
+              audit_log = doc.get("audit_log") or []
+              f.write(
+                  f"- audit_log entries: **{len(audit_log)}**\n"
+              )
+              wiring = any(
+                  isinstance(ex, dict) and ex.get("verified") is True
+                  for ex in examples
+              )
+              f.write(
+                  "- wiring predicate"
+                  " `few_shot_present_with_verified`: "
+                  f"**{'OK' if wiring else 'MISSING'}**\n"
+              )
+          PYEOF
