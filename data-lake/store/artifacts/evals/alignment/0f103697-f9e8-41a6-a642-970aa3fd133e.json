@@ -1,0 +1,51 @@
+{
+  "alignment_result_id": "0f103697-f9e8-41a6-a642-970aa3fd133e",
+  "artifact_source": "meeting_extraction",
+  "artifact_type": "alignment_result",
+  "chunking_strategy": "unknown",
+  "coverage_alignments": [
+    {
+      "alignment_status": "matched",
+      "content_word_overlap": 21,
+      "matched_extracted_item_id": "decision-0",
+      "matched_extracted_item_text": "Meeting agenda approved: scope confirmation, sharing-criteria approach, and action items for the next session",
+      "minutes_item_text": "Group approved application of ITU two-point criteria for FSS protection analysis: negative 10.5 dB at 80th percentile and negative 6 dB at 0.03 percent",
+      "semantic_similarity": 1.0
+    }
+  ],
+  "created_at": "2026-05-14T02:33:17+00:00",
+  "eval_input_warning": false,
+  "minutes_artifact_id": "synthesized-from-extraction:7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
+  "pair_id": "b850616a-dc71-5729-b430-39f23f7db57e",
+  "provenance": {
+    "produced_by": "EvalAligner"
+  },
+  "review_alignments": [
+    {
+      "alignment_status": "matched",
+      "extracted_item_id": "decision-0",
+      "extracted_item_text": "Meeting agenda approved: scope confirmation, sharing-criteria approach, and action items for the next session",
+      "low_confidence_flagged": false,
+      "matched_minutes_text": "Group approved application of ITU two-point criteria for FSS protection analysis: negative 10.5 dB at 80th percentile and negative 6 dB at 0.03 percent",
+      "semantic_similarity": 1.0,
+      "source_turn_ids": [
+        "a0878f78-4b8d-423d-895b-ed49c948a9f3"
+      ],
+      "source_turn_validation": "unknown"
+    },
+    {
+      "alignment_status": "matched",
+      "extracted_item_id": "decision-1",
+      "extracted_item_text": "Group approved application of ITU two-point criteria for FSS protection analysis: negative 10.5 dB at 80th percentile and negative 6 dB at 0.03 percent",
+      "low_confidence_flagged": false,
+      "matched_minutes_text": "Group approved application of ITU two-point criteria for FSS protection analysis: negative 10.5 dB at 80th percentile and negative 6 dB at 0.03 percent",
+      "semantic_similarity": 1.0,
+      "source_turn_ids": [
+        "98df92bb-5106-46d5-b662-a4c145c4187a"
+      ],
+      "source_turn_validation": "unknown"
+    }
+  ],
+  "schema_version": "1.0.0",
+  "source_artifact_id": "a718a798-5e8a-467a-be13-ed8d9579a8f0"
+}
