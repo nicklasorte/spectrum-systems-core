@@ -1,5 +1,8 @@
 name: Diff pipeline runs
 
+# Read-only: clones nicklasorte/data-lake and diffs two run records.
+# No push (read-only).
+
 on:
   workflow_dispatch:
     inputs:
@@ -28,6 +31,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install -e ".[dev]"
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
 
       - name: Diff pipeline runs
         env:

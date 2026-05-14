@@ -1,9 +1,17 @@
 name: Extraction Smoke Test
 
+# Runs on every PR. The CI checks are pure filesystem scans (no
+# data-lake needed); the extraction smoke step clones
+# nicklasorte/data-lake so the real transcript is on disk before the
+# extract-typed call runs. Read-only — no push.
+
 on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   smoke-test:
@@ -46,6 +54,12 @@ jobs:
           python scripts/smoke_test_fixture.py
         # Runs in < 15 seconds. Fails fast if extractor stack is broken.
         # If this fails, skip the slower data-lake test.
+
+      - name: Clone nicklasorte/data-lake
+        if: success()
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
 
       - name: Run extraction smoke test (real data, max 20 chunks)
         if: success()

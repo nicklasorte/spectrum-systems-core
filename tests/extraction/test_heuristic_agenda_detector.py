@@ -180,7 +180,15 @@ def test_metadata_slices_includes_unclassified_predicate() -> None:
         / "data-lake" / "store" / "artifacts" / "evals"
         / "metadata_slices.json"
     )
-    assert path.is_file(), f"metadata_slices.json missing at {path}"
+    if not path.is_file():
+        # Data-lake is now a separate repo (nicklasorte/data-lake).
+        # When the clone is absent, this contract test skips rather
+        # than failing — the assertion still binds when run against a
+        # real data-lake clone.
+        pytest.skip(
+            f"metadata_slices.json absent at {path}; clone nicklasorte/data-lake "
+            "to run this test."
+        )
     doc = json.loads(path.read_text(encoding="utf-8"))
     slice_ids = [s.get("slice_id") for s in doc.get("slices", [])]
     assert "agenda_detection:unclassified" in slice_ids

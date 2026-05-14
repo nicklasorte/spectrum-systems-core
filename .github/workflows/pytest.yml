@@ -1,19 +1,46 @@
 name: pytest
 
+# Most tests use tmp_path fixtures and have no data-lake dependency.
+# A handful of tests assert against the live glossary artifact in
+# nicklasorte/data-lake; those tests skip cleanly when the data-lake
+# clone is absent, so pytest does not strictly require the token.
+# When the token IS present (default branch and direct PRs), the clone
+# is performed so every test runs.
+
 on:
   pull_request:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    env:
+      # Evaluating ``secrets.X`` happens at the job-env scope (a
+      # documented-safe place for the secrets context) and exposes
+      # a non-empty marker the step-level ``if:`` can compare without
+      # touching the secrets context itself.
+      DATA_LAKE_TOKEN_PRESENT: ${{ secrets.DATA_LAKE_TOKEN != '' && 'yes' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Clone nicklasorte/data-lake (when token available)
+        # Forked PRs do not have access to repo secrets. Tests that
+        # depend on the live glossary artifact pytest.skip() when the
+        # clone is absent, so this step is opportunistic.
+        if: env.DATA_LAKE_TOKEN_PRESENT == 'yes'
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
       - name: Install package with dev extras
         run: python -m pip install -e ".[dev]"
+
       - name: Run pytest
         run: python -m pytest

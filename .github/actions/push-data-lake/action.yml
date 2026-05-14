@@ -1,0 +1,86 @@
+name: Commit and push data-lake artifacts
+description: >-
+  Stages, commits, and pushes pipeline artifacts in the local
+  data-lake clone back to nicklasorte/data-lake. Mirrors the
+  retry-with-backoff pattern the old in-repo data-lake pushes used,
+  but the remote is always nicklasorte/data-lake — never
+  spectrum-systems-core.
+
+inputs:
+  data_lake_token:
+    description: "PAT with Contents read/write on nicklasorte/data-lake."
+    required: true
+  path:
+    description: "Local data-lake clone path (default: data-lake)"
+    required: false
+    default: "data-lake"
+  add_paths:
+    description: >-
+      Newline-separated list of paths (relative to the data-lake clone)
+      to stage before committing. Default stages store/artifacts/ and
+      store/processed/.
+    required: false
+    default: |
+      store/artifacts/
+      store/processed/
+  commit_message:
+    description: >-
+      Full commit message body. The caller is responsible for any
+      governance markers the commit must carry (the standard skip-ci
+      marker, the [baseline-commit] defense-in-depth marker, etc.) so
+      they appear literally in the calling workflow file where CI
+      grep-style validators can see them.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Stage artifacts
+      shell: bash
+      env:
+        CLONE_PATH: ${{ inputs.path }}
+        ADD_PATHS: ${{ inputs.add_paths }}
+      run: |
+        set -euo pipefail
+        cd "$CLONE_PATH"
+        while IFS= read -r line; do
+          path="$(echo "$line" | xargs)"
+          [ -z "$path" ] && continue
+          git add "$path" 2>/dev/null || true
+        done <<< "$ADD_PATHS"
+
+    - name: Commit and push to nicklasorte/data-lake
+      shell: bash
+      env:
+        DATA_LAKE_TOKEN: ${{ inputs.data_lake_token }}
+        CLONE_PATH: ${{ inputs.path }}
+        COMMIT_MESSAGE: ${{ inputs.commit_message }}
+      run: |
+        set -euo pipefail
+        cd "$CLONE_PATH"
+        if git diff --staged --quiet; then
+          echo "No data-lake changes to commit."
+          exit 0
+        fi
+        git commit -m "$COMMIT_MESSAGE"
+        PUSH_URL="https://x-access-token:${DATA_LAKE_TOKEN}@github.com/nicklasorte/data-lake.git"
+        attempt=0
+        delay=2
+        while [ $attempt -lt 5 ]; do
+          attempt=$((attempt+1))
+          # Clear any half-rebase state from a previous failed attempt
+          # so the next pull --rebase does not error with "rebase in
+          # progress". Safe no-op when no rebase is active.
+          git rebase --abort 2>/dev/null || true
+          git fetch origin main
+          if git pull --rebase origin main && \
+             git push "$PUSH_URL" HEAD:main; then
+            echo "Push succeeded on attempt $attempt"
+            exit 0
+          fi
+          echo "Push attempt $attempt failed; sleeping ${delay}s..."
+          sleep $delay
+          delay=$((delay*2))
+        done
+        echo "::error::Failed to push to nicklasorte/data-lake after 5 attempts"
+        exit 1

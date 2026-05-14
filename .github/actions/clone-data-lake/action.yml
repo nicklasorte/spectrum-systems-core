@@ -1,0 +1,59 @@
+name: Clone nicklasorte/data-lake
+description: >-
+  Clones the nicklasorte/data-lake repository into ./data-lake using
+  DATA_LAKE_TOKEN, configures the github-actions[bot] git identity, and
+  asserts the clone landed. Every workflow that reads or writes
+  pipeline artifacts must run this BEFORE invoking the CLI scripts so
+  the data-lake is on disk at the path DATA_LAKE_PATH points at.
+
+inputs:
+  data_lake_token:
+    description: >-
+      The PAT with Contents read/write on nicklasorte/data-lake. Pass
+      the value of secrets.DATA_LAKE_TOKEN from the calling workflow.
+    required: true
+  path:
+    description: "Local clone path (default: data-lake)"
+    required: false
+    default: "data-lake"
+
+runs:
+  using: composite
+  steps:
+    - name: Assert DATA_LAKE_TOKEN is provided
+      shell: bash
+      run: |
+        if [ -z "${{ inputs.data_lake_token }}" ]; then
+          echo "::error::DATA_LAKE_TOKEN secret is empty. Configure it"
+          echo "        in repo settings: Secrets and variables ->"
+          echo "        Actions -> DATA_LAKE_TOKEN."
+          exit 1
+        fi
+
+    - name: Clone nicklasorte/data-lake
+      shell: bash
+      env:
+        DATA_LAKE_TOKEN: ${{ inputs.data_lake_token }}
+        CLONE_PATH: ${{ inputs.path }}
+      run: |
+        set -euo pipefail
+        if [ -d "$CLONE_PATH/.git" ]; then
+          echo "Reusing existing clone at $CLONE_PATH"
+        else
+          # Passing the URL through a positional arg keeps the PAT out
+          # of any echoed command line; the workflow log redacts the
+          # secret value anyway, but the conservative form is documented.
+          git clone \
+            "https://x-access-token:${DATA_LAKE_TOKEN}@github.com/nicklasorte/data-lake.git" \
+            "$CLONE_PATH"
+        fi
+        echo "Data-lake clone HEAD: $(git -C "$CLONE_PATH" log -1 --oneline)"
+
+    - name: Configure data-lake git identity
+      shell: bash
+      env:
+        CLONE_PATH: ${{ inputs.path }}
+      run: |
+        git -C "$CLONE_PATH" config user.name "github-actions[bot]"
+        git -C "$CLONE_PATH" config user.email \
+          "github-actions[bot]@users.noreply.github.com"

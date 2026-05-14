@@ -24,6 +24,18 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 GLOSSARY_DIR = REPO_ROOT / "data-lake" / "store" / "artifacts" / "glossary"
 GLOSSARY_PATH = GLOSSARY_DIR / GLOSSARY_FILENAME
 
+# Post-migration, data-lake/ is a clone of nicklasorte/data-lake. When
+# the clone is absent (forked PR, dev checkout without DATA_LAKE_TOKEN)
+# the glossary contract tests skip rather than fail — their assertions
+# are still binding when run against a real data-lake.
+pytestmark = pytest.mark.skipif(
+    not GLOSSARY_PATH.is_file(),
+    reason=(
+        f"glossary artifact not present at {GLOSSARY_PATH}. "
+        "Clone nicklasorte/data-lake into ./data-lake to enable these tests."
+    ),
+)
+
 
 def _load_glossary() -> dict:
     return json.loads(GLOSSARY_PATH.read_text(encoding="utf-8"))

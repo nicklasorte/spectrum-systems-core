@@ -5,16 +5,19 @@ name: Validate and baseline (single transcript)
 # touches the extraction / glossary / evals surface, OR on manual
 # workflow_dispatch, this workflow:
 #
-#   1. Runs the typed-extraction pipeline for the single transcript.
-#   2. Verifies the 5 Phase W wiring signals are green.
-#   3. Calls `eval-ground-truth --set-baseline --specific-source-id`.
-#   4. Commits the resulting baseline_eval_summary back to data-lake.
+#   1. Clones nicklasorte/data-lake (where transcripts and the
+#      baseline live after the data-lake migration).
+#   2. Runs the typed-extraction pipeline for the single transcript.
+#   3. Verifies the 5 Phase W wiring signals are green.
+#   4. Calls `eval-ground-truth --set-baseline --specific-source-id`.
+#   5. Commits the resulting baseline_eval_summary back to
+#      nicklasorte/data-lake.
 #
 # Guards:
-#   * The baseline commit message contains BOTH `[skip ci]` (which
-#     GitHub Actions honors to suppress workflow_runs) AND
-#     `[baseline-commit]` (which the early-exit step here checks
-#     defensively in case GitHub's skip-ci behavior changes).
+#   * The baseline commit message contains BOTH the standard
+#     skip-ci marker (GitHub honors it to suppress workflow_runs)
+#     AND `[baseline-commit]` (which the early-exit step here checks
+#     defensively in case the skip-ci marker behavior ever changes).
 #   * The early-exit step also short-circuits when
 #     `SKIP_BASELINE_WORKFLOW=true` is set as a repository variable
 #     so an operator can mute this workflow without editing the YAML.
@@ -32,8 +35,6 @@ on:
       - 'src/spectrum_systems_core/glossary/**'
       - 'src/spectrum_systems_core/evals/**'
       - 'src/spectrum_systems_core/agenda/**'
-      - 'data-lake/store/artifacts/glossary/**'
-      - 'data-lake/store/artifacts/evals/few_shot/**'
   workflow_dispatch:
     inputs:
       source_id:
@@ -58,7 +59,7 @@ on:
           - 'true'
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   TARGET_SOURCE_ID: ${{ github.event.inputs.source_id || '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218' }}
@@ -107,8 +108,6 @@ jobs:
     steps:
       - name: Checkout spectrum-systems-core
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -120,29 +119,24 @@ jobs:
           python -m pip install -e ".[dev]"
           python -m pip install anthropic
 
-      - name: Seed transcript into data-lake
-        # The repo's data-lake/ ships only store/artifacts/* — raw/ and
-        # processed/ are .gitignore'd, so a fresh checkout has zero
-        # transcripts under store/raw/transcripts/. Without this step,
-        # PipelineOrchestrator._scan() returns unprocessed=[], the next
-        # step exits 0 in <1s with no work done, and extract-typed then
-        # fails with chunks_jsonl_not_found.
-        #
-        # The fixture filename MUST slugify to ${SOURCE_ID} — see
-        # spectrum_systems_core.orchestration.pipeline_orchestrator._slugify
-        # ("7 GHz Downlink TIG Meeting Kickoff - transcript 20251218" →
-        #  "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218").
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      - name: Verify target transcript present in data-lake
+        # The transcript lives in nicklasorte/data-lake; the
+        # spectrum-systems-core repo no longer ships fixtures for it.
+        # Fail fast if the directory is empty so a misconfigured
+        # data-lake (e.g. clone partial / wrong branch) does not
+        # silently produce zero-content baselines.
         run: |
           set -euo pipefail
-          FIXTURE="tests/fixtures/debug_transcripts/7 GHz Downlink TIG Meeting Kickoff - transcript 20251218.txt"
-          if [ ! -f "$FIXTURE" ]; then
-            echo "::error::Debug fixture missing at $FIXTURE"
+          DEST_DIR="$DATA_LAKE_PATH/store/raw/transcripts"
+          if [ ! -d "$DEST_DIR" ] || [ -z "$(find "$DEST_DIR" -name '*.txt' -print -quit)" ]; then
+            echo "::error::no transcripts found in $DEST_DIR"
             exit 1
           fi
-          DEST_DIR="$DATA_LAKE_PATH/store/raw/transcripts"
-          mkdir -p "$DEST_DIR"
-          cp "$FIXTURE" "$DEST_DIR/"
-          echo "Seeded transcripts dir:"
           ls -la "$DEST_DIR"
 
       # ------------------------------------------------------------------
@@ -337,46 +331,21 @@ jobs:
             --specific-source-id "${TARGET_SOURCE_ID}"
 
       # ------------------------------------------------------------------
-      # 4. Commit baseline artifacts back to the data-lake.
+      # 4. Commit baseline artifacts back to nicklasorte/data-lake.
+      #    IMPORTANT: BOTH the standard skip-ci marker and
+      #    [baseline-commit] go in the message; the early-exit guard
+      #    inspects [baseline-commit] as defense-in-depth.
       # ------------------------------------------------------------------
-      - name: Commit baseline artifacts
+      - name: Push baseline artifacts
         if: success()
-        working-directory: data-lake
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add store/artifacts/evals/ 2>/dev/null || true
-          git add store/artifacts/health/ 2>/dev/null || true
-          if git diff --staged --quiet; then
-            echo "No baseline artifact changes to commit."
-            exit 0
-          fi
-          # IMPORTANT: BOTH [skip ci] and [baseline-commit] go in the
-          # message. [skip ci] is the standard GitHub Actions guard;
-          # [baseline-commit] is the secondary guard that the
-          # early-exit-check job inspects defensively in case GitHub's
-          # behavior changes.
-          git commit -m "baseline: development baseline for ${TARGET_SOURCE_ID} [skip ci] [baseline-commit]"
-          attempt=0
-          delay=2
-          while [ $attempt -lt 5 ]; do
-            attempt=$((attempt+1))
-            git rebase --abort 2>/dev/null || true
-            git stash --include-untracked 2>/dev/null || true
-            git fetch origin main
-            if git pull --rebase origin main && git push origin HEAD:main; then
-              git stash pop 2>/dev/null || true
-              echo "Push succeeded on attempt $attempt"
-              exit 0
-            fi
-            git stash pop 2>/dev/null || true
-            echo "Push attempt $attempt failed; sleeping ${delay}s..."
-            sleep $delay
-            delay=$((delay*2))
-          done
-          echo "::error::Failed to push baseline artifacts after 5 attempts"
-          exit 1
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            baseline: development baseline for ${{ env.TARGET_SOURCE_ID }} [skip ci] [baseline-commit]
+          add_paths: |
+            store/artifacts/evals/
+            store/artifacts/health/
 
       # ------------------------------------------------------------------
       # Step summary -- single-page operator view.

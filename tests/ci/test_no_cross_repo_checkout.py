@@ -1,14 +1,20 @@
 """
-CI check: no workflow may checkout a repository other than nicklasorte/spectrum-systems-core.
+CI check: no ``actions/checkout`` step may name a repository other than
+``nicklasorte/spectrum-systems-core``.
 
-Cross-repo checkouts require a PAT with cross-repo scope.  GITHUB_TOKEN is
-scoped to the repo it runs in and cannot access other repositories.  Since
-data-lake was merged into this repo (PR #85), any checkout that names an
-external repository is a bug — it will fail at runtime with a 403 and there
-is no secret to fix it with.
+GITHUB_TOKEN is scoped to the workflow's own repo and cannot access
+other repositories. Any ``actions/checkout`` step with a foreign
+``repository`` will 403 at runtime.
 
-This test catches the pattern before the PR is opened so the failure is
-pre-PR, not post-CI.
+After the data-lake migration, ``nicklasorte/data-lake`` is a separate
+repository that workflows access via the ``./.github/actions/clone-data-lake``
+composite action (which uses ``git clone`` with the ``DATA_LAKE_TOKEN``
+PAT in a ``run`` step). That pattern is NOT an ``actions/checkout``
+step and does not trip this gate.
+
+This test catches a forbidden pattern (``actions/checkout`` of a
+foreign repo) before the PR is opened so the failure is pre-PR, not
+post-CI.
 """
 import pathlib
 import pytest
@@ -70,8 +76,10 @@ def test_no_cross_repo_checkout():
                 f"{wf_path.name}: step '{step.get('name', '(unnamed)')}' "
                 f"checks out external repo '{repo}'. "
                 f"GITHUB_TOKEN cannot access repos other than {THIS_REPO}. "
-                f"Remove the checkout (data-lake is a local subdirectory) "
-                f"or use a PAT secret if a genuine cross-repo checkout is needed."
+                f"For nicklasorte/data-lake, use the "
+                f"./.github/actions/clone-data-lake composite action "
+                f"(it clones via git+DATA_LAKE_TOKEN in a run step) instead "
+                f"of an actions/checkout step."
             )
 
     assert not violations, (
