@@ -140,6 +140,39 @@ jobs:
           ls -la "$DEST_DIR"
 
       # ------------------------------------------------------------------
+      # 0b. Ensure the versioned glossary aggregate exists.
+      #
+      # ``typed_extraction_runner._resolve_versioned_glossary_artifact``
+      # loads ``<sdl_root>/glossary/spectrum_glossary_v1.json``. When
+      # this file is absent the runner falls back to an empty term list
+      # and every per-chunk injection produces zero matches, which
+      # flips the ``glossary_terms_injected_present`` wiring signal to
+      # MISSING. This step makes the workflow self-healing: if the
+      # aggregate is missing, regenerate it from
+      # ``scripts/seed_glossary.py`` (deterministic, byte-identical
+      # output) so the extraction run sees terms even if the operator
+      # has not re-run ``seed-glossary.yml`` since the aggregate
+      # filename was introduced. The aggregate is then included in
+      # the data-lake push so subsequent runs hit it directly without
+      # re-seeding.
+      # ------------------------------------------------------------------
+      - name: Ensure versioned glossary aggregate exists
+        run: |
+          set -euo pipefail
+          AGG="$SDL_ROOT/glossary/spectrum_glossary_v1.json"
+          if [ -f "$AGG" ]; then
+            echo "versioned glossary aggregate already present: $AGG"
+            exit 0
+          fi
+          echo "versioned glossary aggregate missing — building from seed_glossary.py"
+          python scripts/seed_glossary.py --out "$SDL_ROOT/glossary"
+          if [ ! -f "$AGG" ]; then
+            echo "::error::seed_glossary.py did not produce $AGG"
+            exit 1
+          fi
+          echo "wrote $AGG"
+
+      # ------------------------------------------------------------------
       # 1. Run the extraction pipeline for the single transcript.
       # ------------------------------------------------------------------
       - name: Run pipeline for target transcript
@@ -346,6 +379,7 @@ jobs:
           add_paths: |
             store/artifacts/evals/
             store/artifacts/health/
+            store/artifacts/glossary/
 
       # ------------------------------------------------------------------
       # Step summary -- single-page operator view.

@@ -1,0 +1,115 @@
+name: Repair few-shot verified field
+
+# One-shot repair workflow. Re-runs the per-example ``verified`` field
+# normalization on the current
+# ``store/artifacts/evals/few_shot/decision_examples_v1.json`` in
+# nicklasorte/data-lake, then pushes the result via push-data-lake.
+#
+# Why this exists: the Phase W wiring signal
+# ``few_shot_present_with_verified`` requires at least one example
+# whose ``verified`` field equals boolean ``True`` (strict identity
+# check: ``ex.get("verified") is True``). If a prior session left the
+# artifact with examples whose verified field is missing, null, the
+# string "true", or the integer 1 -- even though the operator
+# previously verified them via verify-few-shot-example.yml -- the
+# signal flips to MISSING and validate-and-baseline fails without
+# FORCE_BASELINE.
+#
+# Governance: the repair script (``scripts/repair_few_shot_verified.py``)
+# only normalizes examples that have prior-verification evidence on
+# disk -- an ``audit_log`` entry with action verified/force-verified,
+# OR a non-null ``verified_by`` field. Examples WITHOUT evidence are
+# left untouched. The script never invents verifications; it only
+# heals corrupted-field-value cases for examples that were already
+# verified.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run the repair without pushing changes (preview)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: read
+
+jobs:
+  repair-few-shot-verified:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      - name: Repair verified field
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            python scripts/repair_few_shot_verified.py \
+              --data-lake "${{ github.workspace }}/data-lake" \
+              --dry-run \
+              --force
+          else
+            python scripts/repair_few_shot_verified.py \
+              --data-lake "${{ github.workspace }}/data-lake" \
+              --force
+          fi
+
+      - name: Push repaired artifact to nicklasorte/data-lake
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            chore: normalize verified field on decision_examples_v1.json [skip ci]
+          add_paths: |
+            store/artifacts/evals/few_shot/
+
+      - name: Post repair summary
+        if: always()
+        run: |
+          python - <<'EOF'
+          import json, os, pathlib
+
+          artifact = pathlib.Path(
+              "data-lake/store/artifacts/evals/few_shot/decision_examples_v1.json"
+          )
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
+          with open(summary_path, "a") as f:
+              f.write("## Repair few-shot verified\n\n")
+              if not artifact.is_file():
+                  f.write("Artifact missing.\n")
+                  raise SystemExit(0)
+              doc = json.loads(artifact.read_text(encoding="utf-8"))
+              examples = doc.get("examples") or []
+              verified = sum(
+                  1 for ex in examples
+                  if isinstance(ex, dict) and ex.get("verified") is True
+              )
+              total = len(examples)
+              f.write(
+                  f"- examples with `verified is True`: **{verified} / {total}**\n"
+              )
+              f.write(f"- artifact-level `verified`: `{doc.get('verified')}`\n")
+              audit_log = doc.get("audit_log") or []
+              f.write(f"- audit_log entries: **{len(audit_log)}**\n")
+          EOF
