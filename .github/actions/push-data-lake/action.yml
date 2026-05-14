@@ -64,6 +64,13 @@ runs:
         fi
         git commit -m "$COMMIT_MESSAGE"
         PUSH_URL="https://x-access-token:${DATA_LAKE_TOKEN}@github.com/nicklasorte/data-lake.git"
+        # Stash any unstaged or untracked files left in the worktree
+        # after the commit. ``git pull --rebase`` refuses to run when
+        # the worktree is dirty, so without this stash the retry loop
+        # fails every attempt with "cannot pull with rebase: You have
+        # unstaged changes." The ``|| true`` guards a no-op stash when
+        # the worktree is already clean.
+        git stash --include-untracked || true
         attempt=0
         delay=2
         while [ $attempt -lt 5 ]; do
@@ -76,11 +83,13 @@ runs:
           if git pull --rebase origin main && \
              git push "$PUSH_URL" HEAD:main; then
             echo "Push succeeded on attempt $attempt"
+            git stash pop || true
             exit 0
           fi
           echo "Push attempt $attempt failed; sleeping ${delay}s..."
           sleep $delay
           delay=$((delay*2))
         done
+        git stash pop || true
         echo "::error::Failed to push to nicklasorte/data-lake after 5 attempts"
         exit 1
