@@ -9,6 +9,11 @@ Per-workflow grounding is a list of `(prefix, kind)` pairs in
 transcript once per prefix. The wrapped extractor preserves the original
 payload shape exactly, so tests in tests/test_loop_generality.py still
 pass against the bare extractors.
+
+Phase Y adds optional ``chunks`` plumbing: when ``build_grounded_payload``
+is invoked with a non-None ``chunks`` argument, each grounding entry is
+augmented with a ``source_turns`` list and the payload's
+``schema_version`` is bumped to ``"1.1.0"``.
 """
 from __future__ import annotations
 
@@ -16,6 +21,10 @@ from typing import Callable
 
 from ..workflows.agency_question_summary import _extract_agency_question_summary
 from ..workflows.decision_brief import _extract_decision_brief
+from ..workflows.extraction import (
+    SOURCE_MATCH_FALLBACK,
+    match_source_turns,
+)
 from ..workflows.meeting_action_log import _extract_meeting_action_log
 from ..workflows.meeting_minutes import _extract_meeting_minutes
 from .grounding import GROUNDING_KEY, MEETING_ID_KEY, find_lines_with_prefix
@@ -86,10 +95,41 @@ def supported_workflow(name: str) -> bool:
     return name in GROUNDED_EXTRACTORS
 
 
+def attach_source_turns(
+    grounding_entries: list[dict], chunks: list[dict]
+) -> list[str]:
+    """Add ``source_turns`` to each grounding entry in place. Returns the
+    list of fallback finding codes the pipeline should record alongside
+    the run (one ``source_match_fallback`` entry per fallback item).
+    Exposed as a top-level function so the pipeline can call it without
+    cracking apart the payload-builder return shape — keeps
+    ``build_grounded_payload``'s ``-> dict`` contract intact for the
+    test suite."""
+    findings: list[str] = []
+    for entry in grounding_entries:
+        result = match_source_turns(entry.get("text", ""), chunks)
+        entry["source_turns"] = result.turn_ids
+        if result.was_fallback:
+            findings.append(SOURCE_MATCH_FALLBACK)
+    return findings
+
+
 def build_grounded_payload(
-    transcript_input: TranscriptInput, workflow_name: str
+    transcript_input: TranscriptInput,
+    workflow_name: str,
+    *,
+    chunks: list[dict] | None = None,
 ) -> dict:
-    """Run the workflow's deterministic extractor and attach grounding."""
+    """Run the workflow's deterministic extractor and attach grounding.
+
+    When ``chunks`` is provided, each grounding entry gets a
+    ``source_turns`` list and the payload's ``schema_version`` is
+    bumped to ``"1.1.0"``. Fallback-match findings (one per item that
+    fell back to ``t0000``) are NOT returned here — callers that need
+    them call :func:`attach_source_turns` directly. The dict-only return
+    shape is the historical contract that ``test_data_lake_grounding``
+    and ``test_data_lake_fix_pass_3`` depend on.
+    """
     if workflow_name not in GROUNDED_EXTRACTORS:
         raise ValueError(
             f"unsupported workflow_name {workflow_name!r}; "
@@ -98,5 +138,11 @@ def build_grounded_payload(
     base_extract, grounder = GROUNDED_EXTRACTORS[workflow_name]
     payload = dict(base_extract(transcript_input.transcript_text))
     payload[MEETING_ID_KEY] = transcript_input.meeting_id
-    payload[GROUNDING_KEY] = grounder(transcript_input)
+    grounding_entries = grounder(transcript_input)
+    payload[GROUNDING_KEY] = grounding_entries
+
+    if chunks is not None:
+        attach_source_turns(grounding_entries, chunks)
+        payload["schema_version"] = "1.1.0"
+
     return payload

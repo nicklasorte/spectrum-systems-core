@@ -68,6 +68,17 @@ def _processed_meetings_root(lake_root: Path) -> Path:
     return lake_root / "processed" / "meetings"
 
 
+# Artifact types that live under ``processed/meetings/<meeting_id>/`` as
+# promoted envelopes but are NOT product artifacts: they are pipeline
+# infrastructure (Phase Y: ``source_record`` carries the chunked
+# transcript so ``source_turn_validity`` can verify turn_ids from disk).
+# Excluded from the cross-meeting index because the index is a product
+# catalogue.
+_NON_PRODUCT_ARTIFACT_TYPES: frozenset[str] = frozenset(
+    {"manifest", "debug_report", "source_record"}
+)
+
+
 def _read_artifact_file(path: Path) -> dict[str, Any] | None:
     """Return the artifact envelope dict, or None if it isn't one."""
     try:
@@ -76,7 +87,7 @@ def _read_artifact_file(path: Path) -> dict[str, Any] | None:
         return None
     if not isinstance(body, dict):
         return None
-    if body.get("artifact_type") in (None, "manifest", "debug_report"):
+    if body.get("artifact_type") in (None, *_NON_PRODUCT_ARTIFACT_TYPES):
         return None
     if "status" not in body or "payload" not in body:
         return None

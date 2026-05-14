@@ -106,12 +106,16 @@ def test_golden_weak_meeting_is_blocked_by_transcript_evidence(tmp_path):
     assert result.control_decision.payload["decision"] == expected["decision"]
     reason_codes = result.control_decision.payload["reason_codes"]
     assert any(expected["reason_code_includes"] in r for r in reason_codes)
-    # No promoted artifact file should have been written
+    # No promoted product artifact file should have been written.
+    # source_record__<meeting_id>.json (Phase Y) is pipeline
+    # infrastructure, not a product, so it is excluded from the check.
     processed_dir = tmp_path / "processed" / "meetings" / meeting_id
     if processed_dir.is_dir():
         product_files = [
             f for f in processed_dir.glob("*.json")
-            if not f.name.startswith("manifest__") and not f.name.startswith("debug__")
+            if not f.name.startswith("manifest__")
+            and not f.name.startswith("debug__")
+            and not f.name.startswith("source_record__")
         ]
         assert product_files == []
 

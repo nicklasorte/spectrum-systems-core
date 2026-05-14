@@ -39,6 +39,13 @@ from .grounding import (
     excerpt_is_in_transcript,
 )
 from .extract import build_grounded_payload, supported_workflow
+from .chunker import (
+    chunk_transcript,
+    chunker_health,
+    speaker_null_rate,
+    NO_SPEAKER_DETECTED_FINDING,
+    NO_SPEAKER_STRUCTURE_FINDING,
+)
 from .manifest import (
     MANIFEST_SCHEMA_VERSION,
     REQUIRED_MANIFEST_FIELDS,
@@ -49,7 +56,12 @@ from .manifest import (
     validate_manifest,
 )
 from .debug import build_debug_report, DEBUG_SCHEMA_VERSION
-from .pipeline import PipelineResult, run_transcript_pipeline
+from .pipeline import (
+    PipelineResult,
+    SOURCE_RECORD_TYPE,
+    run_transcript_pipeline,
+    source_record_path,
+)
 from .index import (
     INDEX_FIELDS,
     IndexError,
@@ -168,6 +180,13 @@ __all__ = [
     "excerpt_is_in_transcript",
     "build_grounded_payload",
     "supported_workflow",
+    "chunk_transcript",
+    "chunker_health",
+    "speaker_null_rate",
+    "NO_SPEAKER_DETECTED_FINDING",
+    "NO_SPEAKER_STRUCTURE_FINDING",
+    "SOURCE_RECORD_TYPE",
+    "source_record_path",
     "MANIFEST_SCHEMA_VERSION",
     "REQUIRED_MANIFEST_FIELDS",
     "ManifestError",

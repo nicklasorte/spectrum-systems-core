@@ -1,0 +1,8 @@
+CHAIR: This is the action log for the May standing meeting.
+ALICE: Note the parent meeting reference.
+MEETING_REF: m-2026-05-standing
+BOB: I will draft the response by Friday.
+ACTION: Bob drafts the response by Friday.
+CAROL: I will coordinate with NTIA on the test schedule.
+ACTION: Carol coordinates with NTIA on the test schedule.
+ACTION: Alice files the final summary by next Monday.

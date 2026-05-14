@@ -51,7 +51,12 @@ VALID_METADATA = {
     "source_type": "transcript",
 }
 
-WEAK_TRANSCRIPT = "Just a header line\nMore prose without prefixes.\n"
+# Speaker-labelled to clear the Phase Y chunker gate; no
+# DECISION/ACTION/QUESTION lines so transcript_evidence still blocks.
+WEAK_TRANSCRIPT = (
+    "ALICE: Just a header line\n"
+    "BOB: More prose without prefixes.\n"
+)
 
 
 def _seed_lake(tmp_path: Path, transcript: str = WEAK_TRANSCRIPT, metadata=None) -> None:
@@ -378,10 +383,14 @@ def test_golden_weak_seeds_failure_candidate_and_accepted_review(tmp_path):
     assert "no_transcript_evidence" in rev_body["failure_reason"]
 
     # No promoted product was written for this meeting; only learning files.
+    # source_record__<meeting_id>.json (Phase Y) is pipeline infrastructure
+    # (the on-disk anchor for the source_turn_validity eval), not a product.
     processed_dir = tmp_path / "processed" / "meetings" / meeting_id
     product_files = [
         f for f in processed_dir.glob("*.json")
-        if not f.name.startswith("manifest__") and not f.name.startswith("debug__")
+        if not f.name.startswith("manifest__")
+        and not f.name.startswith("debug__")
+        and not f.name.startswith("source_record__")
     ]
     assert product_files == []
 
@@ -398,11 +407,15 @@ def test_learning_artifacts_do_not_blur_into_product_artifact_dir(tmp_path):
 
     meeting_dir = tmp_path / "processed" / "meetings" / VALID_METADATA["meeting_id"]
     top_level_jsons = [p for p in meeting_dir.glob("*.json")]
-    # Top-level JSONs are only manifest__/debug__/promoted-product files.
+    # Top-level JSONs are only manifest__/debug__/source_record__/promoted-product
+    # files. source_record__ (Phase Y) is pipeline infrastructure for the
+    # source_turn_validity eval and lives at the meeting top level so the
+    # eval can locate it deterministically.
     for p in top_level_jsons:
         assert (
             p.name.startswith("manifest__")
             or p.name.startswith("debug__")
+            or p.name.startswith("source_record__")
         ), f"unexpected top-level file: {p}"
 
 

@@ -1,0 +1,8 @@
+CHAIR: We have an inquiry from the FCC about the 7 GHz band.
+ALICE: Please log the agency and the question for the record.
+AGENCY: FCC
+QUESTION: What are the coexistence requirements for 7 GHz incumbents?
+BOB: Cite the relevant regulations.
+CITATION: 47 CFR 96
+CITATION: NTIA Manual Chapter 8.3
+CAROL: I will draft the summary for review.

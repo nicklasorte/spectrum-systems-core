@@ -97,9 +97,12 @@ def test_is_run_metadata_filename_recognizes_both_prefixes():
 def test_content_signal_blocks_empty_notes_source(tmp_path):
     d = tmp_path / "raw" / "meetings" / "m-notes"
     d.mkdir(parents=True)
-    # No DECISION/ACTION/QUESTION lines and source_type=notes -> empty content
+    # No DECISION/ACTION/QUESTION lines and source_type=notes -> empty content.
+    # Speaker-labelled lines so the Phase Y chunker gate (no_speaker_structure
+    # on 100%-null-speaker transcripts) does not pre-empt content_signal.
     (d / "transcript.txt").write_text(
-        "Some chatter\nNothing actionable here.\n", encoding="utf-8"
+        "ALICE: Some chatter\nBOB: Nothing actionable here.\n",
+        encoding="utf-8",
     )
     (d / "metadata.json").write_text(
         json.dumps({

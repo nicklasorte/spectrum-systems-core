@@ -20,7 +20,13 @@ VALID_METADATA = {
     "source_type": "transcript",
 }
 
-WEAK_TRANSCRIPT = "Just a header line\nMore prose without prefixes.\n"
+# Speaker-labelled so the Phase Y chunker gate (no_speaker_structure)
+# does not pre-empt transcript_evidence. No DECISION/ACTION/QUESTION
+# lines means transcript_evidence still blocks the run.
+WEAK_TRANSCRIPT = (
+    "ALICE: Just a header line\n"
+    "BOB: More prose without prefixes.\n"
+)
 GOOD_TRANSCRIPT = (
     "Header\nDECISION: Yes.\nACTION: Do it.\nQUESTION: When?\n"
 )
