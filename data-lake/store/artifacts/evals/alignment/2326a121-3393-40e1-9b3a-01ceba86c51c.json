@@ -1,0 +1,51 @@
+{
+  "alignment_result_id": "2326a121-3393-40e1-9b3a-01ceba86c51c",
+  "artifact_source": "meeting_extraction",
+  "artifact_type": "alignment_result",
+  "chunking_strategy": "unknown",
+  "coverage_alignments": [
+    {
+      "alignment_status": "matched",
+      "content_word_overlap": 14,
+      "matched_extracted_item_id": "decision-0",
+      "matched_extracted_item_text": "Meeting agenda approved: scope confirmation, sharing-criteria approach, and action items for the next session",
+      "minutes_item_text": "Meeting agenda approved: scope confirmation, sharing-criteria approach, and action items for the next session",
+      "semantic_similarity": 1.0
+    }
+  ],
+  "created_at": "2026-05-14T01:03:23+00:00",
+  "eval_input_warning": false,
+  "minutes_artifact_id": "synthesized-from-extraction:7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
+  "pair_id": "31a562b1-1697-5338-9382-b7ffc60d5a68",
+  "provenance": {
+    "produced_by": "EvalAligner"
+  },
+  "review_alignments": [
+    {
+      "alignment_status": "matched",
+      "extracted_item_id": "decision-0",
+      "extracted_item_text": "Meeting agenda approved: scope confirmation, sharing-criteria approach, and action items for the next session",
+      "low_confidence_flagged": false,
+      "matched_minutes_text": "Meeting agenda approved: scope confirmation, sharing-criteria approach, and action items for the next session",
+      "semantic_similarity": 1.0,
+      "source_turn_ids": [
+        "74cfe301-2d9e-4177-ace1-21b6858b13cb"
+      ],
+      "source_turn_validation": "unknown"
+    },
+    {
+      "alignment_status": "matched",
+      "extracted_item_id": "decision-1",
+      "extracted_item_text": "Group approved application of ITU two-point criteria for FSS protection analysis: negative 10.5 dB at 80th percentile and negative 6 dB at 0.03 percent",
+      "low_confidence_flagged": false,
+      "matched_minutes_text": "Meeting agenda approved: scope confirmation, sharing-criteria approach, and action items for the next session",
+      "semantic_similarity": 1.0,
+      "source_turn_ids": [
+        "f7aed6cb-3153-4ada-b59a-33f28dd2e5e4"
+      ],
+      "source_turn_validation": "unknown"
+    }
+  ],
+  "schema_version": "1.0.0",
+  "source_artifact_id": "7b474018-707a-4e81-a8ce-6100f4bf4dbf"
+}
