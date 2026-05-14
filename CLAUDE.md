@@ -2,94 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Commands
+## What belongs in this file
 
-```bash
-pip install -e ".[dev]"          # install package + dev extras (pytest)
-python -m pytest                 # run full suite
-python -m pytest tests/test_artifact_model.py            # one file
-python -m pytest tests/test_artifact_model.py::test_name # one test
-python -m pytest -k grounding    # filter by name
-```
+CLAUDE.md contains only session governance: rules Claude Code must
+follow, architectural invariants, PR requirements, and module
+boundaries. Every line must answer: "would removing this cause Claude
+to make a mistake on a code change?" If not, it belongs in
+`docs/development/operator_reference.md`, not here.
 
-CI runs only `python -m pytest` on Python 3.11 (`.github/workflows/pytest.yml`). There are no linters, formatters, type-checkers, or coverage gates configured — do not add them without a concrete need (`docs/development/ci.md`).
-
-## Constitutional governance
-
-`docs/architecture/system_constitution.md` is **binding** for this repo. Other docs defer to it. Re-read it before any architectural change. Key rules that affect day-to-day edits:
-
-- The system has exactly one loop: **Produce → Evaluate → Decide → Promote**. Every module must serve it or be deferred.
-- Top-level module names are fixed: `artifacts`, `context`, `workflows`, `evals`, `control`, `promotion`, `data_lake`. Adding a new top-level module requires amending the constitution.
-- `failure_learning` and `ai_adapter` are reserved names but deliberately not implemented. So are live model calls, autonomous agents, dashboards, vector indexes, embeddings, semantic search, certification gates, and remote persistence. Do not add them.
-- Reject AEX/PQX/EVL/TPA/CDE/SEL terminology from the predecessor `spectrum-systems` repo. Plain module names only.
-- Prefer one artifact envelope over many families; one control model over many authority systems.
-
-## Core loop architecture
-
-The loop lives in `src/spectrum_systems_core/workflows/_loop.py::run_governed_loop`. Each workflow file (`meeting_minutes.py`, `decision_brief.py`, `agency_question_summary.py`, `meeting_action_log.py`) only supplies an `artifact_type` string and a deterministic `extract(input_text) -> dict` function. The loop does the rest:
-
-1. `context.build_context_bundle` → context artifact
-2. `artifacts.new_artifact` with the extracted payload (status `draft`)
-3. `evals.run_required_evals` → list of `eval_result` artifacts
-4. `control.decide_control` → `control_decision` artifact (`allow` / `block`)
-5. `promotion.promote_if_allowed` → status becomes `promoted` only on `allow`, else `rejected`
-
-### Adding a new artifact type
-
-Two edits, no new modules:
-
-1. Add `run_<type>_workflow` in `workflows/<type>.py` that calls `run_governed_loop` with a deterministic `extract` function. Re-export it from `workflows/__init__.py`.
-2. Add the required-field tuple and entry in `evals/runner.py::REQUIRED_FIELDS_BY_TYPE`. The `non_empty_payload` eval already runs for every type.
-
-If the type also needs to flow through the data lake pipeline, extend `_CONTENT_SIGNAL_KEYS_BY_TYPE` in `data_lake/pipeline.py` and `data_lake/extract.py`'s grounded payload builder.
-
-## Artifact envelope (one schema for everything)
-
-`artifacts/model.py::Artifact` has these fields and they are shared by every artifact type (target artifacts, `context_bundle`, `eval_result`, `control_decision`, `manifest`, etc.): `artifact_id`, `artifact_type`, `schema_version`, `status`, `created_at`, `trace_id`, `input_refs`, `content_hash`, `payload`. Statuses are restricted to `{draft, evaluated, promoted, rejected}` (`artifacts/validation.py`). State changes are new envelopes or status updates — never edit `payload` in place.
-
-## Control is fail-closed
-
-`control/decision.py` is the only place decisions come from. Rules:
-
-- No eval results → `block` (`missing_required_evals`).
-- Any eval result with `status == "fail"` → `block` (`failed:<eval_type>`).
-- All required evals pass → `allow`.
-- `warn` and `freeze` exist in `ALLOWED_DECISIONS` but are **reserved** and not used. Do not emit them.
-- Model output never decides; only the control function does.
-
-`promotion/promoter.py::promote_if_allowed` is the single path to `promoted` — promotion anywhere else is a constitution violation.
-
-## Data lake boundary (`data_lake/`)
-
-`docs/contracts/data_lake_contract.md` is binding for everything under `data_lake/`. The lake is just a directory tree; core is a pure processor.
-
-- Core **reads only** `raw/meetings/<meeting_id>/{transcript.txt,metadata.json}`.
-- Core **writes only** under `processed/meetings/<meeting_id>/` and `indexes/meetings/`.
-- Core **never deletes** anything. Append-only from core's perspective.
-- Only `status == "promoted"` artifacts may be written under `processed/`. `eval_result` and `control_decision` artifacts stay inside manifests/debug reports — they are run records, not products.
-- `meeting_id` must match `^[a-z0-9][a-z0-9_-]{0,127}$` and equal both the directory name and the `metadata.json` `meeting_id` field. The loader rejects the meeting otherwise.
-- Processed artifact filenames are `<artifact_type>__<slug>.json`. The double-underscore is the separator and must not appear elsewhere in the two segments.
-
-### Determinism is the trust property
-
-All outputs under `processed/` and `indexes/` must be byte-identical across runs given the same inputs. Use `data_lake/serialize.py::canonical_json` (sorted keys, stable separators, single trailing newline). The pipeline (`data_lake/pipeline.py`) achieves this by replacing UUIDs and wall-clock `created_at` with `_stable_artifact_id` (hash of kind+trace_id+payload) and `_DETERMINISTIC_CREATED_AT = "1970-01-01T00:00:00+00:00"` for every artifact it produces. If you add an artifact to the pipeline, run it through `_stabilize` or you will break the determinism invariant.
-
-The `artifact_index.jsonl` is built only from promoted processed artifacts and is sorted by `(meeting_id, artifact_type, artifact_id)` before write.
-
-### Pipeline-only evals
-
-Beyond the type-required-field evals from `evals/runner.py`, the pipeline adds three more in `data_lake/pipeline.py`: `source_grounding`, `transcript_evidence` (blocks transcript-source runs that produced no grounded spans), and `content_signal` (blocks `notes`/`summary` runs whose content lists are all empty). All four pass through the same `decide_control`.
-
-## Testing philosophy
-
-From the constitution: tests defend trust properties, not ceremony. Add a test only if it falls into one of these categories:
-
-- **Unit** — pure logic (artifact construction, hashing, decision rules).
-- **Contract** — payloads conform to declared `schema_version` for their `artifact_type`.
-- **Golden workflow** — known input → known artifact → known decision, end-to-end.
-- **Fail-closed** — missing required evals block; failed required evals block; only `allow` leads to promotion.
-
-Golden transcripts live in `tests/fixtures/golden_meetings/`.
+Before appending anything to CLAUDE.md, apply this test. If it fails,
+open `docs/development/operator_reference.md` instead.
 
 ## Claude Code Execution Standard (non-negotiable)
 
@@ -355,6 +277,105 @@ pushing a follow-up commit whose message omits the token (the new HEAD
 re-triggers via the `synchronize` event) or by amending the commit
 message and force-pushing the branch.
 
+## Control is fail-closed
+
+`control/decision.py` is the only place decisions come from. Rules:
+
+- No eval results → `block` (`missing_required_evals`).
+- Any eval result with `status == "fail"` → `block` (`failed:<eval_type>`).
+- All required evals pass → `allow`.
+- `warn` and `freeze` exist in `ALLOWED_DECISIONS` but are **reserved** and not used. Do not emit them.
+- Model output never decides; only the control function does.
+
+`promotion/promoter.py::promote_if_allowed` is the single path to `promoted` — promotion anywhere else is a constitution violation.
+
+## Constitutional governance
+
+`docs/architecture/system_constitution.md` is **binding** for this
+repo. It is imported directly below. Re-read it before any
+architectural change.
+
+@docs/architecture/system_constitution.md
+
+Key rules also kept inline for fast reference:
+
+- The system has exactly one loop: **Produce → Evaluate → Decide → Promote**. Every module must serve it or be deferred.
+- Top-level module names are fixed: `artifacts`, `context`, `workflows`, `evals`, `control`, `promotion`, `data_lake`. Adding a new top-level module requires amending the constitution.
+- `failure_learning` and `ai_adapter` are reserved names but deliberately not implemented. So are live model calls, autonomous agents, dashboards, vector indexes, embeddings, semantic search, certification gates, and remote persistence. Do not add them.
+- Reject AEX/PQX/EVL/TPA/CDE/SEL terminology from the predecessor `spectrum-systems` repo. Plain module names only.
+- Prefer one artifact envelope over many families; one control model over many authority systems.
+
+## Commands
+
+```bash
+pip install -e ".[dev]"          # install package + dev extras (pytest)
+python -m pytest                 # run full suite
+python -m pytest tests/test_artifact_model.py            # one file
+python -m pytest tests/test_artifact_model.py::test_name # one test
+python -m pytest -k grounding    # filter by name
+```
+
+CI runs only `python -m pytest` on Python 3.11 (`.github/workflows/pytest.yml`). There are no linters, formatters, type-checkers, or coverage gates configured — do not add them without a concrete need (`docs/development/ci.md`).
+
+## Core loop architecture
+
+The loop lives in `src/spectrum_systems_core/workflows/_loop.py::run_governed_loop`. Each workflow file (`meeting_minutes.py`, `decision_brief.py`, `agency_question_summary.py`, `meeting_action_log.py`) only supplies an `artifact_type` string and a deterministic `extract(input_text) -> dict` function. The loop does the rest:
+
+1. `context.build_context_bundle` → context artifact
+2. `artifacts.new_artifact` with the extracted payload (status `draft`)
+3. `evals.run_required_evals` → list of `eval_result` artifacts
+4. `control.decide_control` → `control_decision` artifact (`allow` / `block`)
+5. `promotion.promote_if_allowed` → status becomes `promoted` only on `allow`, else `rejected`
+
+### Adding a new artifact type
+
+Two edits, no new modules:
+
+1. Add `run_<type>_workflow` in `workflows/<type>.py` that calls `run_governed_loop` with a deterministic `extract` function. Re-export it from `workflows/__init__.py`.
+2. Add the required-field tuple and entry in `evals/runner.py::REQUIRED_FIELDS_BY_TYPE`. The `non_empty_payload` eval already runs for every type.
+
+If the type also needs to flow through the data lake pipeline, extend `_CONTENT_SIGNAL_KEYS_BY_TYPE` in `data_lake/pipeline.py` and `data_lake/extract.py`'s grounded payload builder.
+
+## Artifact envelope (one schema for everything)
+
+`artifacts/model.py::Artifact` has these fields and they are shared by every artifact type (target artifacts, `context_bundle`, `eval_result`, `control_decision`, `manifest`, etc.): `artifact_id`, `artifact_type`, `schema_version`, `status`, `created_at`, `trace_id`, `input_refs`, `content_hash`, `payload`. Statuses are restricted to `{draft, evaluated, promoted, rejected}` (`artifacts/validation.py`). State changes are new envelopes or status updates — never edit `payload` in place.
+
+## Data lake boundary (`data_lake/`)
+
+`docs/contracts/data_lake_contract.md` is binding for everything
+under `data_lake/`. It is imported directly below.
+
+@docs/contracts/data_lake_contract.md
+
+### Determinism is the trust property
+
+All outputs under `processed/` and `indexes/` must be byte-identical across runs given the same inputs. Use `data_lake/serialize.py::canonical_json` (sorted keys, stable separators, single trailing newline). The pipeline (`data_lake/pipeline.py`) achieves this by replacing UUIDs and wall-clock `created_at` with `_stable_artifact_id` (hash of kind+trace_id+payload) and `_DETERMINISTIC_CREATED_AT = "1970-01-01T00:00:00+00:00"` for every artifact it produces. If you add an artifact to the pipeline, run it through `_stabilize` or you will break the determinism invariant.
+
+The `artifact_index.jsonl` is built only from promoted processed artifacts and is sorted by `(meeting_id, artifact_type, artifact_id)` before write.
+
+### Pipeline-only evals
+
+Beyond the type-required-field evals from `evals/runner.py`, the pipeline adds three more in `data_lake/pipeline.py`: `source_grounding`, `transcript_evidence` (blocks transcript-source runs that produced no grounded spans), and `content_signal` (blocks `notes`/`summary` runs whose content lists are all empty). All four pass through the same `decide_control`.
+
+## Testing philosophy
+
+From the constitution: tests defend trust properties, not ceremony. Add a test only if it falls into one of these categories:
+
+- **Unit** — pure logic (artifact construction, hashing, decision rules).
+- **Contract** — payloads conform to declared `schema_version` for their `artifact_type`.
+- **Golden workflow** — known input → known artifact → known decision, end-to-end.
+- **Fail-closed** — missing required evals block; failed required evals block; only `allow` leads to promotion.
+
+Golden transcripts live in `tests/fixtures/golden_meetings/`.
+
+## Taxonomy
+
+All domain taxonomy lists (regulatory verbs, decision outcome types, claim types)
+are defined in `src/spectrum_systems_core/config/taxonomy.py`. The extraction
+prompt builder and the binding validator both import from this module so the
+two cannot drift. Never define these lists inline in prompt templates or
+validators. Tests assert `id()` equality on the imported objects.
+
 ## Phase planning protocol
 
 Before starting a new phase planning cycle, the operator should run:
@@ -368,19 +389,6 @@ conversation as the seed for STEP 1 inventory. If the briefing's
 `valid_until` is in the past, re-run `verify-pipeline-state` first, then
 re-run `next-phase-handoff`.
 
-## Operator env vars and phase wiring notes
-
-Runtime configuration, feature flags, and phase wiring details are in
-`docs/development/operator_reference.md`.
-
-## Taxonomy
-
-All domain taxonomy lists (regulatory verbs, decision outcome types, claim types)
-are defined in `src/spectrum_systems_core/config/taxonomy.py`. The extraction
-prompt builder and the binding validator both import from this module so the
-two cannot drift. Never define these lists inline in prompt templates or
-validators. Tests assert `id()` equality on the imported objects.
-
 ## Files worth reading before non-trivial changes
 
 - `docs/architecture/system_constitution.md` — binding; precedence over everything else.
@@ -389,3 +397,8 @@ validators. Tests assert `id()` equality on the imported objects.
 - `src/spectrum_systems_core/data_lake/pipeline.py` — the only place data-lake I/O meets the core loop.
 - `docs/decisions/` — judgment records capturing why architectural decisions were made. Read all files here before any change that touches module structure, artifact types, or the core loop.
 - `docs/decisions/2026-05-13-skl-sequencing.judgment_record.json` — specifically: SKL trace extraction pre-conditions. Do not begin SKL trace extraction work without verifying these are met.
+
+## Operator env vars and phase wiring notes
+
+Runtime configuration, feature flags, and phase wiring details are in
+`docs/development/operator_reference.md`.
