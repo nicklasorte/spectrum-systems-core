@@ -1,0 +1,18 @@
+{
+  "artifact_type": "health_finding",
+  "context": {
+    "baseline_scope": "single_transcript",
+    "coverage": 1.0,
+    "eval_summary_id": "f6a542cc-2cff-4eca-a37d-cacb95d617e8",
+    "f1": 1.0,
+    "pairs_count": 3,
+    "precision": 1.0
+  },
+  "detected_at": "2026-05-14T00:54:53.116082+00:00",
+  "finding_code": "baseline_set",
+  "finding_id": "5fd37c48-92f6-4a91-9ac0-f0a8fea9bdf9",
+  "pipeline_run_id": "tex-62d3291f049046fa",
+  "remediation": "Baseline installed. Subsequent runs will be compared against this eval_summary. Re-run eval-ground-truth --set-baseline to overwrite.",
+  "schema_version": "1.0.0",
+  "severity": "info"
+}
