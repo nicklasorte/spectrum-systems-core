@@ -2047,11 +2047,19 @@ class EvalRunner:
         """Return (partial_run_warning, partial_run_detail).
 
         ``expected`` = number of confirmed ground_truth_pairs.
-        ``actual``   = number of confirmed pairs whose meeting_extraction
-                       artifact is present on disk under
+        ``actual``   = number of confirmed pairs whose source has a
+                       meeting_extraction artifact on disk under
                        ``$SDL_ROOT/extractions/``.
-        ``missing_source_ids`` lists the source_ids whose extraction is
-        absent.
+        ``missing_source_ids`` lists the unique source_ids whose
+        extraction is absent (each slug appears at most once even when
+        multiple pairs share it).
+
+        Extraction is a per-source artifact: multiple pairs may share
+        one ``source_id``. Existence is therefore decided per-source
+        (resolving the current ``source_artifact_id`` via the on-disk
+        ``source_record.json``) instead of per pair's frozen
+        ``source_artifact_id``, which goes stale every time the pipeline
+        re-runs with ``--force``.
 
         Empty confirmed list (expected == 0) yields warning=False — there
         is nothing to be partial about (divide-by-zero guard).
@@ -2060,32 +2068,60 @@ class EvalRunner:
         if expected == 0:
             return (False, {"expected": 0, "actual": 0, "missing_source_ids": []})
 
-        present = 0
-        missing: List[str] = []
+        # Group pairs by resolved source_id. Pairs that fail to resolve
+        # a source_id are tracked separately and reported via their
+        # pair_id so the warning still fires loudly.
+        pairs_by_source: Dict[str, List[Dict[str, Any]]] = {}
+        unresolvable_pairs: List[Dict[str, Any]] = []
         for pair in confirmed_pairs:
             sid = self._resolve_pair_source_id(pair)
             if not sid:
-                # No source_id => we cannot prove extraction exists.
-                # Treat as missing so the warning fires loudly.
-                missing.append(pair.get("pair_id", "") or "<unknown>")
+                unresolvable_pairs.append(pair)
                 continue
-            if self._meeting_extraction_exists_for_source(sid, pair):
-                present += 1
-            else:
-                missing.append(sid)
+            pairs_by_source.setdefault(sid, []).append(pair)
 
-        warning = present < expected
+        present_pair_count = 0
+        missing_sources: List[str] = []
+        for sid, pairs in pairs_by_source.items():
+            # A source is "present" if ANY of its pairs (or the on-disk
+            # source_record's current sa_id) resolves to an extraction
+            # file. The same file decision must hold for every pair of
+            # the source, so present_pair_count gets the full bucket.
+            if any(
+                self._meeting_extraction_exists_for_source(sid, p) for p in pairs
+            ):
+                present_pair_count += len(pairs)
+            else:
+                missing_sources.append(sid)
+
+        # Unresolvable pairs (no source_id at all) count as missing per
+        # pair_id; they don't dedupe because they don't share a source.
+        missing_pair_ids = [
+            (p.get("pair_id", "") or "<unknown>") for p in unresolvable_pairs
+        ]
+
+        # Deduplicate missing sources for human-readable output;
+        # combine with per-pair unresolvable IDs (which already are
+        # unique by construction).
+        missing = sorted(set(missing_sources)) + missing_pair_ids
+        warning = present_pair_count < expected
         return (
             warning,
             {
                 "expected": int(expected),
-                "actual": int(present),
+                "actual": int(present_pair_count),
                 "missing_source_ids": missing,
             },
         )
 
     def _resolve_pair_source_id(self, pair: Dict[str, Any]) -> str:
         sid = pair.get("fixture_source_id")
+        if isinstance(sid, str) and sid:
+            return sid
+        # ground_truth_pair.source_id (Phase X2.5 production slug stamped
+        # by GenerateGTPairs). Lives on the pair so the eval gate can
+        # resolve the source without loading any source_record.
+        sid = pair.get("source_id")
         if isinstance(sid, str) and sid:
             return sid
         # Fall back to source_record.payload.source_id when available.
@@ -2116,13 +2152,32 @@ class EvalRunner:
         direct = extractions_dir / f"{source_id}_meeting_extraction.json"
         if direct.is_file():
             return True
-        # Indirect: filename is <source_artifact_id>_meeting_extraction.json.
-        sa_id = pair.get("source_artifact_id") or ""
-        if isinstance(sa_id, str) and sa_id:
-            indirect = extractions_dir / f"{sa_id}_meeting_extraction.json"
+        # Indirect via the pair's frozen source_artifact_id. This can
+        # go stale every time the pipeline re-runs with --force (a fresh
+        # source_record artifact_id is minted); the source_record-based
+        # resolution below is the canonical check.
+        pair_sa_id = pair.get("source_artifact_id") or ""
+        if isinstance(pair_sa_id, str) and pair_sa_id:
+            indirect = extractions_dir / f"{pair_sa_id}_meeting_extraction.json"
             if indirect.is_file():
                 return True
-        # Last-resort scan: match by payload contents.
+        # Canonical resolution: read the current source_record from the
+        # data-lake (walking processed/<family>/<source_id>/) to obtain
+        # the current source_artifact_id, then check that extraction
+        # filename. Mirrors pipeline_orchestrator._meeting_extraction_exists.
+        current_sa_id = self._resolve_current_source_artifact_id(source_id)
+        if current_sa_id:
+            current_path = (
+                extractions_dir / f"{current_sa_id}_meeting_extraction.json"
+            )
+            if current_path.is_file():
+                return True
+        # Last-resort scan: match by payload contents. The
+        # meeting_extraction schema does not currently carry a
+        # ``source_id`` field, so the source_id branch is rarely a
+        # match — kept for forward compatibility — but the
+        # source_artifact_id branch matches both the pair's frozen sa_id
+        # and the source_record's current sa_id.
         for path in extractions_dir.glob("*_meeting_extraction.json"):
             try:
                 obj = json.loads(path.read_text(encoding="utf-8"))
@@ -2132,11 +2187,47 @@ class EvalRunner:
                 continue
             if obj.get("source_id") == source_id:
                 return True
-            if isinstance(sa_id, str) and sa_id and obj.get(
-                "source_artifact_id"
-            ) == sa_id:
+            obj_sa = obj.get("source_artifact_id")
+            if pair_sa_id and obj_sa == pair_sa_id:
+                return True
+            if current_sa_id and obj_sa == current_sa_id:
                 return True
         return False
+
+    def _resolve_current_source_artifact_id(self, source_id: str) -> str:
+        """Return the source_record.artifact_id currently on disk for
+        ``source_id``, or "" when no source_record is found.
+
+        Walks ``<data_lake>/store/processed/<family>/<source_id>/source_record.json``
+        across known source families so the eval gate sees the same
+        sa_id the pipeline just wrote. Without this lookup the gate is
+        pinned to whatever ``source_artifact_id`` the ground_truth_pair
+        was generated against, which goes stale on every
+        ``run-pipeline --force`` re-run.
+        """
+        if not source_id or not self.data_lake_path:
+            return ""
+        try:
+            from ...ingestion.source_loader import SOURCE_FAMILIES
+        except Exception:
+            SOURCE_FAMILIES = ("meetings",)
+        store_root = Path(self.data_lake_path) / "store"
+        for family in SOURCE_FAMILIES:
+            record_path = (
+                store_root / "processed" / family / source_id / "source_record.json"
+            )
+            if not record_path.is_file():
+                continue
+            try:
+                rec = json.loads(record_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(rec, dict):
+                continue
+            aid = rec.get("artifact_id", "")
+            if isinstance(aid, str) and aid:
+                return aid
+        return ""
 
     # -- baseline + run-count ---------------------------------------------
 
