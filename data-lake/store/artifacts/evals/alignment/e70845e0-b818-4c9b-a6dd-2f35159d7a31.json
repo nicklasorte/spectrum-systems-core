@@ -1,0 +1,39 @@
+{
+  "alignment_result_id": "e70845e0-b818-4c9b-a6dd-2f35159d7a31",
+  "artifact_source": "meeting_extraction",
+  "artifact_type": "alignment_result",
+  "chunking_strategy": "unknown",
+  "coverage_alignments": [
+    {
+      "alignment_status": "matched",
+      "content_word_overlap": 19,
+      "matched_extracted_item_id": "decision-2",
+      "matched_extracted_item_text": "Decision on Course of Action (COA) selection deferred to the next working group meeting pending completion of working paper from Nick",
+      "minutes_item_text": "Decision on Course of Action (COA) selection deferred to the next working group meeting pending completion of working paper from Nick",
+      "semantic_similarity": 1.0
+    }
+  ],
+  "created_at": "2026-05-14T02:27:10+00:00",
+  "eval_input_warning": false,
+  "minutes_artifact_id": "synthesized-from-extraction:7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
+  "pair_id": "a020e03c-696c-5bc9-b463-a8bcfb5b4954",
+  "provenance": {
+    "produced_by": "EvalAligner"
+  },
+  "review_alignments": [
+    {
+      "alignment_status": "matched",
+      "extracted_item_id": "decision-2",
+      "extracted_item_text": "Decision on Course of Action (COA) selection deferred to the next working group meeting pending completion of working paper from Nick",
+      "low_confidence_flagged": false,
+      "matched_minutes_text": "Decision on Course of Action (COA) selection deferred to the next working group meeting pending completion of working paper from Nick",
+      "semantic_similarity": 1.0,
+      "source_turn_ids": [
+        "027c1fa0-a210-4f50-9a6e-9fef2d9fa116"
+      ],
+      "source_turn_validation": "unknown"
+    }
+  ],
+  "schema_version": "1.0.0",
+  "source_artifact_id": "7b474018-707a-4e81-a8ce-6100f4bf4dbf"
+}
