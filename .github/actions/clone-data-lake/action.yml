@@ -10,7 +10,7 @@ inputs:
   data_lake_token:
     description: >-
       The PAT with Contents read/write on nicklasorte/data-lake. Pass
-      `${{ secrets.DATA_LAKE_TOKEN }}` from the calling workflow.
+      the value of secrets.DATA_LAKE_TOKEN from the calling workflow.
     required: true
   path:
     description: "Local clone path (default: data-lake)"
