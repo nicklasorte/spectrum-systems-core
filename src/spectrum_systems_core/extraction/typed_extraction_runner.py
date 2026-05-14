@@ -21,18 +21,32 @@ import datetime
 import json
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Set
 
 from .action_item_extractor import ActionItemExtractor
 from .chunk_classifier import ChunkClassifier
+from .chunk_metadata_gate import (
+    format_report_for_log as _format_chunk_metadata_report,
+    validate_chunk_metadata as _validate_chunk_metadata,
+)
 from .claim_extractor import ClaimExtractor
 from .classification_cache import ClassificationCache
 from .decision_extractor import DecisionExtractor
 from .extraction_merger import ExtractionMerger
 from .generalization_checker import scan_items as _scan_overgeneralization
 from .glossary_manager import GlossaryManager
+from .population_rates import (
+    RATE_WARN_THRESHOLD as _POPULATION_RATE_WARN_THRESHOLD,
+    below_threshold_fields as _below_pop_threshold_fields,
+    compute_population_rates as _compute_population_rates,
+)
+from ..evals.source_turn_orphan import (
+    aggregate_source_turn_reports as _aggregate_source_turn_reports,
+    compute_source_turn_report as _compute_source_turn_report,
+)
 from ._chunk_counters import ChunkCounters
 from ._prompt_blocks import REGULATORY_TAXONOMY_BLOCK
 from ..glossary.chunk_position import (
@@ -91,6 +105,90 @@ _COMPONENT_KEYS: tuple = ("classifier", "decision", "claim", "action_item")
 # JSON object; the three extractors return small lists of items. 2000 covers
 # both with headroom.
 _DEFAULT_MAX_TOKENS = 2000
+
+# Phase P3-A T-2: extraction-mode rollback. Setting
+# EXTRACTION_MODE=single_pass skips the chunk-classification step and
+# never writes a chunk_classifications artifact -- a regression triage
+# can grep for the artifact's absence to confirm the rollback took
+# effect on disk.
+EXTRACTION_MODE_TWO_STAGE: str = "two_stage"
+EXTRACTION_MODE_SINGLE_PASS: str = "single_pass"
+_EXTRACTION_MODE_ENV: str = "EXTRACTION_MODE"
+_VALID_EXTRACTION_MODES = frozenset(
+    {EXTRACTION_MODE_TWO_STAGE, EXTRACTION_MODE_SINGLE_PASS}
+)
+
+
+def _resolve_extraction_mode() -> str:
+    """Read ``EXTRACTION_MODE`` from env; default ``two_stage``.
+
+    An unrecognised value falls back to ``two_stage`` and is logged so
+    a typo never silently produces an unexpected single-pass run.
+    """
+    raw = os.environ.get(_EXTRACTION_MODE_ENV, "").strip().lower()
+    if not raw:
+        return EXTRACTION_MODE_TWO_STAGE
+    if raw in _VALID_EXTRACTION_MODES:
+        return raw
+    _LOG.warning(
+        "extraction_mode_invalid: %s=%r -> falling back to %s",
+        _EXTRACTION_MODE_ENV, raw, EXTRACTION_MODE_TWO_STAGE,
+    )
+    return EXTRACTION_MODE_TWO_STAGE
+
+
+# Phase P3-A T-3: glossary-version pinning. GLOSSARY_VERSION=latest reads
+# the highest-numbered file in the glossary root; GLOSSARY_VERSION=<N>
+# pins to ``spectrum_glossary_v<N>.json`` so a regression can be bisected
+# against a prior glossary without editing the live glossary file.
+_GLOSSARY_VERSION_ENV: str = "GLOSSARY_VERSION"
+_GLOSSARY_VERSION_LATEST: str = "latest"
+_GLOSSARY_FILENAME_RE = re.compile(r"^spectrum_glossary_v(?P<n>\d+)\.json$")
+
+
+def _resolve_pinned_glossary_path(
+    glossary_root: Optional[Path],
+) -> Optional[Path]:
+    """Return the on-disk glossary artifact path the runner should load.
+
+    Resolution order:
+      1. ``GLOSSARY_VERSION=<integer>`` -> ``spectrum_glossary_v<N>.json``
+         (file must exist; missing file falls back to ``latest`` with
+         a warning so a typo doesn't silently load a different version).
+      2. ``GLOSSARY_VERSION=latest`` or unset -> the highest-numbered
+         file matching ``spectrum_glossary_v<N>.json`` in the root.
+      3. None when the glossary_root is missing entirely.
+    """
+    if glossary_root is None or not glossary_root.is_dir():
+        return None
+    raw = os.environ.get(_GLOSSARY_VERSION_ENV, "").strip().lower()
+    candidates: List[tuple] = []
+    for path in glossary_root.iterdir():
+        m = _GLOSSARY_FILENAME_RE.match(path.name)
+        if m:
+            candidates.append((int(m.group("n")), path))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda t: t[0])
+    by_version = {n: p for n, p in candidates}
+    latest_n, latest_path = candidates[-1]
+    if not raw or raw == _GLOSSARY_VERSION_LATEST:
+        return latest_path
+    try:
+        pinned = int(raw)
+    except ValueError:
+        _LOG.warning(
+            "glossary_version_invalid: %s=%r -> falling back to latest (v%d)",
+            _GLOSSARY_VERSION_ENV, raw, latest_n,
+        )
+        return latest_path
+    if pinned in by_version:
+        return by_version[pinned]
+    _LOG.warning(
+        "glossary_version_pinned_missing: %s=%d not on disk -> falling back to latest (v%d)",
+        _GLOSSARY_VERSION_ENV, pinned, latest_n,
+    )
+    return latest_path
 
 
 def _parse_json_response_strict(text: str, chunk_id: str = "") -> Dict[str, Any]:
@@ -535,6 +633,97 @@ def _meeting_extraction_path(sdl_root: Path, source_artifact_id: str) -> Path:
     return sdl_root / "extractions" / f"{source_artifact_id}_meeting_extraction.json"
 
 
+def _chunk_classifications_path(sdl_root: Path, source_artifact_id: str) -> Path:
+    return (
+        sdl_root / "extractions" /
+        f"{source_artifact_id}_chunk_classifications.json"
+    )
+
+
+def _build_chunk_classifications_artifact(
+    *,
+    source_artifact_id: str,
+    source_id: str,
+    extraction_run_id: str,
+    extraction_mode: str,
+    classifications: Sequence[Dict[str, Any]],
+    extraction_path_breakdown: Dict[str, int],
+    off_topic_rate: float,
+    router_model: str,
+) -> Dict[str, Any]:
+    """Build the Phase P3-A T-2 aggregate artifact.
+
+    The artifact is forensic provenance for the routing step. It is
+    NOT consumed by the eval gate (the gate reads the same rates off
+    the meeting_extraction artifact); the aggregate exists so an
+    operator triaging a coverage regression can inspect every
+    classification call without crawling individual chunk records.
+    """
+    per_chunk: List[Dict[str, Any]] = []
+    for cls in classifications or []:
+        if not isinstance(cls, dict):
+            continue
+        per_chunk.append({
+            "chunk_id": str(cls.get("chunk_id") or ""),
+            "classification": cls.get("classification") or "off_topic",
+            "confidence": cls.get("confidence"),
+            "regulatory_verb_fallback_applied": bool(
+                cls.get("regulatory_verb_fallback_applied")
+            ),
+        })
+    return {
+        "artifact_type": "chunk_classifications",
+        "schema_version": "1.0.0",
+        "source_artifact_id": source_artifact_id,
+        "source_id": source_id,
+        "extraction_run_id": extraction_run_id,
+        "created_at": _now_iso(),
+        "extraction_mode": extraction_mode,
+        "chunk_count": len(per_chunk),
+        "classifications": per_chunk,
+        "extraction_path_breakdown": dict(extraction_path_breakdown),
+        "off_topic_skip_count": int(extraction_path_breakdown.get("off_topic", 0)),
+        "off_topic_rate": float(off_topic_rate),
+        "router_model": router_model or ChunkClassifier.MODEL_ID,
+    }
+
+
+def _write_chunk_classifications_artifact(
+    artifact: Dict[str, Any],
+    sdl_root: Path,
+    source_artifact_id: str,
+) -> Optional[Path]:
+    """Atomic write the chunk_classifications artifact. Returns path or None.
+
+    Validation failures are logged but do not abort the run -- the
+    artifact is provenance, not a contract product. The runner
+    itself never reads the file back during the same process.
+    """
+    try:
+        from ..validation import validate_artifact, ArtifactValidationError
+        try:
+            validate_artifact(artifact, "chunk_classifications")
+        except ArtifactValidationError as exc:
+            _LOG.warning(
+                "chunk_classifications_schema_violation: %s", exc,
+            )
+    except ImportError:
+        pass
+    target = _chunk_classifications_path(sdl_root, source_artifact_id)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_text(
+            json.dumps(artifact, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        tmp.replace(target)
+        return target
+    except OSError as exc:
+        _LOG.warning("chunk_classifications_write_failed: %s", exc)
+        return None
+
+
 def _is_rate_limit_error(exc: BaseException) -> bool:
     """Best-effort RateLimitError detection without forcing an SDK import."""
     try:
@@ -689,15 +878,35 @@ def _resolve_versioned_glossary_terms(
 ) -> List[Dict[str, Any]]:
     """Load the versioned glossary terms list. Returns ``[]`` if absent.
 
-    The function never raises; a missing or malformed artifact returns
-    an empty list and a single debug-level log line per process. The
-    runner's ``glossary_terms_injected`` field will then be ``[]`` on
-    every chunk -- still a list shape, never None -- so downstream
-    consumers do not have to special-case the unloaded path.
+    Backward-compatible wrapper around
+    :func:`_resolve_versioned_glossary_artifact`. The function never
+    raises; a missing or malformed artifact returns an empty list and a
+    single debug-level log line per process. The runner's
+    ``glossary_terms_injected`` field will then be ``[]`` on every
+    chunk -- still a list shape, never None -- so downstream consumers
+    do not have to special-case the unloaded path.
+    """
+    artifact = _resolve_versioned_glossary_artifact(sdl_root)
+    if not isinstance(artifact, dict):
+        return []
+    terms = artifact.get("terms")
+    if not isinstance(terms, list):
+        return []
+    return [t for t in terms if isinstance(t, dict)]
+
+
+def _resolve_versioned_glossary_artifact(
+    sdl_root: Optional[Path],
+) -> Optional[Dict[str, Any]]:
+    """Load the versioned glossary artifact (or None when absent).
+
+    Honours ``GLOSSARY_VERSION=latest|<N>`` per Phase P3-A T-3. The
+    function reads the env once per call so a test can override the
+    pinned version without reimporting the module.
     """
     global _PHASE_W_GLOSSARY_NOT_PRELOADED_LOG_EMITTED
     if sdl_root is None:
-        return []
+        return None
     glossary_root = _resolve_versioned_glossary_root(sdl_root)
     if glossary_root is None or not glossary_root.is_dir():
         if not _PHASE_W_GLOSSARY_NOT_PRELOADED_LOG_EMITTED:
@@ -707,14 +916,22 @@ def _resolve_versioned_glossary_terms(
                 sdl_root,
             )
             _PHASE_W_GLOSSARY_NOT_PRELOADED_LOG_EMITTED = True
-        return []
-    artifact = load_versioned_glossary(glossary_root)
-    if not isinstance(artifact, dict):
-        return []
-    terms = artifact.get("terms")
-    if not isinstance(terms, list):
-        return []
-    return [t for t in terms if isinstance(t, dict)]
+        return None
+    # Phase P3-A T-3: resolve the pinned version path. When a specific
+    # version is requested but not present on disk, the resolver falls
+    # back to the latest and logs a warning so the operator notices.
+    pinned_path = _resolve_pinned_glossary_path(glossary_root)
+    if pinned_path is not None and pinned_path.is_file():
+        try:
+            return json.loads(pinned_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            _LOG.warning(
+                "versioned_glossary_pinned_load_failed: path=%s err=%s",
+                pinned_path, exc,
+            )
+            # Fall through to the legacy loader so a corrupted pinned
+            # file does not break the run.
+    return load_versioned_glossary(glossary_root)
 
 
 def _per_chunk_glossary_records(
@@ -1034,6 +1251,25 @@ def run_typed_extraction(
         if isinstance(cid, str) and cid:
             available_turn_ids.add(cid)
 
+    # Phase P3-A T-1: chunk metadata contract gate. Default mode is
+    # graceful-degradation -- the report is logged and continues. Set
+    # STRICT_CHUNK_METADATA=true to promote to halt so a CI run cannot
+    # silently process chunks missing metadata. Findings always flow
+    # into ``phase_w_findings`` so an operator sees them in the
+    # post-run report regardless of mode.
+    chunk_metadata_report = _validate_chunk_metadata(chunks)
+    if chunk_metadata_report.has_violations():
+        _LOG.warning(_format_chunk_metadata_report(chunk_metadata_report))
+        if chunk_metadata_report.strict_mode:
+            return {
+                "status": "failure",
+                "reason": (
+                    "chunk_metadata_contract_violation:strict_mode="
+                    f"{len(chunk_metadata_report.findings)}_violations"
+                ),
+                "chunk_metadata_findings": chunk_metadata_report.as_strings()[:25],
+            }
+
     # Phase W: agenda detection + chunk annotation.
     # The classifier reads ``chunk["agenda_item_id"]`` when Phase W is
     # on. Per Attack 12 (RT1) this runs synchronously and writes all
@@ -1123,17 +1359,54 @@ def run_typed_extraction(
 
     extraction_run_id = "tex-" + uuid.uuid4().hex[:16]
 
-    classifications: List[Dict[str, Any]]
-    try:
-        classifications = asyncio.run(
-            classifier.batch_classify_async(
-                chunks,
-                source_id,
-                max_concurrent=max_concurrent_classifier_batches,
-                async_caller=async_caller,
-                cache=cache,
-            )
+    # Phase P3-A T-2: EXTRACTION_MODE=single_pass rollback. In
+    # single-pass mode the classifier is skipped entirely (no router
+    # call, no off_topic filtering); every chunk is fed to every
+    # extractor. We still synthesise a classifications list so the
+    # downstream merge path (which counts off_topic / regulatory-verb
+    # fallback) stays single-shape. Marker classification ``decision``
+    # is used because every extractor will see the chunk regardless.
+    _early_extraction_mode = _resolve_extraction_mode()
+    _skip_classifier = _early_extraction_mode == EXTRACTION_MODE_SINGLE_PASS
+    classifications: List[Dict[str, Any]] = []
+    if _skip_classifier:
+        _LOG.info(
+            "extraction_mode_single_pass: skipping classifier (rollback path)"
         )
+        for chunk in chunks:
+            cid = ""
+            if isinstance(chunk, dict):
+                cid = str(chunk.get("chunk_id") or chunk.get("id") or "")
+            classifications.append({
+                "classification_id": str(uuid.uuid4()),
+                "chunk_id": cid,
+                "source_id": source_id,
+                "classification": "decision",
+                "regulatory_verb_fallback_applied": False,
+                "confidence": None,
+                "artifact_type": "chunk_classification",
+                "schema_version": ChunkClassifier.SCHEMA_VERSION,
+                "created_at": _now_iso(),
+                "provenance": {
+                    "produced_by": "ChunkClassifier",
+                    "model": "single_pass_rollback",
+                },
+            })
+    try:
+        if _skip_classifier:
+            # No classifier call to make; the synthesised list above is
+            # the single source of truth.
+            pass
+        else:
+            classifications = asyncio.run(
+                classifier.batch_classify_async(
+                    chunks,
+                    source_id,
+                    max_concurrent=max_concurrent_classifier_batches,
+                    async_caller=async_caller,
+                    cache=cache,
+                )
+            )
     except RuntimeError as exc:
         # Already inside an event loop (e.g. Jupyter or PipelineOrchestrator
         # being driven from another async context). Run on a fresh loop in
@@ -1234,8 +1507,20 @@ def run_typed_extraction(
     bucket: Dict[str, List[Dict[str, Any]]] = {
         "decision": [], "claim": [], "action_item": [], "off_topic": [],
     }
-    for chunk, cls in zip(chunks, classifications):
-        bucket[cls["classification"]].append(chunk)
+    if _skip_classifier:
+        # Phase P3-A T-2 rollback: in single_pass mode every chunk is
+        # routed to every extractor. The synthetic classifications
+        # carry classification="decision" so the buckets above would
+        # otherwise route claim/action work past the claim/action
+        # extractors. Override by duplicating each chunk into each
+        # bucket.
+        for chunk in chunks:
+            bucket["decision"].append(chunk)
+            bucket["claim"].append(chunk)
+            bucket["action_item"].append(chunk)
+    else:
+        for chunk, cls in zip(chunks, classifications):
+            bucket[cls["classification"]].append(chunk)
 
     # Phase W (integration wiring): load the versioned glossary once
     # per run + the Phase V.3 few-shot examples once per run. Both
@@ -1244,7 +1529,21 @@ def run_typed_extraction(
     # injection. Per-chunk records are built across ALL chunks
     # (including off_topic) so the orchestration summary reflects
     # actual glossary coverage, not just extractor-routed coverage.
-    versioned_glossary_terms = _resolve_versioned_glossary_terms(sdl_root)
+    glossary_artifact = _resolve_versioned_glossary_artifact(sdl_root)
+    versioned_glossary_terms: List[Dict[str, Any]] = []
+    glossary_version: Optional[int] = None
+    if isinstance(glossary_artifact, dict):
+        terms = glossary_artifact.get("terms")
+        if isinstance(terms, list):
+            versioned_glossary_terms = [t for t in terms if isinstance(t, dict)]
+        raw_version = glossary_artifact.get("glossary_version")
+        if isinstance(raw_version, int):
+            glossary_version = raw_version
+        elif isinstance(raw_version, str):
+            try:
+                glossary_version = int(raw_version)
+            except ValueError:
+                glossary_version = None
     chunk_extraction_records = _per_chunk_glossary_records(
         chunks, versioned_glossary_terms,
     )
@@ -1341,6 +1640,64 @@ def run_typed_extraction(
             sdl_root=sdl_root,
         )
 
+    # Phase P3-A T-2: resolve extraction mode and capture routing
+    # breakdown. The two-stage path is the live wiring; single_pass is
+    # the documented rollback that skips classification and writes no
+    # chunk_classifications artifact. Re-use the value the runner
+    # resolved before kicking off classification so the env is read
+    # exactly once per run.
+    extraction_mode = _early_extraction_mode
+    extraction_path_breakdown = {
+        "decision": len(bucket["decision"]),
+        "claim": len(bucket["claim"]),
+        "action_item": len(bucket["action_item"]),
+        "off_topic": len(bucket["off_topic"]),
+    }
+    classified_total = sum(extraction_path_breakdown.values())
+    off_topic_rate = (
+        extraction_path_breakdown["off_topic"] / classified_total
+        if classified_total > 0
+        else 0.0
+    )
+
+    # Phase P3-A T-1: orphan / diversity over the combined item list.
+    # Per-type reports are computed separately so the rollup
+    # (`by_type`) is also surfaced for diagnostic reading; the
+    # top-level orphan_rate and diversity_rate come from the combined
+    # call so a regression on one type cannot be masked by another.
+    decision_report = _compute_source_turn_report(
+        decisions, available_turn_ids, item_type="decision",
+    )
+    claim_report = _compute_source_turn_report(
+        claims, available_turn_ids, item_type="claim",
+    )
+    action_report = _compute_source_turn_report(
+        actions, available_turn_ids, item_type="action_item",
+    )
+    combined_report = _compute_source_turn_report(
+        list(decisions) + list(claims) + list(actions),
+        available_turn_ids,
+        item_type="combined",
+    )
+    source_turn_orphan_rate = combined_report.orphan_rate
+    source_turn_diversity_rate = combined_report.diversity_rate
+    source_turn_summary = _aggregate_source_turn_reports(
+        [decision_report, claim_report, action_report]
+    )
+    source_turn_summary["diversity_rate"] = source_turn_diversity_rate
+    source_turn_summary["distinct_turns_cited"] = (
+        combined_report.distinct_turns_cited
+    )
+    source_turn_summary["available_turn_count"] = (
+        combined_report.available_turn_count
+    )
+
+    # Phase P3-A T-3: population rates for the extended-schema fields.
+    # Emit a single warn finding listing every field below threshold
+    # so a fully-degraded run does not produce one finding per field.
+    population_rates = _compute_population_rates(decisions, claims)
+    below_threshold = _below_pop_threshold_fields(population_rates)
+
     artifact = ExtractionMerger().merge(
         source_artifact_id=source_artifact_id,
         extraction_run_id=extraction_run_id,
@@ -1349,6 +1706,17 @@ def run_typed_extraction(
         claims=claims,
         action_items=actions,
         run_metadata=run_metadata,
+        p3a_fields={
+            "extraction_mode": extraction_mode,
+            "glossary_version": glossary_version,
+            "off_topic_rate": off_topic_rate,
+            "extraction_path_breakdown": extraction_path_breakdown,
+            "source_turn_orphan_rate": source_turn_orphan_rate,
+            "source_turn_diversity_rate": source_turn_diversity_rate,
+            "stakeholders_populated_rate": population_rates.stakeholders_populated_rate,
+            "rationale_populated_rate": population_rates.rationale_populated_rate,
+            "claim_type_populated_rate": population_rates.claim_type_populated_rate,
+        },
     )
 
     # Phase V: if the post-hoc verification flag is on, run the verifier,
@@ -1409,6 +1777,128 @@ def run_typed_extraction(
         pipeline_run_id=extraction_run_id,
     )
     run_findings.extend(overgen_findings)
+
+    # Phase P3-A T-1: surface the chunk-metadata gate findings into
+    # the unified run_findings stream so they land in the run output
+    # next to the overgeneralization / few-shot findings.
+    if chunk_metadata_report.has_violations():
+        try:
+            run_findings.append(
+                HealthFinding(
+                    finding_code="chunk_metadata_contract_violation",
+                    severity="warn",
+                    context={
+                        "violations": len(chunk_metadata_report.findings),
+                        "chunks_scanned": chunk_metadata_report.chunks_scanned,
+                        "per_field": chunk_metadata_report.per_field_violation_counts(),
+                        "strict_mode": chunk_metadata_report.strict_mode,
+                        "sample": chunk_metadata_report.as_strings()[:5],
+                    },
+                    remediation=(
+                        "Re-run the chunker; if the chunker writes the field "
+                        "but it was None, investigate the speaker-label "
+                        "detector or AGENDA_DETECTION_ENABLED state."
+                    ),
+                    pipeline_run_id=extraction_run_id,
+                )
+            )
+        except ValueError as exc:  # pragma: no cover -- defensive
+            _LOG.warning("chunk_metadata_finding_invalid: %s", exc)
+
+    # Phase P3-A T-1: surface the source-turn orphan and diversity
+    # findings so a regression on grounding is visible in the run
+    # output. orphan_rate > 0 emits warn; diversity_rate < 0.1 emits
+    # info (over-citing a tiny chunk cluster).
+    if source_turn_orphan_rate > 0:
+        try:
+            run_findings.append(
+                HealthFinding(
+                    finding_code="source_turn_orphan_detected",
+                    severity="warn",
+                    context={
+                        "orphan_rate": source_turn_orphan_rate,
+                        "by_type": source_turn_summary["by_type"],
+                    },
+                    remediation=(
+                        "Inspect the orphaned items' source_turn_ids; "
+                        "rerun extraction with force=true after fixing the "
+                        "prompt or chunker drift."
+                    ),
+                    pipeline_run_id=extraction_run_id,
+                )
+            )
+        except ValueError as exc:  # pragma: no cover
+            _LOG.warning("source_turn_orphan_finding_invalid: %s", exc)
+    if (
+        combined_report.available_turn_count > 0
+        and source_turn_diversity_rate < 0.1
+        and (len(decisions) + len(claims) + len(actions)) > 0
+    ):
+        try:
+            run_findings.append(
+                HealthFinding(
+                    finding_code="source_turn_low_diversity",
+                    severity="info",
+                    context={
+                        "diversity_rate": source_turn_diversity_rate,
+                        "distinct_turns_cited": combined_report.distinct_turns_cited,
+                        "available_turn_count": combined_report.available_turn_count,
+                    },
+                    remediation=(
+                        "The model is over-citing a tiny chunk cluster; "
+                        "review whether prompt routing is collapsing too many "
+                        "items onto the same chunk_id."
+                    ),
+                    pipeline_run_id=extraction_run_id,
+                )
+            )
+        except ValueError as exc:  # pragma: no cover
+            _LOG.warning("source_turn_low_diversity_finding_invalid: %s", exc)
+
+    # Phase P3-A T-3: population rate finding. Fail-OPEN: warn but
+    # never halt. One finding per run that lists all under-threshold
+    # fields so the operator sees the full picture in a single line.
+    if below_threshold:
+        try:
+            run_findings.append(
+                HealthFinding(
+                    finding_code="low_field_population_rate",
+                    severity="warn",
+                    context={
+                        "threshold": _POPULATION_RATE_WARN_THRESHOLD,
+                        "below_threshold": below_threshold,
+                        "decisions_total": population_rates.decisions_total,
+                        "claims_total": population_rates.claims_total,
+                    },
+                    remediation=(
+                        "Tune the extraction prompt to require the named "
+                        "field on every extracted item; re-run extraction "
+                        "with force=true."
+                    ),
+                    pipeline_run_id=extraction_run_id,
+                )
+            )
+        except ValueError as exc:  # pragma: no cover
+            _LOG.warning("low_field_population_rate_finding_invalid: %s", exc)
+
+    # Phase P3-A T-2: write the chunk_classifications aggregate
+    # artifact. Skipped in single_pass mode -- the absence of the
+    # file on disk is the rollback signal.
+    chunk_classifications_path: Optional[Path] = None
+    if extraction_mode == EXTRACTION_MODE_TWO_STAGE and sdl_root is not None:
+        cc_artifact = _build_chunk_classifications_artifact(
+            source_artifact_id=source_artifact_id,
+            source_id=source_id,
+            extraction_run_id=extraction_run_id,
+            extraction_mode=extraction_mode,
+            classifications=classifications,
+            extraction_path_breakdown=extraction_path_breakdown,
+            off_topic_rate=off_topic_rate,
+            router_model=_resolve_extraction_model_id(),
+        )
+        chunk_classifications_path = _write_chunk_classifications_artifact(
+            cc_artifact, sdl_root, source_artifact_id,
+        )
 
     # Phase W (integration wiring): orchestration counters. The
     # binding-tuple count is derived from the merged artifact (the
@@ -1541,6 +2031,25 @@ def run_typed_extraction(
         ),
         "calibration_warning_path": (
             str(calibration_path) if calibration_path else ""
+        ),
+        # Phase P3-A: rollup fields surfaced into the runner result so
+        # the smoke test / CLI can read them without re-loading the
+        # written artifact.
+        "extraction_mode": extraction_mode,
+        "glossary_version": glossary_version,
+        "off_topic_rate": off_topic_rate,
+        "extraction_path_breakdown": extraction_path_breakdown,
+        "source_turn_orphan_rate": source_turn_orphan_rate,
+        "source_turn_diversity_rate": source_turn_diversity_rate,
+        "source_turn_summary": source_turn_summary,
+        "stakeholders_populated_rate": population_rates.stakeholders_populated_rate,
+        "rationale_populated_rate": population_rates.rationale_populated_rate,
+        "claim_type_populated_rate": population_rates.claim_type_populated_rate,
+        "chunk_classifications_path": (
+            str(chunk_classifications_path) if chunk_classifications_path else ""
+        ),
+        "chunk_metadata_violations_count": len(
+            chunk_metadata_report.findings
         ),
     }
 

@@ -212,6 +212,53 @@
 
     "verification_artifact_id": { "type": ["string", "null"] },
 
+    "extraction_mode": {
+      "type": "string",
+      "enum": ["two_stage", "single_pass"],
+      "description": "Phase P3-A T-2: routing mode. ``two_stage`` is the default. ``single_pass`` is the rollback path (env var ``EXTRACTION_MODE=single_pass`` skips chunk classification + per-type extractors and runs a single combined prompt). Optional so artifacts written before Phase P3-A still validate."
+    },
+    "glossary_version": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Phase P3-A T-3: integer ``glossary_version`` of the versioned glossary artifact injected into prompts during this run. Distinct from ``prompt_version`` so a glossary edit (no prompt template change) is still traceable. Null when no versioned glossary was loaded."
+    },
+    "off_topic_rate": {
+      "type": "number", "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase P3-A T-2: fraction of classifier output that came back as ``off_topic``."
+    },
+    "extraction_path_breakdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Phase P3-A T-2: map of classification label to count across this run.",
+      "required": ["decision", "claim", "action_item", "off_topic"],
+      "properties": {
+        "decision": { "type": "integer", "minimum": 0 },
+        "claim": { "type": "integer", "minimum": 0 },
+        "action_item": { "type": "integer", "minimum": 0 },
+        "off_topic": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "source_turn_orphan_rate": {
+      "type": "number", "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase P3-A T-1: fraction of extracted items whose ``source_turn_ids`` cite a chunk_id not present in chunks.jsonl."
+    },
+    "source_turn_diversity_rate": {
+      "type": "number", "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase P3-A T-1: distinct cited turns divided by total available turns. Low values mean the model is over-citing a tiny chunk cluster."
+    },
+    "stakeholders_populated_rate": {
+      "type": "number", "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase P3-A T-3: fraction of decisions with a non-empty stakeholders list. Rates < 0.8 emit a warn finding ``low_field_population_rate``."
+    },
+    "rationale_populated_rate": {
+      "type": "number", "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase P3-A T-3: fraction of decisions with a non-empty rationale string."
+    },
+    "claim_type_populated_rate": {
+      "type": "number", "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase P3-A T-3: fraction of claims with a non-empty claim_type."
+    },
+
     "provenance": {
       "type": "object",
       "required": ["produced_by"],
