@@ -77,7 +77,22 @@ synthetic strings into these placeholders before calling
 - **Git-tracked:** YES — the eval-ground-truth CLI reads every pair
   in this directory.
 - **Readers:** `evals.m4.runner` via `eval-ground-truth` CLI,
-  `scripts/annotate_rubric.py`.
+  `scripts/annotate_rubric.py`,
+  `scripts/review_gt_pairs.py` (Phase P1).
+
+### gt_pair_review
+- **Writer:** `scripts/review_gt_pairs.py` (Phase P1 — human-in-the-loop
+  confirmation of a pair's `expected_decision_outcome`).
+- **Path template:** `data-lake/store/artifacts/ground_truth/<pair_id>_review.json`
+- **Schema:** `src/spectrum_systems_core/schemas/gt_pair_review.schema.json`
+- **Git-tracked:** YES — the Phase P1 eval gate refuses to score a
+  ground_truth_pair until a sibling review artifact with
+  `outcome_confirmed: true` is present. Storing the review under the
+  same `ground_truth/` directory as the pair keeps the two artifacts
+  co-located on disk; the `_review.json` filename suffix is the only
+  thing that distinguishes the two from a directory glob.
+- **Readers:** `evals.m4.runner` (the Phase P1 alignment gate),
+  `scripts/review_gt_pairs.py` (idempotency check on re-run).
 
 ### eval_summary (incl. baseline)
 - **Writer:** `evals/m4/runner.py` via `eval-ground-truth` CLI,

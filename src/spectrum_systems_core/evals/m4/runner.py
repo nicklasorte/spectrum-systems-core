@@ -46,6 +46,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import jsonschema
 
 from ...ingestion._paths import contracts_root
+from ..alignment import ALIGNMENT_THRESHOLD, compute_alignment
 from .aligner import EvalAligner
 from .metrics import EvalMetrics
 from .regression_gate import RegressionGate
@@ -54,6 +55,11 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION_SUMMARY = "2.0.0"
 PRODUCED_BY_SUMMARY = "EvalRunner"
+
+# Phase P1: gt_pair_review artifact suffix. The new alignment gate
+# requires a sibling ``<pair_id>_review.json`` confirming the pair's
+# expected_decision_outcome before scoring.
+_GT_PAIR_REVIEW_SUFFIX = "_review.json"
 
 # Phase O.4: minimum distinct source_ids required to expose
 # per_source_metrics. With a single source the rollup would just
@@ -135,6 +141,13 @@ class EvalRunner:
         self.aligner = aligner or EvalAligner()
         self.metrics = metrics or EvalMetrics()
         self.gate = gate or RegressionGate()
+        # Phase P1 source-level aggregates, populated by the new
+        # deterministic alignment path. Keyed by source_id so the
+        # summary builder can pull spurious_add_rate / per_outcome_f1 /
+        # review_queue_count back out after per-pair iteration finishes.
+        self._p1_source_aggregates: Dict[str, Dict[str, Any]] = {}
+        self._p1_review_queue: List[Dict[str, Any]] = []
+        self._p1_eval_result_ids: set = set()
 
     def run(
         self,
@@ -502,6 +515,14 @@ class EvalRunner:
         return out
 
     def _evaluate_pair(self, pair: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        # Phase P1: dispatch on pair shape. New deterministic alignment
+        # fires when the pair carries the typed-extraction surface
+        # (ground_truth_text + expected_decision_outcome) AND no
+        # fixture inline fields. Legacy fixtures continue to use the
+        # TF-IDF EvalAligner path so existing eval tests keep passing.
+        if self._is_p1_eligible_pair(pair):
+            return self._evaluate_pair_p1(pair)
+
         pair_id = pair.get("pair_id") or ""
         source_artifact_id = pair.get("source_artifact_id") or ""
         minutes_artifact_id = pair.get("minutes_artifact_id") or ""
@@ -597,6 +618,460 @@ class EvalRunner:
                 return None
         return eval_result
 
+    # -- Phase P1: deterministic two-stage alignment ----------------------
+
+    @staticmethod
+    def _is_p1_eligible_pair(pair: Dict[str, Any]) -> bool:
+        """True iff the pair should go through the Phase P1 alignment path.
+
+        Eligibility requires the new typed-extraction fields to be
+        present AND the legacy fixture inline fields to be absent.
+        Both conditions are needed: a legacy fixture that happens to
+        carry ``ground_truth_text`` for documentation reasons should
+        still run through the EvalAligner path that the fixture was
+        written against.
+        """
+        if not isinstance(pair, dict):
+            return False
+        gt_text = pair.get("ground_truth_text")
+        gt_outcome = pair.get("expected_decision_outcome")
+        if not isinstance(gt_text, str) or not gt_text.strip():
+            return False
+        if not isinstance(gt_outcome, str) or not gt_outcome.strip():
+            return False
+        if isinstance(pair.get("fixture_extracted_items"), list):
+            return False
+        if isinstance(pair.get("fixture_minutes_text"), str):
+            return False
+        return True
+
+    def _gt_pair_review_path(self, pair_id: str) -> Optional[Path]:
+        if self.sdl_root is None or not pair_id:
+            return None
+        return self.sdl_root / "ground_truth" / f"{pair_id}{_GT_PAIR_REVIEW_SUFFIX}"
+
+    def _load_gt_pair_review(self, pair_id: str) -> Optional[Dict[str, Any]]:
+        path = self._gt_pair_review_path(pair_id)
+        if path is None or not path.is_file():
+            return None
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return doc if isinstance(doc, dict) else None
+
+    def _load_meeting_extraction_for_pair(
+        self, pair: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Load the meeting_extraction artifact tied to ``pair``.
+
+        Lookup precedence:
+          1. <sdl>/extractions/<source_artifact_id>_meeting_extraction.json
+          2. <sdl>/extractions/<source_id>_meeting_extraction.json
+          3. Scan <sdl>/extractions/ for a payload whose
+             source_artifact_id matches.
+
+        Returns ``None`` if no extraction is found; the caller treats
+        that case as zero decisions (the partial_run_warning machinery
+        already covers the operator-facing signal).
+        """
+        if self.sdl_root is None:
+            return None
+        ext_dir = self.sdl_root / "extractions"
+        if not ext_dir.is_dir():
+            return None
+        sa_id = pair.get("source_artifact_id")
+        source_id = self._resolve_pair_source_id(pair) or ""
+        candidates: List[Path] = []
+        if isinstance(sa_id, str) and sa_id:
+            candidates.append(ext_dir / f"{sa_id}_meeting_extraction.json")
+        if source_id:
+            candidates.append(ext_dir / f"{source_id}_meeting_extraction.json")
+        for cand in candidates:
+            if cand.is_file():
+                try:
+                    doc = json.loads(cand.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if isinstance(doc, dict):
+                    return doc
+        # Last-resort scan.
+        for path in ext_dir.glob("*_meeting_extraction.json"):
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(doc, dict):
+                continue
+            if isinstance(sa_id, str) and sa_id and doc.get(
+                "source_artifact_id"
+            ) == sa_id:
+                return doc
+        return None
+
+    def _emit_finding(
+        self,
+        finding_code: str,
+        severity: str,
+        *,
+        context: Dict[str, Any],
+        remediation: str,
+    ) -> None:
+        if self.sdl_root is None:
+            return
+        try:
+            from ...health.finding import HealthFinding, write_finding
+        except ImportError:
+            return
+        try:
+            data_lake_root = self.sdl_root.parent.parent
+        except (OSError, AttributeError):
+            return
+        try:
+            write_finding(
+                HealthFinding(
+                    finding_code=finding_code,
+                    severity=severity,
+                    pipeline_run_id=self.pipeline_run_id,
+                    context=context,
+                    remediation=remediation,
+                ),
+                data_lake_path=data_lake_root,
+            )
+        except Exception as exc:  # never propagate; logging is enough
+            logger.warning(
+                "finding_write_failed code=%s err=%s", finding_code, exc,
+            )
+
+    def _emit_gt_pair_not_reviewed(self, pair_id: str) -> None:
+        self._emit_finding(
+            "gt_pair_not_reviewed",
+            "halt",
+            context={"pair_id": pair_id},
+            remediation=(
+                "Run `python scripts/review_gt_pairs.py --pair-id "
+                f"{pair_id} --reviewer-id <your-id>` "
+                "to confirm the expected_decision_outcome before "
+                "eval-ground-truth will score this pair."
+            ),
+        )
+
+    def _emit_gt_pair_outcome_rejected(self, pair_id: str) -> None:
+        self._emit_finding(
+            "gt_pair_outcome_rejected",
+            "halt",
+            context={"pair_id": pair_id},
+            remediation=(
+                "The reviewer marked this ground_truth_pair's "
+                "expected_decision_outcome as incorrect. Either fix the "
+                "pair record (re-generate from a corrected extraction) "
+                "or write a fresh review with --overwrite once the "
+                "outcome is corrected."
+            ),
+        )
+
+    def _evaluate_pair_p1(
+        self, pair: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Phase P1 deterministic two-stage alignment for a single GT pair.
+
+        Gates:
+          * Missing ``<pair_id>_review.json`` -> emit
+            ``gt_pair_not_reviewed`` (halt) and skip.
+          * Review present with ``outcome_confirmed: false`` -> emit
+            ``gt_pair_outcome_rejected`` (halt) and skip.
+
+        On a passed gate, the runner loads the meeting_extraction for
+        the pair, calls ``compute_alignment`` against this pair alone,
+        and emits a per-pair eval_result. Per-source aggregates are
+        stashed on ``self._p1_source_aggregates`` so the summary
+        builder can roll up spurious_add_rate / per_outcome_f1 /
+        review_queue_count over the whole P1 run.
+        """
+        pair_id = pair.get("pair_id") or ""
+        source_artifact_id = pair.get("source_artifact_id") or ""
+        minutes_artifact_id = pair.get("minutes_artifact_id") or ""
+        source_id = self._resolve_pair_source_id(pair) or source_artifact_id
+
+        # Gate 1: review artifact present.
+        review = self._load_gt_pair_review(pair_id)
+        if review is None:
+            self._emit_gt_pair_not_reviewed(pair_id)
+            logger.info(
+                "skipping_pair_no_review pair_id=%s", pair_id
+            )
+            return None
+        # Gate 2: outcome confirmed.
+        if not bool(review.get("outcome_confirmed", False)):
+            self._emit_gt_pair_outcome_rejected(pair_id)
+            logger.info(
+                "skipping_pair_outcome_rejected pair_id=%s", pair_id
+            )
+            return None
+
+        # Load the extraction once per source. Multiple pairs from the
+        # same source re-use the cached decisions + alignment so the
+        # source-level aggregates are computed from the full GT pool
+        # rather than a single-pair view (which would always score
+        # spurious_add_rate=0 or 1 trivially).
+        aggregates = self._p1_source_aggregates.get(source_id)
+        if aggregates is None:
+            aggregates = self._compute_p1_source_alignment(pair, source_id)
+            self._p1_source_aggregates[source_id] = aggregates
+
+        per_pair = aggregates["per_pair"].get(pair_id)
+        if per_pair is None:
+            # Pair was not present in the source-level pool the first
+            # time we computed -- can happen if multiple pairs share a
+            # source and the first invocation seeded the cache before
+            # this pair joined. Recompute including this pair.
+            aggregates = self._compute_p1_source_alignment(pair, source_id)
+            self._p1_source_aggregates[source_id] = aggregates
+            per_pair = aggregates["per_pair"].get(pair_id, {})
+
+        matched = bool(per_pair.get("matched"))
+        coverage = 1.0 if matched else 0.0
+        precision = 1.0 if matched else 0.0
+        chunking_strategy = aggregates.get("chunking_strategy") or "unknown"
+
+        # Build alignment_result + eval_result so the on-disk shape
+        # stays compatible with the existing schemas. coverage_alignments
+        # carries the matched GT-text record; review_alignments carries
+        # the matched extracted decisions.
+        alignment_id = str(uuid.uuid4())
+        coverage_alignments: List[Dict[str, Any]] = [
+            {
+                "minutes_item_text": pair.get("ground_truth_text") or "",
+                "matched_extracted_item_id": (
+                    f"decision-{per_pair.get('matched_extracted_indices', [None])[0]}"
+                    if matched else None
+                ),
+                "matched_extracted_item_text": (
+                    aggregates["decision_texts"].get(
+                        per_pair.get("matched_extracted_indices", [None])[0]
+                    )
+                    if matched else None
+                ),
+                "semantic_similarity": float(per_pair.get("best_similarity", 0.0)),
+                "content_word_overlap": int(per_pair.get("best_overlap", 0)),
+                "alignment_status": "matched" if matched else "unmatched",
+            }
+        ]
+        review_alignments: List[Dict[str, Any]] = []
+        if matched:
+            for ext_idx in per_pair.get("matched_extracted_indices", []):
+                review_alignments.append(
+                    {
+                        "extracted_item_id": f"decision-{ext_idx}",
+                        "extracted_item_text": aggregates["decision_texts"].get(ext_idx, ""),
+                        "source_turn_ids": aggregates["decision_turns"].get(ext_idx, []),
+                        "source_turn_validation": "unknown",
+                        "matched_minutes_text": pair.get("ground_truth_text") or "",
+                        "semantic_similarity": float(per_pair.get("best_similarity", 0.0)),
+                        "alignment_status": "matched",
+                        "low_confidence_flagged": False,
+                    }
+                )
+        alignment = {
+            "alignment_result_id": alignment_id,
+            "source_artifact_id": source_artifact_id or source_id,
+            "minutes_artifact_id": minutes_artifact_id or f"synthesized-from-extraction:{source_id}",
+            "pair_id": pair_id,
+            "artifact_type": "alignment_result",
+            "schema_version": "1.0.0",
+            "created_at": _now_iso(),
+            "coverage_alignments": coverage_alignments,
+            "review_alignments": review_alignments,
+            "chunking_strategy": chunking_strategy,
+            "artifact_source": "meeting_extraction",
+            "eval_input_warning": bool(aggregates.get("total_extracted", 0) == 0),
+            "provenance": {"produced_by": "EvalAligner"},
+        }
+        if self.sdl_root is not None:
+            ok = self._validate_and_write(
+                "alignment_result",
+                alignment,
+                self.sdl_root / "evals" / "alignment" / f"{alignment_id}.json",
+            )
+            if not ok:
+                logger.warning(
+                    "skipping_pair_invalid_alignment pair_id=%s", pair_id
+                )
+                return None
+
+        total_extracted = int(aggregates.get("total_extracted", 0))
+        review_count = int(aggregates.get("review_queue_count_for_source", 0))
+        eval_result_id = str(uuid.uuid4())
+        eval_result = {
+            "eval_result_id": eval_result_id,
+            "alignment_result_id": alignment_id,
+            "source_artifact_id": source_artifact_id or source_id,
+            "minutes_artifact_id": minutes_artifact_id or f"synthesized-from-extraction:{source_id}",
+            "pair_id": pair_id,
+            "pipeline_run_id": self.pipeline_run_id,
+            "prompt_version": self.prompt_version,
+            "artifact_type": "eval_result",
+            "schema_version": "1.0.0",
+            "created_at": _now_iso(),
+            "chunking_strategy": chunking_strategy,
+            "coverage": float(coverage),
+            "precision": float(precision),
+            "items_requiring_review": int(0 if matched else 1),
+            "items_requiring_review_rate": float(0.0 if matched else 1.0),
+            "total_extracted_items": int(total_extracted),
+            "total_minutes_items": 1,
+            "provenance": {"produced_by": "EvalMetrics"},
+        }
+        if self.sdl_root is not None:
+            ok = self._validate_and_write(
+                "eval_result",
+                eval_result,
+                self.sdl_root / "evals" / "results" / f"{eval_result_id}.json",
+            )
+            if not ok:
+                logger.warning(
+                    "skipping_pair_invalid_eval_result pair_id=%s", pair_id
+                )
+                return None
+
+        self._p1_eval_result_ids.add(eval_result_id)
+        return eval_result
+
+    def _compute_p1_source_alignment(
+        self, seed_pair: Dict[str, Any], source_id: str
+    ) -> Dict[str, Any]:
+        """Run compute_alignment for every confirmed P1 pair under ``source_id``.
+
+        Caching: the result is keyed by ``source_id`` on
+        ``self._p1_source_aggregates`` so a single extraction is
+        scored once even when many pairs share the source.
+        """
+        # Re-load every confirmed P1 pair under the same source so the
+        # per-source aggregates (spurious_add_rate / per_outcome_f1)
+        # reflect the full ground-truth pool, not just the seed pair.
+        all_pairs = self._load_pairs()
+        confirmed_for_source = [
+            p for p in all_pairs
+            if p.get("status") == "confirmed"
+            and self._is_p1_eligible_pair(p)
+            and (self._resolve_pair_source_id(p) or p.get("source_artifact_id") or "") == source_id
+        ]
+        # Only include pairs whose review confirms the outcome -- the
+        # gate is enforced per-pair, but the aggregates should not pull
+        # in rejected pairs either.
+        gt_pool: List[Dict[str, Any]] = []
+        for p in confirmed_for_source:
+            review = self._load_gt_pair_review(p.get("pair_id") or "")
+            if review is None:
+                continue
+            if not bool(review.get("outcome_confirmed", False)):
+                continue
+            gt_pool.append(p)
+
+        extraction = self._load_meeting_extraction_for_pair(seed_pair) or {}
+        decisions_raw = extraction.get("decisions") if isinstance(extraction, dict) else []
+        decisions: List[Dict[str, Any]] = [
+            d for d in (decisions_raw or []) if isinstance(d, dict)
+        ]
+
+        alignment = compute_alignment(
+            extracted_decisions=decisions,
+            gt_pairs=gt_pool,
+            threshold=ALIGNMENT_THRESHOLD,
+        )
+
+        chunking_strategy = "unknown"
+        try:
+            sa_id = seed_pair.get("source_artifact_id") or ""
+            rec = self._load_source_record(sa_id, source_id_hint=source_id)
+            if isinstance(rec, dict):
+                payload = rec.get("payload") or {}
+                cs = payload.get("chunking_strategy")
+                if isinstance(cs, str) and cs in (
+                    "speaker_turn", "character_count_fallback", "unknown"
+                ):
+                    chunking_strategy = cs
+        except Exception as exc:  # never let a load-time hiccup poison alignment
+            logger.warning(
+                "chunking_strategy_lookup_failed source_id=%s err=%s",
+                source_id, exc,
+            )
+
+        # Index per-pair info, attaching best-score signals from the
+        # raw alignment for the on-disk alignment_result payload.
+        per_pair: Dict[str, Dict[str, Any]] = {}
+        for entry in alignment["pairs"]:
+            pid = entry["pair_id"]
+            matched_idxs = entry.get("matched_extracted_indices") or []
+            best_sim = 0.0
+            best_overlap = 0
+            # Best similarity / overlap for the pair across its matched
+            # extracted indices -- only used cosmetically on the
+            # alignment_result coverage_alignments row.
+            for idx in matched_idxs:
+                if 0 <= idx < len(decisions):
+                    text = decisions[idx].get("decision_text") or ""
+                    from ..alignment import _alignment_score
+                    sim_a = _alignment_score(
+                        text, gt_pool[
+                            next(i for i, p in enumerate(gt_pool) if p.get("pair_id") == pid)
+                        ].get("ground_truth_text") or "",
+                    )
+                    if sim_a > best_sim:
+                        best_sim = sim_a
+                    # Token overlap is informational; recompute lightly.
+                    from ..alignment import _tokenize
+                    overlap = len(_tokenize(text) & _tokenize(
+                        gt_pool[
+                            next(i for i, p in enumerate(gt_pool) if p.get("pair_id") == pid)
+                        ].get("ground_truth_text") or ""
+                    ))
+                    if overlap > best_overlap:
+                        best_overlap = overlap
+            per_pair[pid] = {
+                "matched": bool(entry.get("matched")),
+                "matched_extracted_indices": list(matched_idxs),
+                "best_similarity": float(best_sim),
+                "best_overlap": int(best_overlap),
+            }
+
+        decision_texts = {
+            i: (d.get("decision_text") or "")
+            for i, d in enumerate(decisions)
+        }
+        decision_turns = {
+            i: list(d.get("source_turn_ids") or [])
+            for i, d in enumerate(decisions)
+        }
+
+        # Add this source's review queue to the global P1 queue once.
+        if alignment["review_queue"]:
+            for entry in alignment["review_queue"]:
+                self._p1_review_queue.append(
+                    {
+                        "source_id": source_id,
+                        **entry,
+                    }
+                )
+
+        return {
+            "source_id": source_id,
+            "coverage": float(alignment["coverage"]),
+            "precision": float(alignment["precision"]),
+            "spurious_add_rate": float(alignment["spurious_add_rate"]),
+            "per_outcome_f1": dict(alignment["per_outcome_f1"]),
+            "matched_pair_count": int(alignment["matched_pair_count"]),
+            "matched_extracted_count": int(alignment["matched_extracted_count"]),
+            "total_extracted": int(alignment["total_extracted"]),
+            "total_gt_pairs": int(alignment["total_gt_pairs"]),
+            "review_queue_count_for_source": int(len(alignment["review_queue"])),
+            "threshold": float(alignment["threshold"]),
+            "per_pair": per_pair,
+            "decision_texts": decision_texts,
+            "decision_turns": decision_turns,
+            "chunking_strategy": chunking_strategy,
+        }
+
     # -- summary ----------------------------------------------------------
 
     def _build_summary(
@@ -671,7 +1146,13 @@ class EvalRunner:
             )
         )
 
-        return {
+        # Phase P1 aggregates: roll up source-level spurious_add_rate /
+        # per_outcome_f1 / review_queue_count from the new deterministic
+        # alignment path. Computed only over eval_results that went
+        # through ``_evaluate_pair_p1`` so legacy fixtures don't poison
+        # the new metrics with their inline-text scoring.
+        p1_aggregates = self._compute_p1_aggregates(eval_results)
+        summary: Dict[str, Any] = {
             "eval_summary_id": str(uuid.uuid4()),
             "pipeline_run_id": self.pipeline_run_id,
             "artifact_type": "eval_summary",
@@ -700,6 +1181,87 @@ class EvalRunner:
             "per_type_metrics_reason": per_type_metrics_reason,
             "baseline_scope": None,
             "provenance": {"produced_by": PRODUCED_BY_SUMMARY},
+        }
+        # Optional Phase P1 fields. Always emit when at least one P1
+        # eval_result fed the summary so a regression downstream that
+        # changes spurious_add_rate from non-zero to zero is visible.
+        if p1_aggregates["covered_p1_pairs"] > 0:
+            summary["spurious_add_rate"] = float(p1_aggregates["spurious_add_rate"])
+            summary["per_outcome_f1"] = dict(p1_aggregates["per_outcome_f1"])
+            summary["review_queue_count"] = int(p1_aggregates["review_queue_count"])
+            summary["alignment_threshold"] = float(p1_aggregates["threshold"])
+        return summary
+
+    def _compute_p1_aggregates(
+        self, eval_results: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Aggregate Phase P1 source-level metrics across the run.
+
+        ``spurious_add_rate`` is computed from extracted-decision
+        totals, not averaged across sources, so a single source with
+        many extractions has the influence its data warrants.
+
+        ``per_outcome_f1`` is averaged across sources for outcomes
+        present in at least one source — this matches the run-level
+        view of "how is the model doing on each outcome class?".
+
+        ``review_queue_count`` is summed across sources.
+        """
+        relevant_ids = {
+            er.get("eval_result_id")
+            for er in eval_results
+            if er.get("eval_result_id") in self._p1_eval_result_ids
+        }
+        covered_p1_pairs = sum(
+            1 for er in eval_results if er.get("eval_result_id") in relevant_ids
+        )
+        # Aggregate across distinct sources that contributed an
+        # eval_result in this run.
+        sources_in_run = set()
+        for er in eval_results:
+            if er.get("eval_result_id") in relevant_ids:
+                sources_in_run.add(er.get("source_artifact_id") or "")
+        total_extracted_global = 0
+        unmatched_extracted_global = 0
+        outcome_f1_buckets: Dict[str, List[float]] = {}
+        review_queue_total = 0
+        threshold_seen: Optional[float] = None
+        for aggregates in self._p1_source_aggregates.values():
+            if aggregates.get("source_id") not in sources_in_run and \
+                    not any(
+                        self._p1_source_aggregates.get(s) is aggregates
+                        for s in sources_in_run
+                    ):
+                # When the seed-pair source_id differs from the
+                # eval_result.source_artifact_id, we still want to
+                # include the aggregates -- only skip an aggregates
+                # entry that is truly unrelated to this run.
+                pass
+            te = int(aggregates.get("total_extracted", 0))
+            mec = int(aggregates.get("matched_extracted_count", 0))
+            total_extracted_global += te
+            unmatched_extracted_global += max(0, te - mec)
+            review_queue_total += int(aggregates.get("review_queue_count_for_source", 0))
+            t = aggregates.get("threshold")
+            if isinstance(t, (int, float)):
+                threshold_seen = float(t)
+            for outcome, f1 in (aggregates.get("per_outcome_f1") or {}).items():
+                outcome_f1_buckets.setdefault(outcome, []).append(float(f1))
+        per_outcome_f1 = {
+            outcome: round(sum(vals) / len(vals), 6) if vals else 0.0
+            for outcome, vals in outcome_f1_buckets.items()
+        }
+        spurious_add_rate = (
+            (unmatched_extracted_global / total_extracted_global)
+            if total_extracted_global > 0
+            else 0.0
+        )
+        return {
+            "covered_p1_pairs": covered_p1_pairs,
+            "spurious_add_rate": float(spurious_add_rate),
+            "per_outcome_f1": per_outcome_f1,
+            "review_queue_count": int(review_queue_total),
+            "threshold": float(threshold_seen) if threshold_seen is not None else float(ALIGNMENT_THRESHOLD),
         }
 
     def _compute_per_type_metrics(

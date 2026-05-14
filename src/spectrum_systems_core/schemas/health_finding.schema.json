@@ -59,7 +59,9 @@
         "judge_score_unstable",
         "baseline_set",
         "baseline_requires_successful_run",
-        "human_review_artifact_missing"
+        "human_review_artifact_missing",
+        "gt_pair_not_reviewed",
+        "gt_pair_outcome_rejected"
       ]
     },
     "severity": { "enum": ["halt", "warn", "info"] },

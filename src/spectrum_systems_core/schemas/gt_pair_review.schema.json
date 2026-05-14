@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/gt_pair_review.schema.json",
+  "title": "gt_pair_review",
+  "description": "Phase P1: human-confirmation record for a ground_truth_pair's expected_decision_outcome. The Phase P1 eval gate refuses to score a pair until a corresponding gt_pair_review with outcome_confirmed=true exists on disk. Written by scripts/review_gt_pairs.py to data-lake/store/artifacts/ground_truth/<pair_id>_review.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "pair_id",
+    "reviewer_id",
+    "outcome_confirmed",
+    "expected_decision_outcome",
+    "reviewed_at"
+  ],
+  "properties": {
+    "artifact_type": { "const": "gt_pair_review" },
+    "schema_version": { "const": "1.0.0" },
+    "pair_id": { "type": "string", "minLength": 1 },
+    "reviewer_id": { "type": "string", "minLength": 1 },
+    "outcome_confirmed": { "type": "boolean" },
+    "expected_decision_outcome": {
+      "type": ["string", "null"],
+      "enum": [
+        "approval",
+        "rejection",
+        "deferral",
+        "action_required",
+        "noted",
+        "question",
+        null
+      ]
+    },
+    "notes": { "type": ["string", "null"] },
+    "reviewed_at": { "type": "string", "minLength": 1 }
+  }
+}

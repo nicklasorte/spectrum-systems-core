@@ -175,6 +175,21 @@
     "grounding_overlap_p90": {
       "type": "number", "minimum": 0.0, "maximum": 1.0,
       "description": "Phase T.2: 90th percentile of grounding_overlap_score."
+    },
+    "per_outcome_f1": {
+      "type": "object",
+      "description": "Phase P1: F1 per decision_outcome (approval/deferral/...) from the deterministic two-stage alignment. Only present when at least one P1 pair fed the summary.",
+      "additionalProperties": {
+        "type": "number", "minimum": 0.0, "maximum": 1.0
+      }
+    },
+    "review_queue_count": {
+      "type": "integer", "minimum": 0,
+      "description": "Phase P1: count of extracted decisions that passed Stage 1 (outcome match) but failed Stage 2 (bidirectional text overlap)."
+    },
+    "alignment_threshold": {
+      "type": "number", "minimum": 0.0, "maximum": 1.0,
+      "description": "Phase P1: the bidirectional similarity threshold used to gate matched/review_queue across the run."
     }
   },
   "$defs": {
