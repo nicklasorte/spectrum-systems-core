@@ -1,0 +1,17 @@
+{
+  "artifact_type": "gate_decision",
+  "baseline_eval_summary_id": "5df2a8bd-4a24-458e-ba62-dc3d54136b61",
+  "baseline_scope": "single_transcript",
+  "baseline_type": "development",
+  "created_at": "2026-05-14T01:38:29+00:00",
+  "decision": "allow",
+  "eval_summary_id": "785aba7c-f340-4976-bd5b-04bb45b254f0",
+  "gate_decision_id": "ea597b25-9295-4640-9a69-495423a53335",
+  "provenance": {
+    "produced_by": "RegressionGate"
+  },
+  "reason": "within_thresholds",
+  "regression_detail": [],
+  "run_count": 5,
+  "schema_version": "1.0.0"
+}
