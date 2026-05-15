@@ -1,0 +1,63 @@
+name: Validate data-lake artifacts
+
+# Lightweight integrity check that runs on every push to main that
+# touches the validation surface and on manual workflow_dispatch.
+#
+# Catches the bug classes that cost real debugging time previously:
+#   * decision_few_shot_examples.examples[*].verified set to a string
+#     "true" instead of the boolean the wiring signal predicate
+#     requires.
+#   * Missing glossary aggregate at
+#     store/artifacts/glossary/spectrum_glossary_v1.json.
+#   * audit_log entries with action values outside the schema enum.
+#   * Malformed JSON anywhere under store/artifacts/.
+#
+# This runs BEFORE validate-and-baseline so a bad data-lake state is
+# surfaced as its own red check instead of being buried inside the
+# multi-step baseline workflow.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/validate_data_lake.py'
+      - '.github/workflows/validate-data-lake.yml'
+      - 'tests/data_lake/test_validate_data_lake.py'
+      - 'docs/architecture/artifact_manifest.md'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-data-lake:
+    runs-on: ubuntu-latest
+    env:
+      DATA_LAKE_TOKEN_PRESENT: ${{ secrets.DATA_LAKE_TOKEN != '' && 'yes' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # The data-lake clone needs the PAT. Forked PRs do not have access
+      # to repo secrets — when the secret is absent we mark the job as
+      # skipped so the missing-data-lake state is visible instead of
+      # silently passing.
+      - name: Assert DATA_LAKE_TOKEN present
+        if: env.DATA_LAKE_TOKEN_PRESENT != 'yes'
+        run: |
+          echo "::error::DATA_LAKE_TOKEN not configured — cannot clone data-lake to validate."
+          echo "Set the secret in repo settings: Secrets and variables -> Actions -> DATA_LAKE_TOKEN."
+          exit 1
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      - name: Run validator
+        # Pure stdlib — no pip install needed.
+        run: |
+          python scripts/validate_data_lake.py --data-lake data-lake
