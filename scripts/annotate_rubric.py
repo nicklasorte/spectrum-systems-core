@@ -76,6 +76,45 @@ def _write_pair(path: Path, doc: Dict[str, Any]) -> None:
     )
 
 
+def _load_jsonl_pairs(gt_file: Path) -> List[Dict[str, Any]]:
+    """Load every pair from a human_minutes_gt_pairs.jsonl file.
+
+    One JSON object per non-empty line. Malformed lines are skipped
+    (the file is operator-facing ground truth; a single bad line must
+    not sink the whole rubric pass). Order is preserved.
+    """
+    out: List[Dict[str, Any]] = []
+    try:
+        text = gt_file.read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            doc = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(doc, dict):
+            out.append(doc)
+    return out
+
+
+def _write_jsonl_pairs(gt_file: Path, pairs: List[Dict[str, Any]]) -> None:
+    """Rewrite the JSONL deterministically (sorted by pair_id, compact).
+
+    Mirrors create_human_gt_pairs.py's serialization so an annotate
+    pass leaves the file in the same canonical form the writer emits.
+    """
+    ordered = sorted(pairs, key=lambda p: p.get("pair_id") or "")
+    lines = [
+        json.dumps(p, sort_keys=True, separators=(",", ":"))
+        for p in ordered
+    ]
+    gt_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def annotate_pair(
     pair: Dict[str, Any],
     *,
@@ -101,10 +140,28 @@ def annotate_pair(
     return out
 
 
+def _validate_pair(pair: Dict[str, Any], where: str) -> bool:
+    """Schema-gate a pair before annotating. Returns True when valid."""
+    try:
+        validate_artifact(
+            pair,
+            "ground_truth_pair",
+            where,
+            require_artifact_type_field=False,
+        )
+        return True
+    except ArtifactValidationError as exc:
+        print(f"skip: {where} failed schema: {exc}", file=sys.stderr)
+        return False
+
+
 def apply_annotations_from_file(
-    annotations_path: Path, sdl_root: Path,
+    annotations_path: Path,
+    sdl_root: Path,
+    *,
+    gt_file: Optional[Path] = None,
 ) -> int:
-    """Apply a JSON annotations file to the ground_truth/ directory.
+    """Apply a JSON annotations file to the ground-truth records.
 
     Annotation file shape::
 
@@ -118,6 +175,11 @@ def apply_annotations_from_file(
           },
           ...
         ]
+
+    When ``gt_file`` is given the pairs live in a single
+    human_minutes_gt_pairs.jsonl file and the annotated records are
+    written back into that JSONL in canonical form. Otherwise each
+    pair is the usual ``ground_truth/<pair_id>.json`` file.
 
     Returns the number of pairs successfully annotated.
     """
@@ -134,6 +196,50 @@ def apply_annotations_from_file(
         print("error: annotations file must be a JSON array", file=sys.stderr)
         return -1
 
+    # ---- JSONL (--gt-file) path -------------------------------------
+    if gt_file is not None:
+        pairs = _load_jsonl_pairs(gt_file)
+        if not pairs:
+            print(
+                f"error: no pairs loaded from gt-file {gt_file}",
+                file=sys.stderr,
+            )
+            return -1
+        by_id = {
+            p.get("pair_id"): p for p in pairs if p.get("pair_id")
+        }
+        applied = 0
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            pair_id = rec.get("pair_id")
+            outcome = rec.get("expected_decision_outcome")
+            if not isinstance(pair_id, str) or not isinstance(outcome, str):
+                continue
+            pair = by_id.get(pair_id)
+            if pair is None:
+                print(
+                    f"skip: pair_id={pair_id} not in {gt_file}",
+                    file=sys.stderr,
+                )
+                continue
+            if not _validate_pair(pair, f"{gt_file}#{pair_id}"):
+                continue
+            by_id[pair_id] = annotate_pair(
+                pair,
+                expected_decision_outcome=outcome,
+                verb_discrimination_example=bool(
+                    rec.get("verb_discrimination_example", False)
+                ),
+                annotator_id=rec.get("annotator_id")
+                or "scripts/annotate_rubric.py",
+                notes=rec.get("notes"),
+            )
+            applied += 1
+        _write_jsonl_pairs(gt_file, list(by_id.values()))
+        return applied
+
+    # ---- per-file ground_truth/<pair_id>.json path ------------------
     applied = 0
     for rec in records:
         if not isinstance(rec, dict):
@@ -152,15 +258,7 @@ def apply_annotations_from_file(
         # pair pre-dates the artifact_type convention so we pass
         # ``require_artifact_type_field=False``; structural validity
         # still surfaces any field-name drift.
-        try:
-            validate_artifact(
-                pair,
-                "ground_truth_pair",
-                str(path),
-                require_artifact_type_field=False,
-            )
-        except ArtifactValidationError as exc:
-            print(f"skip: pair_id={pair_id} failed schema: {exc}", file=sys.stderr)
+        if not _validate_pair(pair, str(path)):
             continue
         updated = annotate_pair(
             pair,
@@ -207,27 +305,39 @@ def list_candidates(
     *,
     source_id: Optional[str] = None,
     limit: int = 20,
+    gt_file: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
-    """Walk ground_truth/ and return up to ``limit`` candidate pairs.
+    """Return up to ``limit`` candidate pairs.
 
-    Filters to ``target_type == "decision"`` when present. Balances
-    across decision_outcome buckets per ``DEFAULT_BUCKET_LIMIT``.
+    Default source is the ``ground_truth/`` directory (one JSON per
+    pair). When ``gt_file`` is given, pairs are read from that single
+    human_minutes_gt_pairs.jsonl file instead — this is the seam the
+    updated annotate-gt-rubric / confirm-rubric-annotations workflows
+    use to operate on the non-circular human ground truth.
 
-    When ``source_id`` is given, a pair matches when ANY of its
+    Filters to ``target_type == "decision"`` when present. When
+    ``source_id`` is given, a pair matches when ANY of its
     ``_SOURCE_ID_FIELDS`` equals the filter. GroundTruthLinker pairs
     only carry ``source_artifact_id`` (per the schema); fixture pairs
-    may also carry ``fixture_source_id``; GenerateGTPairs pairs carry
-    a top-level ``source_id`` set to the human-readable transcript
-    slug so mobile workflow_dispatch inputs match without UUID lookup.
+    may also carry ``fixture_source_id``; GenerateGTPairs and
+    HumanMinutesGTPairs pairs carry a top-level ``source_id`` set to
+    the human-readable transcript slug so mobile workflow_dispatch
+    inputs match without UUID lookup.
     """
-    pairs_dir = sdl_root / "ground_truth"
-    if not pairs_dir.is_dir():
-        return []
+    if gt_file is not None:
+        candidates = _load_jsonl_pairs(gt_file)
+    else:
+        pairs_dir = sdl_root / "ground_truth"
+        if not pairs_dir.is_dir():
+            return []
+        candidates = []
+        for path in sorted(pairs_dir.glob("*.json")):
+            pair = _load_pair(path)
+            if pair is not None:
+                candidates.append(pair)
+
     out: List[Dict[str, Any]] = []
-    for path in sorted(pairs_dir.glob("*.json")):
-        pair = _load_pair(path)
-        if pair is None:
-            continue
+    for pair in candidates:
         if source_id and source_id not in _pair_source_ids(pair):
             continue
         if pair.get("target_type") not in (None, "decision"):
@@ -236,18 +346,28 @@ def list_candidates(
     return out[:limit]
 
 
-def _all_source_ids_seen(sdl_root: Path) -> List[str]:
-    """Return the sorted set of every source_id-like value present in
-    the ground_truth/ directory. Used only for the helpful error
-    message when ``--source-id`` matches zero pairs."""
-    pairs_dir = sdl_root / "ground_truth"
-    if not pairs_dir.is_dir():
-        return []
+def _all_source_ids_seen(
+    sdl_root: Path, *, gt_file: Optional[Path] = None
+) -> List[str]:
+    """Return the sorted set of every source_id-like value present.
+
+    Used only for the helpful error message when ``--source-id``
+    matches zero pairs. Reads the JSONL when ``gt_file`` is given,
+    else the ``ground_truth/`` directory.
+    """
+    if gt_file is not None:
+        candidates = _load_jsonl_pairs(gt_file)
+    else:
+        pairs_dir = sdl_root / "ground_truth"
+        if not pairs_dir.is_dir():
+            return []
+        candidates = []
+        for path in sorted(pairs_dir.glob("*.json")):
+            pair = _load_pair(path)
+            if pair is not None:
+                candidates.append(pair)
     seen: set = set()
-    for path in sorted(pairs_dir.glob("*.json")):
-        pair = _load_pair(path)
-        if pair is None:
-            continue
+    for pair in candidates:
         for sid in _pair_source_ids(pair):
             seen.add(sid)
     return sorted(seen)
@@ -262,6 +382,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--sdl-root", default=None,
         help="Override SDL_ROOT (defaults to <data-lake>/store/artifacts).",
+    )
+    parser.add_argument(
+        "--gt-file", default=None,
+        help=(
+            "Optional path to a human_minutes_gt_pairs.jsonl file. When "
+            "set, candidates are read from (and annotations written back "
+            "into) this single JSONL instead of the ground_truth/ "
+            "directory. Used by the create-human-gt-pairs flow."
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -282,8 +411,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"error: sdl_root not a directory: {sdl_root}", file=sys.stderr)
         return 1
 
+    gt_file = Path(args.gt_file) if args.gt_file else None
+    if gt_file is not None and not gt_file.is_file():
+        print(f"error: --gt-file not found: {gt_file}", file=sys.stderr)
+        return 1
+
     if args.apply_from:
-        n = apply_annotations_from_file(Path(args.apply_from), sdl_root)
+        n = apply_annotations_from_file(
+            Path(args.apply_from), sdl_root, gt_file=gt_file,
+        )
         if n < 0:
             return 1
         print(f"applied {n} annotation(s)")
@@ -291,13 +427,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     candidates = list_candidates(
         sdl_root, source_id=args.source_id, limit=args.limit,
+        gt_file=gt_file,
     )
     if not candidates:
         if args.source_id:
             # Codex P1 fix: never silently return empty when --source-id
             # is provided. Surface the available identifiers so the
             # operator can spot a typo or wrong dataset immediately.
-            seen = _all_source_ids_seen(sdl_root)
+            seen = _all_source_ids_seen(sdl_root, gt_file=gt_file)
             preview = seen[:5] if seen else []
             print(
                 f"ERROR: --source-id '{args.source_id}' matched 0 ground "

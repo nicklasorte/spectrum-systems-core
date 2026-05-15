@@ -50,8 +50,8 @@
       "properties": {
         "produced_by": {
           "type": "string",
-          "enum": ["GroundTruthLinker", "GenerateGTPairs"],
-          "description": "Writer that produced this pair. GroundTruthLinker pairs come from transcript<->minutes date matching; GenerateGTPairs pairs are synthesized from an extraction's decisions for rubric annotation seeding."
+          "enum": ["GroundTruthLinker", "GenerateGTPairs", "HumanMinutesGTPairs"],
+          "description": "Writer that produced this pair. GroundTruthLinker pairs come from transcript<->minutes date matching; GenerateGTPairs pairs are synthesized from an extraction's decisions for rubric annotation seeding (self-referential — derived from pipeline output); HumanMinutesGTPairs pairs are extracted directly from the human-authored meeting minutes document and are NON-circular: the pipeline output was never read as input."
         }
       }
     },
@@ -115,6 +115,24 @@
     "ground_truth_pass": {
       "type": ["boolean", "null"],
       "description": "Phase X2.5: optional ground-truth verdict (the annotator's pass/fail), used by judge_calibration to compute agreement_rate_overall."
+    },
+    "extraction_type": {
+      "type": ["string", "null"],
+      "enum": ["decision", "action_item", "claim", null],
+      "description": "Set by HumanMinutesGTPairs. The category the human-authored minutes item falls under. Distinct from target_type only in provenance: extraction_type is the human annotator's category label authored from the minutes document; pairs carry both with the same value so existing rubric tooling that filters on target_type keeps working. Optional so existing GroundTruthLinker/GenerateGTPairs pairs continue to validate."
+    },
+    "human_authored": {
+      "type": ["boolean", "null"],
+      "description": "True only on HumanMinutesGTPairs pairs. This flag is the trust property that distinguishes a non-circular ground-truth pair (extracted from the human-authored minutes) from a self-referential one (synthesized from pipeline output by GenerateGTPairs). Optional so legacy pairs validate."
+    },
+    "verified": {
+      "type": ["boolean", "null"],
+      "description": "True on HumanMinutesGTPairs pairs: the ground_truth_text is taken verbatim/near-verbatim from a human-authored authoritative minutes document, so it requires no further human confirmation. Optional so legacy pairs validate."
+    },
+    "verified_by": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "description": "Identity of the authoritative human source that verified this pair (e.g. 'human_minutes_20251218'). Set by HumanMinutesGTPairs. Optional so legacy pairs validate."
     }
   }
 }
