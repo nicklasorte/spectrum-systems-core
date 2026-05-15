@@ -1,0 +1,155 @@
+name: Annotate human GT (Dec 18 kickoff, one-shot)
+
+# One-shot variant of annotate-gt-rubric.yml with every parameter
+# hardcoded. It auto-classifies the regulatory-verb rubric for the
+# human_minutes_gt_pairs.jsonl produced for the 7 GHz downlink TIG
+# kickoff (2025-12-18) transcript, then pushes the annotations back
+# to nicklasorte/data-lake.
+#
+# Hardcoded values:
+#   source_id       7-ghz-downlink-tig-meeting-kickoff---transcript-20251218
+#   gt_file         store/processed/meetings/7-ghz-downlink-tig-meeting-kickoff---transcript-20251218/ground_truth/human_minutes_gt_pairs.jsonl
+#   limit           20
+#   default_outcome noted
+#
+# No ANTHROPIC_API_KEY needed -- classification is keyword matching
+# against REGULATORY_VERBS from config/taxonomy.py.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_ID: 7-ghz-downlink-tig-meeting-kickoff---transcript-20251218
+  GT_FILE: store/processed/meetings/7-ghz-downlink-tig-meeting-kickoff---transcript-20251218/ground_truth/human_minutes_gt_pairs.jsonl
+  LIMIT: '20'
+  DEFAULT_OUTCOME: noted
+
+jobs:
+  annotate-human-gt-dec18:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      - name: Generate auto-classified annotations file
+        id: generate
+        run: |
+          python - <<'EOF'
+          import json, os, pathlib, sys
+
+          sys.path.insert(0, "scripts")
+          import annotate_rubric
+
+          from spectrum_systems_core.config.taxonomy import OUTCOME_TO_VERBS
+
+          data_lake = pathlib.Path("data-lake").resolve()
+          sdl_root = data_lake / "store" / "artifacts"
+          source_id = os.environ["SOURCE_ID"]
+          limit = int(os.environ["LIMIT"])
+          default_outcome = os.environ["DEFAULT_OUTCOME"]
+          gt_file_input = (os.environ.get("GT_FILE") or "").strip()
+          gt_file = (data_lake / gt_file_input) if gt_file_input else None
+
+          pairs = annotate_rubric.list_candidates(
+              sdl_root, source_id=source_id, limit=limit, gt_file=gt_file,
+              data_lake=data_lake,
+          )
+          if not pairs:
+              seen = annotate_rubric._all_source_ids_seen(
+                  sdl_root, gt_file=gt_file
+              )
+              raise SystemExit(
+                  f"ERROR: source_id '{source_id}' matched 0 pairs. "
+                  f"Available identifiers (first 5): {seen[:5]}"
+              )
+
+          def classify(text: str) -> str:
+              t = (text or "").lower()
+              for outcome, verbs in OUTCOME_TO_VERBS.items():
+                  for verb in verbs:
+                      if verb in t:
+                          return outcome
+              return default_outcome
+
+          out = []
+          for p in pairs:
+              text = (
+                  p.get("ground_truth_text")
+                  or p.get("fixture_minutes_text")
+                  or ""
+              )
+              out.append({
+                  "pair_id": p.get("pair_id"),
+                  "expected_decision_outcome": classify(text),
+                  "verb_discrimination_example": False,
+                  "annotator_id": "auto-classifier",
+                  "notes": (
+                      f"auto-classified from text (default={default_outcome})"
+                  ),
+              })
+
+          pathlib.Path("annotations.json").write_text(
+              json.dumps(out, indent=2), encoding="utf-8"
+          )
+          print(f"wrote {len(out)} proposed annotations to annotations.json")
+          EOF
+
+      - name: Apply auto-classified annotations
+        run: |
+          python scripts/annotate_rubric.py \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            --apply-from annotations.json \
+            --gt-file "${{ github.workspace }}/data-lake/$GT_FILE"
+
+      - name: Push annotations to nicklasorte/data-lake
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            chore: auto-classify rubric for ${{ env.SOURCE_ID }} [skip ci]
+          add_paths: |
+            store/artifacts/ground_truth/
+            store/processed/meetings/${{ env.SOURCE_ID }}/ground_truth/human_minutes_gt_pairs.jsonl
+
+      - name: Post proposals table to step summary
+        if: always()
+        run: |
+          python - <<'EOF'
+          import json, os, pathlib
+
+          path = pathlib.Path("annotations.json")
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
+          with open(summary_path, "a") as f:
+              f.write("## Proposed rubric annotations\n\n")
+              if not path.is_file():
+                  f.write("No annotations file produced.\n")
+                  raise SystemExit(0)
+              records = json.loads(path.read_text(encoding="utf-8"))
+              if not records:
+                  f.write("No pairs matched.\n")
+                  raise SystemExit(0)
+              f.write("| pair_id | proposed outcome |\n")
+              f.write("|---|---|\n")
+              for r in records:
+                  f.write(
+                      f"| `{r.get('pair_id')}` | "
+                      f"{r.get('expected_decision_outcome')} |\n"
+                  )
+              f.write("\n")
+          EOF
