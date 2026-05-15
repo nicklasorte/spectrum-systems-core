@@ -43,4 +43,24 @@ jobs:
         run: python -m pip install -e ".[dev]"
 
       - name: Run pytest
-        run: python -m pytest
+        run: |
+          set -o pipefail
+          python -m pytest -rA --tb=short 2>&1 | tee /tmp/pytest_output.txt
+
+      - name: Surface pytest failures to step summary
+        # Runs only when the pytest step failed. The raw Actions log
+        # requires auth to read; the step summary renders on the public
+        # checks page, so a failure digest here is retrievable without
+        # admin rights. Diagnostic only — does not change pass/fail.
+        if: failure()
+        run: |
+          {
+            echo "## pytest failures"
+            echo ""
+            echo '```'
+            # The short-test-summary block pytest prints at the end with
+            # -rA: every FAILED/ERROR line plus the assertion message.
+            sed -n '/=* short test summary info =*/,$p' /tmp/pytest_output.txt \
+              || tail -n 200 /tmp/pytest_output.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
