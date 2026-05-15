@@ -837,6 +837,39 @@ def _write_orchestration_result(
         return None
 
 
+def _spurious_add_count_from_verification(
+    verification_result: Optional[Dict[str, Any]],
+) -> int:
+    """Phase Z.4: integer count of merged items the post-hoc verifier
+    judged ``unsupported`` or ``contradicted``.
+
+    This is the count behind the verification summary's
+    ``spurious_add_rate`` (post_hoc_verifier._compute_summary:
+    ``spurious_add_rate = (unsupported + contradicted) / total``). It is
+    surfaced on orchestration_result so a fabricated-claim run is visible
+    as a hard count without a downstream consumer re-deriving the rate.
+    It is read from the EXISTING verification summary — it does not
+    re-measure anything.
+
+    Returns 0 when ``verification_result`` is None (Phase V disabled —
+    no verifier ran, so no spurious add was *detected*; 0 is the honest
+    value, not a silent skip) or when the summary is missing/malformed.
+    The synthetic regression test proves the value goes > 0 when the
+    verifier marks an item unsupported, so this is never always-zero.
+    """
+    if not isinstance(verification_result, dict):
+        return 0
+    summary = verification_result.get("summary")
+    if not isinstance(summary, dict):
+        return 0
+    total = 0
+    for key in ("unsupported_count", "contradicted_count"):
+        value = summary.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            total += value
+    return total
+
+
 # -- Phase W (integration wiring) helpers -----------------------------------
 #
 # These helpers wire the Phase T/V modules (versioned glossary,
@@ -1917,6 +1950,14 @@ def run_typed_extraction(
         "glossary_injection_summary": glossary_injection_summary,
         "binding_tuple_call_count": binding_tuple_call_count,
         "scope_overgeneralization_count": len(overgen_findings),
+        # Phase Z.4: always an int (never None) so _write_orchestration_result
+        # does not skip it via the None-filter — the metric is present on
+        # every completed run, 0 when Phase V is off or all items verified.
+        # verification_result is computed above (apply_phase_v_if_enabled);
+        # both _write_orchestration_result call sites receive this dict.
+        "spurious_add_count": _spurious_add_count_from_verification(
+            verification_result
+        ),
     }
 
     try:

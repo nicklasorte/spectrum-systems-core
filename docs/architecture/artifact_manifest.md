@@ -100,6 +100,12 @@ calling `git check-ignore`.
   the workspace.
 - **Readers:** `spectrum_systems_core.health.run_diff`,
   validate-and-baseline workflow, manual diagnostic scripts.
+- **Phase Z.4:** carries an optional `spurious_add_count` (integer ≥ 0)
+  — the count of merged items the post-hoc verifier marked
+  unsupported/contradicted, surfaced from the existing verification
+  summary. Additive: path and Git-tracked status are unchanged;
+  pre-Z.4 artifacts and blocked runs that never ran the verifier
+  remain schema-valid because the property is optional.
 
 ### decision_few_shot_examples
 - **Writer:** `scripts/select_few_shot_examples.py`,
