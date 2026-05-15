@@ -28,6 +28,7 @@ import pytest
 
 from tests.integration.fixtures import (
     make_decision_few_shot_placeholder,
+    make_ground_truth_pair_from_decision,
     make_meeting_extraction_artifact,
     make_source_record,
 )
@@ -304,3 +305,101 @@ def test_annotate_rubric_validates_pair_shape(tmp_path: Path) -> None:
     # And the pair must remain un-annotated.
     saved = json.loads((gt_dir / f"{bad_pair['pair_id']}.json").read_text())
     assert "rubric_notes" not in saved
+
+
+def _run_annotate_list(data_lake: Path) -> subprocess.CompletedProcess:
+    """List candidates for SOURCE_ID (the human-readable slug) via the
+    same subprocess path the mobile annotate-gt-rubric workflow uses."""
+    return subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "annotate_rubric.py"),
+            "--data-lake", str(data_lake),
+            "--source-id", SOURCE_ID,
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+    )
+
+
+def test_annotate_rubric_matches_pair_by_slug(tmp_path: Path) -> None:
+    """SLUG MATCH (end-to-end). A real ``ground_truth_pair`` written by
+    the production writer (``generate_gt_pairs.build_pair`` via the
+    fixture factory) carries a top-level ``source_id`` slug. The script,
+    invoked exactly as the mobile workflow invokes it (--source-id
+    <slug>), must find it. Factory-backed so a writer-side field rename
+    breaks setup, not production."""
+    dl = tmp_path / "data-lake"
+    artifact_id = str(uuid.uuid4())
+
+    proc_dir = dl / "store" / "processed" / "meetings" / SOURCE_ID
+    proc_dir.mkdir(parents=True)
+    (proc_dir / "source_record.json").write_text(
+        json.dumps(make_source_record(SOURCE_ID, artifact_id))
+    )
+
+    pair = make_ground_truth_pair_from_decision(
+        source_id=SOURCE_ID,
+        source_artifact_id=artifact_id,
+        minutes_artifact_id="min-001",
+        decision_text="The Committee approved the 7 GHz downlink plan.",
+    )
+    gt_dir = dl / "store" / "artifacts" / "ground_truth"
+    gt_dir.mkdir(parents=True)
+    (gt_dir / f"{pair['pair_id']}.json").write_text(json.dumps(pair))
+
+    result = _run_annotate_list(dl)
+    assert result.returncode == 0, (
+        f"slug must match the factory pair; stderr: {result.stderr}"
+    )
+    assert pair["pair_id"] in result.stdout
+
+
+def test_annotate_rubric_matches_uuid_only_pair_via_source_record(
+    tmp_path: Path,
+) -> None:
+    """UUID MATCH (end-to-end) — the bug this PR fixes.
+
+    A GroundTruthLinker-shaped pair carries ONLY ``source_artifact_id``
+    (the opaque UUID); the optional top-level ``source_id`` slug is
+    absent (the GT-pair schema requires only ``source_artifact_id``).
+    The operator passes the human-readable slug. Pre-fix this exited
+    "source_id matched 0 pairs" even though the pair existed. The fix
+    resolves the slug to the UUID through ``source_record.json`` and
+    matches on ``source_artifact_id``.
+
+    The envelope is still produced by the real writer; only the
+    optional ``source_id`` is dropped to model the GroundTruthLinker
+    producer's shape (schema-valid — ``source_id`` is not required)."""
+    dl = tmp_path / "data-lake"
+    artifact_id = str(uuid.uuid4())
+
+    proc_dir = dl / "store" / "processed" / "meetings" / SOURCE_ID
+    proc_dir.mkdir(parents=True)
+    (proc_dir / "source_record.json").write_text(
+        json.dumps(make_source_record(SOURCE_ID, artifact_id))
+    )
+
+    pair = make_ground_truth_pair_from_decision(
+        source_id=SOURCE_ID,
+        source_artifact_id=artifact_id,
+        minutes_artifact_id="min-001",
+        decision_text="The Committee approved the 7 GHz downlink plan.",
+    )
+    # GroundTruthLinker shape: no top-level source_id slug. Slug-only
+    # matching CANNOT find this — only source_record resolution can.
+    pair.pop("source_id", None)
+    assert "source_id" not in pair
+    assert pair["source_artifact_id"] == artifact_id
+
+    gt_dir = dl / "store" / "artifacts" / "ground_truth"
+    gt_dir.mkdir(parents=True)
+    (gt_dir / f"{pair['pair_id']}.json").write_text(json.dumps(pair))
+
+    result = _run_annotate_list(dl)
+    assert result.returncode == 0, (
+        "slug must resolve to the UUID via source_record.json and match "
+        f"the pair's source_artifact_id; stderr: {result.stderr}"
+    )
+    assert pair["pair_id"] in result.stdout
