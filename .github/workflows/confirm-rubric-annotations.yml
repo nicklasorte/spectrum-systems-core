@@ -99,6 +99,7 @@ jobs:
 
           pairs = annotate_rubric.list_candidates(
               sdl_root, source_id=source_id, limit=10_000, gt_file=gt_file,
+              data_lake=data_lake,
           )
           if not pairs:
               raise SystemExit(

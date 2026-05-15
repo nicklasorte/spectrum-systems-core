@@ -300,12 +300,98 @@ def _pair_source_ids(pair: Dict[str, Any]) -> List[str]:
     return out
 
 
+# Source families the typed_extraction_runner walks when locating
+# source_record.json. Kept in sync with
+# ``scripts/select_few_shot_examples.py::_SOURCE_FAMILIES`` so the
+# slug -> artifact_id resolution here matches the runner's lookup.
+_SOURCE_FAMILIES: Tuple[str, ...] = (
+    "meetings", "books", "comments", "working_papers", "notes",
+)
+
+
+def _resolve_source_artifact_id(
+    data_lake: Path, source_id: str
+) -> Optional[str]:
+    """Resolve a source_id slug to the source_record artifact_id.
+
+    GroundTruthLinker / GenerateGTPairs pairs identify their source via
+    ``source_artifact_id`` — the UUID the typed_extraction_runner read
+    from ``<data_lake>/store/processed/<family>/<source_id>/
+    source_record.json`` (its ``artifact_id`` field), NOT the slug. A
+    mobile workflow_dispatch passes the human-readable slug, so to match
+    those pairs we must reproduce the runner's lookup here. Mirrors
+    ``scripts/select_few_shot_examples.py::_resolve_source_artifact_id``
+    and ``scripts/generate_gt_pairs.py::_resolve_source_artifact_id``.
+    Returns None when the record is absent (dev checkout / forked PR);
+    callers fall back to direct slug matching.
+    """
+    store_root = data_lake / "store"
+    for family in _SOURCE_FAMILIES:
+        sr_path = (
+            store_root / "processed" / family / source_id / "source_record.json"
+        )
+        if sr_path.is_file():
+            try:
+                data = json.loads(sr_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return None
+            aid = data.get("artifact_id") if isinstance(data, dict) else None
+            if isinstance(aid, str) and aid:
+                return aid
+    return None
+
+
+def _data_lake_from_sdl_root(sdl_root: Path) -> Path:
+    """Best-effort data-lake root for a given sdl_root.
+
+    The standard layout is ``<data_lake>/store/artifacts``; walk up two
+    levels to recover ``<data_lake>``. When ``--sdl-root`` overrides the
+    layout the guessed path may not exist — _resolve_source_artifact_id
+    then returns None and the filter falls back to direct slug matching,
+    so a wrong guess is safe rather than fatal.
+    """
+    if sdl_root.name == "artifacts" and sdl_root.parent.name == "store":
+        return sdl_root.parent.parent
+    return sdl_root
+
+
+def _matches_source(
+    pair: Dict[str, Any],
+    source_id: str,
+    source_artifact_id: Optional[str] = None,
+) -> bool:
+    """Return True when ``pair`` belongs to the requested source.
+
+    Dual-match, mirroring the pattern in
+    ``select_few_shot_examples.py`` / ``generate_gt_pairs.py``:
+
+    1. Direct — the filter value equals any of the pair's
+       source-id-like fields (``source_artifact_id`` /
+       ``fixture_source_id`` / ``source_id``). Covers an operator who
+       passes the slug, the UUID, or a fixture id verbatim, and pairs
+       written by HumanMinutesGTPairs / GenerateGTPairs that carry both
+       the slug and the UUID.
+    2. Resolved — the filter slug was resolved (via source_record.json)
+       to a source_record artifact_id and that UUID equals the pair's
+       ``source_artifact_id``. This is the arm that lets a mobile
+       workflow_dispatch pass the human-readable transcript slug and
+       still match GroundTruthLinker pairs that only carry the opaque
+       ``source_artifact_id`` UUID — the bug this function fixes.
+    """
+    if source_id in _pair_source_ids(pair):
+        return True
+    if source_artifact_id and pair.get("source_artifact_id") == source_artifact_id:
+        return True
+    return False
+
+
 def list_candidates(
     sdl_root: Path,
     *,
     source_id: Optional[str] = None,
     limit: int = 20,
     gt_file: Optional[Path] = None,
+    data_lake: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
     """Return up to ``limit`` candidate pairs.
 
@@ -316,13 +402,22 @@ def list_candidates(
     use to operate on the non-circular human ground truth.
 
     Filters to ``target_type == "decision"`` when present. When
-    ``source_id`` is given, a pair matches when ANY of its
-    ``_SOURCE_ID_FIELDS`` equals the filter. GroundTruthLinker pairs
-    only carry ``source_artifact_id`` (per the schema); fixture pairs
-    may also carry ``fixture_source_id``; GenerateGTPairs and
-    HumanMinutesGTPairs pairs carry a top-level ``source_id`` set to
-    the human-readable transcript slug so mobile workflow_dispatch
-    inputs match without UUID lookup.
+    ``source_id`` is given a pair matches under either arm of
+    ``_matches_source``:
+
+    * Direct — the filter equals any of the pair's source-id-like
+      fields (``source_artifact_id`` / ``fixture_source_id`` /
+      ``source_id``). GenerateGTPairs and HumanMinutesGTPairs pairs
+      carry a top-level ``source_id`` slug so a mobile
+      workflow_dispatch input matches here.
+    * Resolved — the filter slug is resolved to its source_record
+      ``artifact_id`` (via ``source_record.json``) and matched against
+      the pair's ``source_artifact_id``. GroundTruthLinker pairs only
+      carry the opaque UUID, so without this arm a slug filter matches
+      zero pairs even though the pairs exist. ``data_lake`` locates the
+      ``store/processed/<family>/<slug>/source_record.json`` lookup;
+      when omitted it is derived from ``sdl_root``'s standard
+      ``<data_lake>/store/artifacts`` layout.
     """
     if gt_file is not None:
         candidates = _load_jsonl_pairs(gt_file)
@@ -336,9 +431,19 @@ def list_candidates(
             if pair is not None:
                 candidates.append(pair)
 
+    resolved_artifact_id: Optional[str] = None
+    if source_id:
+        dl = (
+            data_lake if data_lake is not None
+            else _data_lake_from_sdl_root(sdl_root)
+        )
+        resolved_artifact_id = _resolve_source_artifact_id(dl, source_id)
+
     out: List[Dict[str, Any]] = []
     for pair in candidates:
-        if source_id and source_id not in _pair_source_ids(pair):
+        if source_id and not _matches_source(
+            pair, source_id, resolved_artifact_id
+        ):
             continue
         if pair.get("target_type") not in (None, "decision"):
             continue
@@ -427,7 +532,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     candidates = list_candidates(
         sdl_root, source_id=args.source_id, limit=args.limit,
-        gt_file=gt_file,
+        gt_file=gt_file, data_lake=Path(args.data_lake),
     )
     if not candidates:
         if args.source_id:

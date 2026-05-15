@@ -223,6 +223,175 @@ def test_unknown_source_id_returns_helpful_error(
     assert "src-001" in err
 
 
+# --- slug OR source_artifact_id dual match -------------------------
+
+# A realistic transcript slug + the opaque UUID it resolves to via
+# source_record.json. These mirror the production failure: the operator
+# (mobile workflow_dispatch) passes the slug, the GT pair carries only
+# the UUID.
+_SLUG = "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218"
+_UUID = "3d7a489a-d6cf-4895-a082-ca2fd3963d56"
+
+
+def _seed_source_record(
+    data_lake: Path, source_id: str, artifact_id: str,
+    family: str = "meetings",
+) -> None:
+    """Write the ingestion-time identity record the resolver reads.
+
+    Only ``artifact_id`` is consumed by
+    ``annotate_rubric._resolve_source_artifact_id``; the rest mirrors
+    the real ``source_record.json`` shape.
+    """
+    sr_dir = data_lake / "store" / "processed" / family / source_id
+    sr_dir.mkdir(parents=True, exist_ok=True)
+    (sr_dir / "source_record.json").write_text(
+        json.dumps(
+            {
+                "artifact_type": "source_record",
+                "schema_version": "1.0.0",
+                "artifact_id": artifact_id,
+                "source_id": source_id,
+                "created_at": "2025-12-18T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_slug_match_works_via_top_level_source_id(tmp_path: Path) -> None:
+    """SLUG MATCH: a pair carrying a top-level ``source_id`` slug must
+    be returned when --source-id is that slug. This is the
+    GenerateGTPairs / HumanMinutesGTPairs shape and exercises the
+    direct arm of ``_matches_source``."""
+    sdl_root = tmp_path / "store" / "artifacts"
+    _seed_gt_pair(
+        sdl_root, "88888888-8888-4888-8888-888888888888",
+        target_type="decision",
+        source_artifact_id=_UUID,
+        source_id=_SLUG,
+    )
+    matched = annotate_rubric.list_candidates(sdl_root, source_id=_SLUG)
+    assert len(matched) == 1
+    assert matched[0]["source_id"] == _SLUG
+
+
+def test_uuid_match_works_via_source_record_resolution(
+    tmp_path: Path,
+) -> None:
+    """UUID MATCH: a GroundTruthLinker-shaped pair whose ONLY source
+    field is ``source_artifact_id`` (the opaque UUID) must still be
+    returned when the operator passes the human-readable slug. The
+    slug is resolved to the UUID through ``source_record.json``.
+
+    Without the dual-match fix this returned 0 pairs even though the
+    pair exists — the exact production failure ("source_id matched 0
+    pairs" while the UUID is in the available-identifiers list)."""
+    sdl_root = tmp_path / "store" / "artifacts"
+    _seed_gt_pair(
+        sdl_root, "99999999-9999-4999-9999-999999999999",
+        target_type="decision",
+        source_artifact_id=_UUID,
+    )  # NOTE: no top-level source_id — slug match alone cannot work
+    _seed_source_record(tmp_path, _SLUG, _UUID)
+
+    matched = annotate_rubric.list_candidates(
+        sdl_root, source_id=_SLUG, data_lake=tmp_path,
+    )
+    assert len(matched) == 1
+    assert matched[0]["source_artifact_id"] == _UUID
+
+
+def test_uuid_match_works_when_data_lake_derived_from_sdl_root(
+    tmp_path: Path,
+) -> None:
+    """The workflow path: callers that pass only ``sdl_root`` (standard
+    ``<data_lake>/store/artifacts`` layout) still resolve the slug —
+    ``data_lake`` is recovered from ``sdl_root`` when not supplied."""
+    sdl_root = tmp_path / "store" / "artifacts"
+    _seed_gt_pair(
+        sdl_root, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+        target_type="decision",
+        source_artifact_id=_UUID,
+    )
+    _seed_source_record(tmp_path, _SLUG, _UUID)
+
+    # No data_lake kwarg — must be derived from sdl_root.
+    matched = annotate_rubric.list_candidates(sdl_root, source_id=_SLUG)
+    assert len(matched) == 1
+    assert matched[0]["source_artifact_id"] == _UUID
+
+
+def test_uuid_match_works_through_jsonl_gt_file(tmp_path: Path) -> None:
+    """The exact mobile-workflow seam: pairs in a
+    human_minutes_gt_pairs.jsonl read via ``gt_file``, operator passes
+    the slug, pair carries only the UUID. Resolution + dual match must
+    still return the pair."""
+    sdl_root = tmp_path / "store" / "artifacts"
+    sdl_root.mkdir(parents=True)
+    gt_file = tmp_path / "human_minutes_gt_pairs.jsonl"
+    pair = _base_pair("bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb")
+    pair["source_artifact_id"] = _UUID
+    pair["target_type"] = "decision"
+    gt_file.write_text(
+        json.dumps(pair, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    _seed_source_record(tmp_path, _SLUG, _UUID)
+
+    matched = annotate_rubric.list_candidates(
+        sdl_root, source_id=_SLUG, gt_file=gt_file, data_lake=tmp_path,
+    )
+    assert len(matched) == 1
+    assert matched[0]["source_artifact_id"] == _UUID
+
+
+def test_slug_without_source_record_still_does_not_false_match(
+    tmp_path: Path,
+) -> None:
+    """Negative guard: when the slug resolves to nothing (no
+    source_record.json) and the pair has neither the slug nor a
+    matching UUID, the filter must NOT match — the fix widens matching
+    without weakening it."""
+    sdl_root = tmp_path / "store" / "artifacts"
+    _seed_gt_pair(
+        sdl_root, "cccccccc-cccc-4ccc-cccc-cccccccccccc",
+        target_type="decision",
+        source_artifact_id=_UUID,
+    )  # no source_record.json seeded -> slug resolves to None
+    matched = annotate_rubric.list_candidates(
+        sdl_root, source_id=_SLUG, data_lake=tmp_path,
+    )
+    assert matched == []
+
+
+def test_matches_source_unit_both_arms() -> None:
+    """Direct unit coverage of the dual-match predicate."""
+    slug_pair = {"source_id": _SLUG, "source_artifact_id": _UUID}
+    uuid_only_pair = {"source_artifact_id": _UUID}
+    other_pair = {"source_artifact_id": "some-other-uuid"}
+
+    # Arm 1: direct membership (slug present on the pair).
+    assert annotate_rubric._matches_source(slug_pair, _SLUG) is True
+    # Arm 1: direct membership (operator passes the UUID itself).
+    assert annotate_rubric._matches_source(uuid_only_pair, _UUID) is True
+    # Arm 2: slug resolved to UUID, pair only carries the UUID.
+    assert (
+        annotate_rubric._matches_source(uuid_only_pair, _SLUG, _UUID)
+        is True
+    )
+    # Resolved id present but pair's UUID differs -> False.
+    assert (
+        annotate_rubric._matches_source(other_pair, _SLUG, _UUID) is False
+    )
+    # No resolved id and slug absent from the pair -> False (the fix
+    # widens matching without weakening it).
+    assert (
+        annotate_rubric._matches_source(uuid_only_pair, _SLUG, None)
+        is False
+    )
+
+
 # --- judge calibration uses rubric_notes -----------------------
 
 
