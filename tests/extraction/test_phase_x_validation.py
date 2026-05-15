@@ -53,6 +53,27 @@ class ValidateArtifactHappyPathTests(unittest.TestCase):
     def test_orchestration_result_valid_artifact_passes(self) -> None:
         validate_artifact(_orchestration_artifact(), "orchestration_result")
 
+    def test_orchestration_result_accepts_spurious_add_count(self) -> None:
+        # Phase Z.4: the new optional field validates at 0 and > 0.
+        validate_artifact(
+            _orchestration_artifact(spurious_add_count=0),
+            "orchestration_result",
+        )
+        validate_artifact(
+            _orchestration_artifact(spurious_add_count=3),
+            "orchestration_result",
+        )
+
+    def test_orchestration_result_additive_without_spurious_add_count(
+        self,
+    ) -> None:
+        # Backward-compat / additive proof: an artifact written before
+        # Phase Z.4 (no spurious_add_count key at all) is still valid
+        # because the property is optional, not in 'required'.
+        art = _orchestration_artifact()
+        self.assertNotIn("spurious_add_count", art)
+        validate_artifact(art, "orchestration_result")
+
     def test_calibration_warning_valid_artifact_passes(self) -> None:
         validate_artifact(
             {
@@ -97,6 +118,16 @@ class ValidateArtifactRejectionTests(unittest.TestCase):
         # schema with additionalProperties: false will reject it.
         bad = _orchestration_artifact()
         bad["artifact_kind"] = "orchestration_result"
+        with self.assertRaises(ArtifactValidationError):
+            validate_artifact(bad, "orchestration_result")
+
+    def test_negative_spurious_add_count_fails(self) -> None:
+        bad = _orchestration_artifact(spurious_add_count=-1)
+        with self.assertRaises(ArtifactValidationError):
+            validate_artifact(bad, "orchestration_result")
+
+    def test_non_integer_spurious_add_count_fails(self) -> None:
+        bad = _orchestration_artifact(spurious_add_count="3")
         with self.assertRaises(ArtifactValidationError):
             validate_artifact(bad, "orchestration_result")
 

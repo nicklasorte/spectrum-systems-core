@@ -75,6 +75,11 @@
       "type": "integer",
       "minimum": 0,
       "description": "Phase X2.6: number of correction_candidate artifacts with review_status in ('reviewed', 'reviewed_after_expiry') for this source."
+    },
+    "spurious_add_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Phase Z.4: count of merged extraction items the post-hoc verifier marked unsupported or contradicted (the integer numerator behind the verification summary's spurious_add_rate). 0 when Phase V verification is disabled or every item verified. Optional and additive: orchestration_result artifacts written before Phase Z.4, and blocked/early-exit runs that never ran the verifier, remain schema-valid because this property is not in 'required'."
     }
   }
 }

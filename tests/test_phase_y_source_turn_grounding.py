@@ -371,6 +371,43 @@ def test_non_list_source_turns_fails_explicitly(tmp_path):
     )
 
 
+def test_empty_source_turns_list_fails_source_turn_validity(tmp_path):
+    """Mission constraint: source_turns must enforce minItems:1 — an
+    empty list IS a violation. The non-list (string) case is covered by
+    ``test_non_list_source_turns_fails_explicitly``; this pins the
+    distinct empty-list ``[]`` code path (source_turn_validity.py:
+    ``if not source_turns -> empty_source_turns_list``) so a future
+    refactor cannot let ``"source_turns": []`` pass the deterministic
+    gate silently. Schema-level minItems:1 on the v2 extraction
+    artifact is already covered by
+    ``tests/extraction/test_phase_r_binding.py`` and
+    ``tests/extraction/test_source_turn_ids.py``; this is the grounded
+    core-artifact analogue at the eval gate."""
+    chunks = [
+        {"turn_id": "t0000", "speaker": "A", "text": "x", "line_start": 1, "line_end": 1},
+    ]
+    sr_path = _write_source_record_to_disk(tmp_path, "m-empty-list", chunks)
+
+    target = new_artifact(
+        artifact_type="meeting_minutes",
+        payload={
+            "schema_version": "1.1.0",
+            "grounding": [
+                {"kind": "decision", "text": "x", "source_turns": []}
+            ],
+        },
+        trace_id="trace-test",
+        status="draft",
+    )
+
+    eval_result = run_source_turn_validity_eval(target, sr_path)
+    assert eval_result.payload["status"] == "fail"
+    assert any(
+        "empty_source_turns_list" in r
+        for r in eval_result.payload["reason_codes"]
+    ), f"expected empty_source_turns_list in {eval_result.payload['reason_codes']!r}"
+
+
 # ---------------------------------------------------------------------------
 # Rejection: invalid source_record on disk.
 # ---------------------------------------------------------------------------
