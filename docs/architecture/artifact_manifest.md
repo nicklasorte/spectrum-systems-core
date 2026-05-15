@@ -119,14 +119,53 @@ calling `git check-ignore`.
   `scripts/generate_gt_pairs.py` (Phase X2 follow-up: synthesizes
   decision-derived pairs from a `meeting_extraction` so the
   annotate-gt-rubric mobile workflow has input to operate on after a
-  single-transcript debug run).
+  single-transcript debug run — SELF-REFERENTIAL, derived from
+  pipeline output),
+  `scripts/create_human_gt_pairs.py` (extracts NON-circular pairs
+  directly from the human-authored minutes `.docx`; emitted as the
+  `human_minutes_gt_pairs` JSONL below, not as per-pair files here).
 - **Path template:** `data-lake/store/artifacts/ground_truth/<artifact_id>.json`
 - **Schema:** `contracts/schemas/ingestion/ground_truth_pair.schema.json`
+  — extended with optional `extraction_type`, `human_authored`,
+  `verified`, `verified_by` fields and a new `provenance.produced_by`
+  value `HumanMinutesGTPairs`. All additions are optional so existing
+  GroundTruthLinker / GenerateGTPairs pairs continue to validate.
 - **Git-tracked:** YES — the eval-ground-truth CLI reads every pair
   in this directory.
 - **Readers:** `evals.m4.runner` via `eval-ground-truth` CLI,
   `scripts/annotate_rubric.py`,
   `scripts/review_gt_pairs.py` (Phase P1).
+
+### human_minutes_gt_pairs
+- **Writer:** `scripts/create_human_gt_pairs.py` (the
+  create-human-gt-pairs workflow). One schema-valid
+  `ground_truth_pair` envelope per JSONL line, extracted by
+  `claude-sonnet-4-20250514` from the human-authored meeting minutes
+  `.docx`. Carries `human_authored: true`, `verified: true`,
+  `verified_by`, and `provenance.produced_by == "HumanMinutesGTPairs"`.
+  These pairs are NON-circular: the pipeline's `meeting_extraction`
+  output is never read as input — only the minutes `.docx` and
+  `source_record.json` (the ingestion identity record).
+- **Path template:** `data-lake/store/processed/meetings/<source_id>/ground_truth/human_minutes_gt_pairs.jsonl`
+- **Schema:** `contracts/schemas/ingestion/ground_truth_pair.schema.json`
+  (one envelope per line; same schema as `ground_truth_pair`).
+- **Git-tracked:** NO — the path lives under `processed/`, which the
+  `nicklasorte/data-lake` repo bulk-ignores via `**/processed/**`
+  (the same rule that shadows everything except the explicitly
+  un-ignored `source_record.json`). The create-human-gt-pairs and
+  rubric workflows stage this exact path via `push-data-lake`, but
+  for the commit to actually land the **data-lake repo** must add an
+  explicit negation `!**/processed/**/ground_truth/human_minutes_gt_pairs.jsonl`
+  mirroring the existing `!**/processed/**/source_record.json`
+  precedent. Until that data-lake-repo `.gitignore` change lands the
+  `git add` is a no-op for this file. Per-artifact gitignore
+  enforcement inside the data-lake repo is that repo's
+  responsibility (see spectrum-systems-core `.gitignore` comment);
+  the spectrum-systems-core `_gitignore_audit.py` only audits
+  `Git-tracked: YES` entries, so this entry does not gate CI.
+- **Readers:** `scripts/annotate_rubric.py` (via the new `--gt-file`
+  seam), `evals.m4.runner` via `eval-ground-truth` once the data-lake
+  negation is in place.
 
 ### gt_pair_review
 - **Writer:** `scripts/review_gt_pairs.py` (Phase P1 — human-in-the-loop

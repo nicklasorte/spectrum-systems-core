@@ -1,0 +1,129 @@
+name: Create human-authored GT pairs (Dec 18 minutes)
+
+# Produces the FIRST non-circular ground truth for single-transcript
+# validation. The current baseline is self-referential (coverage=1.000,
+# precision=1.000) because GT pairs were synthesized from the pipeline's
+# own meeting_extraction output (scripts/generate_gt_pairs.py). This
+# workflow extracts decisions / action items / claims directly from the
+# human-authored meeting-minutes .docx in nicklasorte/data-lake using
+# Claude Sonnet 4 (claude-sonnet-4-6 — the task named the dated
+# 2025-05-14 Sonnet 4 alias, but the binding no-deprecated-model-strings
+# CI gate maps it to claude-sonnet-4-6; same Sonnet 4 generation, NOT
+# the Haiku extraction default), so the pairs measure quality honestly.
+#
+# The script never reads pipeline output. It reads only the minutes
+# .docx and source_record.json (the ingestion identity record).
+#
+# dry_run defaults to TRUE: the first run should be inspected before
+# the JSONL is committed to nicklasorte/data-lake.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run: extract and print pairs, do NOT write/commit'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      source_id:
+        description: 'Transcript slug the minutes belong to'
+        required: false
+        default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
+      minutes_file:
+        description: 'Minutes .docx path (relative to the data-lake clone)'
+        required: false
+        default: 'store/raw/minutes/7 GHz Downlink TIG Kickoff Meeting Minutes 20251218 FINAL.docx'
+
+permissions:
+  contents: read
+
+jobs:
+  create-human-gt-pairs:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+      SDL_ROOT: ${{ github.workspace }}/data-lake/store/artifacts
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install anthropic  # explicit safety net
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      - name: Create human-authored GT pairs
+        id: create
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          SOURCE_ID: ${{ github.event.inputs.source_id }}
+          MINUTES_FILE: ${{ github.event.inputs.minutes_file }}
+        run: |
+          DRY_FLAG=""
+          if [ "$DRY_RUN" = "true" ]; then
+            DRY_FLAG="--dry-run"
+          fi
+          python scripts/create_human_gt_pairs.py \
+            --data-lake "${{ github.workspace }}/data-lake" \
+            --source-id "$SOURCE_ID" \
+            --minutes-file "$MINUTES_FILE" \
+            $DRY_FLAG | tee /tmp/gt_summary.json
+
+      - name: Push GT pairs to nicklasorte/data-lake
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            evals: human-authored GT pairs for ${{ github.event.inputs.source_id }} [skip ci]
+          add_paths: |
+            store/processed/meetings/${{ github.event.inputs.source_id }}/ground_truth/human_minutes_gt_pairs.jsonl
+
+      - name: Post summary
+        if: always()
+        run: |
+          python - <<'EOF'
+          import json, os, pathlib
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
+          p = pathlib.Path("/tmp/gt_summary.json")
+          with open(summary_path, "a") as f:
+              f.write("## Human-authored GT pairs\n\n")
+              if not p.is_file():
+                  f.write("No summary produced (script did not run).\n")
+                  raise SystemExit(0)
+              # The script prints a JSON object; tee may prepend nothing.
+              text = p.read_text(encoding="utf-8").strip()
+              try:
+                  data = json.loads(text)
+              except json.JSONDecodeError:
+                  f.write("```\n" + text + "\n```\n")
+                  raise SystemExit(0)
+              f.write(f"- status: **{data.get('status')}**\n")
+              f.write(f"- dry_run: {data.get('dry_run')}\n")
+              extracted = data.get("pairs_extracted", data.get("pairs_written", 0))
+              f.write(f"- pairs: **{extracted}**\n")
+              by_type = data.get("by_type") or {}
+              if by_type:
+                  f.write("- by extraction_type:\n")
+                  for k in sorted(by_type):
+                      f.write(f"  - {k}: {by_type[k]}\n")
+              if data.get("output_path"):
+                  f.write(f"- output: `{data['output_path']}`\n")
+              if data.get("reason"):
+                  f.write(f"- reason: {data['reason']}\n")
+          EOF

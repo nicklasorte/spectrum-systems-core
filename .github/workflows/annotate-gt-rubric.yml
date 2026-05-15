@@ -41,6 +41,13 @@ on:
           - action_required
           - noted
           - question
+      gt_file:
+        description: >-
+          Optional path (relative to the data-lake clone) to a
+          human_minutes_gt_pairs.jsonl. When set, operate on that
+          JSONL instead of the ground_truth/ directory.
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -81,12 +88,16 @@ jobs:
           source_id = os.environ["SOURCE_ID"]
           limit = int(os.environ["LIMIT"])
           default_outcome = os.environ["DEFAULT_OUTCOME"]
+          gt_file_input = (os.environ.get("GT_FILE") or "").strip()
+          gt_file = (data_lake / gt_file_input) if gt_file_input else None
 
           pairs = annotate_rubric.list_candidates(
-              sdl_root, source_id=source_id, limit=limit,
+              sdl_root, source_id=source_id, limit=limit, gt_file=gt_file,
           )
           if not pairs:
-              seen = annotate_rubric._all_source_ids_seen(sdl_root)
+              seen = annotate_rubric._all_source_ids_seen(
+                  sdl_root, gt_file=gt_file
+              )
               raise SystemExit(
                   f"ERROR: source_id '{source_id}' matched 0 pairs. "
                   f"Available identifiers (first 5): {seen[:5]}"
@@ -126,12 +137,20 @@ jobs:
           SOURCE_ID: ${{ github.event.inputs.source_id }}
           LIMIT: ${{ github.event.inputs.limit }}
           DEFAULT_OUTCOME: ${{ github.event.inputs.batch_decision }}
+          GT_FILE: ${{ github.event.inputs.gt_file }}
 
       - name: Apply auto-classified annotations
+        env:
+          GT_FILE: ${{ github.event.inputs.gt_file }}
         run: |
+          GT_FLAG=""
+          if [ -n "$GT_FILE" ]; then
+            GT_FLAG="--gt-file ${{ github.workspace }}/data-lake/$GT_FILE"
+          fi
           python scripts/annotate_rubric.py \
             --data-lake "${{ github.workspace }}/data-lake" \
-            --apply-from annotations.json
+            --apply-from annotations.json \
+            $GT_FLAG
 
       - name: Push annotations to nicklasorte/data-lake
         uses: ./.github/actions/push-data-lake
@@ -141,6 +160,7 @@ jobs:
             chore: auto-classify rubric for ${{ github.event.inputs.source_id }} [skip ci]
           add_paths: |
             store/artifacts/ground_truth/
+            store/processed/meetings/${{ github.event.inputs.source_id }}/ground_truth/human_minutes_gt_pairs.jsonl
 
       - name: Post proposals table to step summary
         if: always()

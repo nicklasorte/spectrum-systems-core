@@ -222,6 +222,39 @@ def make_gt_pair_review(
     )
 
 
+def make_human_minutes_gt_pair(
+    *,
+    source_id: str,
+    source_artifact_id: str,
+    ground_truth_text: str,
+    extraction_type: str = "decision",
+) -> Dict[str, Any]:
+    """Produce a human-authored ``ground_truth_pair`` via the real writer.
+
+    Calls ``scripts.create_human_gt_pairs.build_pair`` so the output is
+    byte-shape identical to what the live ``create_human_gt_pairs.py``
+    writes. If the writer renames a field, every test that depends on
+    this factory rebuilds against the new shape on the next run — no
+    per-test dict edits required (CLAUDE.md integration-test rule).
+    """
+    import sys as _sys
+
+    scripts_dir = (
+        __import__("pathlib").Path(__file__).resolve().parents[2] / "scripts"
+    )
+    if str(scripts_dir) not in _sys.path:
+        _sys.path.insert(0, str(scripts_dir))
+
+    import create_human_gt_pairs  # type: ignore  # noqa: WPS433
+
+    return create_human_gt_pairs.build_pair(
+        source_id=source_id,
+        source_artifact_id=source_artifact_id,
+        ground_truth_text=ground_truth_text,
+        extraction_type=extraction_type,
+    )
+
+
 def make_decision_few_shot_placeholder(
     extraction_type: str = "decision",
 ) -> Dict[str, Any]:
