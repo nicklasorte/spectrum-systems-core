@@ -154,11 +154,17 @@ calling `git check-ignore`.
   (the same rule that shadows everything except the explicitly
   un-ignored `source_record.json`). The create-human-gt-pairs and
   rubric workflows stage this exact path via `push-data-lake`, but
-  for the commit to actually land the **data-lake repo** must add an
-  explicit negation `!**/processed/**/ground_truth/human_minutes_gt_pairs.jsonl`
-  mirroring the existing `!**/processed/**/source_record.json`
-  precedent. Until that data-lake-repo `.gitignore` change lands the
-  `git add` is a no-op for this file. Per-artifact gitignore
+  for the commit to actually land the **data-lake repo** must carry
+  the GENERAL negation
+  `!**/processed/**/ground_truth/human_minutes_gt_pairs.jsonl`
+  (covering every `<source_id>`, not just Dec 18) mirroring the
+  existing `!**/processed/**/source_record.json` precedent. The
+  `create-human-gt-pairs-batch` workflow ENSURES this exact general
+  line in the data-lake clone's `.gitignore` (idempotent — only
+  appends when absent) and commits it in the same single push, so the
+  batch path is self-healing; a missing or Dec-18-specific negation in
+  the data-lake repo no longer makes the `git add` a silent no-op for
+  later transcripts. Per-artifact gitignore
   enforcement inside the data-lake repo is that repo's
   responsibility (see spectrum-systems-core `.gitignore` comment);
   the spectrum-systems-core `_gitignore_audit.py` only audits
