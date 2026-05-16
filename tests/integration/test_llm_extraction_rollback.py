@@ -29,6 +29,7 @@ from tests.llm_stub import (
     DEC18_ACTION_ITEMS,
     DEC18_DECISIONS,
     DEC18_OPEN_QUESTIONS,
+    DEC18_TECHNICAL_PARAMETERS,
     json_stub,
     load_fixture,
 )
@@ -55,6 +56,7 @@ def test_rollback_both_flag_states_promote_and_are_queryable(tmp_path):
             decisions=DEC18_DECISIONS,
             action_items=DEC18_ACTION_ITEMS,
             open_questions=DEC18_OPEN_QUESTIONS,
+            technical_parameters=DEC18_TECHNICAL_PARAMETERS,
         ),
         meeting_id="m-dec18-llm",
         env={"ANTHROPIC_API_KEY": "sk-test"},
@@ -98,6 +100,7 @@ def test_llm_arm_eval_history_records_threshold_for_audit(tmp_path):
             decisions=DEC18_DECISIONS,
             action_items=DEC18_ACTION_ITEMS,
             open_questions=DEC18_OPEN_QUESTIONS,
+            technical_parameters=DEC18_TECHNICAL_PARAMETERS,
         ),
         meeting_id=source_id,
         source_id=source_id,

@@ -298,3 +298,73 @@ def test_missing_legacy_required_field_fails():
     del art["decisions"]
     with pytest.raises(ArtifactValidationError):
         validate_artifact(art, ARTIFACT_TYPE)
+
+
+# ---- Step 6: stakeholders + confidence on a structured decision --------
+
+
+def _decision_object(**overrides) -> dict:
+    base = {
+        "text": "The group approved the 7 GHz downlink threshold.",
+        "verb": "approved",
+        "stakeholders": ["NTIA", "DoD"],
+        "confidence": 0.9,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_structured_decision_with_stakeholders_and_confidence_validates():
+    art = _fully_populated()
+    art["decisions"] = [_decision_object()]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_structured_decision_without_optional_fields_validates():
+    """stakeholders and confidence are OPTIONAL — a structured decision
+    carrying only the required `text` still validates (additivity)."""
+    art = _fully_populated()
+    art["decisions"] = [{"text": "The group deferred the methodology."}]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_structured_decision_confidence_null_validates():
+    art = _fully_populated()
+    art["decisions"] = [_decision_object(confidence=None)]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_legacy_string_and_structured_decision_mix_validates():
+    """A decisions array may mix legacy strings and structured objects
+    — the schema `oneOf` keeps both forms valid in one list."""
+    art = _fully_populated()
+    art["decisions"] = ["Legacy string decision still allowed.", _decision_object()]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_decision_confidence_out_of_range_fails():
+    art = _fully_populated()
+    art["decisions"] = [_decision_object(confidence=1.5)]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_decision_stakeholders_not_array_fails():
+    art = _fully_populated()
+    art["decisions"] = [_decision_object(stakeholders="NTIA")]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_decision_object_unknown_key_fails():
+    art = _fully_populated()
+    art["decisions"] = [_decision_object(smuggled="x")]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_decision_object_missing_required_text_fails():
+    art = _fully_populated()
+    art["decisions"] = [{"verb": "approved", "confidence": 0.5}]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)

@@ -4,16 +4,17 @@ fences.
 
 # Output schema (exact)
 
-Return a single JSON object. The first three keys are the legacy
-content arrays and MUST be arrays of strings. The remaining keys are
-the structured arrays; each is an array of objects with the exact
-fields shown. EVERY key below must be present. An empty array (`[]`)
-is a valid and expected value for any of them. Do not add any other
-keys. Do not wrap the object in another object.
+Return a single JSON object. `action_items` and `open_questions` MUST
+be arrays of strings. `decisions` is an array whose items are EITHER a
+plain verbatim string OR an object (see below) — mix freely. The
+remaining keys are the structured arrays; each is an array of objects
+with the exact fields shown. EVERY key below must be present. An empty
+array (`[]`) is a valid and expected value for any of them. Do not add
+any other keys. Do not wrap the object in another object.
 
 ```
 {
-  "decisions": ["<verbatim or near-verbatim decision text>", ...],
+  "decisions": ["<verbatim decision text>", {"text":"<verbatim decision text>","verb":"approved","stakeholders":["DoD"],"confidence":0.9}, ...],
   "action_items": ["<verbatim or near-verbatim action text>", ...],
   "open_questions": ["<verbatim or near-verbatim question text>", ...],
   "commitments": [{"commitment_id","owner","commitment_text","due","source_speaker"}, ...],
@@ -28,11 +29,24 @@ keys. Do not wrap the object in another object.
 }
 ```
 
-`decisions`, `action_items`, and `open_questions` stay arrays of plain
-strings — do NOT turn them into objects. Each `*_id` field is a short
-unique slug you assign (e.g. `"risk-1"`, `"risk-2"`). Any field with
-no value in the transcript is `null` (for the nullable scalar fields
-shown) — never invented.
+`action_items` and `open_questions` stay arrays of plain strings — do
+NOT turn them into objects. A `decisions` item may be a plain verbatim
+string OR an object `{"text","verb","stakeholders","confidence"}`:
+
+- `text`: the verbatim or near-verbatim decision text (required in the
+  object form).
+- `verb`: the governing decision verb actually used in the transcript
+  (e.g. "approved", "deferred", "adopted", "rejected").
+- `stakeholders`: list the names of stakeholders affected by or
+  responsible for this decision; empty array if unclear.
+- `confidence`: your confidence 0.0-1.0 that this is a real decision
+  vs. discussion; omit if uncertain.
+
+Use the object form whenever you can attribute stakeholders or a
+confidence; otherwise a plain string is fine. Each `*_id` field is a
+short unique slug you assign (e.g. `"risk-1"`, `"risk-2"`). Any field
+with no value in the transcript is `null` (for the nullable scalar
+fields shown) — never invented.
 
 # Grounding rules (binding — these are the trust property)
 

@@ -19,6 +19,7 @@ from tests.llm_stub import (
     DEC18_ACTION_ITEMS,
     DEC18_DECISIONS,
     DEC18_OPEN_QUESTIONS,
+    DEC18_TECHNICAL_PARAMETERS,
     json_stub,
     load_fixture,
     text_stub,
@@ -66,6 +67,7 @@ def test_step4_happy_content_with_items_passes():
             decisions=DEC18_DECISIONS,
             action_items=DEC18_ACTION_ITEMS,
             open_questions=DEC18_OPEN_QUESTIONS,
+            technical_parameters=DEC18_TECHNICAL_PARAMETERS,
         ),
     )
     nonempty = _eval(result, NONEMPTY_EVAL_TYPE)
@@ -94,11 +96,14 @@ def test_step5_happy_all_items_in_source():
             decisions=DEC18_DECISIONS,
             action_items=DEC18_ACTION_ITEMS,
             open_questions=DEC18_OPEN_QUESTIONS,
+            technical_parameters=DEC18_TECHNICAL_PARAMETERS,
         ),
     )
     within = _eval(result, WITHIN_SOURCE_EVAL_TYPE)
     assert within["status"] == "pass"
-    assert within["items_in_source"] == 4
+    # 2 decisions + 1 action + 1 question (legacy) + 1 grounded
+    # technical_parameters.value (Step 4 structured within-source).
+    assert within["items_in_source"] == 5
     assert within["items_not_in_source"] == 0
 
 
@@ -169,6 +174,7 @@ def test_step6_coverage_emits_numeric_float_and_threshold(tmp_path):
             decisions=DEC18_DECISIONS,
             action_items=DEC18_ACTION_ITEMS,
             open_questions=DEC18_OPEN_QUESTIONS,
+            technical_parameters=DEC18_TECHNICAL_PARAMETERS,
         ),
         source_id=source_id,
         lake_root=tmp_path,
@@ -194,6 +200,7 @@ def test_step6_no_gt_file_still_numeric_and_passes():
             decisions=DEC18_DECISIONS,
             action_items=DEC18_ACTION_ITEMS,
             open_questions=DEC18_OPEN_QUESTIONS,
+            technical_parameters=DEC18_TECHNICAL_PARAMETERS,
         ),
         source_id="missing",
         lake_root=None,

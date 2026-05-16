@@ -25,8 +25,32 @@
 
     "decisions": {
       "type": "array",
-      "description": "Legacy shape: list of verbatim decision strings. Not restructured here (the task adds structure only to action_items / open_questions); leaving decisions as string items keeps every existing regex / LLM artifact valid.",
-      "items": { "type": "string" }
+      "description": "Additive (schema-version-agnostic): an item may be a legacy verbatim decision STRING or a structured object. The string branch keeps every existing regex / LLM artifact and the legacy LLM strict-schema path valid. The object branch carries the canonical typed-decision shape (`text`, optional `verb`) plus the two optional architecture-review fields `stakeholders` and `confidence`. `text`/`verb` match what evals/regulatory_verb.py reads so an object-form decision is still verb-classified, not silently bypassed.",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["text"],
+            "properties": {
+              "text": { "type": "string", "minLength": 1 },
+              "verb": { "type": "string" },
+              "stakeholders": {
+                "type": "array",
+                "description": "Optional, default []. Names of stakeholders affected by or responsible for this decision. Empty array when the transcript does not make it clear (default applied by the producer/model, not enforced by JSON Schema).",
+                "items": { "type": "string" }
+              },
+              "confidence": {
+                "type": ["number", "null"],
+                "minimum": 0.0,
+                "maximum": 1.0,
+                "description": "Optional. Model confidence 0.0-1.0 that this is a real decision vs. discussion. Null or omitted when uncertain; any number outside [0.0, 1.0] fails the gate."
+              }
+            }
+          }
+        ]
+      }
     },
 
     "action_items": {

@@ -17,8 +17,13 @@ on, never an exception that crashes the loop). Each uses a distinct
 Eval map:
 
 - ``llm_extraction_strict_schema``        reason ``schema_violation``
-- ``llm_extraction_nonempty_required``    reason ``extraction_empty_with_content``
+  (full meeting_minutes.schema.json validation, before the write)
+- ``llm_extraction_nonempty_required``    reason
+  ``extraction_empty_with_content`` and/or
+  ``extraction_empty_with_content:proxy_types``
 - ``extraction_within_source_required``   reason ``extraction_not_in_source``
+  (legacy arrays — string AND object form — plus commitment_text /
+  risk_text / technical_parameters.value)
 - ``extraction_vs_human_minutes_coverage``observe-only; numeric
   ``coverage_percent`` + ``threshold`` fields (never blocks).
 """
@@ -30,6 +35,11 @@ from pathlib import Path
 from typing import Any
 
 from ..artifacts import Artifact, new_artifact
+from ..validation import (
+    ArtifactValidationError,
+    SchemaNotFoundError,
+    validate_artifact,
+)
 
 # ---- eval_type constants (stable, machine-grepable) ----------------------
 
@@ -42,8 +52,49 @@ GT_COVERAGE_EVAL_TYPE = "extraction_vs_human_minutes_coverage"
 
 SCHEMA_VIOLATION = "schema_violation"
 EXTRACTION_EMPTY_WITH_CONTENT = "extraction_empty_with_content"
+# Step 5: even when the three legacy arrays are non-empty, a
+# content-bearing transcript must yield at least one of the
+# fact-bearing proxy arrays. Distinct suffix so the operator can tell
+# the legacy-empty case from the proxy-empty case in eval_history.
+EXTRACTION_EMPTY_PROXY_TYPES = "extraction_empty_with_content:proxy_types"
 EXTRACTION_NOT_IN_SOURCE = "extraction_not_in_source"
 NO_GT_PAIRS = "no_gt_pairs"
+
+# The flat-artifact projection meeting_minutes.schema.json validates:
+# ``{"artifact_type": <type>, **payload}`` — exactly the shape
+# tests/test_meeting_minutes_schema.py validates and the documented
+# pattern meeting_extraction.schema.json uses.
+_MEETING_MINUTES_TYPE = "meeting_minutes"
+
+# Step 5 proxy arrays. At least one must be non-empty on a
+# content-bearing transcript (fact-bearing extraction must not be
+# entirely missing the technical record).
+_PROXY_NONEMPTY_ARRAYS = (
+    "technical_parameters",
+    "named_artifacts",
+    "scheduled_events",
+)
+
+# Step 4: structured arrays whose listed text field must appear in the
+# transcript (same normalized-substring algorithm as the legacy
+# within-source check). Deliberately excludes attendees / topics /
+# scheduled_events / regulatory_references / cross_references /
+# named_artifacts — those legitimately carry paraphrased or
+# proper-noun text per the PR #123 design.
+_WITHIN_SOURCE_STRUCTURED = (
+    ("commitments", "commitment_text"),
+    ("risks", "risk_text"),
+    ("technical_parameters", "value"),
+)
+
+# Primary text field for the structured (object) form of each legacy
+# required array. Used so an item switched from a plain string to the
+# schema's ``oneOf`` object form cannot bypass the within-source gate.
+_LEGACY_OBJECT_TEXT_KEY = {
+    "decisions": "text",
+    "action_items": "action",
+    "open_questions": "question_text",
+}
 
 # The three arrays the strict LLM schema requires. The regex
 # meeting_minutes extractor also emits exactly these (as ``[]`` when
@@ -130,18 +181,56 @@ def _content_present(transcript_text: str) -> bool:
 
 
 def _iter_item_texts(payload: dict[str, Any]) -> list[tuple[str, str]]:
-    """Yield ``(array_key, item_text)`` for every string item in the
-    three required arrays. Non-list arrays and non-string items are
-    skipped here — the strict-schema eval is what fails on those, so
-    this function stays robust and never raises."""
+    """Yield ``(array_key, item_text)`` for every grounded text in the
+    three required arrays.
+
+    A string item yields its text. An object item (the schema
+    ``oneOf`` form for action_items / open_questions, and the
+    Step 6 structured-decision form) yields its primary text field
+    (``decisions.text`` / ``action_items.action`` /
+    ``open_questions.question_text``) so switching an item from a
+    string to an object cannot bypass the within-source gate. Non-list
+    arrays and unrecognised item shapes are skipped — the strict-schema
+    eval fails closed on those, so this function stays robust and never
+    raises."""
     out: list[tuple[str, str]] = []
     for key in _REQUIRED_ARRAYS:
         arr = payload.get(key)
         if not isinstance(arr, list):
             continue
+        text_key = _LEGACY_OBJECT_TEXT_KEY.get(key)
         for item in arr:
             if isinstance(item, str) and item.strip():
                 out.append((key, item))
+            elif isinstance(item, dict) and text_key:
+                val = item.get(text_key)
+                if isinstance(val, str) and val.strip():
+                    out.append((key, val))
+    return out
+
+
+def _iter_structured_source_texts(
+    payload: dict[str, Any]
+) -> list[tuple[str, str]]:
+    """Yield ``(array_key, text)`` for the Step 4 structured arrays
+    whose listed text field must be grounded in the transcript.
+
+    Robust by construction: non-list arrays, non-dict items and
+    missing / non-string text fields are skipped (the strict-schema
+    eval validates their shape and blocks closed on a violation, so a
+    skip here can never let an ungrounded item through — the item is
+    already blocked upstream)."""
+    out: list[tuple[str, str]] = []
+    for key, text_field in _WITHIN_SOURCE_STRUCTURED:
+        arr = payload.get(key)
+        if not isinstance(arr, list):
+            continue
+        for item in arr:
+            if not isinstance(item, dict):
+                continue
+            val = item.get(text_field)
+            if isinstance(val, str) and val.strip():
+                out.append((key, val))
     return out
 
 
@@ -149,17 +238,37 @@ def _iter_item_texts(payload: dict[str, Any]) -> list[tuple[str, str]]:
 
 
 def run_llm_strict_schema_eval(artifact: Artifact) -> Artifact:
-    """Strict shape gate for the LLM extraction payload.
+    """Strict schema gate for the LLM extraction payload.
 
-    Requires: payload is an object that contains ``decisions``,
-    ``action_items`` and ``open_questions``, each a list of strings.
-    A raw string at the top level, a missing array, or a non-list /
-    non-string-item array all fail with the ``schema_violation`` reason
-    code → control blocks → artifact unpromoted. Empty arrays are
-    valid (the constitution permits an empty, faithful extraction).
+    This is the gate Step 3 specifies: it validates the assembled
+    payload against ``schemas/meeting_minutes.schema.json`` and fails
+    closed with ``schema_violation`` on any mismatch. It runs as an
+    eval inside the governed loop, BEFORE the control decision and the
+    promotion gate, so a schema-violating payload is never promoted and
+    therefore never written under ``processed/`` — validation strictly
+    precedes the artifact write.
+
+    Two layers, fail-closed:
+
+    1. Cheap structural pre-checks emit precise, stable reason codes
+       (``payload_not_object``, ``missing_array:<k>``,
+       ``not_a_list:<k>``) so the operator and the existing
+       rejection-path tests get an exact pointer.
+    2. The authoritative check: the WHOLE flat artifact
+       ``{"artifact_type": <type>, **payload}`` is validated against
+       the real JSON Schema. This is what carries the nine PR #123
+       structured arrays and the Step 6 ``stakeholders`` /
+       ``confidence`` fields — the legacy ``list[str]`` forms and the
+       ``oneOf`` object forms both validate (schema additivity); an
+       explicit ``null`` array, a malformed structured item, an
+       out-of-enum value, or an unknown key all fail
+       ``schema_violation`` → control blocks → unpromoted.
+
+    Empty arrays are valid (the constitution permits an empty, faithful
+    extraction). The eval never raises: any unexpected validator error
+    is itself a fail-closed ``schema_violation``.
     """
     payload = artifact.payload
-    reasons: list[str] = []
     if not isinstance(payload, dict):
         return _eval_result(
             STRICT_SCHEMA_EVAL_TYPE,
@@ -167,24 +276,59 @@ def run_llm_strict_schema_eval(artifact: Artifact) -> Artifact:
             passed=False,
             reason_codes=[f"{SCHEMA_VIOLATION}:payload_not_object"],
         )
+
+    reasons: list[str] = []
     for key in _REQUIRED_ARRAYS:
         if key not in payload:
             reasons.append(f"{SCHEMA_VIOLATION}:missing_array:{key}")
             continue
-        value = payload[key]
-        if not isinstance(value, list):
+        if not isinstance(payload[key], list):
             reasons.append(f"{SCHEMA_VIOLATION}:not_a_list:{key}")
-            continue
-        for idx, item in enumerate(value):
-            if not isinstance(item, str):
-                reasons.append(
-                    f"{SCHEMA_VIOLATION}:item_not_string:{key}[{idx}]"
-                )
+    if reasons:
+        # A required array is missing or not a list. The flat-schema
+        # check below would also reject this, but the precise codes
+        # above are a better operator pointer — return them directly.
+        return _eval_result(
+            STRICT_SCHEMA_EVAL_TYPE,
+            artifact,
+            passed=False,
+            reason_codes=reasons,
+        )
+
+    flat = {"artifact_type": artifact.artifact_type, **payload}
+    try:
+        validate_artifact(flat, _MEETING_MINUTES_TYPE)
+    except ArtifactValidationError as exc:
+        return _eval_result(
+            STRICT_SCHEMA_EVAL_TYPE,
+            artifact,
+            passed=False,
+            reason_codes=[f"{SCHEMA_VIOLATION}:{exc}"],
+        )
+    except SchemaNotFoundError:
+        # The schema file is part of the repo; its absence is a
+        # fail-closed condition, never a silent pass.
+        return _eval_result(
+            STRICT_SCHEMA_EVAL_TYPE,
+            artifact,
+            passed=False,
+            reason_codes=[f"{SCHEMA_VIOLATION}:no_schema"],
+        )
+    except Exception as exc:  # noqa: BLE001 — eval never raises
+        return _eval_result(
+            STRICT_SCHEMA_EVAL_TYPE,
+            artifact,
+            passed=False,
+            reason_codes=[
+                f"{SCHEMA_VIOLATION}:validator_error:{type(exc).__name__}"
+            ],
+        )
+
     return _eval_result(
         STRICT_SCHEMA_EVAL_TYPE,
         artifact,
-        passed=not reasons,
-        reason_codes=reasons,
+        passed=True,
+        reason_codes=[],
     )
 
 
@@ -210,15 +354,35 @@ def run_llm_nonempty_eval(
         if isinstance(arr, list):
             combined += len(arr)
 
-    if _content_present(transcript_text) and combined == 0:
+    proxy_total = 0
+    for key in _PROXY_NONEMPTY_ARRAYS:
+        arr = payload.get(key)
+        if isinstance(arr, list):
+            proxy_total += len(arr)
+
+    if not _content_present(transcript_text):
+        # Empty-on-empty (short / procedural transcript) is allowed —
+        # the constitution's "never invent" rule, not a failure.
         return _eval_result(
-            NONEMPTY_EVAL_TYPE,
-            artifact,
-            passed=False,
-            reason_codes=[EXTRACTION_EMPTY_WITH_CONTENT],
+            NONEMPTY_EVAL_TYPE, artifact, passed=True, reason_codes=[]
         )
+
+    reasons: list[str] = []
+    if combined == 0:
+        reasons.append(EXTRACTION_EMPTY_WITH_CONTENT)
+    if proxy_total == 0:
+        # Step 5: a content-bearing transcript records a technical /
+        # artifact / scheduling fact somewhere — at least one of
+        # technical_parameters / named_artifacts / scheduled_events
+        # must be non-empty. An all-empty trio is a silent
+        # under-extraction the legacy three arrays cannot catch.
+        reasons.append(EXTRACTION_EMPTY_PROXY_TYPES)
+
     return _eval_result(
-        NONEMPTY_EVAL_TYPE, artifact, passed=True, reason_codes=[]
+        NONEMPTY_EVAL_TYPE,
+        artifact,
+        passed=not reasons,
+        reason_codes=reasons,
     )
 
 
@@ -240,7 +404,15 @@ def run_llm_within_source_eval(
     """
     payload = artifact.payload if isinstance(artifact.payload, dict) else {}
     haystack = _normalize(transcript_text)
-    items = _iter_item_texts(payload)
+    # Legacy required arrays (string OR object form) PLUS the Step 4
+    # structured arrays (commitment_text / risk_text /
+    # technical_parameters.value). All share the one binding
+    # normalized-substring algorithm — paraphrase-tolerant arrays
+    # (attendees, topics, scheduled_events, regulatory_references,
+    # cross_references, named_artifacts) are deliberately NOT here.
+    items = _iter_item_texts(payload) + _iter_structured_source_texts(
+        payload
+    )
 
     in_source = 0
     not_in_source = 0
@@ -385,6 +557,7 @@ __all__ = [
     "GT_COVERAGE_EVAL_TYPE",
     "SCHEMA_VIOLATION",
     "EXTRACTION_EMPTY_WITH_CONTENT",
+    "EXTRACTION_EMPTY_PROXY_TYPES",
     "EXTRACTION_NOT_IN_SOURCE",
     "NO_GT_PAIRS",
     "GT_COVERAGE_THRESHOLD",
