@@ -75,12 +75,18 @@ class AnthropicJSONClient:
 
         try:
             client = anthropic.Anthropic()
-            message = client.messages.create(
-                model=self._model,
-                max_tokens=self._max_tokens,
-                system=system,
-                messages=[{"role": "user", "content": user}],
-            )
+            call_kwargs: dict = {
+                "model": self._model,
+                "max_tokens": self._max_tokens,
+                "system": system,
+                "messages": [{"role": "user", "content": user}],
+            }
+            # claude-opus-4-7 does not support sampling params; omit entirely
+            if "opus-4-7" in self._model:
+                call_kwargs.pop("temperature", None)
+                call_kwargs.pop("top_p", None)
+                call_kwargs.pop("top_k", None)
+            message = client.messages.create(**call_kwargs)
         except Exception as exc:  # noqa: BLE001 - transport is opaque; fail closed
             raise LLMClientError(
                 f"live extraction call failed: {type(exc).__name__}: {exc}"
