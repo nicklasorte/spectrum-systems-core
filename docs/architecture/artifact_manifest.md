@@ -329,6 +329,38 @@ calling `git check-ignore`.
   into the governed loop). Consumed by humans / future eval comparison
   only.
 
+### comparison_result
+- **Writer:** `scripts/compare_opus_haiku.py` (the compare-opus-haiku
+  workflow — System 1 of the self-improvement loop). ONE JSON object
+  per file, the full `comparison_result` envelope. ZERO model calls:
+  the diff is pure case-insensitive, whitespace-normalized substring
+  matching (the same rule as the `extraction_within_source_required`
+  eval), so the artifact is replay-stable for the same Opus baseline +
+  Haiku artifact inputs. The script reads ONLY the Opus reference
+  baseline, the promoted Haiku `meeting_minutes` artifact (whose
+  `payload.provenance.produced_by` MUST be `meeting_minutes_llm` — a
+  regex-extractor artifact is rejected fail-closed), and (optionally)
+  the human GT pairs. It never reads a model.
+- **Path template:** `data-lake/store/processed/meetings/<source_id>/comparisons/haiku_vs_opus_<run_id>.json`
+- **Schema:** `src/spectrum_systems_core/schemas/comparison_result.schema.json`
+  (validated by the script BEFORE the write — a malformed
+  comparison_result is never written).
+- **Git-tracked:** NO — same reasoning as `opus_reference_minutes`:
+  the path lives under `processed/`, which the `nicklasorte/data-lake`
+  repo bulk-ignores via `**/processed/**`. The compare-opus-haiku
+  workflow ENSURES the general negations
+  `!**/processed/**/comparisons/*.json` and
+  `!**/processed/**/eval_history.jsonl` in the data-lake clone's
+  `.gitignore` (idempotent — only appends when absent) and commits
+  them in the same push, mirroring the existing
+  `!**/processed/**/source_record.json` precedent. Per-artifact
+  gitignore enforcement inside the data-lake repo is that repo's
+  responsibility; `_gitignore_audit.py` only audits `Git-tracked: YES`
+  entries, so this entry does not gate CI.
+- **Readers:** `scripts/correction_miner.py` (System 2 — reads every
+  `comparison_result` for a source to mine systematic failure
+  patterns). Never read back into the governed loop.
+
 ### gt_pair_review
 - **Writer:** `scripts/review_gt_pairs.py` (Phase P1 — human-in-the-loop
   confirmation of a pair's `expected_decision_outcome`).

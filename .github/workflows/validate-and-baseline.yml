@@ -60,6 +60,9 @@ on:
 
 permissions:
   contents: read
+  # actions: write so the post-baseline step can dispatch
+  # compare-opus-haiku.yml (the self-improvement loop entry point).
+  actions: write
 
 env:
   TARGET_SOURCE_ID: ${{ github.event.inputs.source_id || '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218' }}
@@ -380,6 +383,59 @@ jobs:
             store/artifacts/evals/
             store/artifacts/health/
             store/artifacts/glossary/
+
+      # ------------------------------------------------------------------
+      # 5. Self-improvement loop entry: once the baseline is set, kick
+      #    the Haiku-vs-Opus comparison IFF both the Opus baseline and
+      #    a Haiku LLM meeting_minutes artifact exist for the target.
+      #    A missing input is a clean skip, never a workflow failure —
+      #    the comparison/correction loop is opportunistic.
+      # ------------------------------------------------------------------
+      - name: Trigger Haiku-vs-Opus comparison
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          MEET_DIR="$DATA_LAKE_PATH/store/processed/meetings/$TARGET_SOURCE_ID"
+          OPUS="$MEET_DIR/reference_baselines/opus_reference_minutes.jsonl"
+          HAVE_OPUS=no
+          HAVE_HAIKU=no
+          if [ -s "$OPUS" ]; then
+            HAVE_OPUS=yes
+          fi
+          # A Haiku LLM artifact is a meeting_minutes__*.json whose
+          # payload.provenance.produced_by == "meeting_minutes_llm".
+          # A regex-extractor artifact does NOT count (comparing it to
+          # the Opus baseline is meaningless).
+          if [ -d "$MEET_DIR" ]; then
+            FOUND="$(python - "$MEET_DIR" <<'EOF'
+          import glob, json, os, sys
+          mdir = sys.argv[1]
+          for p in sorted(glob.glob(os.path.join(mdir, "meeting_minutes__*.json"))):
+              try:
+                  art = json.load(open(p, encoding="utf-8"))
+              except Exception:
+                  continue
+              prov = (art.get("payload") or {}).get("provenance") or {}
+              if prov.get("produced_by") == "meeting_minutes_llm":
+                  print("yes")
+                  break
+          EOF
+          )"
+            if [ "$FOUND" = "yes" ]; then
+              HAVE_HAIKU=yes
+            fi
+          fi
+          if [ "$HAVE_OPUS" = "yes" ] && [ "$HAVE_HAIKU" = "yes" ]; then
+            echo "Dispatching compare-opus-haiku.yml for $TARGET_SOURCE_ID"
+            gh workflow run compare-opus-haiku.yml \
+              -f source_id="$TARGET_SOURCE_ID" \
+              -f dry_run=false \
+              --repo "${{ github.repository }}"
+          else
+            echo "skipped: missing opus baseline or haiku llm output (opus=$HAVE_OPUS haiku=$HAVE_HAIKU)"
+          fi
 
       # ------------------------------------------------------------------
       # Step summary -- single-page operator view.

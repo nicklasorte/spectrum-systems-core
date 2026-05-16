@@ -1,0 +1,187 @@
+"""Integration contract test for ``scripts/compare_opus_haiku.py``.
+
+CLAUDE.md non-negotiable: a script that reads a pipeline artifact
+(the promoted ``meeting_minutes`` envelope) and calls
+``validate_artifact`` must have an integration test that
+
+  1. Uses ``tests/integration/fixtures.py`` factories — never a
+     hand-rolled dict — to produce the artifact via the real writer
+     (here: the real LLM governed loop + ``write_promoted_artifact``).
+  2. Writes artifacts to a real temp directory (not mocked).
+  3. Calls the script via ``subprocess.run`` against the temp dir.
+  4. Asserts the correct output on disk (not just the return code).
+
+This catches writer/reader field drift at the fixture-factory level
+before the script logic runs — the exact bug class CLAUDE.md cites.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import uuid
+from pathlib import Path
+
+from tests.integration.fixtures import (
+    make_human_minutes_gt_pair,
+    make_opus_reference_baseline,
+    make_promoted_meeting_minutes_artifact,
+    make_source_record,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = REPO_ROOT / "scripts" / "compare_opus_haiku.py"
+SOURCE_ID = "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218"
+OPUS_MODEL = "claude-opus-4-6"
+
+DECISIONS = ["The group approved the 7 GHz downlink threshold."]
+ACTION_ITEMS = ["DoD will submit revised ERP values before the next session."]
+OPEN_QUESTIONS = [
+    "What is the coordination distance for federal incumbents?"
+]
+
+
+def _seed(tmp_path: Path, *, gt: bool = True, llm: bool = True) -> Path:
+    dl = tmp_path / "data-lake"
+    store = dl / "store"
+    sid_dir = store / "processed" / "meetings" / SOURCE_ID
+    sid_dir.mkdir(parents=True)
+    source_artifact_id = str(uuid.uuid4())
+    (sid_dir / "source_record.json").write_text(
+        json.dumps(make_source_record(SOURCE_ID, source_artifact_id)),
+        encoding="utf-8",
+    )
+
+    make_opus_reference_baseline(
+        data_lake_root=dl,
+        source_id=SOURCE_ID,
+        source_artifact_id=source_artifact_id,
+        model=OPUS_MODEL,
+        items_by_type={
+            "decisions": DECISIONS
+            + ["The group deferred the aggregate interference methodology."],
+            "action_items": ACTION_ITEMS,
+            "open_questions": OPEN_QUESTIONS,
+        },
+    )
+
+    if llm:
+        path = make_promoted_meeting_minutes_artifact(
+            lake_root=store,
+            source_id=SOURCE_ID,
+            decisions=DECISIONS,
+            action_items=ACTION_ITEMS,
+            open_questions=OPEN_QUESTIONS,
+        )
+        assert path.name.startswith("meeting_minutes__")
+        assert path.is_file()
+
+    if gt:
+        gt_path = (
+            sid_dir / "ground_truth" / "human_minutes_gt_pairs.jsonl"
+        )
+        gt_path.parent.mkdir(parents=True, exist_ok=True)
+        pair = make_human_minutes_gt_pair(
+            source_id=SOURCE_ID,
+            source_artifact_id=source_artifact_id,
+            ground_truth_text=DECISIONS[0],
+            extraction_type="decision",
+        )
+        gt_path.write_text(json.dumps(pair) + "\n", encoding="utf-8")
+
+    return dl
+
+
+def _run(args: list[str]):
+    env = dict(os.environ)
+    env.pop("ANTHROPIC_API_KEY", None)  # prove no live model path
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env=env,
+    )
+
+
+def _comparison_artifact(dl: Path) -> Path:
+    comp_dir = (
+        dl / "store" / "processed" / "meetings" / SOURCE_ID
+        / "comparisons"
+    )
+    files = sorted(comp_dir.glob("haiku_vs_opus_*.json"))
+    assert files, f"no comparison artifact under {comp_dir}"
+    return files[-1]
+
+
+def test_subprocess_writes_comparison_and_eval_history(
+    tmp_path: Path,
+) -> None:
+    dl = _seed(tmp_path)
+    result = _run(["--data-lake", str(dl), "--source-id", SOURCE_ID])
+    assert result.returncode == 0, (
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+
+    art = json.loads(
+        _comparison_artifact(dl).read_text(encoding="utf-8")
+    )
+    assert art["artifact_type"] == "comparison_result"
+    assert "artifact_kind" not in json.dumps(art)
+    assert art["schema_version"] == "1.0.0"
+    assert art["opus_model_id"] == OPUS_MODEL
+    s = art["summary"]
+    # Opus = 2 decisions + 1 action + 1 question = 4. Haiku reproduced
+    # 1 decision + 1 action + 1 question = 3 verbatim. The deferred
+    # decision is the one false negative.
+    assert s["total_opus_items"] == 4
+    assert s["total_haiku_items"] == 3
+    assert s["true_positives"] == 3
+    assert s["false_negatives"] == 1
+    assert s["haiku_recall_vs_opus"] == 0.75
+    assert s["haiku_precision_vs_opus"] == 1.0
+    assert s["gt_recall_haiku"] == 1.0
+
+    eh = (
+        dl / "store" / "processed" / "meetings" / SOURCE_ID
+        / "eval_history.jsonl"
+    )
+    rows = [
+        json.loads(ln)
+        for ln in eh.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    assert any(
+        r.get("eval_type") == "haiku_vs_opus_comparison" for r in rows
+    )
+
+
+def test_subprocess_dry_run_writes_nothing(tmp_path: Path) -> None:
+    dl = _seed(tmp_path)
+    result = _run(
+        ["--data-lake", str(dl), "--source-id", SOURCE_ID, "--dry-run"]
+    )
+    assert result.returncode == 0, result.stderr
+    comp_dir = (
+        dl / "store" / "processed" / "meetings" / SOURCE_ID
+        / "comparisons"
+    )
+    assert not comp_dir.exists() or not list(comp_dir.glob("*.json"))
+
+
+def test_subprocess_missing_opus_baseline_halts(tmp_path: Path) -> None:
+    dl = tmp_path / "data-lake"
+    (dl / "store" / "processed" / "meetings" / SOURCE_ID).mkdir(
+        parents=True
+    )
+    result = _run(["--data-lake", str(dl), "--source-id", SOURCE_ID])
+    assert result.returncode == 1
+    assert "missing_opus_baseline" in result.stdout
+
+
+def test_subprocess_no_llm_artifact_halts(tmp_path: Path) -> None:
+    dl = _seed(tmp_path, llm=False)
+    result = _run(["--data-lake", str(dl), "--source-id", SOURCE_ID])
+    assert result.returncode == 1
+    assert "missing_haiku_llm_output" in result.stdout

@@ -1,0 +1,178 @@
+name: Run correction miner
+
+# System 2 of the self-improvement loop. Reads every comparison_result
+# for a source_id, mines the systematic patterns in what Haiku missed,
+# asks Opus (resolved from ai/registry/model_registry.json) for
+# ADDITIVE prompt additions, re-evaluates each with Haiku (also from
+# the registry) through the real governed loop, and promotes the best
+# candidate via a DRAFT PR — but ONLY when it improves F1 vs Opus by
+# STRICTLY more than 0.05.
+#
+# Auto-trigger: compare-opus-haiku.yml dispatches THIS workflow with
+# dry_run=false whenever haiku_f1_vs_opus < 0.70 (the inner loop kicks
+# itself when quality drops). It is also runnable manually.
+#
+# dry_run defaults to TRUE: analyze + generate candidates, run NO
+# evaluation and open NO PR, so the operator can inspect the patterns
+# and proposed additions before any model spend or prompt change.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_id:
+        description: 'Transcript slug to mine corrections for'
+        required: true
+        default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
+      dry_run:
+        description: 'Dry run: analyze + generate only (no eval, no PR)'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      max_candidates:
+        description: 'Max candidates (hard cap 3)'
+        required: false
+        default: '3'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  run-correction-miner:
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_ID: ${{ github.event.inputs.source_id }}
+      DRY_RUN: ${{ github.event.inputs.dry_run }}
+      MAX_CANDIDATES: ${{ github.event.inputs.max_candidates }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install anthropic  # explicit safety net
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      - name: Configure git identity for the correction PR
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Ensure data-lake .gitignore negation
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          CLONE_PATH: ${{ github.workspace }}/data-lake
+        run: |
+          set -euo pipefail
+          GI="$CLONE_PATH/.gitignore"
+          touch "$GI"
+          add_rule() {
+            grep -qxF "$1" "$GI" || printf '%s\n' "$1" >> "$GI"
+          }
+          add_rule '!**/processed/**/'
+          add_rule '!**/processed/**/eval_history.jsonl'
+          echo "Ensured eval_history negation in data-lake .gitignore"
+
+      - name: Run correction miner
+        id: miner
+        env:
+          # The script's default PR opener shells `gh pr create
+          # --draft` on a promotion; gh needs a token. Only consumed
+          # on the non-dry-run promotion path.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ARGS=( --data-lake "${{ github.workspace }}/data-lake" --source-id "$SOURCE_ID" )
+          if [ "$DRY_RUN" = "true" ]; then
+            ARGS+=( --dry-run )
+          else
+            ARGS+=( --no-dry-run )
+          fi
+          if [ -n "${MAX_CANDIDATES:-}" ]; then
+            ARGS+=( --max-candidates "$MAX_CANDIDATES" )
+          fi
+          # STDOUT is pure JSON; tee it for the summary step.
+          python scripts/correction_miner.py "${ARGS[@]}" \
+            | tee /tmp/correction_result.json
+
+      - name: Push eval_history (promotion row) to nicklasorte/data-lake
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            chore(correction): record correction-miner run for ${{ env.SOURCE_ID }} [skip ci]
+          add_paths: |
+            .gitignore
+            store/processed/
+
+      - name: Post summary
+        if: always()
+        run: |
+          python - <<'EOF'
+          import json, os, pathlib
+          sp = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
+          p = pathlib.Path("/tmp/correction_result.json")
+          with open(sp, "a") as f:
+              f.write("## Correction miner\n\n")
+              if not p.is_file() or not p.read_text().strip():
+                  f.write("No result produced (script halted; see log).\n")
+                  raise SystemExit(0)
+              try:
+                  d = json.loads(p.read_text())
+              except json.JSONDecodeError:
+                  f.write("```\n" + p.read_text() + "\n```\n")
+                  raise SystemExit(0)
+              if d.get("status") != "success":
+                  f.write(f"- status: **{d.get('status')}**\n")
+                  f.write(f"- reason: `{d.get('reason')}`\n")
+                  f.write(f"- detail: {d.get('detail')}\n")
+                  raise SystemExit(0)
+              f.write(f"- source: `{d.get('source_id')}`\n")
+              f.write(f"- dry_run: {d.get('dry_run')}\n\n")
+              f.write("### Failure patterns\n\n")
+              f.write("| pattern | frequency | % of FNs |\n|---|---|---|\n")
+              for pat in d.get("patterns", []):
+                  f.write(
+                      f"| {pat['pattern_type']} | {pat['frequency']} | "
+                      f"{pat['percentage_of_fns']:.0%} |\n"
+                  )
+              scores = d.get("scores", [])
+              if scores:
+                  f.write("\n### Candidate scores\n\n")
+                  f.write("| candidate | f1 | delta_f1 | > 0.05 |\n|---|---|---|---|\n")
+                  for s in scores:
+                      f.write(
+                          f"| `{s['candidate_id'][:8]}` | "
+                          f"{s['f1_vs_opus']:.3f} | {s['delta_f1']:+.3f} | "
+                          f"{'YES' if s['better_than_baseline'] else 'no'} |\n"
+                      )
+              promo = d.get("promotion", {})
+              f.write("\n### Promotion decision\n\n")
+              if promo.get("promoted"):
+                  f.write(
+                      f"- **PROMOTED** candidate "
+                      f"`{promo.get('candidate_id', '')[:8]}` "
+                      f"(pattern `{promo.get('pattern_addressed')}`, "
+                      f"Δ {promo.get('delta_f1', 0):+.3f})\n"
+                      f"- backup: `{promo.get('backup_path')}`\n"
+                      f"- branch: `{promo.get('branch')}`\n"
+                  )
+              else:
+                  f.write(f"- no promotion — {promo.get('reason')}\n")
+          EOF
