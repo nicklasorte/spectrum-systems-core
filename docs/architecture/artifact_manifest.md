@@ -118,6 +118,65 @@ calling `git check-ignore`.
     the whole flat payload against this schema file BEFORE promotion,
     so a schema violation blocks the write rather than shipping a
     malformed artifact.
+- **schema_version 1.2.0 additive optional fields** (all optional;
+  every legacy 1.0.0 / 1.1.0 artifact validates unchanged — proven by
+  `tests/test_meeting_minutes_schema.py` across all 6 golden
+  transcripts on all three versions). "Within-source coverage" =
+  whether the field's text is a verbatim/near-verbatim span of the
+  transcript that the within-source eval could check.
+  - `rationale` — on each `decisions` object item. Purpose: the
+    stated reason WHY a decision was made (the explicit
+    justification, distinct from background context). Within-source
+    coverage: yes (verbatim speaker justification). Set by: extraction
+    model.
+  - `external_references` — on each `claims` object item (the
+    `claims` array is itself new in 1.2.0). Purpose: documents,
+    ITU articles, or CFR sections explicitly cited as evidence for
+    the claim. Within-source coverage: no (proper-noun citations,
+    not verbatim spans — same exclusion class as `named_artifacts`).
+    Set by: extraction model.
+  - `evidence_in_transcript` — on each `claims` object item.
+    Purpose: `turn_id`s where evidence SUPPORTING the claim was
+    presented, deliberately distinct from the PR #128
+    grounding/`source_turns` (where the claim was STATED); the
+    PR #128 grounding contract is unchanged. Within-source coverage:
+    n/a (a `turn_id` list, not extracted text). Set by: extraction
+    model.
+  - `follow_up_required` — on each `action_items` object item.
+    Purpose: true when a human must act before the next meeting,
+    false for completed/informational items (producer default
+    true). Within-source coverage: no (a status flag, not text).
+    Set by: extraction model.
+  - `word_level_timestamps` — top-level boolean. Purpose: whether
+    the transcript's `chunks.jsonl` carries word-level timestamps;
+    false for the current docx inputs, infrastructure for future
+    diarized transcripts. Within-source coverage: n/a (ingestion
+    signal). Set by: chunker (`data_lake/chunker.py`), never the
+    extraction model; surfaces onto the artifact header on the
+    grounded path.
+  - `sentiment_indicators` — top-level array of
+    `{turn_id, speaker, sentiment, text_preview}`; `sentiment` is one
+    of `disagreement` / `concern` / `strong_endorsement` /
+    `uncertainty` / `frustration`. Purpose: speaker turns flagged for
+    notable, unambiguous sentiment (a high bar — never routine formal
+    language). Within-source coverage: yes (`text_preview` is the
+    leading slice of the flagged turn). Set by: extraction model.
+  - `meeting_phases` — top-level array of
+    `{phase_id, phase_name, start_turn_id, end_turn_id, summary}`;
+    `phase_name` is one of `opening` / `working_session` / `q_and_a`
+    / `wrap_up` / `other`. Purpose: ordered high-level segmentation of
+    the meeting. Within-source coverage: no (structural segmentation;
+    `summary` is a paraphrase). Set by: extraction model.
+  - Carry-through: `claims`, `sentiment_indicators`, and
+    `meeting_phases` are added to
+    `workflows/meeting_minutes_llm._STRUCTURED_ARRAYS` so a
+    model-emitted value reaches the artifact and is validated
+    fail-closed by the strict-schema eval (an explicit `null` or a
+    malformed item blocks promotion — never silently dropped). The
+    Opus reference-baseline workflow derives its extraction types
+    from this schema, so all three new arrays have
+    `_PRIMARY_TEXT_FIELD` mappings (`claim_text` / `text_preview` /
+    `phase_name`).
 - **Git-tracked:** NO — `meeting_minutes` product artifacts live in
   the separate `nicklasorte/data-lake` repo under
   `processed/meetings/` (data-lake contract §6.1: only promoted

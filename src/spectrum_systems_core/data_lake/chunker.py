@@ -37,6 +37,13 @@ can tell which boundary heuristic produced it:
 ``word_count`` is ``len(text.split())`` — a cheap deterministic size
 signal used by the recursive fallback and available to consumers.
 
+Every chunk also carries ``word_level_timestamps`` (always ``False``
+here). This is infrastructure for future diarized transcripts: the
+current plain-text / docx inputs carry no word-level timing data, so
+the chunker emits ``False`` for every chunk. The extraction model
+never sets this field — it is a chunker-owned ingestion-time signal
+that surfaces unchanged onto the ``meeting_minutes`` artifact header.
+
 Speaker null rate (the fraction of chunks with ``speaker is None``) is
 a health signal:
 
@@ -148,6 +155,10 @@ def _make_chunk(
         "line_end": line_end,
         "chunker_version": chunker_version,
         "word_count": len(text.split()),
+        # Always False for the current plain-text / docx inputs (no
+        # word-level timing). Set by the chunker, never the model;
+        # surfaces onto the meeting_minutes artifact header.
+        "word_level_timestamps": False,
         "agenda_item_id": agenda_item_id,
     }
 

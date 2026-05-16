@@ -368,3 +368,295 @@ def test_decision_object_missing_required_text_fails():
     art["decisions"] = [{"verb": "approved", "confidence": 0.5}]
     with pytest.raises(ArtifactValidationError):
         validate_artifact(art, ARTIFACT_TYPE)
+
+
+# ---- schema_version 1.2.0 additive fields ------------------------------
+#
+# Trust property: every 1.2.0 field is optional, so a 1.0.0 / 1.1.0
+# artifact validates unchanged; a present-but-malformed value (enum
+# miss, wrong type) is rejected fail-closed, never silently accepted.
+
+
+def _claim(**overrides) -> dict:
+    base = {
+        "claim_id": "claim-1",
+        "claim_text": "The 7 GHz downlink threshold protects federal incumbents.",
+    }
+    base.update(overrides)
+    return base
+
+
+def _sentiment(**overrides) -> dict:
+    base = {
+        "turn_id": "t0042",
+        "speaker": "DoD Rep",
+        "sentiment": "disagreement",
+        "text_preview": "I strongly object to this approach for the 7 GHz downlink threshold.",
+    }
+    base.update(overrides)
+    return base
+
+
+def _phase(**overrides) -> dict:
+    base = {
+        "phase_id": "phase-1",
+        "phase_name": "opening",
+        "start_turn_id": "t0000",
+        "end_turn_id": "t0004",
+        "summary": "Roll call and agenda review.",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_schema_version_enum_has_all_three():
+    """1.2.0 sits in the enum alongside 1.0.0 and 1.1.0 (additivity:
+    a legacy version string still validates; an unknown one does not)."""
+    schema = _load_schema(ARTIFACT_TYPE)
+    assert schema["properties"]["schema_version"]["enum"] == [
+        "1.0.0",
+        "1.1.0",
+        "1.2.0",
+    ]
+
+
+@pytest.mark.parametrize("version", ["1.0.0", "1.1.0", "1.2.0"])
+@pytest.mark.parametrize(
+    "fixture_dir",
+    sorted(p for p in GOLDEN_DIR.iterdir() if p.is_dir())
+    if GOLDEN_DIR.is_dir()
+    else [],
+    ids=lambda p: p.name,
+)
+def test_golden_transcripts_validate_on_all_three_schema_versions(
+    fixture_dir, version
+):
+    """Schema additivity proof: every golden transcript's real regex
+    payload validates when its schema_version is set to 1.0.0, 1.1.0,
+    OR 1.2.0 — no legacy artifact breaks on the 1.2.0 schema."""
+    transcript = (fixture_dir / "transcript.txt").read_text(encoding="utf-8")
+    payload = run_meeting_minutes_workflow(transcript).meeting_minutes.payload
+    art = _flat(payload)
+    art["schema_version"] = version
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+# rationale (decisions) --------------------------------------------------
+
+
+def test_decision_rationale_null_validates():
+    art = _fully_populated()
+    art["decisions"] = [_decision_object(rationale=None)]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_decision_rationale_string_validates():
+    art = _fully_populated()
+    art["decisions"] = [_decision_object(rationale="to align with the OB3 mandate")]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_decision_rationale_wrong_type_fails():
+    art = _fully_populated()
+    art["decisions"] = [_decision_object(rationale=["not", "a", "string"])]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+# claims.external_references / claims.evidence_in_transcript -------------
+
+
+def test_claim_external_references_empty_validates():
+    art = _fully_populated()
+    art["claims"] = [_claim(external_references=[])]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_claim_external_references_populated_validates():
+    art = _fully_populated()
+    art["claims"] = [_claim(external_references=["ITU Art 21"])]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_claim_evidence_in_transcript_validates():
+    art = _fully_populated()
+    art["claims"] = [_claim(evidence_in_transcript=["t0001", "t0002"])]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_claim_minimal_required_only_validates():
+    """external_references / evidence_in_transcript are optional — a
+    claim with only the two required fields still validates."""
+    art = _fully_populated()
+    art["claims"] = [_claim()]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_claim_missing_required_text_fails():
+    art = _fully_populated()
+    art["claims"] = [{"claim_id": "claim-1"}]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_claim_external_references_not_array_fails():
+    art = _fully_populated()
+    art["claims"] = [_claim(external_references="ITU Art 21")]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_claim_unknown_key_fails():
+    art = _fully_populated()
+    art["claims"] = [_claim(smuggled="x")]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+# action_items.follow_up_required ---------------------------------------
+
+
+@pytest.mark.parametrize("flag", [True, False])
+def test_action_item_follow_up_required_validates(flag):
+    art = _fully_populated()
+    art["action_items"][1]["follow_up_required"] = flag
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_action_item_follow_up_required_not_boolean_fails():
+    art = _fully_populated()
+    art["action_items"][1]["follow_up_required"] = "yes"
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+# sentiment_indicators (top-level) --------------------------------------
+
+
+def test_sentiment_indicators_empty_validates():
+    art = _fully_populated()
+    art["sentiment_indicators"] = []
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_sentiment_indicators_populated_validates():
+    art = _fully_populated()
+    art["sentiment_indicators"] = [_sentiment(sentiment="disagreement")]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["disagreement", "concern", "strong_endorsement", "uncertainty", "frustration"],
+)
+def test_sentiment_indicators_each_enum_value_validates(value):
+    art = _fully_populated()
+    art["sentiment_indicators"] = [_sentiment(sentiment=value)]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_sentiment_indicator_value_outside_enum_fails():
+    art = _fully_populated()
+    art["sentiment_indicators"] = [_sentiment(sentiment="annoyed")]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_sentiment_indicator_missing_required_field_fails():
+    art = _fully_populated()
+    bad = _sentiment()
+    del bad["text_preview"]
+    art["sentiment_indicators"] = [bad]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_sentiment_indicator_empty_text_preview_fails():
+    """text_preview is minLength 1 so a schema-valid item is always a
+    usable non-empty string downstream (Opus baseline never HALTs)."""
+    art = _fully_populated()
+    art["sentiment_indicators"] = [_sentiment(text_preview="")]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+# meeting_phases (top-level) --------------------------------------------
+
+
+def test_meeting_phases_empty_validates():
+    art = _fully_populated()
+    art["meeting_phases"] = []
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_meeting_phases_populated_validates():
+    art = _fully_populated()
+    art["meeting_phases"] = [_phase(phase_name="opening")]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+@pytest.mark.parametrize(
+    "value", ["opening", "working_session", "q_and_a", "wrap_up", "other"]
+)
+def test_meeting_phase_each_enum_value_validates(value):
+    art = _fully_populated()
+    art["meeting_phases"] = [_phase(phase_name=value)]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_meeting_phase_name_outside_enum_fails():
+    art = _fully_populated()
+    art["meeting_phases"] = [_phase(phase_name="lunch")]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_meeting_phase_null_turn_ids_validate():
+    art = _fully_populated()
+    art["meeting_phases"] = [
+        _phase(start_turn_id=None, end_turn_id=None, summary=None)
+    ]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+# word_level_timestamps (top-level) -------------------------------------
+
+
+def test_word_level_timestamps_false_validates():
+    art = _fully_populated()
+    art["word_level_timestamps"] = False
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_word_level_timestamps_true_validates():
+    """The schema permits true (future diarized transcripts); the
+    chunker emits false for the current docx inputs — see
+    tests/data_lake for the chunker-side default assertion."""
+    art = _fully_populated()
+    art["word_level_timestamps"] = True
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_word_level_timestamps_not_boolean_fails():
+    art = _fully_populated()
+    art["word_level_timestamps"] = "false"
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+# additivity: a legacy 1.0.0 / 1.1.0 artifact with NONE of the 1.2.0
+# fields still validates (the core additivity guarantee).
+
+
+@pytest.mark.parametrize("version", ["1.0.0", "1.1.0", "1.2.0"])
+def test_legacy_artifact_without_any_1_2_0_field_validates(version):
+    legacy = {
+        "artifact_type": ARTIFACT_TYPE,
+        "schema_version": version,
+        "title": "Quarterly sync",
+        "summary": "Team reviewed Q3 priorities.",
+        "decisions": ["Approve Q3 roadmap."],
+        "action_items": ["Draft SSC-002 scope."],
+        "open_questions": ["Do we need a separate empty-transcript eval?"],
+    }
+    validate_artifact(legacy, ARTIFACT_TYPE)

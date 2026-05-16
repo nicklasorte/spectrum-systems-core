@@ -146,6 +146,13 @@ _PRIMARY_TEXT_FIELD: Dict[str, Optional[str]] = {
     "technical_parameters": "value",
     "named_artifacts": "name",
     "scheduled_events": "title",
+    # 1.2.0 additions. Each maps to a schema-*required*, reliably
+    # non-empty string so a schema-valid item never HALTs the baseline:
+    # claim_text / phase_name carry minLength or enum constraints, and
+    # text_preview is required with minLength 1.
+    "claims": "claim_text",
+    "sentiment_indicators": "text_preview",
+    "meeting_phases": "phase_name",
 }
 
 # Object-form fallbacks for the three legacy arrays: the schema allows
