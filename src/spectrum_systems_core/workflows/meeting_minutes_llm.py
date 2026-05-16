@@ -29,11 +29,14 @@ from pathlib import Path
 
 from ..artifacts import Artifact
 from ..config import preflight_llm_config
+from ..data_lake.chunker import chunk_transcript
 from ..evals import (
+    run_grounding_coverage_eval,
     run_llm_gt_coverage_eval,
     run_llm_nonempty_eval,
     run_llm_strict_schema_eval,
     run_llm_within_source_eval,
+    run_source_turn_validity_eval_from_chunks,
 )
 from ._loop import run_governed_loop
 from .llm_client import AnthropicJSONClient, LLMClient, LLMClientError
@@ -42,6 +45,31 @@ from .meeting_minutes import WorkflowResult
 PRODUCED_BY = "meeting_minutes_llm"
 
 _PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "meeting_minutes_llm.md"
+
+# Header delimiting the turn-segmented transcript appended to the user
+# message. The raw transcript is sent FIRST (so the verbatim
+# within-source / nonempty evals, which bind to the raw input_text, are
+# unaffected); the turn block is appended after this header purely so
+# the model can cite turn_ids in ``grounding``.
+_TURN_BLOCK_HEADER = (
+    "\n\n=== TRANSCRIPT TURNS "
+    '(cite these turn_ids in "grounding") ===\n'
+)
+
+
+def _render_turn_block(chunks: list[dict]) -> str:
+    """Deterministic ``[turn_id] SPEAKER: text`` listing of the chunked
+    transcript. Same chunks → same string (chunks are already a pure
+    function of the transcript), so the grounded prompt stays
+    replay-stable."""
+    lines: list[str] = []
+    for chunk in chunks:
+        speaker = chunk.get("speaker")
+        who = f" {speaker}:" if speaker else ""
+        lines.append(
+            f"[{chunk['turn_id']}]{who} {chunk.get('text', '')}"
+        )
+    return _TURN_BLOCK_HEADER + "\n".join(lines)
 
 
 def _system_prompt() -> str:
@@ -151,6 +179,11 @@ def _parse_llm_payload(raw: str) -> dict | None:
         # present-and-null -> None (preserved, blocked by the schema
         # gate); present-and-list -> carried as-is.
         out[key] = doc.get(key, [])
+    # Phase Y grounding array, carried verbatim with the same rule:
+    # omitted -> [] ; explicit null -> None (schema gate blocks the
+    # non-array). The caller drops this key on the ungrounded (1.0.0)
+    # path so legacy payloads are byte-identical to before.
+    out["grounding"] = doc.get("grounding", [])
     return out
 
 
@@ -159,19 +192,34 @@ def _make_extract(
     client: LLMClient,
     meeting_id: str | None,
 ):
-    def _extract(input_text: str) -> dict:
+    def _extract(
+        input_text: str, chunks: list[dict] | None = None
+    ) -> dict:
         title = _derive_title(input_text)
+        grounded = bool(chunks)
         payload: dict = {
             "title": title,
             "summary": title,
-            "schema_version": "1.0.0",
+            # Phase Y: grounded run emits 1.1.0 so the runner's
+            # per-item grounding check + source_turn_validity apply;
+            # the ungrounded path stays byte-identical at 1.0.0.
+            "schema_version": "1.1.0" if grounded else "1.0.0",
             "provenance": {"produced_by": PRODUCED_BY},
         }
         if meeting_id:
             payload["meeting_id"] = meeting_id
 
+        # The model is shown the raw transcript FIRST (verbatim evals
+        # bind to it) then the turn-segmented block so it can cite
+        # turn_ids. Same chunks → same user message (replay-stable).
+        user = (
+            input_text + _render_turn_block(chunks)
+            if grounded
+            else input_text
+        )
+
         try:
-            raw = client(system=_system_prompt(), user=input_text)
+            raw = client(system=_system_prompt(), user=user)
         except LLMClientError as exc:
             # Fail-closed: no text-mode fallback, no regex fallback. Emit
             # a payload the strict-schema eval rejects; record the cause
@@ -187,6 +235,10 @@ def _make_extract(
             payload["_llm_raw"] = (raw or "")[:500]
             return payload
 
+        if not grounded:
+            # Ungrounded (1.0.0) path: drop grounding so the payload is
+            # byte-identical to the pre-Phase-Y legacy shape.
+            parsed.pop("grounding", None)
         payload.update(parsed)
         return payload
 
@@ -227,6 +279,14 @@ def run_meeting_minutes_llm_workflow(
     active_client: LLMClient = client or AnthropicJSONClient()
     extract = _make_extract(client=active_client, meeting_id=meeting_id)
 
+    # Phase Y: chunk the transcript so the model can attribute every
+    # extracted item to specific turn_ids, and so the deterministic
+    # source-turn-validity eval can reject a fabricated turn_id. A
+    # whitespace-only transcript yields no chunks → the ungrounded
+    # (1.0.0) path runs, exactly as before (rollback by construction).
+    chunks = chunk_transcript(input_text)
+    grounded = bool(chunks)
+
     extra_evals = [
         run_llm_strict_schema_eval,
         functools.partial(run_llm_nonempty_eval, transcript_text=input_text),
@@ -235,11 +295,25 @@ def run_meeting_minutes_llm_workflow(
             run_llm_gt_coverage_eval, source_id=source_id, lake_root=lake_root
         ),
     ]
+    if grounded:
+        # Same eval logic and same control authority as the data-lake
+        # pipeline's Phase Y gate — only the source of the valid
+        # turn-id set differs (in-memory chunks vs. on-disk
+        # source_record). A fabricated turn_id or an unattributed
+        # content item now blocks promotion through the one
+        # decide_control gate.
+        extra_evals.append(
+            functools.partial(
+                run_source_turn_validity_eval_from_chunks, chunks=chunks
+            )
+        )
+        extra_evals.append(run_grounding_coverage_eval)
 
     run = run_governed_loop(
         input_text=input_text,
         artifact_type="meeting_minutes",
         extract=extract,
+        chunks=chunks if grounded else None,
         extra_evals=extra_evals,
     )
     return WorkflowResult(

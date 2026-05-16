@@ -14,6 +14,28 @@ Boundary heuristic in priority order:
 
 Every chunk carries ``turn_id = f"t{index:04d}"`` where ``index`` is the
 0-based position in the returned list. Chunk index IS turn index, always.
+``turn_index`` is that same 0-based position carried as an explicit int
+field; ``turn_id`` remains the single grounding key Phase Y's
+``source_turn_validity`` eval validates against — this module is the one
+turn-id authority and is deliberately NOT changed to a UUID scheme (a
+second id space would orphan every already-grounded artifact).
+
+Every chunk also carries ``chunker_version`` so a downstream consumer
+can tell which boundary heuristic produced it:
+
+- ``speaker_turn_v1``  — split on ALL-CAPS speaker labels.
+- ``blank_line_v1``    — split on blank-line paragraph boundaries.
+- ``recursive_512``    — terminal fallback: no speaker or paragraph
+  structure, so the text is split into deterministic ~512-word windows.
+  These boundaries are NOT speaker turns; ``speaker`` is ``None`` on
+  every such chunk. ``turn_id`` is still emitted because the binding
+  data-lake source_record contract (and ``source_turn_validity``)
+  require every chunk to carry a string ``turn_id``; the
+  ``chunker_version`` field is what tells a consumer the boundary is
+  positional, not a real speaker turn.
+
+``word_count`` is ``len(text.split())`` — a cheap deterministic size
+signal used by the recursive fallback and available to consumers.
 
 Speaker null rate (the fraction of chunks with ``speaker is None``) is
 a health signal:
@@ -38,6 +60,17 @@ SPEAKER_LABEL_RE = re.compile(r"^([A-Z][A-Z\s\-\.]{1,40}):\s(.*)$")
 
 NO_SPEAKER_DETECTED_FINDING = "no_speaker_detected"
 NO_SPEAKER_STRUCTURE_FINDING = "no_speaker_structure"
+
+# chunker_version tags. Additive: legacy consumers ignore the field;
+# Phase Y keys on turn_id regardless of which heuristic produced it.
+CHUNKER_VERSION_SPEAKER_TURN = "speaker_turn_v1"
+CHUNKER_VERSION_BLANK_LINE = "blank_line_v1"
+CHUNKER_VERSION_RECURSIVE = "recursive_512"
+
+# Word budget for one recursive-fallback window. 512 words is a
+# deterministic, model-agnostic proxy for "about one context-friendly
+# block" — no tokenizer dependency keeps the chunker pure.
+RECURSIVE_WORD_BUDGET = 512
 
 # Phase Z.4: deterministic agenda-item markers. The detector runs on a
 # turn's text AFTER speaker-label stripping. Only the first pattern
@@ -103,14 +136,18 @@ def _make_chunk(
     text: str,
     line_start: int,
     line_end: int,
+    chunker_version: str,
     agenda_item_id: str | None = None,
 ) -> dict:
     return {
         "turn_id": f"t{index:04d}",
+        "turn_index": index,
         "speaker": speaker,
         "text": text,
         "line_start": line_start,
         "line_end": line_end,
+        "chunker_version": chunker_version,
+        "word_count": len(text.split()),
         "agenda_item_id": agenda_item_id,
     }
 
@@ -169,6 +206,7 @@ def _split_on_speaker_labels(
                     text=leading_text,
                     line_start=1,
                     line_end=first_speaker_line,
+                    chunker_version=CHUNKER_VERSION_SPEAKER_TURN,
                 )
             )
             chunk_index += 1
@@ -195,6 +233,7 @@ def _split_on_speaker_labels(
                 text=text,
                 line_start=line_idx + 1,
                 line_end=end_idx + 1,
+                chunker_version=CHUNKER_VERSION_SPEAKER_TURN,
             )
         )
         chunk_index += 1
@@ -238,9 +277,43 @@ def _split_on_blank_lines(lines: list[str]) -> list[dict] | None:
             text=text,
             line_start=line_start,
             line_end=line_end,
+            chunker_version=CHUNKER_VERSION_BLANK_LINE,
         )
         for i, (line_start, line_end, text) in enumerate(paragraphs)
     ]
+
+
+def _split_recursive_512(
+    lines: list[str],
+) -> list[tuple[int, int, str]]:
+    """Split lines into deterministic ~512-word windows.
+
+    A window closes as soon as its cumulative word count reaches
+    ``RECURSIVE_WORD_BUDGET``; a single over-budget line still forms its
+    own window (lines are never split mid-line, so line ranges stay
+    meaningful and the output stays a pure function of ``lines``).
+    Returns ``(line_start, line_end, text)`` tuples, both bounds 1-based
+    inclusive.
+    """
+    windows: list[tuple[int, int, str]] = []
+    cur_lines: list[str] = []
+    cur_start: int | None = None
+    cur_words = 0
+    for idx, raw in enumerate(lines):
+        if cur_start is None:
+            cur_start = idx + 1
+        cur_lines.append(raw)
+        cur_words += len(raw.split())
+        if cur_words >= RECURSIVE_WORD_BUDGET:
+            text = "\n".join(cur_lines).rstrip("\n")
+            windows.append((cur_start, idx + 1, text))
+            cur_lines = []
+            cur_start = None
+            cur_words = 0
+    if cur_lines and cur_start is not None:
+        text = "\n".join(cur_lines).rstrip("\n")
+        windows.append((cur_start, len(lines), text))
+    return windows
 
 
 def chunk_transcript(transcript_text: str) -> list[dict]:
@@ -265,16 +338,25 @@ def chunk_transcript(transcript_text: str) -> list[dict]:
     if by_blank is not None:
         return _propagate_agenda_ids(by_blank)
 
-    # Fallback: whole transcript is one chunk.
-    text = transcript_text.rstrip("\n")
+    # Terminal fallback: no speaker labels, no blank-line paragraph
+    # boundaries. The text has no turn structure, so we split it into
+    # deterministic ~512-word windows. speaker is None on every window
+    # and chunker_version marks the boundary as positional, not a real
+    # speaker turn — turn_id is still emitted because the binding
+    # source_record contract requires it.
+    windows = _split_recursive_512(lines)
+    if not windows:
+        windows = [(1, max(1, len(lines)), transcript_text.rstrip("\n"))]
     return _propagate_agenda_ids([
         _make_chunk(
-            index=0,
+            index=i,
             speaker=None,
             text=text,
-            line_start=1,
-            line_end=max(1, len(lines)),
+            line_start=line_start,
+            line_end=line_end,
+            chunker_version=CHUNKER_VERSION_RECURSIVE,
         )
+        for i, (line_start, line_end, text) in enumerate(windows)
     ])
 
 

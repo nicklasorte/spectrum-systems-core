@@ -97,6 +97,11 @@ def test_dispatch_flag_off_runs_regex_arm_only():
 
 
 def test_dispatch_flag_on_runs_llm_arm_only():
+    # SpyStub returns a FIXED string (it cannot see the turn block), so
+    # it must carry its own grounding. t0000 is always a real chunk for
+    # any non-empty transcript, so this attributes every item without
+    # the stub needing to read the prompt — the Phase Y gates pass and
+    # this stays a dispatch-wiring test, not a grounding test.
     spy = SpyStub(
         json.dumps(
             {
@@ -104,6 +109,13 @@ def test_dispatch_flag_on_runs_llm_arm_only():
                 "action_items": DEC18_ACTION_ITEMS,
                 "open_questions": DEC18_OPEN_QUESTIONS,
                 "technical_parameters": DEC18_TECHNICAL_PARAMETERS,
+                "grounding": [
+                    {
+                        "kind": "decision",
+                        "text": DEC18_DECISIONS[0],
+                        "source_turns": ["t0000"],
+                    }
+                ],
             }
         )
     )

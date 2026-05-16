@@ -9,10 +9,22 @@ network.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Callable
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "llm_extraction"
+
+# turn_id token as the grounded workflow renders it into the user
+# message: ``[t0000]``. The stub mirrors a well-behaved model — it
+# cites the REAL turn_ids it was shown rather than inventing them.
+_TURN_RE = re.compile(r"\[(t\d{4})\]")
+
+# Distinguishes "caller did not pass grounding" (auto-derive) from
+# "caller passed grounding=[...]" including an empty / fabricated list
+# (use verbatim — this is how a hallucination test injects a bogus
+# turn_id).
+_NO_GROUNDING_OVERRIDE = object()
 
 
 def load_fixture(name: str) -> str:
@@ -39,32 +51,112 @@ _NEW_ARRAYS = (
 )
 
 
+_ITEM_TEXT_FIELDS = (
+    "text",
+    "action",
+    "question_text",
+    "commitment_text",
+    "risk_text",
+    "ref_text",
+    "reference_text",
+    "parameter_name",
+    "name",
+    "title",
+)
+
+
+def _item_text(item) -> str:
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        for field in _ITEM_TEXT_FIELDS:
+            value = item.get(field)
+            if isinstance(value, str) and value:
+                return value
+    return ""
+
+
+def _auto_grounding(doc: dict, user: str) -> list[dict]:
+    """Mirror a well-behaved model: one grounding entry per content
+    item, each citing every real turn_id the workflow showed in the
+    user message. Deterministic given the same prompt. When there is no
+    content, grounding is ``[]`` (the coverage floor allows that)."""
+    turn_ids = list(dict.fromkeys(_TURN_RE.findall(user)))
+    entries: list[dict] = []
+    for kind, key in (
+        ("decision", "decisions"),
+        ("action_item", "action_items"),
+        ("open_question", "open_questions"),
+    ):
+        for item in doc[key]:
+            entries.append(
+                {
+                    "kind": kind,
+                    "text": _item_text(item),
+                    "source_turns": turn_ids,
+                }
+            )
+    for key in _NEW_ARRAYS:
+        for item in doc[key]:
+            entries.append(
+                {
+                    "kind": key,
+                    "text": _item_text(item),
+                    "source_turns": turn_ids,
+                }
+            )
+    return entries
+
+
 def json_stub(
     *,
     decisions=(),
     action_items=(),
     open_questions=(),
+    grounding=_NO_GROUNDING_OVERRIDE,
     **new_arrays,
 ) -> Callable[..., str]:
-    """Emit the full 12-key meeting_minutes content object.
+    """Emit the full meeting_minutes content object.
 
     The three legacy arrays plus the nine PR #123 structured arrays.
     Any new array not passed defaults to ``[]`` — exactly what the
     parser must carry through and what the strict-schema eval expects.
     Unknown kwargs raise so a typo in a test fixture fails loudly
     instead of silently emitting an empty array.
+
+    ``grounding`` (Phase Y): when NOT passed, the stub auto-derives one
+    grounding entry per content item citing the real turn_ids present
+    in the user message — so a well-behaved-model happy path needs no
+    per-test wiring. Pass ``grounding=[...]`` to inject a specific
+    (possibly fabricated) attribution: that is exactly how the
+    synthetic-hallucination test cites a turn_id that does not exist in
+    chunks.jsonl.
     """
     unknown = set(new_arrays) - set(_NEW_ARRAYS)
     if unknown:
         raise TypeError(f"json_stub got unknown array kwargs: {sorted(unknown)}")
-    doc = {
+    base = {
         "decisions": list(decisions),
         "action_items": list(action_items),
         "open_questions": list(open_questions),
     }
     for key in _NEW_ARRAYS:
-        doc[key] = list(new_arrays.get(key, []))
-    return text_stub(json.dumps(doc))
+        base[key] = list(new_arrays.get(key, []))
+    override = (
+        _NO_GROUNDING_OVERRIDE
+        if grounding is _NO_GROUNDING_OVERRIDE
+        else list(grounding)
+    )
+
+    def _client(*, system: str, user: str) -> str:  # noqa: ARG001
+        doc = {k: list(v) for k, v in base.items()}
+        if override is _NO_GROUNDING_OVERRIDE:
+            doc["grounding"] = _auto_grounding(doc, user)
+        else:
+            doc["grounding"] = override
+        return json.dumps(doc)
+
+    return _client
 
 
 class SpyStub:

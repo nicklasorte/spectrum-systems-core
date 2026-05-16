@@ -99,6 +99,8 @@ def test_registered_eval_entrypoints_are_the_frozen_set():
     expected = {
         "run_required_evals",
         "run_source_turn_validity_eval",
+        "run_source_turn_validity_eval_from_chunks",
+        "run_grounding_coverage_eval",
         "run_regulatory_verb_eval",
         "run_extraction_precision_eval",
         "run_llm_strict_schema_eval",
@@ -160,6 +162,17 @@ def test_no_eval_surfaces_raw_output(tmp_path):
     results = []
     results += evals_pkg.run_required_evals(art)
     results.append(evals_pkg.run_source_turn_validity_eval(art, sr_path))
+    results.append(
+        evals_pkg.run_source_turn_validity_eval_from_chunks(
+            art,
+            [
+                {"turn_id": "t0001", "speaker": "CHAIR",
+                 "text": "nothing relevant here", "line_start": 1,
+                 "line_end": 1},
+            ],
+        )
+    )
+    results.append(evals_pkg.run_grounding_coverage_eval(art))
     results.append(evals_pkg.run_regulatory_verb_eval(art))
     results.append(evals_pkg.run_extraction_precision_eval(art, sr_path))
     results.append(evals_pkg.run_llm_strict_schema_eval(art))

@@ -9,9 +9,14 @@ from .runner import (
 )
 from .source_turn_validity import (
     run_source_turn_validity_eval,
+    run_source_turn_validity_eval_from_chunks,
+    run_grounding_coverage_eval,
     EVAL_TYPE as SOURCE_TURN_VALIDITY_EVAL_TYPE,
+    GROUNDING_COVERAGE_EVAL_TYPE,
     SOURCE_RECORD_INVALID,
+    CHUNKS_INVALID,
     SOURCE_TURN_UNRESOLVED_PREFIX,
+    GROUNDING_MISSING_FOR_CONTENT,
 )
 from .regulatory_verb import (
     run_regulatory_verb_eval,
@@ -53,9 +58,14 @@ __all__ = [
     "REQUIRED_FIELDS_BY_TYPE",
     "DEFAULT_SCHEMA_VERSION",
     "run_source_turn_validity_eval",
+    "run_source_turn_validity_eval_from_chunks",
+    "run_grounding_coverage_eval",
     "SOURCE_TURN_VALIDITY_EVAL_TYPE",
+    "GROUNDING_COVERAGE_EVAL_TYPE",
     "SOURCE_RECORD_INVALID",
+    "CHUNKS_INVALID",
     "SOURCE_TURN_UNRESOLVED_PREFIX",
+    "GROUNDING_MISSING_FOR_CONTENT",
     "run_regulatory_verb_eval",
     "REGULATORY_VERB_EVAL_TYPE",
     "DECISIONS_FIELD_MISSING",

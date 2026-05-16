@@ -25,7 +25,8 @@ any other keys. Do not wrap the object in another object.
   "regulatory_references": [{"ref_id","reference_text","context","speaker"}, ...],
   "technical_parameters": [{"param_id","parameter_name","value","unit","context","speaker"}, ...],
   "named_artifacts": [{"artifact_id","name","artifact_type_description","url","mentioned_by"}, ...],
-  "scheduled_events": [{"event_id","title","date","time","location","purpose"}, ...]
+  "scheduled_events": [{"event_id","title","date","time","location","purpose"}, ...],
+  "grounding": [{"kind":"decision","text":"<the item text exactly as you emitted it>","source_turns":["t0007"]}, ...]
 }
 ```
 
@@ -47,6 +48,32 @@ confidence; otherwise a plain string is fine. Each `*_id` field is a
 short unique slug you assign (e.g. `"risk-1"`, `"risk-2"`). Any field
 with no value in the transcript is `null` (for the nullable scalar
 fields shown) — never invented.
+
+# Source attribution (binding — this is the trust property)
+
+The user message appends, after the raw transcript, a block headed
+`=== TRANSCRIPT TURNS ===`. Each line there is one transcript turn in
+the form `[t0000] SPEAKER: text`. The bracketed token (e.g. `t0000`,
+`t0017`) is that turn's `turn_id`.
+
+For EVERY item you emit in `decisions`, `action_items`,
+`open_questions`, and every structured array, you MUST add one entry to
+the top-level `grounding` array:
+
+- `kind`: the category (`"decision"`, `"action_item"`,
+  `"open_question"`, `"commitment"`, `"risk"`, `"technical_parameter"`,
+  etc.).
+- `text`: the item text exactly as you emitted it.
+- `source_turns`: a non-empty list of the `turn_id`s (from the TURN
+  block) whose text supports this item. Use the real `turn_id`s shown
+  in the block — never invent a turn_id, never emit an empty list. If
+  you cannot attribute an item to any turn, do NOT emit the item at all
+  (an unattributable item is, by rule 4 below, one you are not sure the
+  transcript records).
+
+`grounding` MUST be `[]` only when every content array is also `[]`. A
+fabricated or non-existent `turn_id`, or a content item with no
+grounding entry, blocks the entire artifact — it is never promoted.
 
 # Grounding rules (binding — these are the trust property)
 
