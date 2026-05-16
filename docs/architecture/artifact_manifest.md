@@ -228,6 +228,48 @@ calling `git check-ignore`.
   seam), `evals.m4.runner` via `eval-ground-truth` once the data-lake
   negation is in place.
 
+### opus_reference_minutes
+- **Writer:** `scripts/create_opus_reference_baselines.py` (the
+  create-opus-reference-baselines workflow). One JSONL line per
+  extracted item. The Opus model string is NEVER hardcoded: the
+  workflow resolves it from `ai/registry/model_registry.json` (the
+  `opus_reference_baseline` key) at run time and the script stamps it
+  into every line as `model_id`, so a past baseline keeps its exact
+  model even after the registry is rolled forward. Each line carries
+  `human_authored: false`, `model_authored: true`, `verified: false`,
+  `status: "reference_only"`, and
+  `provenance.produced_by == "opus_reference_baseline_workflow"`. These
+  are NOT ground truth and NOT product artifacts — they are a stronger
+  model's read of the SAME raw transcript, produced with the SAME
+  canonical extraction prompt (`workflows/prompts/meeting_minutes_llm.md`)
+  the Haiku pipeline uses, for human/eval comparison only. The script
+  reads ONLY the raw transcript `.docx` and `source_record.json` (the
+  ingestion identity record) — never any existing extraction artifact.
+- **Path template:** `data-lake/store/processed/meetings/<source_id>/reference_baselines/opus_reference_minutes.jsonl`
+- **Schema:** per-item `item_data` conforms to the matching array-item
+  shape in `src/spectrum_systems_core/schemas/meeting_minutes.schema.json`
+  (all 13 array types from PR #123; extraction types are derived from
+  that schema's array properties so there is no parallel list to drift).
+  The JSONL line envelope itself is the reference-baseline record shape
+  documented in the script docstring.
+- **Git-tracked:** NO — same reasoning as `human_minutes_gt_pairs`: the
+  path lives under `processed/`, which the `nicklasorte/data-lake` repo
+  bulk-ignores via `**/processed/**`. The create-opus-reference-baselines
+  workflow ENSURES the GENERAL negation
+  `!**/processed/**/reference_baselines/opus_reference_minutes.jsonl`
+  in the data-lake clone's `.gitignore` (idempotent — only appends when
+  absent) and commits it in the same push, mirroring the existing
+  `!**/processed/**/source_record.json` precedent.
+  `scripts/create_opus_reference_baselines.py` ALSO refuses to leave
+  behind the artifact if it is still shadowed after the write (it shells
+  `git check-ignore` and halts with `gitignore_blocks_artifact`). Per-
+  artifact gitignore enforcement inside the data-lake repo is that
+  repo's responsibility; `_gitignore_audit.py` only audits
+  `Git-tracked: YES` entries, so this entry does not gate CI.
+- **Readers:** none in-loop (reference baselines are NEVER read back
+  into the governed loop). Consumed by humans / future eval comparison
+  only.
+
 ### gt_pair_review
 - **Writer:** `scripts/review_gt_pairs.py` (Phase P1 — human-in-the-loop
   confirmation of a pair's `expected_decision_outcome`).

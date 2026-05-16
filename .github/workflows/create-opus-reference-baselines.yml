@@ -1,0 +1,198 @@
+name: Create Opus reference baselines
+
+# Runs an Opus model over the canonical extraction prompt
+# (workflows/prompts/meeting_minutes_llm.md — the SAME prompt the Haiku
+# pipeline uses) against every raw transcript .docx in
+# nicklasorte/data-lake, and commits one reference_baselines/
+# opus_reference_minutes.jsonl per source. Reference baselines are
+# model-authored, unverified, status: reference_only — never promoted,
+# never read back into the governed loop.
+#
+# Model pinning: the Opus model string is NOT hardcoded here. The
+# binding no-model-strings-in-workflows CI gate
+# (tests/ci/test_no_model_strings_in_workflow_yaml) forbids any
+# claude-<tier>-<n> literal on a non-comment line of a workflow file.
+# The pinned string lives in ai/registry/model_registry.json under the
+# "opus_reference_baseline" key (the same single-source-of-truth file
+# seed-model-registry.yml documents). This workflow resolves it at run
+# time into OPUS_MODEL and passes it through --model; the script stamps
+# it into every JSONL line as model_id so a past artifact keeps its
+# exact model even after the registry is rolled forward.
+#
+# To ship a new Opus: edit the "opus_reference_baseline" value in
+# ai/registry/model_registry.json (one line, one file) and re-run.
+#
+# dry_run defaults to TRUE: inspect the first run before anything is
+# committed to nicklasorte/data-lake.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_id:
+        description: 'Transcript slug to process (blank = all transcripts)'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Dry run: print what would be written, commit nothing'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      skip_existing:
+        description: 'Skip sources that already have the baseline JSONL'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  contents: read
+
+jobs:
+  create-opus-reference-baselines:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install anthropic  # explicit safety net
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      - name: Resolve Opus model from registry
+        id: model
+        run: |
+          set -euo pipefail
+          # The pinned string lives ONLY in this JSON file (kept out of
+          # YAML so the no-model-strings-in-workflows gate stays green).
+          OPUS_MODEL="$(python -c "import json;print(json.load(open('ai/registry/model_registry.json'))['models']['opus_reference_baseline'])")"
+          if [ -z "$OPUS_MODEL" ]; then
+            echo "::error::opus_reference_baseline missing from ai/registry/model_registry.json"
+            exit 1
+          fi
+          echo "OPUS_MODEL=$OPUS_MODEL" >> "$GITHUB_ENV"
+          echo "Resolved Opus model: $OPUS_MODEL"
+
+      - name: Ensure data-lake .gitignore negation
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          CLONE_PATH: ${{ github.workspace }}/data-lake
+        run: |
+          set -euo pipefail
+          # The artifact must be committable BEFORE the script writes it
+          # (the script's own gitignore_blocks_artifact guard runs right
+          # after the write). The data-lake's processed/ tree is bulk
+          # runtime data. Git cannot re-include a file whose parent
+          # directory is excluded, so a bare file negation is not
+          # enough: we must FIRST re-include the directory chain
+          # (!**/processed/**/ — directories only, files stay ignored)
+          # and THEN re-include the specific baseline file. Verified
+          # empirically against the file-glob bulk pattern the
+          # data-lake repo uses (the same shape that makes the existing
+          # !**/processed/**/source_record.json precedent work). Each
+          # line is appended idempotently (only when absent).
+          GI="$CLONE_PATH/.gitignore"
+          DIR_RULE='!**/processed/**/'
+          FILE_RULE='!**/processed/**/reference_baselines/opus_reference_minutes.jsonl'
+          touch "$GI"
+          added=0
+          if ! grep -qxF "$DIR_RULE" "$GI"; then
+            printf '\n# Opus reference baselines (model-authored, reference_only)\n%s\n' "$DIR_RULE" >> "$GI"
+            added=1
+          fi
+          if ! grep -qxF "$FILE_RULE" "$GI"; then
+            printf '%s\n' "$FILE_RULE" >> "$GI"
+            added=1
+          fi
+          if [ "$added" -eq 1 ]; then
+            echo "Ensured Opus baseline negation in data-lake .gitignore"
+          else
+            echo "Opus baseline negation already present in data-lake .gitignore"
+          fi
+
+      - name: Create Opus reference baselines
+        id: create
+        env:
+          SOURCE_ID: ${{ github.event.inputs.source_id }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          SKIP_EXISTING: ${{ github.event.inputs.skip_existing }}
+        run: |
+          set -euo pipefail
+          ARGS=( --data-lake "${{ github.workspace }}/data-lake" --model "$OPUS_MODEL" )
+          if [ -n "$SOURCE_ID" ]; then
+            ARGS+=( --source-id "$SOURCE_ID" )
+          fi
+          if [ "$DRY_RUN" = "true" ]; then
+            ARGS+=( --dry-run )
+          fi
+          if [ "$SKIP_EXISTING" = "true" ]; then
+            ARGS+=( --skip-existing )
+          else
+            ARGS+=( --no-skip-existing )
+          fi
+          python scripts/create_opus_reference_baselines.py "${ARGS[@]}" \
+            | tee /tmp/opus_ref_summary.json
+
+      - name: Push baselines to nicklasorte/data-lake
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            feat(reference): Opus reference baselines
+            [${{ github.event.inputs.source_id || 'all' }}]
+            model=${{ env.OPUS_MODEL }} [skip ci][baseline-commit]
+          add_paths: |
+            .gitignore
+            store/processed/
+
+      - name: Post summary
+        if: always()
+        run: |
+          python - <<'EOF'
+          import json, os, pathlib
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
+          p = pathlib.Path("/tmp/opus_ref_summary.json")
+          with open(summary_path, "a") as f:
+              f.write("## Opus reference baselines\n\n")
+              if not p.is_file():
+                  f.write("No summary produced (script did not run).\n")
+                  raise SystemExit(0)
+              text = p.read_text(encoding="utf-8").strip()
+              try:
+                  data = json.loads(text)
+              except json.JSONDecodeError:
+                  f.write("```\n" + text + "\n```\n")
+                  raise SystemExit(0)
+              f.write(f"- status: **{data.get('status')}**\n")
+              f.write(f"- model: `{data.get('model')}`\n")
+              f.write(f"- dry_run: {data.get('dry_run')}\n")
+              f.write(f"- skip_existing: {data.get('skip_existing')}\n")
+              f.write(f"- transcripts: {data.get('transcripts')}\n")
+              for t in data.get("per_transcript", []):
+                  by_type = t.get("by_type") or {}
+                  bt = ", ".join(f"{k}={by_type[k]}" for k in sorted(by_type)) or "-"
+                  f.write(
+                      f"  - `{t['source_id']}` | {t['status']} | "
+                      f"total={t['total']} | {bt}\n"
+                  )
+          EOF
