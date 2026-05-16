@@ -1,0 +1,24 @@
+{
+  "meeting_id": "meeting_real_001",
+  "authored_before_extractor_run": true,
+  "rubric": "Independent human ground truth, authored from the transcript ALONE before running any extractor (regex, Haiku, or Opus). Inclusion rule: a DECISION is any statement by the chair or a named participant that records a settled outcome, recognisable by a governing verb (approved / agreed to adopt / rejected / deferred / will require / noted) applied to a concrete spectrum-policy thing. An ACTION is a future commitment of the form '<owner> will <do thing>' or '<owner> to <do thing>'. An open QUESTION is an unresolved interrogative raised for the record. Items deliberately span BOTH the labelled-prefix form (DECISION:/ACTION:/QUESTION:, which the regex baseline can catch) and the unlabelled conversational form (which the regex baseline structurally cannot catch) so the regex->Haiku gap is measurable. This file is the measurement reference; it is NOT derived from any extractor's output.",
+  "decisions": [
+    {"text": "Approved the 3.45 GHz commercial sharing framework for Phase 2."},
+    {"text": "The working group agreed to adopt the dynamic protection contour methodology."},
+    {"text": "The committee rejected the fixed exclusion-zone proposal for coastal radars."},
+    {"text": "Deferred the 7 GHz incumbent transition timeline to the next quarterly review."},
+    {"text": "We will require all SAS operators to file revised interference budgets."},
+    {"text": "Noted the NTIA objection to the proposed aggregate EIRP limit."}
+  ],
+  "actions": [
+    {"text": "Carol will circulate the revised interference budget template by next Friday."},
+    {"text": "Dan to coordinate the field-measurement campaign with the Navy testing office."},
+    {"text": "Priya compiles the public comment summary before the May 30 deadline."},
+    {"text": "The secretariat will publish the updated coordination procedures on the docket."}
+  ],
+  "questions": [
+    {"text": "Do we need a separate eval track for non-federal incumbents in the 7 GHz band?"},
+    {"text": "How should the aggregate EIRP limit be enforced across overlapping SAS territories?"},
+    {"text": "Should the Phase 2 framework include a sunset clause?"}
+  ]
+}

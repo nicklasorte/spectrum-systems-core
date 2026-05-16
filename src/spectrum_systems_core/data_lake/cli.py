@@ -564,6 +564,29 @@ def _build_parser() -> argparse.ArgumentParser:
             "(defaults to --meeting-id). Only consulted on the --llm path."
         ),
     )
+
+    ce = sub.add_parser(
+        "compare-extraction",
+        help="Phase AB: three-point extraction comparison instrument.",
+        description=(
+            "Run the regex / Haiku / Opus extractors over one meeting's "
+            "transcript and write extraction_comparison, "
+            "extraction_telemetry, and (on Opus success) "
+            "extraction_unconstrained instrument artifacts plus a "
+            "Markdown report. Fail-closed: a missing/empty "
+            "ANTHROPIC_API_KEY or a missing source_record halts the run "
+            "before any API call and writes NO artifact. Exit 1 on any "
+            "pre-flight or extractor failure (comparison status "
+            "'rejected')."
+        ),
+    )
+    ce.add_argument("--lake", required=True, help="Path to the data lake root.")
+    ce.add_argument(
+        "--meeting-id",
+        required=True,
+        help="Meeting id (directory under raw/meetings/; source_record "
+        "must already exist under processed/meetings/).",
+    )
     return parser
 
 
@@ -596,6 +619,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         _print_result(result)
         return 0
+
+    if args.command == "compare-extraction":
+        # Lazy import: keeps the anthropic-backed adapters out of the
+        # import path for the common process-meeting command.
+        from ..extraction.comparison_runner import run_compare_extraction
+
+        return run_compare_extraction(
+            lake_root=args.lake,
+            meeting_id=args.meeting_id,
+        )
 
     parser.error(f"unknown command: {args.command}")
     return 2

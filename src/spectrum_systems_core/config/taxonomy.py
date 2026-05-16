@@ -121,11 +121,22 @@ AMBIGUOUS_VERBS: frozenset = frozenset({
 })
 
 
+# Phase AB.4: threshold for considering an extracted item to match a
+# gold item in the extraction-gap metric. Pinned at 0.7 to match
+# ``evals.extraction_precision.LCS_THRESHOLD`` (Phase Z) so the gap
+# instrument and the precision eval use one paraphrase boundary.
+# Lowering this without consultation is a measurement-trust regression;
+# ``tests/evals/test_extraction_gap.py::test_lcs_threshold_pinned``
+# pins the 0.7 value.
+EXTRACTION_GAP_MIN_LCS = 0.7
+
+
 __all__ = [
     "AMBIGUOUS_VERBS",
     "CLAIM_TYPES",
     "DECISION_OUTCOME_TYPES",
     "DECISION_VERBS",
+    "EXTRACTION_GAP_MIN_LCS",
     "OUTCOME_TO_VERBS",
     "OVERGENERALIZATION_MARKERS",
     "REGULATORY_VERBS",

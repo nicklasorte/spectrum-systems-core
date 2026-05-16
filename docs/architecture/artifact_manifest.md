@@ -342,6 +342,86 @@ calling `git check-ignore`.
   architectural changes.
 - **First PR:** #96.
 
+### extraction_comparison (Phase AB instrument)
+- **Writer:** `extraction/comparison_runner.py::run_compare_extraction`
+  (the `compare-extraction` CLI). Written directly via
+  `serialize.canonical_json` — NOT through `write_promoted_artifact`,
+  because it is a run-level measurement record (like `manifest__` /
+  `debug__`), not a promoted product artifact.
+- **Path template:** `data-lake/store/processed/meetings/<meeting_id>/extraction_comparison__<slug>.json`
+  (slug == `<meeting_id>`; re-runs overwrite, never accumulate).
+- **Schema:** `schema_version: 1`. `payload`: `meeting_id`,
+  `transcript_artifact_id`, `extractor_status`
+  (`{regex,haiku,opus}` each `ok|failed:<reason>`), `regex_output`
+  / `haiku_output` (`{decisions,actions,questions}` lists of
+  `{text,...}`), `opus_output_ref` (the `extraction_unconstrained`
+  `artifact_id`, or `null` when Opus failed). Envelope `status` is
+  `promoted` only when all three extractors succeeded, else
+  `rejected` — but the file is written either way (it exists to
+  explain the run).
+- **Git-tracked:** NO — lives under `processed/`, which the
+  `nicklasorte/data-lake` repo bulk-ignores via `**/processed/**`
+  (same reasoning as `meeting_minutes` and `human_minutes_gt_pairs`).
+  It is a measurement instrument / run-level record, not a promoted
+  product artifact, and does not enter
+  `indexes/meetings/artifact_index.jsonl`. The Phase AB prompt
+  requested `Git-tracked: YES`; that was overridden because the
+  binding data-lake contract (§6.1) and the manifest's own
+  `processed/` precedent make a `Git-tracked: YES` claim on a
+  `processed/` path internally contradictory and a post-merge audit
+  trap (the audit only SKIPs it in CI because no data-lake clone is
+  present there).
+- **Readers:** `evals/extraction_gap.py::compute_gap_metrics`
+  (regex/haiku outputs + the Opus-ref text it is given),
+  `data_lake/markdown_views.py` (view render). Telemetry cost /
+  latency values are real measurements and therefore NOT
+  byte-deterministic across runs; the artifact's structural identity
+  (`artifact_id`, `created_at`) IS stabilised the same way the
+  pipeline stabilises its artifacts.
+
+### extraction_telemetry (Phase AB instrument)
+- **Writer:** `extraction/comparison_runner.py::run_compare_extraction`
+  (sibling of `extraction_comparison`, same write path).
+- **Path template:** `data-lake/store/processed/meetings/<meeting_id>/extraction_telemetry__<slug>.json`
+  (slug == `<meeting_id>`).
+- **Schema:** `schema_version: 1`. `payload`: `meeting_id`,
+  `comparison_artifact_id`, and per-extractor `regex` / `haiku` /
+  `opus` blocks carrying `cost_usd`, `latency_ms`, and (haiku/opus)
+  `model`. Envelope `status` mirrors the comparison artifact.
+- **Git-tracked:** NO — same reasoning as `extraction_comparison`
+  (run-level measurement record under `processed/`, not a promoted
+  product; cost/latency are non-deterministic real measurements).
+- **Readers:** `data_lake/markdown_views.py` (cost table render);
+  human operators / future cost-vs-quality analysis.
+
+### extraction_unconstrained (Phase AB instrument)
+- **Writer:** `extraction/comparison_runner.py::run_compare_extraction`
+  (written only when the Opus extractor succeeded).
+- **Path template:** `data-lake/store/processed/meetings/<meeting_id>/extraction_unconstrained__<slug>.json`
+  (slug == `<meeting_id>`).
+- **Schema:** `schema_version: 1`. `payload`: `meeting_id`,
+  `raw_output` (str, OPAQUE), `model`, `prompt`, `cost_usd`,
+  `latency_ms`.
+- **PIPELINE INVARIANT (non-negotiable):** `payload.raw_output` is
+  NEVER parsed or used by any eval, the control function, the
+  promotion gate, or the governed loop. The ONLY code permitted to
+  parse it is `evals/extraction_gap.py::parse_opus_output` (the
+  explicitly approximate, deterministic, non-LLM gap parser). A
+  source-level guard test
+  (`tests/integration/test_opus_output_never_parsed.py`) asserts the
+  token `raw_output` appears in no `evals/*.py` file except
+  `extraction_gap.py`, and runs every registered eval against an
+  `extraction_unconstrained` artifact whose `raw_output` carries a
+  sentinel, asserting the sentinel never leaks into any eval_result.
+- **Git-tracked:** NO — same reasoning as `extraction_comparison`
+  (run-level measurement record under `processed/`, not a promoted
+  product). Captured only for human comparison and the gap metric.
+- **Readers:** `evals/extraction_gap.py` (the single approximate
+  parser); `data_lake/markdown_views.py` renders the raw text
+  verbatim in a fenced block (display only — quoting opaque text in
+  a non-canonical view is not "parsing"; markdown is neither an eval
+  nor the control gate).
+
 ## Runtime / debug artifacts (intentionally NOT git-tracked)
 
 These are recorded here for completeness so future authors do not
