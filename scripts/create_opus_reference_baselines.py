@@ -30,7 +30,15 @@ written):
 * The model returns non-JSON / a non-object / a content array that is
   not a list / a structured item missing its schema-required primary
   text field -> ``malformed_llm_response`` (the whole transcript's file
-  is never written — no partial JSONL).
+  is never written — no partial JSONL). Before this halt the parser
+  tries, in order: markdown-fence stripping, truncation back to the
+  last balanced ``}`` (recovers a valid object followed by trailing
+  prose/markdown), then ONE simplified "JSON only" retry seeded with
+  just the first 200 chars of the failed response. Only when all three
+  fail does the run halt — it never silently emits an empty extraction.
+  A long transcript can need several thousand output tokens, so this
+  workflow sets ``max_tokens`` explicitly (8192) to keep a valid
+  response from truncating into invalid JSON in the first place.
 * After writing, the artifact is shadowed by a ``.gitignore`` rule in
   the data-lake clone -> ``gitignore_blocks_artifact`` (we refuse to
   leave behind an artifact that can never be committed).
@@ -105,6 +113,16 @@ _OPUS_REF_NAMESPACE = uuid.UUID("3f1c9d8e-2b6a-5c7d-9e0f-1a2b3c4d5e6f")
 _RAW_TRANSCRIPTS_SUBPATH = ("store", "raw", "transcripts")
 _OUTPUT_SUBDIR = "reference_baselines"
 _OUTPUT_FILENAME = "opus_reference_minutes.jsonl"
+
+# A full structured extraction of all ~15 types over a long (40k+ char)
+# transcript can need 6-8k output tokens; the shared AnthropicJSONClient
+# default (4000) silently truncates such a response into invalid JSON
+# (the observed malformed_llm_response root cause). Opus reference
+# baselines are not on the byte-determinism path, so a generous bound is
+# safe here and is set explicitly rather than inherited (Fix 2). 8192
+# matches the established Opus extraction bound in
+# src/spectrum_systems_core/extraction/llm_opus.py.
+_OPUS_MAX_TOKENS = 8192
 
 # The canonical extraction prompt — resolved through the pipeline module
 # so the path is the SINGLE source of truth. We do not re-derive or
@@ -369,9 +387,17 @@ def _meeting_date_from_header(text: str) -> Optional[str]:
 
 
 def _strip_fence(text: str) -> str:
+    """Strip a markdown code fence the model may have wrapped the JSON in.
+
+    Handles both the multi-line ` ```json\\n{...}\\n``` ` shape and the
+    degenerate single-line ` ```{...}``` ` shape (no newline after the
+    opening fence — drop the three backticks, never the body, so a
+    fenced-but-recoverable response is not turned into empty text).
+    This MUST run before any ``json.loads`` (Fix 1).
+    """
     body = (text or "").strip()
     if body.startswith("```"):
-        body = body.split("\n", 1)[1] if "\n" in body else ""
+        body = body.split("\n", 1)[1] if "\n" in body else body[3:]
     if body.endswith("```"):
         body = body.rsplit("```", 1)[0]
     return body.strip()
@@ -401,6 +427,171 @@ def parse_response(raw: str) -> Dict[str, Any]:
             f"model response JSON is {type(doc).__name__}, not an object",
         )
     return doc
+
+
+# Exact wording of the second-attempt repair instruction. The model is
+# given ONLY the first 200 chars of the failed response (never the whole
+# broken blob) plus a hard "JSON only" directive.
+_SECOND_ATTEMPT_INSTRUCTION = (
+    "The previous response was not valid JSON. Return ONLY a valid "
+    "JSON object with the same keys. No explanation, no markdown, "
+    "no preamble. Start with { and end with }."
+)
+_FAILED_RESPONSE_CONTEXT_CHARS = 200
+
+
+def _warn(message: str) -> None:
+    """Loud, non-fatal signal. stderr only — stdout stays pure JSON.
+
+    The workflow tees stdout into the run summary and ``json.loads`` it,
+    so every diagnostic MUST go to stderr or it corrupts that parse.
+    """
+    print(f"WARN: {message}", file=sys.stderr)
+
+
+def _log_parse_debug(
+    source_id: str, raw: str, exc: json.JSONDecodeError
+) -> None:
+    """Step A: dump the head/tail of the raw response + the error site.
+
+    Enough to diagnose truncation-vs-prose from the log alone, without
+    echoing the (potentially huge) full response.
+    """
+    head = raw[:500]
+    tail = raw[-500:] if len(raw) > 500 else ""
+    _warn(
+        f"malformed_llm_response_debug for {source_id}: parse error "
+        f"{exc.msg} at line {exc.lineno} column {exc.colno} "
+        f"(char {exc.pos}) of a {len(raw)}-char response"
+    )
+    _warn(f"  raw[:500] for {source_id}: {head!r}")
+    if tail:
+        _warn(f"  raw[-500:] for {source_id}: {tail!r}")
+
+
+def _truncate_at_last_brace(body: str, err_pos: int) -> Optional[str]:
+    """Step B helper: the prefix of ``body`` up to the last ``}`` before
+    the parse error, or ``None`` if there is no such ``}``.
+
+    ``err_pos`` is a code-point index into ``body`` (the exact string
+    handed to ``json.loads``). ``str`` slicing is code-point based, so
+    cutting at the index of a ``}`` can never split a multi-byte
+    character into invalid UTF-8 — the cut is on a structural ``}``
+    boundary, not a raw byte offset. A ``}`` that sits inside an
+    unterminated string just yields a substring that fails
+    ``json.loads`` on the next attempt; nothing invalid is ever
+    accepted.
+    """
+    cut = body.rfind("}", 0, max(err_pos, 0))
+    if cut == -1:
+        return None
+    return body[: cut + 1]
+
+
+def parse_response_with_recovery(
+    *,
+    raw: str,
+    client: Callable[..., str],
+    system: str,
+    user: str,
+    source_id: str,
+) -> Dict[str, Any]:
+    """Fix 1+3: fence-strip, parse, and on a JSON parse failure attempt
+    (B) truncation at the last ``}`` then (C) one simplified retry, else
+    (D) HALT ``malformed_llm_response``. Never returns an empty/silent
+    extraction on failure.
+
+    Fence stripping (Fix 1) runs before EVERY ``json.loads`` here — the
+    first attempt, the truncation attempt, and the retry — so a fenced
+    response can never reach ``json.loads`` unstripped.
+    """
+    body = _strip_fence(raw)
+    if not body:
+        raise ReferenceBaselineError(
+            "malformed_llm_response", "model returned empty text"
+        )
+    # ``except ... as exc`` unbinds ``exc`` at block exit in Python 3,
+    # so the error is copied into a function-scoped name that survives
+    # for the recovery steps below.
+    first_err: Optional[json.JSONDecodeError] = None
+    try:
+        doc = json.loads(body)
+    except json.JSONDecodeError as exc:
+        first_err = exc
+    else:
+        if not isinstance(doc, dict):
+            # Valid JSON but the wrong shape — truncation/retry cannot
+            # turn a list/scalar into the required object. Fail closed
+            # immediately rather than burning a retry that cannot help.
+            raise ReferenceBaselineError(
+                "malformed_llm_response",
+                f"model response JSON is {type(doc).__name__}, not an "
+                f"object",
+            )
+        return doc
+
+    # Reached only when ``json.loads`` raised (the ``else`` returns or
+    # raises), so ``first_err`` is always set here.
+    assert first_err is not None
+
+    # Step A — debug the failure before attempting any recovery.
+    _log_parse_debug(source_id, raw, first_err)
+
+    # Step B — truncation: reuse the longest valid JSON object prefix
+    # that ends on a ``}`` before the error.
+    truncated = _truncate_at_last_brace(body, first_err.pos)
+    if truncated is not None:
+        try:
+            doc = json.loads(truncated)
+        except json.JSONDecodeError:
+            doc = None
+        if isinstance(doc, dict):
+            _warn(
+                f"truncated_response_used: parsed {len(truncated)} "
+                f"chars of {len(raw)} char response for {source_id}"
+            )
+            return doc
+
+    # Step C — one simplified retry. Only the FIRST 200 chars of the
+    # failed response are sent back (never the whole broken blob), plus
+    # the original transcript so the model can actually redo the work.
+    retry_user = (
+        f"{_SECOND_ATTEMPT_INSTRUCTION}\n\n"
+        f"First {_FAILED_RESPONSE_CONTEXT_CHARS} characters of the "
+        f"previous (invalid) response, for reference only:\n"
+        f"{raw[:_FAILED_RESPONSE_CONTEXT_CHARS]}\n\n"
+        f"---\nRe-extract from this transcript:\n{user}"
+    )
+    try:
+        raw2 = client(system=system, user=retry_user)
+    except LLMClientError as exc:
+        raise ReferenceBaselineError(
+            "llm_transport_error",
+            f"second (repair) model call failed for {source_id}: {exc} "
+            f"— no fallback model, no partial file written",
+        ) from exc
+
+    body2 = _strip_fence(raw2)
+    if body2:
+        try:
+            doc = json.loads(body2)
+        except json.JSONDecodeError:
+            doc = None
+        if isinstance(doc, dict):
+            _warn(
+                f"second_attempt_used: recovered a valid JSON object on "
+                f"the simplified retry for {source_id}"
+            )
+            return doc
+
+    # Step D — every recovery path exhausted. HALT loudly; never a
+    # silent empty extraction.
+    raise ReferenceBaselineError(
+        "malformed_llm_response",
+        f"model response is not valid JSON for {source_id} after "
+        f"fence-strip, truncation, and one simplified retry "
+        f"(original error: {first_err})",
+    )
 
 
 def _primary_text(etype: str, item: Any) -> str:
@@ -653,7 +844,9 @@ def create_baselines(
                 return stub
             active_client = _stub_client
         else:
-            active_client = AnthropicJSONClient(model=model)
+            active_client = AnthropicJSONClient(
+                model=model, max_tokens=_OPUS_MAX_TOKENS
+            )
 
     transcripts = _inventory_transcripts(data_lake, source_id)
 
@@ -688,7 +881,13 @@ def create_baselines(
                 f"fallback model, no partial file written",
             ) from exc
 
-        parsed = parse_response(raw)
+        parsed = parse_response_with_recovery(
+            raw=raw,
+            client=active_client,
+            system=prompt,
+            user=transcript_text,
+            source_id=sid,
+        )
         records = build_records(
             parsed=parsed,
             types=types,
@@ -698,6 +897,21 @@ def create_baselines(
             meeting_date=meeting_date,
             created_at=_now_utc_iso(),
         )
+
+        # An empty object ``{}`` (or every type-array empty) is valid
+        # JSON, so it survives parsing and produces ZERO records. That is
+        # not a malformed-response halt, but a silent empty baseline on a
+        # content-bearing transcript is exactly the failure this task
+        # forbids — make it loud (stderr, non-fatal).
+        if not records:
+            _warn(
+                f"empty_extraction for {sid}: model returned a valid "
+                f"JSON object with zero items across all {len(types)} "
+                f"extraction types on a {len(transcript_text)}-char "
+                f"transcript — the baseline will be empty. This is not "
+                f"a halt (an empty object is structurally valid) but is "
+                f"suspicious; inspect the raw response."
+            )
 
         by_type: Dict[str, int] = {}
         for r in records:

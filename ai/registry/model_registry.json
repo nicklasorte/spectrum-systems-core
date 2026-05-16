@@ -5,7 +5,7 @@
     "extraction": "claude-haiku-4-5-20251001",
     "generation": "claude-sonnet-4-6",
     "complex_reasoning": "claude-opus-4-7",
-    "opus_reference_baseline": "claude-opus-4-6"
+    "opus_reference_baseline": "claude-opus-4-7-20250514"
   },
   "note": "No hardcoded model strings anywhere in code. All model resolution must use ModelRegistry.get(task_type). Update this file to migrate model versions."
 }

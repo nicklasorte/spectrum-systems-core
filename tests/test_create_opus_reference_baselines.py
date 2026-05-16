@@ -96,6 +96,29 @@ class SpyClient:
         return self.response
 
 
+class SequenceClient:
+    """Returns a different response per call (1st, 2nd, ...).
+
+    Drives the Fix 3 retry path: the first call returns a malformed
+    blob, the second returns the simplified-retry reply. Records every
+    ``user`` message so a test can prove the retry sent ONLY the first
+    200 chars of the failed response (never the whole broken blob).
+    """
+
+    def __init__(self, responses: list[str]):
+        self._responses = list(responses)
+        self.calls = 0
+        self.users: list[str] = []
+        self.systems: list[str] = []
+
+    def __call__(self, *, system: str, user: str) -> str:
+        self.systems.append(system)
+        self.users.append(user)
+        idx = min(self.calls, len(self._responses) - 1)
+        self.calls += 1
+        return self._responses[idx]
+
+
 def _make_docx(path: Path) -> None:
     from docx import Document
 
@@ -605,3 +628,257 @@ def test_source_id_filter(tmp_path: Path) -> None:
     )
     assert result["transcripts"] == 1
     assert result["per_transcript"][0]["source_id"] == SOURCE_ID
+
+
+# --------------------------------------------------------------------------
+# Fix 1 — markdown fence stripping runs BEFORE json.loads, always
+# --------------------------------------------------------------------------
+def _written_records(dl: Path) -> list[dict]:
+    return [
+        json.loads(ln)
+        for ln in _out_path(dl).read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+
+
+def test_parse_response_strips_json_language_fence() -> None:
+    """```json\\n{...}\\n``` -> valid JSON parsed (would fail raw)."""
+    fenced = "```json\n" + _VALID_RESPONSE + "\n```"
+    # Sanity: the fenced blob is NOT itself valid JSON, so a pass here
+    # proves the fence was stripped before json.loads (not bypassed).
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(fenced)
+    doc = cob.parse_response(fenced)
+    assert isinstance(doc, dict)
+    assert doc["decisions"][0].startswith("The group approved")
+
+
+def test_parse_response_strips_bare_fence_no_language() -> None:
+    """``` ... ``` with no language token -> valid JSON parsed."""
+    fenced = "```\n" + _VALID_RESPONSE + "\n```"
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(fenced)
+    doc = cob.parse_response(fenced)
+    assert isinstance(doc, dict)
+    assert "risks" in doc
+
+
+def test_parse_response_clean_json_still_parses() -> None:
+    """Regression: Fix 1 must not break an unfenced clean response."""
+    doc = cob.parse_response(_VALID_RESPONSE)
+    assert isinstance(doc, dict)
+    assert len(doc["decisions"]) == 2
+
+
+def test_fenced_response_end_to_end_writes_baseline(
+    tmp_path: Path,
+) -> None:
+    """The production path (parse_response_with_recovery) also strips
+    fences before json.loads — a ```json fenced response writes the
+    full baseline."""
+    dl = _seed(tmp_path)
+    fenced = "```json\n" + _VALID_RESPONSE + "\n```"
+    cob.create_baselines(
+        data_lake=dl,
+        source_id=None,
+        dry_run=False,
+        skip_existing=True,
+        model=MODEL,
+        client=SpyClient(fenced),
+    )
+    assert len(_written_records(dl)) == 8
+
+
+# --------------------------------------------------------------------------
+# Fix 3 Step B — truncation fallback: valid JSON then trailing prose
+# --------------------------------------------------------------------------
+def test_truncation_fallback_recovers_trailing_prose(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dl = _seed(tmp_path)
+    # Valid object, then the model kept talking (the documented
+    # malformed_llm_response root cause: prose after the JSON).
+    raw = _VALID_RESPONSE + "\n\nHere is a short summary of the above."
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(raw)  # sanity: the whole blob is NOT valid JSON
+    spy = SpyClient(raw)
+    cob.create_baselines(
+        data_lake=dl,
+        source_id=None,
+        dry_run=False,
+        skip_existing=True,
+        model=MODEL,
+        client=spy,
+    )
+    # Recovered without a second model call.
+    assert spy.calls == 1
+    assert len(_written_records(dl)) == 8
+    err = capsys.readouterr().err
+    assert "truncated_response_used" in err
+    assert "char response" in err
+
+
+def test_truncation_never_accepts_invalid_json(
+    tmp_path: Path,
+) -> None:
+    """A ``}`` inside an unterminated string must NOT yield a
+    falsely-accepted object — it must fall through to the retry/halt."""
+    dl = _seed(tmp_path)
+    # Unterminated string that merely CONTAINS a brace. Truncating at
+    # that brace produces invalid JSON; nothing partial may be accepted.
+    bad = '{"decisions": ["the rule said {x} and then'
+    with pytest.raises(cob.ReferenceBaselineError) as ei:
+        cob.create_baselines(
+            data_lake=dl,
+            source_id=None,
+            dry_run=False,
+            skip_existing=True,
+            model=MODEL,
+            client=SpyClient(bad),  # retry returns same -> halt
+        )
+    assert ei.value.reason == "malformed_llm_response"
+    assert not _out_path(dl).exists()
+
+
+# --------------------------------------------------------------------------
+# Fix 3 Step C — second (simplified) API call recovers clean JSON,
+# sending ONLY the first 200 chars of the failed response
+# --------------------------------------------------------------------------
+def test_second_attempt_recovers_and_sends_only_200_chars(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dl = _seed(tmp_path)
+    # 500-char non-JSON blob with NO brace -> truncation impossible,
+    # forcing the Step C retry.
+    failed = "x" * 500
+    seq = SequenceClient([failed, _VALID_RESPONSE])
+    cob.create_baselines(
+        data_lake=dl,
+        source_id=None,
+        dry_run=False,
+        skip_existing=True,
+        model=MODEL,
+        client=seq,
+    )
+    assert seq.calls == 2, "must make exactly one repair call"
+    assert len(_written_records(dl)) == 8
+    err = capsys.readouterr().err
+    assert "second_attempt_used" in err
+
+    retry_user = seq.users[1]
+    # Red-team: ONLY the first 200 chars of the failed response, never
+    # the whole broken blob.
+    assert ("x" * 200) in retry_user
+    assert ("x" * 201) not in retry_user
+    assert failed not in retry_user
+    assert "Return ONLY a valid JSON object" in retry_user
+
+
+def test_both_attempts_fail_halts_not_empty(
+    tmp_path: Path,
+) -> None:
+    """Truncation impossible + retry still malformed -> HALT
+    malformed_llm_response. Never a silent empty extraction."""
+    dl = _seed(tmp_path)
+    seq = SequenceClient(
+        ["not json one no brace", "still not json two no brace"]
+    )
+    with pytest.raises(cob.ReferenceBaselineError) as ei:
+        cob.create_baselines(
+            data_lake=dl,
+            source_id=None,
+            dry_run=False,
+            skip_existing=True,
+            model=MODEL,
+            client=seq,
+        )
+    assert ei.value.reason == "malformed_llm_response"
+    assert seq.calls == 2, "exactly one repair attempt, then halt"
+    assert not _out_path(dl).exists(), "no partial/empty JSONL on halt"
+
+
+def test_non_object_json_halts_without_burning_retry(
+    tmp_path: Path,
+) -> None:
+    """Valid JSON of the wrong shape ([...]) halts immediately — a
+    retry cannot turn a list into the required object."""
+    dl = _seed(tmp_path)
+    seq = SequenceClient(["[1, 2, 3]", _VALID_RESPONSE])
+    with pytest.raises(cob.ReferenceBaselineError) as ei:
+        cob.create_baselines(
+            data_lake=dl,
+            source_id=None,
+            dry_run=False,
+            skip_existing=True,
+            model=MODEL,
+            client=seq,
+        )
+    assert ei.value.reason == "malformed_llm_response"
+    assert seq.calls == 1, "must NOT waste a repair call on a shape error"
+
+
+# --------------------------------------------------------------------------
+# Red-team: empty {} is valid JSON -> zero items must WARN, not be silent
+# --------------------------------------------------------------------------
+def test_empty_object_warns_not_silent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dl = _seed(tmp_path)
+    result = cob.create_baselines(
+        data_lake=dl,
+        source_id=None,
+        dry_run=False,
+        skip_existing=True,
+        model=MODEL,
+        client=SpyClient("{}"),
+    )
+    assert result["status"] == "success"
+    t = result["per_transcript"][0]
+    assert t["total"] == 0
+    err = capsys.readouterr().err
+    assert "empty_extraction" in err, (
+        "an empty object on a content-bearing transcript must be loud"
+    )
+
+
+# --------------------------------------------------------------------------
+# Fix 4 — registry holds the new Opus string; the workflow resolves it
+# from the registry (no hardcoded model literal) so OPUS_MODEL == registry
+# --------------------------------------------------------------------------
+EXPECTED_OPUS_MODEL = "claude-opus-4-7-20250514"
+
+
+def test_registry_opus_reference_baseline_updated() -> None:
+    registry = json.loads(
+        (REPO_ROOT / "ai" / "registry" / "model_registry.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert (
+        registry["models"]["opus_reference_baseline"]
+        == EXPECTED_OPUS_MODEL
+    )
+
+
+def test_workflow_opus_model_resolves_from_registry() -> None:
+    """The workflow must read OPUS_MODEL from the registry key (not a
+    literal), so the effective OPUS_MODEL equals the registry entry."""
+    import re
+
+    wf = (
+        REPO_ROOT
+        / ".github"
+        / "workflows"
+        / "create-opus-reference-baselines.yml"
+    ).read_text(encoding="utf-8")
+    assert "['models']['opus_reference_baseline']" in wf, (
+        "workflow no longer resolves OPUS_MODEL from the registry key"
+    )
+    model_re = re.compile(r"claude-(?:opus|sonnet|haiku|mythos)-\d[\w-]*")
+    for i, line in enumerate(wf.splitlines(), 1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        assert not model_re.search(line), (
+            f"hardcoded model literal on non-comment line {i}: {line!r}"
+        )

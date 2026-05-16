@@ -238,3 +238,98 @@ def test_subprocess_pair_ids_deterministic(tmp_path: Path) -> None:
         ]
 
     assert ids(tmp_path / "a") == ids(tmp_path / "b")
+
+
+def _run_with_stub(args: list[str], stub: str):
+    """Same as ``_run`` but with a caller-supplied stub response.
+
+    The env stub returns the SAME text on every call, so this drives
+    the recovery paths that succeed WITHOUT a differing second response
+    (fence-strip, truncation, empty-object). The differing-second-call
+    path is covered by the in-process unit suite (a sequence client).
+    """
+    env = dict(os.environ)
+    env["OPUS_REFERENCE_BASELINE_STUB_RESPONSE"] = stub
+    env.pop("ANTHROPIC_API_KEY", None)
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env=env,
+    )
+
+
+def test_subprocess_fenced_response_recovered(tmp_path: Path) -> None:
+    """Fix 1 at the subprocess boundary: a ```json-fenced response is
+    fence-stripped before json.loads and the baseline is written."""
+    dl = _seed(tmp_path)
+    result = _run_with_stub(
+        ["--data-lake", str(dl), "--model", MODEL, "--no-skip-existing"],
+        "```json\n" + _STUB_RESPONSE + "\n```",
+    )
+    assert result.returncode == 0, (
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    out = _out(dl)
+    assert out.is_file()
+    lines = [
+        ln for ln in out.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    assert len(lines) == 3  # 1 decision + 1 action + 1 risk
+
+
+def test_subprocess_trailing_prose_truncated(tmp_path: Path) -> None:
+    """Fix 3 Step B at the subprocess boundary: valid JSON followed by
+    prose is truncated back to the last ``}`` and recovered."""
+    dl = _seed(tmp_path)
+    result = _run_with_stub(
+        ["--data-lake", str(dl), "--model", MODEL, "--no-skip-existing"],
+        _STUB_RESPONSE + "\n\nThat concludes the extraction. Thanks!",
+    )
+    assert result.returncode == 0, (
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert _out(dl).is_file()
+    assert "truncated_response_used" in result.stderr
+    lines = [
+        ln for ln in _out(dl).read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    assert len(lines) == 3
+
+
+def test_subprocess_empty_object_warns_returncode_zero(
+    tmp_path: Path,
+) -> None:
+    """Red-team at the subprocess boundary: ``{}`` is valid JSON, so
+    the run succeeds (rc 0) but MUST warn loudly on stderr — never a
+    silent empty baseline."""
+    dl = _seed(tmp_path)
+    result = _run_with_stub(
+        ["--data-lake", str(dl), "--model", MODEL, "--no-skip-existing"],
+        "{}",
+    )
+    assert result.returncode == 0, (
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "empty_extraction" in result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["per_transcript"][0]["total"] == 0
+
+
+def test_subprocess_unrecoverable_halts_no_partial(
+    tmp_path: Path,
+) -> None:
+    """Garbage with no recoverable object: fence-strip, truncation, and
+    the (same-stub) retry all fail -> halt malformed_llm_response, no
+    partial JSONL."""
+    dl = _seed(tmp_path)
+    result = _run_with_stub(
+        ["--data-lake", str(dl), "--model", MODEL, "--no-skip-existing"],
+        "I am unable to produce JSON for this transcript.",
+    )
+    assert result.returncode != 0
+    assert "malformed_llm_response" in result.stdout
+    assert not _out(dl).exists()
