@@ -3630,6 +3630,7 @@ def cmd_compare_extraction(args) -> int:
     return run_compare_extraction(
         lake_root=args.lake,
         meeting_id=args.meeting_id,
+        transcript_file=args.transcript_file,
     )
 
 
@@ -4535,16 +4536,26 @@ def _build_parser() -> argparse.ArgumentParser:
             "Run regex / Haiku / Opus extraction over one meeting and "
             "write extraction_comparison + extraction_telemetry "
             "(+ extraction_unconstrained on Opus success) plus a "
-            "Markdown report. Fail-closed: missing/empty "
-            "ANTHROPIC_API_KEY or missing source_record halts before any "
-            "API call with no artifact written."
+            "Markdown report. Provide exactly one of --meeting-id "
+            "(reads the lake; source_record must already exist) or "
+            "--transcript-file (reads a flat file; meeting_id is "
+            "derived from the slugified filename stem). Fail-closed: "
+            "missing/empty ANTHROPIC_API_KEY, an invalid source "
+            "selector, or missing source_record halts before any API "
+            "call with no artifact written."
         ),
     )
     ce.add_argument("--lake", required=True, help="Data lake root.")
     ce.add_argument(
         "--meeting-id",
-        required=True,
-        help="Meeting id (source_record must already exist on disk).",
+        help="Meeting id (source_record must already exist on disk). "
+        "Mutually exclusive with --transcript-file; provide exactly one.",
+    )
+    ce.add_argument(
+        "--transcript-file",
+        help="Flat transcript file path; meeting_id is derived from the "
+        "slugified filename stem (no source_record required). "
+        "Mutually exclusive with --meeting-id; provide exactly one.",
     )
 
     return parser

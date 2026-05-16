@@ -573,9 +573,13 @@ def _build_parser() -> argparse.ArgumentParser:
             "transcript and write extraction_comparison, "
             "extraction_telemetry, and (on Opus success) "
             "extraction_unconstrained instrument artifacts plus a "
-            "Markdown report. Fail-closed: a missing/empty "
-            "ANTHROPIC_API_KEY or a missing source_record halts the run "
-            "before any API call and writes NO artifact. Exit 1 on any "
+            "Markdown report. Provide exactly one of --meeting-id "
+            "(reads the lake; source_record must already exist) or "
+            "--transcript-file (reads a flat file; meeting_id is "
+            "derived from the slugified filename stem). Fail-closed: a "
+            "missing/empty ANTHROPIC_API_KEY, an invalid source "
+            "selector, or a missing source_record halts the run before "
+            "any API call and writes NO artifact. Exit 1 on any "
             "pre-flight or extractor failure (comparison status "
             "'rejected')."
         ),
@@ -583,9 +587,16 @@ def _build_parser() -> argparse.ArgumentParser:
     ce.add_argument("--lake", required=True, help="Path to the data lake root.")
     ce.add_argument(
         "--meeting-id",
-        required=True,
         help="Meeting id (directory under raw/meetings/; source_record "
-        "must already exist under processed/meetings/).",
+        "must already exist under processed/meetings/). Mutually "
+        "exclusive with --transcript-file; provide exactly one.",
+    )
+    ce.add_argument(
+        "--transcript-file",
+        help="Path to a flat transcript file. meeting_id is derived "
+        "from the slugified filename stem; no source_record is "
+        "required. Mutually exclusive with --meeting-id; provide "
+        "exactly one.",
     )
     return parser
 
@@ -628,6 +639,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_compare_extraction(
             lake_root=args.lake,
             meeting_id=args.meeting_id,
+            transcript_file=args.transcript_file,
         )
 
     parser.error(f"unknown command: {args.command}")

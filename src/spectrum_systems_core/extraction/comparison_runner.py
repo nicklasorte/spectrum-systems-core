@@ -25,8 +25,10 @@ Fail-closed order (red-team Pass 1):
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -39,7 +41,7 @@ from ..data_lake.pipeline import (
     _stable_artifact_id,
     source_record_path,
 )
-from ..data_lake.paths import processed_meeting_dir
+from ..data_lake.paths import processed_meeting_dir, validate_meeting_id
 from ..data_lake.serialize import artifact_to_dict, canonical_json
 from ..workflows.meeting_minutes import _build_base_payload
 from . import llm_haiku, llm_opus
@@ -53,6 +55,25 @@ UNCONSTRAINED_TYPE = "extraction_unconstrained"
 # runs never set it; the comparison runner's whole purpose is to make
 # real API calls.
 STUB_ENV_FLAG = "COMPARE_EXTRACTION_STUB"
+
+_SLUG_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+
+
+def slugify(filename_stem: str) -> str:
+    """Deterministic filename-stem -> meeting_id slug.
+
+    Lowercase; every run of non-[a-z0-9] collapses to a single hyphen;
+    leading/trailing hyphens stripped. Defined once here so the
+    ``--transcript-file`` meeting_id derivation cannot drift from the
+    contract.
+
+    "7 GHz Downlink TIG Meeting Kickoff - transcript 20251218"
+      -> "7-ghz-downlink-tig-meeting-kickoff-transcript-20251218"
+    """
+    s = filename_stem.lower()
+    s = _SLUG_NON_ALNUM_RE.sub("-", s)
+    s = s.strip("-")
+    return s
 
 
 class _StubOpusResult:
@@ -199,7 +220,8 @@ def _write_instrument(lake_root: Path, meeting_id: str, art: Artifact) -> Path:
 def run_compare_extraction(
     *,
     lake_root: Path | str,
-    meeting_id: str,
+    meeting_id: str | None = None,
+    transcript_file: Path | str | None = None,
     env: Mapping[str, str] | None = None,
     haiku_extract: Callable[[str], Any] | None = None,
     opus_extract: Callable[[str], Any] | None = None,
@@ -207,10 +229,18 @@ def run_compare_extraction(
 ) -> int:
     """Run the three-point comparison for one meeting.
 
+    Source selection is mutually exclusive — provide exactly one of:
+
+    * ``meeting_id`` — read the lake (transcript + chunked
+      ``source_record``; fail-closed if either is missing).
+    * ``transcript_file`` — read a flat transcript file directly;
+      ``meeting_id`` is derived from the slugified filename stem and
+      no ``source_record`` is required.
+
     Returns 0 only when all three extractors succeeded; 1 on any
-    pre-flight failure or extractor failure. Injected extractors are
-    the test seam; production passes none and the real adapters are
-    used after the fail-closed pre-flight gate.
+    usage error, pre-flight failure, or extractor failure. Injected
+    extractors are the test seam; production passes none and the real
+    adapters are used after the fail-closed pre-flight gate.
     """
     out = stream if stream is not None else sys.stdout
     env = env if env is not None else os.environ
@@ -220,33 +250,78 @@ def run_compare_extraction(
         "1", "true", "yes",
     }
 
-    # 1. pre-flight credentials (skipped only in stub mode).
-    if not _preflight_credentials(env, out, stub=stub):
-        return 1
-
-    # 2. transcript + source_record must exist BEFORE any API call.
-    try:
-        transcript_input = load_meeting(lake_root, meeting_id)
-    except LoaderError as exc:
-        print(f"ERROR: meeting_not_loadable:{exc}", file=out)
-        return 1
-
-    chunks, sr_error = _load_source_record_chunks(lake_root, meeting_id)
-    if sr_error is not None:
-        print(f"ERROR: {sr_error}", file=out)
+    # 0. exactly one source selector. A usage error returns 1 with a
+    #    clear message (NOT argparse's exit 2) so every entry point
+    #    — direct call, cli.py, data_lake.cli — behaves identically.
+    if (meeting_id is None) == (transcript_file is None):
         print(
-            "Run `spectrum-core process-meeting --lake <lake> "
-            f"--meeting-id {meeting_id}` first to produce source_record. "
-            f"|retry: spectrum-core compare-extraction --lake {lake_root} "
-            f"--meeting-id {meeting_id}",
+            "ERROR: source_selector_invalid: provide exactly one of "
+            "--meeting-id or --transcript-file",
             file=out,
         )
         return 1
 
-    assert chunks is not None  # narrowed by sr_error is None
-    transcript_text = transcript_input.transcript_text
-    transcript_turns = _transcript_with_turn_ids(chunks)
-    trace_id = f"cmp-{transcript_input.transcript_hash[:16]}"
+    # 1. pre-flight credentials (skipped only in stub mode). Stays
+    #    ahead of any transcript read so a credential-less invocation
+    #    fails closed before touching disk in either mode.
+    if not _preflight_credentials(env, out, stub=stub):
+        return 1
+
+    # 2. resolve the transcript source.
+    if transcript_file is not None:
+        tf = Path(transcript_file)
+        if not tf.is_file():
+            print(f"ERROR: transcript_file_not_found:{tf}", file=out)
+            return 1
+        transcript_bytes = tf.read_bytes()
+        if not transcript_bytes.strip():
+            print(f"ERROR: transcript_file_empty:{tf}", file=out)
+            return 1
+        meeting_id = slugify(tf.stem)
+        try:
+            validate_meeting_id(meeting_id)
+        except ValueError as exc:
+            print(
+                f"ERROR: meeting_id_from_filename_invalid:{exc}", file=out
+            )
+            return 1
+        try:
+            transcript_text = transcript_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            print(f"ERROR: transcript_file_not_utf8:{exc}", file=out)
+            return 1
+        # No chunked source_record in flat-file mode: the Haiku point
+        # sees the raw transcript (no turn ids to cite). Deterministic
+        # given the same file bytes.
+        transcript_turns = transcript_text
+        transcript_hash = hashlib.sha256(transcript_bytes).hexdigest()
+    else:
+        # Existing --meeting-id path: unchanged. transcript +
+        # source_record must exist BEFORE any API call.
+        try:
+            transcript_input = load_meeting(lake_root, meeting_id)
+        except LoaderError as exc:
+            print(f"ERROR: meeting_not_loadable:{exc}", file=out)
+            return 1
+
+        chunks, sr_error = _load_source_record_chunks(lake_root, meeting_id)
+        if sr_error is not None:
+            print(f"ERROR: {sr_error}", file=out)
+            print(
+                "Run `spectrum-core process-meeting --lake <lake> "
+                f"--meeting-id {meeting_id}` first to produce source_record. "
+                f"|retry: spectrum-core compare-extraction --lake {lake_root} "
+                f"--meeting-id {meeting_id}",
+                file=out,
+            )
+            return 1
+
+        assert chunks is not None  # narrowed by sr_error is None
+        transcript_text = transcript_input.transcript_text
+        transcript_turns = _transcript_with_turn_ids(chunks)
+        transcript_hash = transcript_input.transcript_hash
+
+    trace_id = f"cmp-{transcript_hash[:16]}"
 
     if stub:
         haiku_extract = haiku_extract or llm_haiku.stub_extract
@@ -320,7 +395,7 @@ def run_compare_extraction(
     # 4. always write the instrument artifacts.
     comparison_payload = {
         "meeting_id": meeting_id,
-        "transcript_artifact_id": transcript_input.transcript_hash,
+        "transcript_artifact_id": transcript_hash,
         "extractor_status": status,
         "regex_output": regex_out,
         "haiku_output": haiku_out,
@@ -384,5 +459,6 @@ __all__ = [
     "TELEMETRY_TYPE",
     "UNCONSTRAINED_TYPE",
     "STUB_ENV_FLAG",
+    "slugify",
     "run_compare_extraction",
 ]

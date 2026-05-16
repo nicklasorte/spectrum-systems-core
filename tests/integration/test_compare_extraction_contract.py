@@ -112,3 +112,59 @@ def test_compare_extraction_subprocess_writes_expected_artifacts(tmp_path):
     assert md.is_file()
     body = md.read_text(encoding="utf-8")
     assert f"# Extraction Comparison — {MEETING_ID}" in body
+
+
+def test_compare_extraction_transcript_file_subprocess(tmp_path):
+    """Flat-file mode: no source_record, no raw/ tree — only a flat
+    transcript file. meeting_id is derived from the slugified stem and
+    the instrument artifacts land under the derived directory."""
+    lake = tmp_path / "lake"
+    tf = tmp_path / "7 GHz Downlink TIG Meeting Kickoff - transcript 20251218.txt"
+    tf.write_text(
+        (FIXTURE / "transcript.txt").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    env = dict(os.environ)
+    env["COMPARE_EXTRACTION_STUB"] = "1"
+    env.pop("ANTHROPIC_API_KEY", None)
+    repo_src = str(Path(__file__).resolve().parents[2] / "src")
+    env["PYTHONPATH"] = repo_src + os.pathsep + env.get("PYTHONPATH", "")
+
+    proc = subprocess.run(
+        [
+            sys.executable, "-m", "spectrum_systems_core.data_lake.cli",
+            "compare-extraction",
+            "--lake", str(lake),
+            "--transcript-file", str(tf),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0, (
+        f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+
+    derived = "7-ghz-downlink-tig-meeting-kickoff-transcript-20251218"
+    meeting_dir = lake / "processed" / "meetings" / derived
+    comp = list(meeting_dir.glob("extraction_comparison__*.json"))
+    tele = list(meeting_dir.glob("extraction_telemetry__*.json"))
+    unc = list(meeting_dir.glob("extraction_unconstrained__*.json"))
+    assert len(comp) == 1 and len(tele) == 1 and len(unc) == 1
+
+    comparison = json.loads(comp[0].read_text(encoding="utf-8"))
+    assert comparison["artifact_type"] == "extraction_comparison"
+    assert comparison["status"] == "promoted"
+    assert comparison["payload"]["meeting_id"] == derived
+    # Slug in the filename equals the derived meeting_id.
+    assert comp[0].name == f"extraction_comparison__{derived}.json"
+    # No source_record / raw tree was needed.
+    assert not (lake / "raw").exists()
+
+    md = meeting_dir / "markdown" / "extraction_comparison.md"
+    assert md.is_file()
+    assert f"# Extraction Comparison — {derived}" in md.read_text(
+        encoding="utf-8"
+    )
