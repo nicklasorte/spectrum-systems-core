@@ -1,0 +1,191 @@
+"""Integration contract test for ``scripts/create_opus_reference_baselines.py``.
+
+CLAUDE.md non-negotiable: a script that reads a pipeline artifact
+(``source_record.json``) and calls ``validate_artifact`` must have an
+integration test that
+
+  1. Uses ``tests.integration.fixtures`` factories (``make_source_record``)
+     — never a hand-rolled dict — to produce the artifact in the format
+     the pipeline writes.
+  2. Writes artifacts to a real temp directory (not mocked).
+  3. Calls the script via ``subprocess.run`` against that temp dir.
+  4. Asserts the correct output on disk (not just the return code).
+
+The model transport is the explicit offline env-var seam
+(``OPUS_REFERENCE_BASELINE_STUB_RESPONSE``) so CI needs no API key.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import uuid
+from pathlib import Path
+
+from tests.integration.fixtures import make_source_record
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = REPO_ROOT / "scripts" / "create_opus_reference_baselines.py"
+MODEL = "claude-opus-4-6"
+TRANSCRIPT_STEM = "phase-ab-transcript-20251218"
+SOURCE_ID = "phase-ab-transcript-20251218"
+
+_STUB_RESPONSE = json.dumps(
+    {
+        "decisions": [
+            "The TIG approved the 7 GHz downlink threshold.",
+        ],
+        "action_items": ["NTIA to circulate the revised methodology."],
+        "open_questions": [],
+        "commitments": [],
+        "risks": [
+            {
+                "risk_id": "risk-1",
+                "risk_text": "Adjacent-band interference is unquantified.",
+                "raised_by": "FSS Rep",
+                "severity": None,
+                "mitigation_mentioned": None,
+            }
+        ],
+        "cross_references": [],
+        "attendees": [],
+        "topics": [],
+        "regulatory_references": [],
+        "technical_parameters": [],
+        "named_artifacts": [],
+        "scheduled_events": [],
+    }
+)
+
+
+def _make_docx(path: Path) -> None:
+    from docx import Document
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc = Document()
+    doc.add_paragraph("7 GHz Downlink TIG — 2025-12-18")
+    doc.add_paragraph("The TIG approved the 7 GHz downlink threshold.")
+    doc.add_paragraph("NTIA to circulate the revised methodology.")
+    doc.save(str(path))
+
+
+def _seed(tmp_path: Path, *, with_source_record: bool = True) -> Path:
+    dl = tmp_path / "data-lake"
+    _make_docx(
+        dl / "store" / "raw" / "transcripts" / f"{TRANSCRIPT_STEM}.docx"
+    )
+    if with_source_record:
+        proc = dl / "store" / "processed" / "meetings" / SOURCE_ID
+        proc.mkdir(parents=True)
+        # Factory: the format the pipeline writes (real-writer-shaped).
+        (proc / "source_record.json").write_text(
+            json.dumps(make_source_record(SOURCE_ID, str(uuid.uuid4())))
+        )
+    return dl
+
+
+def _run(args: list[str]):
+    env = dict(os.environ)
+    env["OPUS_REFERENCE_BASELINE_STUB_RESPONSE"] = _STUB_RESPONSE
+    env.pop("ANTHROPIC_API_KEY", None)  # prove no real API path is taken
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env=env,
+    )
+
+
+def _out(dl: Path) -> Path:
+    return (
+        dl / "store" / "processed" / "meetings" / SOURCE_ID
+        / "reference_baselines" / "opus_reference_minutes.jsonl"
+    )
+
+
+def test_subprocess_writes_reference_only_baselines(
+    tmp_path: Path,
+) -> None:
+    dl = _seed(tmp_path)
+    artifact_id = json.loads(
+        (
+            dl / "store" / "processed" / "meetings" / SOURCE_ID
+            / "source_record.json"
+        ).read_text(encoding="utf-8")
+    )["artifact_id"]
+
+    result = _run(
+        ["--data-lake", str(dl), "--model", MODEL, "--no-skip-existing"]
+    )
+    assert result.returncode == 0, (
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+
+    out = _out(dl)
+    assert out.is_file(), "JSONL not written at the contract path"
+    lines = [
+        json.loads(ln)
+        for ln in out.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    assert len(lines) == 3  # 1 decision + 1 action + 1 risk
+    for r in lines:
+        assert r["model_id"] == MODEL
+        assert r["model_authored"] is True
+        assert r["human_authored"] is False
+        assert r["verified"] is False
+        assert r["status"] == "reference_only"
+        assert r["provenance"]["produced_by"] == (
+            "opus_reference_baseline_workflow"
+        )
+        assert r["source_artifact_id"] == artifact_id
+        assert r["source_id"] == SOURCE_ID
+        assert r["meeting_date"] == "2025-12-18"
+        assert uuid.UUID(r["pair_id"]).version == 5
+    assert {r["extraction_type"] for r in lines} == {
+        "decisions", "action_items", "risks"
+    }
+
+
+def test_subprocess_dry_run_writes_nothing(tmp_path: Path) -> None:
+    dl = _seed(tmp_path)
+    result = _run(
+        ["--data-lake", str(dl), "--model", MODEL, "--dry-run"]
+    )
+    assert result.returncode == 0, result.stderr
+    assert not _out(dl).exists(), "dry-run must not write the JSONL"
+    summary = json.loads(result.stdout)
+    assert summary["dry_run"] is True
+    assert summary["model"] == MODEL
+    assert summary["per_transcript"][0]["status"] == "dry_run"
+
+
+def test_subprocess_missing_source_record_halts(tmp_path: Path) -> None:
+    dl = _seed(tmp_path, with_source_record=False)
+    result = _run(
+        ["--data-lake", str(dl), "--model", MODEL, "--no-skip-existing"]
+    )
+    assert result.returncode != 0
+    assert "missing_source_record" in result.stdout
+    assert not _out(dl).exists()
+
+
+def test_subprocess_pair_ids_deterministic(tmp_path: Path) -> None:
+    def ids(root: Path) -> list[str]:
+        dl = _seed(root)
+        r = _run(
+            [
+                "--data-lake", str(dl), "--model", MODEL,
+                "--no-skip-existing",
+            ]
+        )
+        assert r.returncode == 0, r.stderr
+        return [
+            json.loads(ln)["pair_id"]
+            for ln in _out(dl).read_text(encoding="utf-8").splitlines()
+            if ln.strip()
+        ]
+
+    assert ids(tmp_path / "a") == ids(tmp_path / "b")
