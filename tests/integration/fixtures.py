@@ -255,6 +255,125 @@ def make_human_minutes_gt_pair(
     )
 
 
+def make_promoted_meeting_minutes_artifact(
+    *,
+    lake_root: "Any",
+    source_id: str,
+    decisions: Optional[List[str]] = None,
+    action_items: Optional[List[str]] = None,
+    open_questions: Optional[List[str]] = None,
+    transcript_text: Optional[str] = None,
+) -> "Any":
+    """Produce a promoted ``meeting_minutes`` artifact via the REAL path.
+
+    Runs ``run_meeting_minutes_llm_workflow`` (the real governed loop +
+    every LLM eval gate) with a deterministic stub transport, then
+    writes it through the real ``write_promoted_artifact`` writer. If
+    the workflow, the envelope, or the writer changes shape, every test
+    that depends on this factory rebuilds against the new shape on the
+    next run (CLAUDE.md integration-test rule — no hand-rolled dict).
+
+    The stubbed model returns the passed items verbatim; the transcript
+    is synthesized to contain every item as a literal substring so the
+    within-source eval passes and the artifact actually promotes.
+    """
+    from pathlib import Path as _Path
+
+    from spectrum_systems_core.data_lake.writer import (
+        write_promoted_artifact,
+    )
+    from spectrum_systems_core.workflows.meeting_minutes_llm import (
+        run_meeting_minutes_llm_workflow,
+    )
+
+    import sys as _sys
+
+    tests_dir = _Path(__file__).resolve().parents[1]
+    if str(tests_dir) not in _sys.path:
+        _sys.path.insert(0, str(tests_dir))
+    from llm_stub import json_stub  # type: ignore  # noqa: WPS433
+
+    decisions = decisions or [
+        "The group approved the 7 GHz downlink threshold."
+    ]
+    action_items = action_items or [
+        "DoD will submit revised ERP values before the next session."
+    ]
+    open_questions = open_questions or [
+        "What is the coordination distance for federal incumbents?"
+    ]
+
+    if transcript_text is None:
+        lines = ["7 GHz Downlink TIG — kickoff"]
+        lines.extend(decisions)
+        lines.extend(action_items)
+        lines.extend(open_questions)
+        transcript_text = "\n".join(lines) + "\n"
+
+    client = json_stub(
+        decisions=decisions,
+        action_items=action_items,
+        open_questions=open_questions,
+    )
+    result = run_meeting_minutes_llm_workflow(
+        transcript_text,
+        client=client,
+        meeting_id=source_id,
+        source_id=source_id,
+        lake_root=lake_root,
+    )
+    if not result.promoted:
+        eval_payloads = [r.payload for r in result.eval_results]
+        raise AssertionError(
+            "factory could not promote meeting_minutes; "
+            f"decision={result.control_decision.payload} "
+            f"evals={eval_payloads}"
+        )
+    return write_promoted_artifact(
+        _Path(lake_root), result.meeting_minutes, meeting_id=source_id
+    )
+
+
+def make_opus_reference_baseline(
+    *,
+    data_lake_root: "Any",
+    source_id: str,
+    source_artifact_id: str,
+    model: str,
+    items_by_type: Dict[str, List[Any]],
+) -> "Any":
+    """Produce ``opus_reference_minutes.jsonl`` via the REAL builder.
+
+    Calls ``create_opus_reference_baselines.build_records`` and the
+    script's own ``_write_jsonl`` writer so the JSONL is byte-shape
+    identical to a real Opus baseline run (CLAUDE.md rule). ``model``
+    is stamped into every line as ``model_id`` exactly as the workflow
+    resolves it from ``ai/registry/model_registry.json``.
+    ``data_lake_root`` is the data-lake REPO root (the script appends
+    ``store/processed/meetings/...`` itself).
+    """
+    from pathlib import Path as _Path
+    import sys as _sys
+
+    scripts_dir = _Path(__file__).resolve().parents[2] / "scripts"
+    if str(scripts_dir) not in _sys.path:
+        _sys.path.insert(0, str(scripts_dir))
+    import create_opus_reference_baselines as crb  # type: ignore  # noqa: WPS433
+
+    records = crb.build_records(
+        parsed=items_by_type,
+        types=crb.extraction_types(),
+        source_id=source_id,
+        source_artifact_id=source_artifact_id,
+        model=model,
+        meeting_date="2025-12-18",
+        created_at="1970-01-01T00:00:00+00:00",
+    )
+    out = crb._jsonl_path(_Path(data_lake_root), source_id)
+    crb._write_jsonl(out, records)
+    return out
+
+
 def make_decision_few_shot_placeholder(
     extraction_type: str = "decision",
 ) -> Dict[str, Any]:

@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/comparison_result.schema.json",
+  "title": "comparison_result",
+  "description": "Deterministic Haiku-vs-Opus extraction diff. Written by scripts/compare_opus_haiku.py. NEVER produced by an LLM call: the comparison is pure text matching, so this artifact is replay-stable for the same Opus baseline + Haiku artifact inputs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "source_id",
+    "haiku_run_id",
+    "opus_model_id",
+    "compared_at",
+    "summary",
+    "by_type",
+    "false_negatives",
+    "haiku_only_items",
+    "gt_missed"
+  ],
+  "properties": {
+    "artifact_type": { "const": "comparison_result" },
+    "schema_version": { "type": "string", "minLength": 1 },
+    "source_id": { "type": "string", "minLength": 1 },
+    "haiku_run_id": { "type": "string" },
+    "opus_model_id": { "type": "string" },
+    "compared_at": { "type": "string", "minLength": 1 },
+    "gt_pairs_present": { "type": "boolean" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total_opus_items",
+        "total_haiku_items",
+        "true_positives",
+        "false_negatives",
+        "haiku_only",
+        "gt_covered_by_haiku",
+        "gt_missed_by_haiku",
+        "gt_covered_by_opus",
+        "haiku_recall_vs_opus",
+        "haiku_precision_vs_opus",
+        "haiku_f1_vs_opus",
+        "gt_recall_haiku",
+        "gt_recall_opus"
+      ],
+      "properties": {
+        "total_opus_items": { "type": "integer", "minimum": 0 },
+        "total_haiku_items": { "type": "integer", "minimum": 0 },
+        "true_positives": { "type": "integer", "minimum": 0 },
+        "false_negatives": { "type": "integer", "minimum": 0 },
+        "haiku_only": { "type": "integer", "minimum": 0 },
+        "gt_covered_by_haiku": { "type": "integer", "minimum": 0 },
+        "gt_missed_by_haiku": { "type": "integer", "minimum": 0 },
+        "gt_covered_by_opus": { "type": "integer", "minimum": 0 },
+        "haiku_recall_vs_opus": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "haiku_precision_vs_opus": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "haiku_f1_vs_opus": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "gt_recall_haiku": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "gt_recall_opus": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+      }
+    },
+    "by_type": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "opus_count",
+          "haiku_count",
+          "true_positives",
+          "false_negatives",
+          "haiku_only"
+        ],
+        "properties": {
+          "opus_count": { "type": "integer", "minimum": 0 },
+          "haiku_count": { "type": "integer", "minimum": 0 },
+          "true_positives": { "type": "integer", "minimum": 0 },
+          "false_negatives": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["text_preview", "extraction_type"],
+              "properties": {
+                "text_preview": { "type": "string" },
+                "extraction_type": { "type": "string" }
+              }
+            }
+          },
+          "haiku_only": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["text_preview", "extraction_type"],
+              "properties": {
+                "text_preview": { "type": "string" },
+                "extraction_type": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "false_negatives": { "type": "array", "items": { "type": "object" } },
+    "haiku_only_items": { "type": "array", "items": { "type": "object" } },
+    "gt_missed": { "type": "array", "items": { "type": "object" } }
+  }
+}
