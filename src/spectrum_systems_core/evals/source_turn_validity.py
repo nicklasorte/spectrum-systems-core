@@ -40,6 +40,7 @@ from ..artifacts import Artifact, new_artifact
 
 # Reason codes
 SOURCE_RECORD_INVALID = "source_record_invalid"
+CHUNKS_INVALID = "chunks_invalid"
 SOURCE_TURN_UNRESOLVED_PREFIX = "source_turn_unresolved:"
 SOURCE_MATCH_FALLBACK_PREFIX = "source_match_fallback:"
 
@@ -119,10 +120,13 @@ def _iter_items_with_source_turns(
 
 
 def _eval_result(
-    target: Artifact, passed: bool, reason_codes: list[str]
+    target: Artifact,
+    passed: bool,
+    reason_codes: list[str],
+    eval_type: str = EVAL_TYPE,
 ) -> Artifact:
     payload = {
-        "eval_type": EVAL_TYPE,
+        "eval_type": eval_type,
         "target_artifact_id": target.artifact_id,
         "status": "pass" if passed else "fail",
         "score": 1.0 if passed else 0.0,
@@ -137,28 +141,21 @@ def _eval_result(
     )
 
 
-def run_source_turn_validity_eval(
-    artifact: Artifact,
-    source_record_path: Path | str | None,
-) -> Artifact:
-    """Run the source_turn_validity check. Always returns an
-    ``eval_result`` artifact; never raises on missing or malformed
-    source_record — the eval fails with ``source_record_invalid``."""
-    record, reason = _load_source_record(source_record_path)
-    if record is None:
-        # Fail-closed: a missing or malformed source_record is an
-        # explicit fail. Document the cause inline so a new engineer
-        # can read the eval_result and know what to fix.
-        return _eval_result(
-            artifact,
-            passed=False,
-            reason_codes=[
-                f"{SOURCE_RECORD_INVALID}:{reason}"
-            ],
-        )
+def _collect_unresolved_reason_codes(
+    artifact: Artifact, valid_turn_ids: set[str]
+) -> list[str]:
+    """Pure core: build the ``source_turn_unresolved:`` reason codes for
+    every item whose ``source_turns`` is non-list, empty, carries a
+    non-string entry, or references a turn_id outside ``valid_turn_ids``.
 
-    valid_turn_ids = _build_valid_turn_ids(record)
-
+    This is the single source-turn validation rule. Both the on-disk
+    entry point (:func:`run_source_turn_validity_eval`) and the
+    in-memory entry point (:func:`run_source_turn_validity_eval_from_chunks`)
+    delegate here so there is exactly one validation logic and one
+    control authority — the returned ``eval_result`` flows through the
+    same ``decide_control`` gate regardless of how the valid turn-id
+    set was built.
+    """
     reason_codes: list[str] = []
     for parent_key, idx, item in _iter_items_with_source_turns(artifact):
         source_turns = item.get("source_turns")
@@ -191,7 +188,142 @@ def run_source_turn_validity_eval(
                     f"{SOURCE_TURN_UNRESOLVED_PREFIX}{parent_key}[{idx}]:"
                     f"{turn_id}"
                 )
+    return reason_codes
 
+
+def _valid_turn_ids_from_chunks(
+    chunks: object,
+) -> tuple[set[str] | None, str | None]:
+    """Build the valid turn-id set from an in-memory chunk list.
+
+    Mirrors :func:`_load_source_record`'s fail-closed contract: an
+    absent, non-list, empty, or malformed chunk list yields
+    ``(None, reason)`` so the caller fails the eval explicitly rather
+    than passing silently on missing input.
+    """
+    if not isinstance(chunks, list):
+        return None, "chunks is missing or not a list"
+    if not chunks:
+        return None, "chunks is empty"
+    for i, chunk in enumerate(chunks):
+        if not isinstance(chunk, dict):
+            return None, f"chunks[{i}] is not a dict"
+        if "turn_id" not in chunk or not isinstance(chunk["turn_id"], str):
+            return None, f"chunks[{i}] missing string turn_id"
+    return {c["turn_id"] for c in chunks}, None
+
+
+# Content arrays whose presence makes grounding mandatory on a
+# grounded (1.1.0) artifact. If any of these is a non-empty list the
+# artifact asserts facts about the transcript, so it must carry a
+# non-empty ``grounding`` array — otherwise every extracted item is
+# unattributed and a fabricated item promotes silently. This is the
+# fail-closed floor the runner's per-item check cannot provide (that
+# check passes vacuously when ``grounding`` is an empty list).
+GROUNDING_CONTENT_KEYS: tuple[str, ...] = (
+    "decisions",
+    "action_items",
+    "open_questions",
+    "commitments",
+    "risks",
+    "cross_references",
+    "regulatory_references",
+    "technical_parameters",
+    "named_artifacts",
+    "scheduled_events",
+)
+
+GROUNDING_MISSING_FOR_CONTENT = "grounding_missing_for_content"
+GROUNDING_COVERAGE_EVAL_TYPE = "grounding_coverage"
+
+
+def _has_content(artifact: Artifact) -> bool:
+    for key in GROUNDING_CONTENT_KEYS:
+        value = artifact.payload.get(key)
+        if isinstance(value, list) and len(value) > 0:
+            return True
+    return False
+
+
+def run_grounding_coverage_eval(artifact: Artifact) -> Artifact:
+    """Fail-closed grounding floor for the live-LLM path.
+
+    The runner's 1.1.0 per-item check verifies every ``grounding``
+    entry has a non-empty ``source_turns``, but it passes vacuously when
+    ``grounding`` itself is ``[]`` or absent. So a model that extracts
+    decisions yet emits ``grounding: []`` would promote with zero
+    attribution. This eval closes that hole: if the artifact carries any
+    content item, ``grounding`` MUST be a non-empty list. Per-entry
+    turn-id resolution is still enforced separately by
+    :func:`run_source_turn_validity_eval_from_chunks`."""
+    grounding = artifact.payload.get("grounding")
+    if _has_content(artifact) and not (
+        isinstance(grounding, list) and len(grounding) > 0
+    ):
+        return _eval_result(
+            artifact,
+            passed=False,
+            reason_codes=[GROUNDING_MISSING_FOR_CONTENT],
+            eval_type=GROUNDING_COVERAGE_EVAL_TYPE,
+        )
+    return _eval_result(
+        artifact,
+        passed=True,
+        reason_codes=[],
+        eval_type=GROUNDING_COVERAGE_EVAL_TYPE,
+    )
+
+
+def run_source_turn_validity_eval(
+    artifact: Artifact,
+    source_record_path: Path | str | None,
+) -> Artifact:
+    """Run the source_turn_validity check against the on-disk
+    source_record. Always returns an ``eval_result`` artifact; never
+    raises on missing or malformed source_record — the eval fails with
+    ``source_record_invalid``."""
+    record, reason = _load_source_record(source_record_path)
+    if record is None:
+        # Fail-closed: a missing or malformed source_record is an
+        # explicit fail. Document the cause inline so a new engineer
+        # can read the eval_result and know what to fix.
+        return _eval_result(
+            artifact,
+            passed=False,
+            reason_codes=[
+                f"{SOURCE_RECORD_INVALID}:{reason}"
+            ],
+        )
+
+    valid_turn_ids = _build_valid_turn_ids(record)
+    reason_codes = _collect_unresolved_reason_codes(artifact, valid_turn_ids)
+    return _eval_result(
+        artifact, passed=not reason_codes, reason_codes=reason_codes
+    )
+
+
+def run_source_turn_validity_eval_from_chunks(
+    artifact: Artifact,
+    chunks: object,
+) -> Artifact:
+    """In-memory twin of :func:`run_source_turn_validity_eval` for the
+    live-LLM path, which produces chunks in memory instead of writing a
+    data-lake source_record to disk.
+
+    Same validation rule, same ``eval_result`` envelope, same
+    ``decide_control`` gate — only the source of the valid turn-id set
+    differs. Fail-closed: an absent / malformed chunk list fails the
+    eval with ``chunks_invalid`` rather than passing on missing input,
+    so a workflow that forgot to pass chunks cannot promote an
+    ungrounded artifact."""
+    valid_turn_ids, reason = _valid_turn_ids_from_chunks(chunks)
+    if valid_turn_ids is None:
+        return _eval_result(
+            artifact,
+            passed=False,
+            reason_codes=[f"{CHUNKS_INVALID}:{reason}"],
+        )
+    reason_codes = _collect_unresolved_reason_codes(artifact, valid_turn_ids)
     return _eval_result(
         artifact, passed=not reason_codes, reason_codes=reason_codes
     )
