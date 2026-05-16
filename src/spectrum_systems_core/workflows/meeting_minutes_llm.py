@@ -65,15 +65,57 @@ def _derive_title(input_text: str) -> str:
     return "Untitled meeting"
 
 
-def _parse_llm_payload(raw: str) -> dict | None:
-    """Parse the model text into ``{decisions, action_items,
-    open_questions}`` of string lists, or ``None`` if it is not a
-    well-formed object with all three array keys.
+# The nine structured arrays PR #123 added to the schema and the Haiku
+# prompt. The parser carries every one through to the artifact so the
+# strict-schema eval (which validates the WHOLE payload against
+# meeting_minutes.schema.json) sees exactly what the model returned —
+# nothing dropped, nothing invented.
+_STRUCTURED_ARRAYS = (
+    "commitments",
+    "risks",
+    "cross_references",
+    "attendees",
+    "topics",
+    "regulatory_references",
+    "technical_parameters",
+    "named_artifacts",
+    "scheduled_events",
+)
 
-    ``None`` is the fail-closed signal: the caller emits a payload that
-    the strict-schema eval rejects. We do NOT coerce, repair, or invent
-    — a malformed response must block, not be patched into something
-    that passes.
+# The three legacy required arrays. Kept exactly fail-closed: a missing
+# key or a non-list value is still ``None`` (block via schema_violation).
+_LEGACY_ARRAYS = ("decisions", "action_items", "open_questions")
+
+
+def _parse_llm_payload(raw: str) -> dict | None:
+    """Parse the model text into the full meeting_minutes content
+    payload, or ``None`` if it is not a well-formed object carrying the
+    three legacy array keys.
+
+    Carry-through contract:
+
+    * ``decisions`` / ``action_items`` / ``open_questions`` — required.
+      A missing key or a non-list value is the fail-closed ``None``
+      signal (caller emits a payload the strict-schema eval rejects).
+      String items are stripped and empties dropped (UNCHANGED legacy
+      behaviour). Non-string items (the structured object forms PR #123
+      added via the schema ``oneOf``) are preserved VERBATIM so the
+      strict-schema eval validates their real shape — they are never
+      coerced to strings and never silently dropped.
+    * The nine structured arrays — carried with ``.get(key, [])`` so an
+      omitted key becomes ``[]`` (never absent, never ``null``). An
+      EXPLICIT ``null`` from the model is preserved as-is (``None``) so
+      the strict-schema eval blocks it with ``schema_violation`` rather
+      than the parser silently patching a malformed response into
+      something that passes (constitution: never invent, never repair).
+    * ``stakeholders`` / ``confidence`` (architecture-review fields on a
+      structured decision item) ride along untouched inside the
+      preserved decision object — no injection, no defaulting here; the
+      schema marks them optional and the model is instructed to emit
+      them.
+
+    We do NOT coerce, repair, or invent. A malformed response must
+    block, not be patched into something that passes.
     """
     body = _strip_fence(raw)
     if not body:
@@ -85,16 +127,30 @@ def _parse_llm_payload(raw: str) -> dict | None:
     if not isinstance(doc, dict):
         return None
     out: dict = {}
-    for key in ("decisions", "action_items", "open_questions"):
+    for key in _LEGACY_ARRAYS:
         if key not in doc:
             return None
         value = doc[key]
         if not isinstance(value, list):
             return None
-        # Keep only clean string items; the strict-schema eval still
-        # runs on the result, so dropping a non-string here cannot
-        # smuggle a bad item past the gate — it only avoids crashing.
-        out[key] = [v.strip() for v in value if isinstance(v, str) and v.strip()]
+        cleaned: list = []
+        for v in value:
+            if isinstance(v, str):
+                s = v.strip()
+                if s:
+                    cleaned.append(s)
+            else:
+                # Structured object (or any non-string): preserve
+                # verbatim. The strict-schema eval validates the whole
+                # payload against meeting_minutes.schema.json, so a bad
+                # item is blocked there — never smuggled, never coerced.
+                cleaned.append(v)
+        out[key] = cleaned
+    for key in _STRUCTURED_ARRAYS:
+        # ``.get(key, [])``: omitted -> [] (never absent, never null);
+        # present-and-null -> None (preserved, blocked by the schema
+        # gate); present-and-list -> carried as-is.
+        out[key] = doc.get(key, [])
     return out
 
 

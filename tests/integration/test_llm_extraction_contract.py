@@ -22,6 +22,7 @@ from tests.llm_stub import (
     DEC18_ACTION_ITEMS,
     DEC18_DECISIONS,
     DEC18_OPEN_QUESTIONS,
+    DEC18_TECHNICAL_PARAMETERS,
     SpyStub,
     json_stub,
     load_fixture,
@@ -36,6 +37,7 @@ def _real_stub():
         decisions=DEC18_DECISIONS,
         action_items=DEC18_ACTION_ITEMS,
         open_questions=DEC18_OPEN_QUESTIONS,
+        technical_parameters=DEC18_TECHNICAL_PARAMETERS,
     )
 
 
@@ -101,6 +103,7 @@ def test_dispatch_flag_on_runs_llm_arm_only():
                 "decisions": DEC18_DECISIONS,
                 "action_items": DEC18_ACTION_ITEMS,
                 "open_questions": DEC18_OPEN_QUESTIONS,
+                "technical_parameters": DEC18_TECHNICAL_PARAMETERS,
             }
         )
     )

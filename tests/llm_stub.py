@@ -26,21 +26,45 @@ def text_stub(response_text: str) -> Callable[..., str]:
     return _client
 
 
+_NEW_ARRAYS = (
+    "commitments",
+    "risks",
+    "cross_references",
+    "attendees",
+    "topics",
+    "regulatory_references",
+    "technical_parameters",
+    "named_artifacts",
+    "scheduled_events",
+)
+
+
 def json_stub(
     *,
     decisions=(),
     action_items=(),
     open_questions=(),
+    **new_arrays,
 ) -> Callable[..., str]:
-    return text_stub(
-        json.dumps(
-            {
-                "decisions": list(decisions),
-                "action_items": list(action_items),
-                "open_questions": list(open_questions),
-            }
-        )
-    )
+    """Emit the full 12-key meeting_minutes content object.
+
+    The three legacy arrays plus the nine PR #123 structured arrays.
+    Any new array not passed defaults to ``[]`` — exactly what the
+    parser must carry through and what the strict-schema eval expects.
+    Unknown kwargs raise so a typo in a test fixture fails loudly
+    instead of silently emitting an empty array.
+    """
+    unknown = set(new_arrays) - set(_NEW_ARRAYS)
+    if unknown:
+        raise TypeError(f"json_stub got unknown array kwargs: {sorted(unknown)}")
+    doc = {
+        "decisions": list(decisions),
+        "action_items": list(action_items),
+        "open_questions": list(open_questions),
+    }
+    for key in _NEW_ARRAYS:
+        doc[key] = list(new_arrays.get(key, []))
+    return text_stub(json.dumps(doc))
 
 
 class SpyStub:
@@ -67,4 +91,18 @@ DEC18_ACTION_ITEMS = [
 ]
 DEC18_OPEN_QUESTIONS = [
     "What is the coordination distance for federal incumbents in the 7 GHz band?",
+]
+# A technical_parameter whose ``value`` is a VERBATIM substring of
+# dec18_transcript.txt, so the Step 4 structured within-source check
+# and the Step 5 proxy-nonempty gate both pass on the happy path.
+# Kept here so every happy-path test shares one grounded fact.
+DEC18_TECHNICAL_PARAMETERS = [
+    {
+        "param_id": "param-1",
+        "parameter_name": "7 GHz downlink threshold",
+        "value": "minus 47 dBm per megahertz",
+        "unit": "dBm/MHz",
+        "context": "approved threshold for the 7 GHz downlink band",
+        "speaker": "NTIA Lead",
+    }
 ]

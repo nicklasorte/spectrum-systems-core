@@ -93,20 +93,31 @@ calling `git check-ignore`.
   schema file is the type-checking contract used by
   `tests/test_meeting_minutes_schema.py` and is available to any
   future `validate_artifact(..., "meeting_minutes")` caller.
-- **Additive optional fields (schema-only, all default `[]` / absent;
-  legacy artifacts without them still validate):**
+- **Additive optional fields (all default `[]` / absent; legacy
+  artifacts without them still validate):**
   - `action_items` items may be a legacy string OR a structured
     object carrying an optional `status`
     (`open` / `in_progress` / `completed`).
   - `open_questions` items may be a legacy string OR a structured
     Q&A-log object (`question_id`, `question_text`, `asked_by`,
     `category`, `initial_response`, `follow_up_action`, `resolved`).
-    The live-LLM path continues to emit the string form (the LLM
-    strict-schema eval requires `list[str]`); the structured form is
-    for non-LLM producers.
+  - `decisions` items may be a legacy string OR a structured object
+    `{text (required), verb, stakeholders[], confidence (0.0-1.0,
+    nullable)}`. `text`/`verb` match what `evals/regulatory_verb.py`
+    reads, so an object-form decision is still verb-classified, not
+    bypassed. `stakeholders` / `confidence` are the architecture-review
+    fields.
   - New optional arrays: `commitments`, `risks`, `cross_references`,
     `attendees`, `topics`, `regulatory_references`,
     `technical_parameters`, `named_artifacts`, `scheduled_events`.
+  - The live-LLM path now carries ALL of the above through to the
+    promoted artifact: `workflows/meeting_minutes_llm._parse_llm_payload`
+    preserves the structured object forms verbatim (never coerced to
+    string, never dropped) and defaults every omitted new array to `[]`
+    (never `null`, never absent). The LLM strict-schema eval validates
+    the whole flat payload against this schema file BEFORE promotion,
+    so a schema violation blocks the write rather than shipping a
+    malformed artifact.
 - **Git-tracked:** NO — `meeting_minutes` product artifacts live in
   the separate `nicklasorte/data-lake` repo under
   `processed/meetings/` (data-lake contract §6.1: only promoted
