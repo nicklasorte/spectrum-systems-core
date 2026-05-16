@@ -145,6 +145,7 @@ from .cli import (
     ProcessMeetingResult,
     main as cli_main,
     process_meeting,
+    process_meeting_llm,
 )
 
 __all__ = [
@@ -264,6 +265,7 @@ __all__ = [
     "write_eval_history",
     "DEFAULT_WORKFLOWS",
     "ProcessMeetingResult",
+    "process_meeting_llm",
     "cli_main",
     "process_meeting",
 ]
