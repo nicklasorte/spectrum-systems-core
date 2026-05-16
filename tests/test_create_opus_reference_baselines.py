@@ -278,22 +278,82 @@ def test_missing_source_record_halts_no_partial(tmp_path: Path) -> None:
     assert not _out_path(dl).exists()
 
 
-def test_invalid_source_record_halts(tmp_path: Path) -> None:
+def _seed_custom_record(tmp_path: Path, record: dict) -> Path:
+    """Seed the data-lake with a hand-written source_record.json.
+
+    The minimal-contract gate cases below assert that ONLY a
+    valid-UUID ``artifact_id`` is required, so they intentionally do
+    NOT route through ``make_source_record`` — they pin the exact
+    record shapes the contract must accept or reject.
+    """
     dl = _seed(tmp_path, with_source_record=False)
     proc = dl / "store" / "processed" / "meetings" / SOURCE_ID
     proc.mkdir(parents=True)
-    # Wrong artifact_type -> schema-validation halt, not silent UUID guess.
     (proc / "source_record.json").write_text(
-        json.dumps(
-            {
-                "artifact_type": "not_a_source_record",
-                "schema_version": "1.0.0",
-                "artifact_id": "x",
-                "source_id": SOURCE_ID,
-                "created_at": "2025-12-18T00:00:00+00:00",
-            }
-        )
+        json.dumps(record), encoding="utf-8"
     )
+    return dl
+
+
+def test_source_record_only_artifact_id_passes(tmp_path: Path) -> None:
+    """Gate: a record carrying ONLY a valid-UUID artifact_id passes."""
+    aid = str(uuid.uuid4())
+    dl = _seed_custom_record(tmp_path, {"artifact_id": aid})
+    result = cob.create_baselines(
+        data_lake=dl,
+        source_id=None,
+        dry_run=False,
+        skip_existing=True,
+        model=MODEL,
+        client=SpyClient(_VALID_RESPONSE),
+    )
+    assert result["status"] == "success"
+    out = _out_path(dl)
+    assert out.is_file()
+    for ln in out.read_text(encoding="utf-8").splitlines():
+        if ln.strip():
+            assert json.loads(ln)["source_artifact_id"] == aid
+
+
+def test_source_record_artifact_id_plus_source_id_passes(
+    tmp_path: Path,
+) -> None:
+    """Gate: artifact_id + a redundant top-level source_id still passes."""
+    aid = str(uuid.uuid4())
+    dl = _seed_custom_record(
+        tmp_path, {"artifact_id": aid, "source_id": SOURCE_ID}
+    )
+    result = cob.create_baselines(
+        data_lake=dl,
+        source_id=None,
+        dry_run=False,
+        skip_existing=True,
+        model=MODEL,
+        client=SpyClient(_VALID_RESPONSE),
+    )
+    assert result["status"] == "success"
+    assert _out_path(dl).is_file()
+
+
+def test_source_record_missing_artifact_id_halts(tmp_path: Path) -> None:
+    """Gate: a record with no artifact_id halts invalid_source_record."""
+    dl = _seed_custom_record(tmp_path, {"source_id": SOURCE_ID})
+    with pytest.raises(cob.ReferenceBaselineError) as ei:
+        cob.create_baselines(
+            data_lake=dl,
+            source_id=None,
+            dry_run=False,
+            skip_existing=True,
+            model=MODEL,
+            client=SpyClient(_VALID_RESPONSE),
+        )
+    assert ei.value.reason == "invalid_source_record"
+    assert not _out_path(dl).exists()
+
+
+def test_source_record_non_uuid_artifact_id_halts(tmp_path: Path) -> None:
+    """A present but non-UUID artifact_id is still a fail-closed halt."""
+    dl = _seed_custom_record(tmp_path, {"artifact_id": "x"})
     with pytest.raises(cob.ReferenceBaselineError) as ei:
         cob.create_baselines(
             data_lake=dl,

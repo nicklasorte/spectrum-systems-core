@@ -20,8 +20,11 @@ written):
 * The canonical prompt file cannot be read  -> ``missing_extraction_prompt``
   (checked BEFORE any model call — a missing prompt can never reach the
   transport).
-* ``source_record.json`` missing / not schema-valid -> ``missing_source_record``
-  / ``invalid_source_record`` (no inference of the UUID).
+* ``source_record.json`` missing -> ``missing_source_record``; present
+  but unreadable JSON, not a JSON object, or lacking a valid-UUID
+  ``artifact_id`` -> ``invalid_source_record``. The UUID is never
+  inferred. ``source_id`` is taken from ``--source-id`` / the
+  transcript slug and is deliberately NOT required on the record.
 * The model transport fails -> ``llm_transport_error`` (no fallback to a
   weaker model, no partial file).
 * The model returns non-JSON / a non-object / a content array that is
@@ -63,17 +66,6 @@ import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
-
-# scripts/ on sys.path so the artifact validator import works whether
-# this file is run as a script or imported as a module by tests.
-_SCRIPTS_DIR = Path(__file__).resolve().parent
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
-
-from _artifact_validator import (  # noqa: E402
-    ArtifactValidationError,
-    validate_artifact,
-)
 
 # Reused pipeline functions — NEVER reimplemented here. A drift in any
 # of these would silently desync this workflow from the Haiku pipeline.
@@ -268,9 +260,17 @@ def extraction_types() -> List[str]:
 def _resolve_source_artifact_id(data_lake: Path, source_id: str) -> str:
     """slug -> stable transcript UUID via source_record.json.
 
-    Validates the record against ``source_record.schema.json`` before
-    reading ``artifact_id`` off it (CLAUDE.md read-path co-requirement).
-    Missing file or schema drift halts — the UUID is never inferred.
+    ``artifact_id`` is the ONLY field this read requires: it must be
+    present and a valid UUID string. The record's ``source_id`` is
+    deliberately NOT required here. The source slug is already
+    authoritative — it arrives via ``--source-id`` / the transcript
+    filename and is what every output path is keyed on — so
+    re-requiring it on the artifact is redundant, and a strict schema
+    check would reject every record the ingestion pipeline actually
+    writes (``source_loader.py`` nests ``source_id`` under ``payload``,
+    not at the top level). Missing file, unreadable JSON, a non-object
+    body, or a missing / non-UUID ``artifact_id`` halts — the UUID is
+    never inferred.
     """
     sr_path = (
         data_lake
@@ -293,19 +293,27 @@ def _resolve_source_artifact_id(data_lake: Path, source_id: str) -> str:
             "invalid_source_record",
             f"source_record.json at {sr_path} is unreadable/!json: {exc}",
         ) from exc
-    try:
-        validate_artifact(record, "source_record", str(sr_path))
-    except ArtifactValidationError as exc:
+    if not isinstance(record, dict):
         raise ReferenceBaselineError(
             "invalid_source_record",
-            f"source_record.json at {sr_path} failed schema: {exc}",
-        ) from exc
-    artifact_id = record.get("artifact_id")
-    if not isinstance(artifact_id, str) or not artifact_id:
-        raise ReferenceBaselineError(
-            "invalid_source_record",
-            f"source_record.json at {sr_path} has no usable artifact_id",
+            f"source_record.json at {sr_path} is "
+            f"{type(record).__name__}, expected a JSON object",
         )
+    artifact_id = record.get("artifact_id")
+    if not isinstance(artifact_id, str):
+        raise ReferenceBaselineError(
+            "invalid_source_record",
+            f"source_record.json at {sr_path} has no string "
+            f"artifact_id (got {type(artifact_id).__name__})",
+        )
+    try:
+        uuid.UUID(artifact_id)
+    except ValueError as exc:
+        raise ReferenceBaselineError(
+            "invalid_source_record",
+            f"source_record.json at {sr_path} artifact_id "
+            f"{artifact_id!r} is not a valid UUID: {exc}",
+        ) from exc
     return artifact_id
 
 

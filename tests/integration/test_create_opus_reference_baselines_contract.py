@@ -1,8 +1,7 @@
 """Integration contract test for ``scripts/create_opus_reference_baselines.py``.
 
 CLAUDE.md non-negotiable: a script that reads a pipeline artifact
-(``source_record.json``) and calls ``validate_artifact`` must have an
-integration test that
+(``source_record.json``) must have an integration test that
 
   1. Uses ``tests.integration.fixtures`` factories (``make_source_record``)
      — never a hand-rolled dict — to produce the artifact in the format
@@ -10,6 +9,12 @@ integration test that
   2. Writes artifacts to a real temp directory (not mocked).
   3. Calls the script via ``subprocess.run`` against that temp dir.
   4. Asserts the correct output on disk (not just the return code).
+
+The script's source_record read requires ONLY a valid-UUID
+``artifact_id``; ``source_id`` comes from ``--source-id`` / the
+transcript slug and is never required on the record. The
+minimal-contract gate (only artifact_id present) is exercised here at
+the subprocess level in addition to the in-process unit tests.
 
 The model transport is the explicit offline env-var seam
 (``OPUS_REFERENCE_BASELINE_STUB_RESPONSE``) so CI needs no API key.
@@ -169,6 +174,50 @@ def test_subprocess_missing_source_record_halts(tmp_path: Path) -> None:
     )
     assert result.returncode != 0
     assert "missing_source_record" in result.stdout
+    assert not _out(dl).exists()
+
+
+def test_subprocess_only_artifact_id_source_record_passes(
+    tmp_path: Path,
+) -> None:
+    """Gate (subprocess): a source_record with ONLY a valid-UUID
+    artifact_id is accepted and the baseline JSONL is written."""
+    dl = _seed(tmp_path, with_source_record=False)
+    proc = dl / "store" / "processed" / "meetings" / SOURCE_ID
+    proc.mkdir(parents=True)
+    aid = str(uuid.uuid4())
+    (proc / "source_record.json").write_text(
+        json.dumps({"artifact_id": aid}), encoding="utf-8"
+    )
+    result = _run(
+        ["--data-lake", str(dl), "--model", MODEL, "--no-skip-existing"]
+    )
+    assert result.returncode == 0, (
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    out = _out(dl)
+    assert out.is_file(), "JSONL not written for minimal source_record"
+    for ln in out.read_text(encoding="utf-8").splitlines():
+        if ln.strip():
+            assert json.loads(ln)["source_artifact_id"] == aid
+
+
+def test_subprocess_missing_artifact_id_source_record_halts(
+    tmp_path: Path,
+) -> None:
+    """Gate (subprocess): no artifact_id -> invalid_source_record, no
+    partial output."""
+    dl = _seed(tmp_path, with_source_record=False)
+    proc = dl / "store" / "processed" / "meetings" / SOURCE_ID
+    proc.mkdir(parents=True)
+    (proc / "source_record.json").write_text(
+        json.dumps({"source_id": SOURCE_ID}), encoding="utf-8"
+    )
+    result = _run(
+        ["--data-lake", str(dl), "--model", MODEL, "--no-skip-existing"]
+    )
+    assert result.returncode != 0
+    assert "invalid_source_record" in result.stdout
     assert not _out(dl).exists()
 
 
