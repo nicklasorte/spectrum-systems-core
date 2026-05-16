@@ -3617,6 +3617,22 @@ def compile_findings_cli(
     return 0
 
 
+def cmd_compare_extraction(args) -> int:
+    """Phase AB: three-point extraction comparison.
+
+    Thin wrapper over ``extraction.comparison_runner.run_compare_extraction``
+    so the same instrument is reachable from both this module CLI and
+    the ``spectrum-core`` console entry point. All fail-closed logic
+    (pre-flight credential check, source_record_missing, partial-failure
+    handling) lives in the runner — not duplicated here."""
+    from .extraction.comparison_runner import run_compare_extraction
+
+    return run_compare_extraction(
+        lake_root=args.lake,
+        meeting_id=args.meeting_id,
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m spectrum_systems_core.cli",
@@ -4512,6 +4528,25 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    ce = sub.add_parser(
+        "compare-extraction",
+        help="Phase AB: three-point extraction comparison instrument.",
+        description=(
+            "Run regex / Haiku / Opus extraction over one meeting and "
+            "write extraction_comparison + extraction_telemetry "
+            "(+ extraction_unconstrained on Opus success) plus a "
+            "Markdown report. Fail-closed: missing/empty "
+            "ANTHROPIC_API_KEY or missing source_record halts before any "
+            "API call with no artifact written."
+        ),
+    )
+    ce.add_argument("--lake", required=True, help="Data lake root.")
+    ce.add_argument(
+        "--meeting-id",
+        required=True,
+        help="Meeting id (source_record must already exist on disk).",
+    )
+
     return parser
 
 
@@ -4714,6 +4749,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             cycle_id=args.cycle_id,
             freshness_hours=args.freshness_hours,
         )
+    if args.command == "compare-extraction":
+        return cmd_compare_extraction(args)
     parser.error(f"unknown command: {args.command}")
     return 2
 

@@ -1,0 +1,34 @@
+CHAIR: I call the spectrum coordination working group to order. We have a full agenda on the 3.45 GHz and 7 GHz proceedings.
+CHAIR: Item one is the 3.45 GHz commercial sharing framework.
+ALICE: Industry submitted comments supporting the staged rollout. The technical annex looks sound.
+CHAIR: Hearing no objection, let us record this.
+DECISION: Approved the 3.45 GHz commercial sharing framework for Phase 2.
+BOB: On the protection methodology, the engineering subgroup ran the contour simulations overnight.
+ALICE: The numbers favor the adaptive approach over static rings.
+CHAIR: Then the working group agreed to adopt the dynamic protection contour methodology.
+BOB: That leaves the coastal radar exclusion zone question.
+ALICE: The fixed exclusion-zone proposal over-protects by roughly forty percent.
+CHAIR: After discussion, the committee rejected the fixed exclusion-zone proposal for coastal radars.
+CHAIR: Item two is the 7 GHz incumbent transition.
+BOB: The incumbents asked for more time to model the transition costs.
+CHAIR: Given the open cost questions, deferred the 7 GHz incumbent transition timeline to the next quarterly review.
+ALICE: We also need cleaner interference accounting from the SAS administrators.
+CHAIR: Agreed. We will require all SAS operators to file revised interference budgets.
+BOB: NTIA flagged the aggregate EIRP limit during the interagency review.
+CHAIR: Understood. Noted the NTIA objection to the proposed aggregate EIRP limit.
+CHAIR: Let us turn to follow-up assignments.
+CAROL: I can own the budget template work.
+CHAIR: Good. Carol will circulate the revised interference budget template by next Friday.
+DAN: I will take the field side.
+CHAIR: Dan to coordinate the field-measurement campaign with the Navy testing office.
+CHAIR: We still owe the public a comment digest.
+ACTION: Priya compiles the public comment summary before the May 30 deadline.
+CHAIR: And the procedures document needs to go out.
+SECRETARIAT: I will handle the docket posting.
+CHAIR: The secretariat will publish the updated coordination procedures on the docket.
+CHAIR: Before we close, a few open items remain.
+ALICE: Do we need a separate eval track for non-federal incumbents in the 7 GHz band?
+BOB: How should the aggregate EIRP limit be enforced across overlapping SAS territories?
+CHAIR: One more for the record.
+QUESTION: Should the Phase 2 framework include a sunset clause?
+CHAIR: We will carry the open questions to the next session. Meeting adjourned.
