@@ -17,6 +17,7 @@ from spectrum_systems_core.data_lake.cli import main as dl_main
 from spectrum_systems_core.extraction.comparison_runner import (
     COMPARISON_TYPE,
     run_compare_extraction,
+    slugify,
 )
 
 FIXTURE = (
@@ -145,6 +146,159 @@ def test_stub_mode_all_three_ok(tmp_path, monkeypatch):
     assert list(meeting_dir.glob("extraction_telemetry__*.json"))
     assert list(meeting_dir.glob("extraction_unconstrained__*.json"))
     assert (meeting_dir / "markdown" / "extraction_comparison.md").is_file()
+
+
+def test_slugify_exact_contract_example():
+    # The exact mapping pinned by the task contract.
+    assert slugify(
+        "7 GHz Downlink TIG Meeting Kickoff - transcript 20251218"
+    ) == "7-ghz-downlink-tig-meeting-kickoff-transcript-20251218"
+    # Idempotent, and edges/runs collapse to a single hyphen.
+    assert slugify("--A  B__C!!") == "a-b-c"
+    assert slugify("already-slugged") == "already-slugged"
+
+
+def _flat_transcript_file(tmp_path: Path) -> Path:
+    """Write the gold transcript to a flat file whose stem has spaces
+    and mixed case so slugify is exercised end-to-end."""
+    p = tmp_path / "7 GHz Downlink TIG Meeting Kickoff - transcript 20251218.txt"
+    p.write_text(
+        (FIXTURE / "transcript.txt").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return p
+
+
+def test_transcript_file_stub_mode_writes_under_derived_meeting_id(
+    tmp_path, monkeypatch
+):
+    tf = _flat_transcript_file(tmp_path)
+    lake = tmp_path / "lake"
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("COMPARE_EXTRACTION_STUB", "1")
+
+    rc = dl_main(
+        ["compare-extraction", "--lake", str(lake),
+         "--transcript-file", str(tf)]
+    )
+
+    assert rc == 0
+    derived = "7-ghz-downlink-tig-meeting-kickoff-transcript-20251218"
+    meeting_dir = lake / "processed" / "meetings" / derived
+    comp = list(meeting_dir.glob(f"{COMPARISON_TYPE}__*.json"))
+    assert len(comp) == 1
+    art = json.loads(comp[0].read_text(encoding="utf-8"))
+    assert art["status"] == "promoted"
+    assert art["payload"]["meeting_id"] == derived
+    assert art["payload"]["extractor_status"] == {
+        "regex": "ok", "haiku": "ok", "opus": "ok",
+    }
+    # No source_record was required: only the flat file existed.
+    assert not (lake / "raw").exists()
+    assert list(meeting_dir.glob("extraction_telemetry__*.json"))
+    assert list(meeting_dir.glob("extraction_unconstrained__*.json"))
+    assert (meeting_dir / "markdown" / "extraction_comparison.md").is_file()
+
+
+def test_both_selectors_exit_1(tmp_path, monkeypatch):
+    tf = _flat_transcript_file(tmp_path)
+    monkeypatch.setenv("COMPARE_EXTRACTION_STUB", "1")
+    out = io.StringIO()
+
+    rc = run_compare_extraction(
+        lake_root=tmp_path / "lake",
+        meeting_id="some-id",
+        transcript_file=tf,
+        env={"COMPARE_EXTRACTION_STUB": "1"},
+        stream=out,
+    )
+
+    assert rc == 1
+    assert "source_selector_invalid" in out.getvalue()
+
+
+def test_neither_selector_exits_1(tmp_path):
+    out = io.StringIO()
+
+    rc = run_compare_extraction(
+        lake_root=tmp_path / "lake",
+        env={"COMPARE_EXTRACTION_STUB": "1"},
+        stream=out,
+    )
+
+    assert rc == 1
+    assert "source_selector_invalid" in out.getvalue()
+
+
+def test_transcript_file_not_found_exits_1(tmp_path):
+    out = io.StringIO()
+
+    rc = run_compare_extraction(
+        lake_root=tmp_path / "lake",
+        transcript_file=tmp_path / "does-not-exist.txt",
+        env={"COMPARE_EXTRACTION_STUB": "1"},
+        stream=out,
+    )
+
+    assert rc == 1
+    assert "transcript_file_not_found" in out.getvalue()
+
+
+def test_transcript_file_empty_exits_1(tmp_path):
+    empty = tmp_path / "Empty Transcript.txt"
+    empty.write_text("   \n\t\n", encoding="utf-8")
+    out = io.StringIO()
+
+    rc = run_compare_extraction(
+        lake_root=tmp_path / "lake",
+        transcript_file=empty,
+        env={"COMPARE_EXTRACTION_STUB": "1"},
+        stream=out,
+    )
+
+    assert rc == 1
+    assert "transcript_file_empty" in out.getvalue()
+
+
+def test_transcript_file_unslugifiable_stem_exits_1(tmp_path):
+    # A stem with no [a-z0-9] slugifies to "" → invalid meeting_id.
+    bad = tmp_path / "!!! @@@.txt"
+    bad.write_text("Decisions:\n- something\n", encoding="utf-8")
+    out = io.StringIO()
+
+    rc = run_compare_extraction(
+        lake_root=tmp_path / "lake",
+        transcript_file=bad,
+        env={"COMPARE_EXTRACTION_STUB": "1"},
+        stream=out,
+    )
+
+    assert rc == 1
+    assert "meeting_id_from_filename_invalid" in out.getvalue()
+
+
+def test_transcript_file_missing_api_key_fails_closed(tmp_path, monkeypatch):
+    tf = _flat_transcript_file(tmp_path)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("COMPARE_EXTRACTION_STUB", raising=False)
+    out = io.StringIO()
+
+    def _must_not_run(_):  # pragma: no cover - asserts it never runs
+        raise AssertionError("extractor ran despite missing credentials")
+
+    rc = run_compare_extraction(
+        lake_root=tmp_path / "lake",
+        transcript_file=tf,
+        env={},
+        haiku_extract=_must_not_run,
+        opus_extract=_must_not_run,
+        stream=out,
+    )
+
+    assert rc == 1
+    assert "missing_credentials:ANTHROPIC_API_KEY" in out.getvalue()
+    # Fail-closed on disk: nothing written for the flat-file path.
+    assert not (tmp_path / "lake").exists()
 
 
 def test_forced_extractor_failure_writes_rejected_and_exits_1(tmp_path):

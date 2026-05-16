@@ -350,6 +350,14 @@ calling `git check-ignore`.
   `debug__`), not a promoted product artifact.
 - **Path template:** `data-lake/store/processed/meetings/<meeting_id>/extraction_comparison__<slug>.json`
   (slug == `<meeting_id>`; re-runs overwrite, never accumulate).
+- **`<meeting_id>` source:** either a lake meeting directory name
+  (`--meeting-id`, requires a chunked `source_record`) OR the
+  slugified stem of a flat transcript file passed via
+  `--transcript-file` (`comparison_runner.slugify`: lowercase, each
+  run of non-`[a-z0-9]` → one hyphen, ends trimmed). The flat-file
+  mode requires no `source_record`; the Haiku point sees the raw
+  transcript with no turn ids. Path template and Git-tracked status
+  are unchanged by the source mode.
 - **Schema:** `schema_version: 1`. `payload`: `meeting_id`,
   `transcript_artifact_id`, `extractor_status`
   (`{regex,haiku,opus}` each `ok|failed:<reason>`), `regex_output`
