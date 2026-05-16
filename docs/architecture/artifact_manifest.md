@@ -78,6 +78,44 @@ calling `git check-ignore`.
   `scripts/_artifact_validator.py`,
   `evals.m4.runner`.
 
+### meeting_minutes
+- **Writer:** governed loop — `workflows/meeting_minutes.py`
+  (deterministic regex), `workflows/meeting_minutes_llm.py`
+  (live-LLM, default-off flag), routed by `workflows/dispatch.py`.
+- **Path template:** `data-lake/store/processed/meetings/<meeting_id>/meeting_minutes__<slug>.json`
+- **Schema:** `src/spectrum_systems_core/schemas/meeting_minutes.schema.json`
+  — a flat content projection (`artifact_type` + string
+  `schema_version` + content fields), the same shape pattern
+  `meeting_extraction.schema.json` uses. NOT wired into the governed
+  loop's write path: `meeting_minutes` structural validation still
+  runs through `evals/runner.py` (required-field eval) and, on the
+  LLM path, `evals/llm_extraction.py` (strict-schema eval). The
+  schema file is the type-checking contract used by
+  `tests/test_meeting_minutes_schema.py` and is available to any
+  future `validate_artifact(..., "meeting_minutes")` caller.
+- **Additive optional fields (schema-only, all default `[]` / absent;
+  legacy artifacts without them still validate):**
+  - `action_items` items may be a legacy string OR a structured
+    object carrying an optional `status`
+    (`open` / `in_progress` / `completed`).
+  - `open_questions` items may be a legacy string OR a structured
+    Q&A-log object (`question_id`, `question_text`, `asked_by`,
+    `category`, `initial_response`, `follow_up_action`, `resolved`).
+    The live-LLM path continues to emit the string form (the LLM
+    strict-schema eval requires `list[str]`); the structured form is
+    for non-LLM producers.
+  - New optional arrays: `commitments`, `risks`, `cross_references`,
+    `attendees`, `topics`, `regulatory_references`,
+    `technical_parameters`, `named_artifacts`, `scheduled_events`.
+- **Git-tracked:** NO — `meeting_minutes` product artifacts live in
+  the separate `nicklasorte/data-lake` repo under
+  `processed/meetings/` (data-lake contract §6.1: only promoted
+  artifacts written there). spectrum-systems-core carries only the
+  schema source file under `src/`; the artifact payloads are never
+  committed to this repo (root `.gitignore` carries `data-lake/`).
+- **Readers:** `data_lake/pipeline.py` (promotion + index),
+  `evals/runner.py`, `evals/llm_extraction.py` (LLM path only).
+
 ### source_record
 - **Writer:** `extraction/chunker.py` (per-source metadata file)
 - **Path template:** `data-lake/store/processed/meetings/<source_id>/source_record.json`

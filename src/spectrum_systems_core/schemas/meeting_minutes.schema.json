@@ -1,0 +1,256 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/meeting_minutes.schema.json",
+  "title": "meeting_minutes",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "title",
+    "summary",
+    "decisions",
+    "action_items",
+    "open_questions"
+  ],
+  "properties": {
+    "artifact_type": { "const": "meeting_minutes" },
+    "schema_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Payload schema_version string (e.g. \"1.0.0\", \"1.1.0\"). Kept as a free non-empty string — exactly as meeting_extraction.schema.json does — so a legacy artifact and an artifact carrying the additive arrays below both validate (schema additivity)."
+    },
+    "title": { "type": "string", "minLength": 1 },
+    "summary": { "type": "string" },
+
+    "decisions": {
+      "type": "array",
+      "description": "Legacy shape: list of verbatim decision strings. Not restructured here (the task adds structure only to action_items / open_questions); leaving decisions as string items keeps every existing regex / LLM artifact valid.",
+      "items": { "type": "string" }
+    },
+
+    "action_items": {
+      "type": "array",
+      "description": "Additive: items may be a legacy string OR a structured object carrying the new optional `status` field. The string branch keeps every existing artifact and the LLM strict-schema eval (list[str]) passing.",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["action"],
+            "properties": {
+              "action": { "type": "string", "minLength": 1 },
+              "status": {
+                "enum": ["open", "in_progress", "completed"],
+                "description": "Optional. Default \"open\" when absent (default applied by the producer, not enforced by JSON Schema). Only these three values are valid — e.g. \"done\" fails the gate."
+              },
+              "owner": { "type": ["string", "null"] },
+              "due": { "type": ["string", "null"] }
+            }
+          }
+        ]
+      }
+    },
+
+    "open_questions": {
+      "type": "array",
+      "description": "Additive: items may be a legacy string OR a structured Q&A-log object. The string branch preserves existing artifacts and the LLM strict-schema eval.",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["question_id", "question_text"],
+            "properties": {
+              "question_id": { "type": "string", "minLength": 1 },
+              "question_text": { "type": "string", "minLength": 1 },
+              "asked_by": { "type": "string" },
+              "category": { "type": "string" },
+              "initial_response": { "type": ["string", "null"] },
+              "follow_up_action": { "type": ["string", "null"] },
+              "resolved": { "type": "boolean" }
+            }
+          }
+        ]
+      }
+    },
+
+    "commitments": {
+      "type": "array",
+      "description": "Optional, default []. Individual \"I will do X\" statements distinct from group action_items.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["commitment_id", "owner", "commitment_text", "source_speaker"],
+        "properties": {
+          "commitment_id": { "type": "string", "minLength": 1 },
+          "owner": { "type": "string", "minLength": 1 },
+          "commitment_text": { "type": "string", "minLength": 1 },
+          "due": { "type": ["string", "null"] },
+          "source_speaker": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+
+    "risks": {
+      "type": "array",
+      "description": "Optional, default []. Things a speaker flagged as a potential problem.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["risk_id", "risk_text", "raised_by"],
+        "properties": {
+          "risk_id": { "type": "string", "minLength": 1 },
+          "risk_text": { "type": "string", "minLength": 1 },
+          "raised_by": { "type": "string", "minLength": 1 },
+          "severity": {
+            "enum": ["low", "medium", "high", null],
+            "description": "Optional severity. Null when the transcript does not state one. Any value outside low/medium/high (and null) fails the gate."
+          },
+          "mitigation_mentioned": { "type": ["string", "null"] }
+        }
+      }
+    },
+
+    "cross_references": {
+      "type": "array",
+      "description": "Optional, default []. References to other meetings or documents.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ref_id", "ref_type", "ref_text"],
+        "properties": {
+          "ref_id": { "type": "string", "minLength": 1 },
+          "ref_type": { "enum": ["meeting", "document", "report", "artifact"] },
+          "ref_text": { "type": "string", "minLength": 1 },
+          "ref_date": { "type": ["string", "null"] },
+          "ref_url": { "type": ["string", "null"] }
+        }
+      }
+    },
+
+    "attendees": {
+      "type": "array",
+      "description": "Optional, default []. Roster with name, agency, role.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "agency"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "agency": { "type": "string", "minLength": 1 },
+          "role": { "type": ["string", "null"] },
+          "present": {
+            "type": "boolean",
+            "description": "Optional. Default true when absent (default applied by the producer)."
+          }
+        }
+      }
+    },
+
+    "topics": {
+      "type": "array",
+      "description": "Optional, default []. Agenda-item segmentation.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["topic_id", "title"],
+        "properties": {
+          "topic_id": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "start_timestamp": { "type": ["string", "null"] },
+          "end_timestamp": { "type": ["string", "null"] },
+          "summary": { "type": ["string", "null"] }
+        }
+      }
+    },
+
+    "regulatory_references": {
+      "type": "array",
+      "description": "Optional, default []. OB3, statutory citations, rule references.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ref_id", "reference_text", "context", "speaker"],
+        "properties": {
+          "ref_id": { "type": "string", "minLength": 1 },
+          "reference_text": { "type": "string", "minLength": 1 },
+          "context": { "type": "string", "minLength": 1 },
+          "speaker": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+
+    "technical_parameters": {
+      "type": "array",
+      "description": "Optional, default []. Exact numeric values (frequencies, bands, thresholds) stated verbatim.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["param_id", "parameter_name", "value"],
+        "properties": {
+          "param_id": { "type": "string", "minLength": 1 },
+          "parameter_name": { "type": "string", "minLength": 1 },
+          "value": { "type": "string", "minLength": 1 },
+          "unit": { "type": ["string", "null"] },
+          "context": { "type": "string" },
+          "speaker": { "type": "string" }
+        }
+      }
+    },
+
+    "named_artifacts": {
+      "type": "array",
+      "description": "Optional, default []. Documents, folders, reports mentioned by name.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifact_id", "name", "artifact_type_description"],
+        "properties": {
+          "artifact_id": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "artifact_type_description": { "type": "string", "minLength": 1 },
+          "url": { "type": ["string", "null"] },
+          "mentioned_by": { "type": "string" }
+        }
+      }
+    },
+
+    "scheduled_events": {
+      "type": "array",
+      "description": "Optional, default []. Future meetings/events with dates and purposes.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["event_id", "title", "date"],
+        "properties": {
+          "event_id": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "date": { "type": "string", "minLength": 1 },
+          "time": { "type": ["string", "null"] },
+          "location": { "type": ["string", "null"] },
+          "purpose": { "type": ["string", "null"] }
+        }
+      }
+    },
+
+    "grounding": {
+      "type": "array",
+      "description": "Phase Y (schema_version 1.1.0): one entry per extracted item with its source_turns. Shape left loose here so the additive change does not re-pin the Phase Y grounding contract.",
+      "items": { "type": "object" }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["produced_by"],
+      "properties": {
+        "produced_by": { "type": "string", "minLength": 1 },
+        "phase": { "type": "string" }
+      }
+    },
+    "meeting_id": { "type": "string", "minLength": 1 },
+    "_llm_error": { "type": "string" },
+    "_llm_raw": { "type": "string" }
+  }
+}
