@@ -845,7 +845,7 @@ def test_empty_object_warns_not_silent(
 # Fix 4 — registry holds the new Opus string; the workflow resolves it
 # from the registry (no hardcoded model literal) so OPUS_MODEL == registry
 # --------------------------------------------------------------------------
-EXPECTED_OPUS_MODEL = "claude-opus-4-7-20250514"
+EXPECTED_OPUS_MODEL = "claude-opus-4-7"
 
 
 def test_registry_opus_reference_baseline_updated() -> None:
