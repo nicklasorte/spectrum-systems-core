@@ -470,7 +470,9 @@ calling `git check-ignore`.
   mode requires no `source_record`; the Haiku point sees the raw
   transcript with no turn ids. Path template and Git-tracked status
   are unchanged by the source mode.
-- **Schema:** `schema_version: 1`. `payload`: `meeting_id`,
+- **Schema:** envelope `schema_version: 1` (integer — the system
+  constitution §6 binds the envelope to an integer; this is
+  unchanged by Phase AC). `payload`: `meeting_id`,
   `transcript_artifact_id`, `extractor_status`
   (`{regex,haiku,opus}` each `ok|failed:<reason>`), `regex_output`
   / `haiku_output` (`{decisions,actions,questions}` lists of
@@ -479,6 +481,27 @@ calling `git check-ignore`.
   `promoted` only when all three extractors succeeded, else
   `rejected` — but the file is written either way (it exists to
   explain the run).
+- **Payload schema version (Phase AC.1):** the payload now carries a
+  string `schema_version` semantic-version marker, distinct from the
+  integer envelope `schema_version` (same flat-content-projection
+  pattern `meeting_minutes.schema.json` uses). Two documented
+  generations:
+  - **`1.0.0`** (legacy, pre-Phase-AC): payload has NO
+    `schema_version` key. Readers treat its absence as `1.0.0`. The
+    raw extractor outputs are the only payload content; gap /
+    per-entity metrics are derived on demand and not stored here.
+  - **`1.1.0`** (Phase AC.1): payload carries
+    `schema_version: "1.1.0"`. The raw extractor outputs are
+    UNCHANGED (so a 1.0.0 reader of a 1.1.0 artifact still works,
+    and the new code reading an old 1.0.0 artifact falls back to the
+    aggregate-only view — backward compatible both directions). The
+    per-entity F1 drill-down is produced by
+    `evals.extraction_gap.compute_gap_metrics` /
+    `compute_per_entity_metrics` against a `comparison_gold`
+    independent gold set and is persisted at the CORPUS level (see
+    `corpus_comparison`), never inlined into this single-meeting
+    record (a meeting has no guaranteed gold set, so storing a
+    fabricated 0.0 here would read like a real measurement).
 - **Git-tracked:** NO — lives under `processed/`, which the
   `nicklasorte/data-lake` repo bulk-ignores via `**/processed/**`
   (same reasoning as `meeting_minutes` and `human_minutes_gt_pairs`).
@@ -541,6 +564,61 @@ calling `git check-ignore`.
   verbatim in a fenced block (display only — quoting opaque text in
   a non-canonical view is not "parsing"; markdown is neither an eval
   nor the control gate).
+
+### corpus_comparison (Phase AC instrument)
+- **Writer:** `extraction/corpus_runner.py::run_compare_corpus`
+  (the `compare-corpus` CLI). Written directly via
+  `serialize.canonical_json` (the same write path as
+  `extraction_comparison`) — NOT through `write_promoted_artifact`,
+  because it is a corpus-level measurement record, not a promoted
+  product artifact.
+- **Path template:** `data-lake/store/processed/corpus/<corpus_id>/corpus_comparison__<corpus_id>.json`
+  where `<corpus_id>` is `corpus-<16 hex>`, a deterministic hash of
+  the sorted meeting ids + the transcripts dir (re-runs over the same
+  corpus reuse the id and overwrite — never accumulate; same
+  precedent as `extraction_comparison` slug==meeting_id). Lives under
+  `processed/corpus/`, a sibling of `processed/meetings/`, so a corpus
+  run never collides with a single meeting.
+- **Schema:** envelope `schema_version: 1` (integer; constitution §6).
+  `payload` carries a string `schema_version: "1.0.0"` plus
+  `corpus_id`, `transcripts_dir`, `meeting_ids`,
+  `discovery_findings` (`skipped_non_txt:<name>` for non-`.txt`
+  inputs), `per_meeting` (`{<meeting_id>: {comparison_artifact_id,
+  extractor_status {haiku,opus} each `ok|failed:<reason>|retry:<cmd>`,
+  per_entity_f1 (`{decisions,actions,questions}` each `{haiku,opus}`)
+  OR null when no gold, per_entity_metrics (full diagnostic incl
+  `partial_items`) OR null, gold_present, findings}}`), `aggregate`
+  (`per_entity_f1` unweighted mean of gold-backed successful meetings,
+  `per_entity_f1_n_averaged` how many fed each mean,
+  `total_cost_usd`/`total_latency_ms` summed across meetings,
+  `meetings_processed`, `meetings_failed`), and `corpus_status`
+  (`complete` all ok / `degraded` ≥1 extractor failure or empty
+  transcript / `rejected` <50% of meetings succeeded for either
+  extractor). Envelope `status` is `promoted` only when
+  `corpus_status == "complete"`, else `rejected` — but the file is
+  written whenever ≥1 transcript was attempted (it exists to explain
+  the corpus run, exactly like `extraction_comparison`).
+- **Git-tracked:** NO — same reasoning as `extraction_comparison` /
+  `extraction_telemetry` / `extraction_unconstrained`: it lives under
+  `processed/`, which the `nicklasorte/data-lake` repo bulk-ignores
+  via `**/processed/**`; it is a run-level measurement instrument, not
+  a promoted product artifact, and does not enter
+  `indexes/meetings/artifact_index.jsonl`. The Phase AC prompt's
+  red-team Pass 3 checklist requested `Git-tracked: YES`; that is
+  overridden here for the SAME documented reason the manifest already
+  overrode the identical Phase AB request for `extraction_comparison`
+  (above): the binding data-lake contract §6.1 and the manifest's own
+  `processed/` precedent make a `Git-tracked: YES` claim on a
+  `processed/` path internally contradictory and a post-merge audit
+  trap. Aggregate cost / latency are real (non-deterministic)
+  measurements; the artifact's structural identity (`artifact_id`,
+  `created_at`) IS stabilised the same way the pipeline stabilises
+  its artifacts, and the Markdown projection is byte-deterministic
+  from the stored payload.
+- **Readers:** `data_lake/markdown_views.py::render_corpus_comparison_markdown`
+  (view render). No in-loop reader — corpus_comparison is a human /
+  cost-vs-quality analysis instrument, never read back into the
+  governed loop.
 
 ## Runtime / debug artifacts (intentionally NOT git-tracked)
 

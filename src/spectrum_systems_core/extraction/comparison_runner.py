@@ -393,7 +393,19 @@ def run_compare_extraction(
     all_ok = all(v == "ok" for v in status.values())
 
     # 4. always write the instrument artifacts.
+    #
+    # ``schema_version`` here is a PAYLOAD-level semantic-version marker
+    # (string), distinct from the artifact envelope's integer
+    # ``schema_version`` (the system constitution §6 binds the envelope
+    # to an integer; it stays 1). Phase AC sets "1.1.0": the gap /
+    # per-entity view layered on this raw record now has a per-entity
+    # breakdown. An old artifact written before Phase AC carries no
+    # payload ``schema_version`` and every reader treats its absence as
+    # "1.0.0" and falls back to the aggregate-only view (red-team
+    # Pass 1 item 5). The raw extractor outputs themselves are
+    # unchanged, so a 1.0.0 reader of a 1.1.0 artifact also still works.
     comparison_payload = {
+        "schema_version": "1.1.0",
         "meeting_id": meeting_id,
         "transcript_artifact_id": transcript_hash,
         "extractor_status": status,
