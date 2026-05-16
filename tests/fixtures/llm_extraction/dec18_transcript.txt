@@ -1,0 +1,15 @@
+7 GHz Downlink TIG Meeting Kickoff - transcript 20251218
+
+Chair Smith: Good morning everyone, this is the kickoff of the 7 GHz downlink technical interference group. Let's begin with the agenda.
+NTIA Lead: Thank you. NTIA has reviewed the prior comment cycle and is ready to proceed.
+Chair Smith: First item. We need to decide on the downlink power threshold for the 7 GHz band.
+NTIA Lead: NTIA approved the 7 GHz downlink threshold of minus 47 dBm per megahertz.
+Chair Smith: Noted. The group approved the 7 GHz downlink threshold of minus 47 dBm per megahertz.
+DoD Rep: DoD has a concern about the aggregate interference methodology and would like it revisited.
+Chair Smith: The group deferred the aggregate interference methodology pending further study.
+NTIA Lead: We should assign someone to draft the revised methodology.
+Chair Smith: Action item. DoD will submit revised ERP values before the next session.
+DoD Rep: Understood. DoD will submit revised ERP values before the next session.
+NTIA Lead: One open question remains. What is the coordination distance for federal incumbents in the 7 GHz band?
+Chair Smith: Let's record that as an open question. What is the coordination distance for federal incumbents in the 7 GHz band?
+Chair Smith: Any other business? Hearing none, we adjourn. Thank you all.

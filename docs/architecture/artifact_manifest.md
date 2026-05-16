@@ -388,6 +388,27 @@ debug or runtime state and live under `data-lake/` only when
   `governance/audits/index.json` (explicit un-ignore in root
   `.gitignore`).
 
+### llm_extraction eval sub-types
+- Phase: live-LLM `meeting_minutes_llm` workflow. Four evals run only
+  for that workflow (passed via `run_governed_loop(extra_evals=...)`),
+  surfaced as the `payload.eval_type` value on the normal
+  `eval_result` envelope — not separate files on disk:
+  `llm_extraction_strict_schema`, `llm_extraction_nonempty_required`,
+  `extraction_within_source_required`,
+  `extraction_vs_human_minutes_coverage`.
+- Git-tracked: NO — same reasoning as `regulatory_verb_result`. Eval
+  results are run-level provenance, not promoted product artifacts.
+  The regex `meeting_minutes` path never emits these (mutual
+  exclusion at dispatch), so no existing artifact's shape changes.
+
+### llm_extraction eval_history projection
+- Path: `data-lake/store/processed/meetings/<source_id>/eval_history.jsonl`
+- Writer: `workflows/llm_eval_history.py` (shape-identical to
+  `data_lake/eval_history.py`; written only for the LLM workflow when
+  a `lake_root` is supplied, for GT-coverage threshold auditability).
+- Git-tracked: NO — harness memory, not authority (data-lake contract
+  §6.4). Covered by the `**/processed/**` ignore.
+
 ## Gitignore Audit Rule
 
 Every path listed above as **Git-tracked: YES** must satisfy:

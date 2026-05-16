@@ -46,6 +46,7 @@ def run_governed_loop(
     artifact_type: str,
     extract: Callable,
     chunks: list[dict] | None = None,
+    extra_evals: list[Callable[[Artifact], Artifact]] | None = None,
 ) -> GovernedRun:
     """One Produce -> Evaluate -> Decide -> Promote pass for any artifact_type.
 
@@ -55,6 +56,15 @@ def run_governed_loop(
     ``source_turns`` on every extracted item. When omitted, the extract
     function is called with ``(input_text,)`` and emits the original
     1.0.0-style payload (backward-compatible — see runner.py).
+
+    ``extra_evals`` is an optional list of ``(target) -> eval_result``
+    callables appended to the required evals BEFORE the control decision.
+    It is how the live-LLM workflow attaches its workflow-scoped gates
+    (strict schema, non-empty, within-source, GT-coverage) without
+    polluting the global ``run_required_evals`` sequence — the regex
+    path passes ``None`` and is byte-for-byte unchanged. The extra eval
+    results flow through the SAME ``decide_control`` / ``promote`` gate,
+    so a failed extra eval blocks promotion exactly like a required one.
     """
     store = ArtifactStore()
     trace_id = derive_trace_id(input_text)
@@ -76,6 +86,8 @@ def run_governed_loop(
     store.put(target)
 
     eval_results = run_required_evals(target)
+    if extra_evals:
+        eval_results = eval_results + [e(target) for e in extra_evals]
     for r in eval_results:
         store.put(r)
 

@@ -28,6 +28,20 @@ from .extraction_precision import (
     SOURCE_TEXT_NOT_GROUNDED_PREFIX,
     TURN_ID_NOT_FOUND_PREFIX,
 )
+from .llm_extraction import (
+    run_llm_strict_schema_eval,
+    run_llm_nonempty_eval,
+    run_llm_within_source_eval,
+    run_llm_gt_coverage_eval,
+    STRICT_SCHEMA_EVAL_TYPE,
+    NONEMPTY_EVAL_TYPE,
+    WITHIN_SOURCE_EVAL_TYPE,
+    GT_COVERAGE_EVAL_TYPE,
+    SCHEMA_VIOLATION,
+    EXTRACTION_EMPTY_WITH_CONTENT,
+    EXTRACTION_NOT_IN_SOURCE,
+    GT_COVERAGE_THRESHOLD,
+)
 
 __all__ = [
     "run_required_evals",
@@ -52,4 +66,16 @@ __all__ = [
     "SOURCE_RECORD_MISSING",
     "SOURCE_TEXT_NOT_GROUNDED_PREFIX",
     "TURN_ID_NOT_FOUND_PREFIX",
+    "run_llm_strict_schema_eval",
+    "run_llm_nonempty_eval",
+    "run_llm_within_source_eval",
+    "run_llm_gt_coverage_eval",
+    "STRICT_SCHEMA_EVAL_TYPE",
+    "NONEMPTY_EVAL_TYPE",
+    "WITHIN_SOURCE_EVAL_TYPE",
+    "GT_COVERAGE_EVAL_TYPE",
+    "SCHEMA_VIOLATION",
+    "EXTRACTION_EMPTY_WITH_CONTENT",
+    "EXTRACTION_NOT_IN_SOURCE",
+    "GT_COVERAGE_THRESHOLD",
 ]
