@@ -598,6 +598,38 @@ def _build_parser() -> argparse.ArgumentParser:
         "required. Mutually exclusive with --meeting-id; provide "
         "exactly one.",
     )
+
+    cc = sub.add_parser(
+        "compare-corpus",
+        help="Phase AC: corpus-wide per-entity extraction comparison.",
+        description=(
+            "Run the regex / Haiku / Opus extractors over EVERY .txt "
+            "transcript under --transcripts and write one "
+            "corpus_comparison instrument artifact (per-meeting + "
+            "aggregate per-entity F1 for decisions / actions / "
+            "questions) plus a Markdown projection. Per-entity F1 is "
+            "computed only for a meeting that has a sibling "
+            "independent_gold.json (the Phase AB.4 comparison_gold "
+            "layout); meetings without gold are recorded with "
+            "per_entity_f1=null and excluded from the aggregate mean. "
+            "Fail-closed: a missing/empty ANTHROPIC_API_KEY or a "
+            "transcripts dir with no .txt files halts before any API "
+            "call and writes NO artifact. A per-transcript failure is "
+            "recorded and the run continues; corpus_status is "
+            "complete / degraded / rejected (rejected exits 1)."
+        ),
+    )
+    cc.add_argument(
+        "--lake", required=True, help="Path to the data lake root."
+    )
+    cc.add_argument(
+        "--transcripts",
+        required=True,
+        help="Directory of .txt transcripts (searched recursively). "
+        "Non-.txt files are skipped with a finding; a sibling "
+        "independent_gold.json next to a transcript enables its "
+        "per-entity F1.",
+    )
     return parser
 
 
@@ -640,6 +672,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             lake_root=args.lake,
             meeting_id=args.meeting_id,
             transcript_file=args.transcript_file,
+        )
+
+    if args.command == "compare-corpus":
+        # Lazy import for the same reason as compare-extraction: keeps
+        # the anthropic-backed adapters off the common command path.
+        from ..extraction.corpus_runner import run_compare_corpus
+
+        return run_compare_corpus(
+            lake_root=args.lake,
+            transcripts_dir=args.transcripts,
         )
 
     parser.error(f"unknown command: {args.command}")

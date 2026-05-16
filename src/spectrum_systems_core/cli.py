@@ -3634,6 +3634,21 @@ def cmd_compare_extraction(args) -> int:
     )
 
 
+def cmd_compare_corpus(args) -> int:
+    """Phase AC: corpus-wide per-entity extraction comparison.
+
+    Thin wrapper over ``extraction.corpus_runner.run_compare_corpus``;
+    all fail-closed logic (pre-flight credential check, empty
+    transcripts dir, per-transcript failure handling, corpus_status
+    transitions) lives in the runner — not duplicated here."""
+    from .extraction.corpus_runner import run_compare_corpus
+
+    return run_compare_corpus(
+        lake_root=args.lake,
+        transcripts_dir=args.transcripts,
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m spectrum_systems_core.cli",
@@ -4558,6 +4573,28 @@ def _build_parser() -> argparse.ArgumentParser:
         "Mutually exclusive with --meeting-id; provide exactly one.",
     )
 
+    cco = sub.add_parser(
+        "compare-corpus",
+        help="Phase AC: corpus-wide per-entity extraction comparison.",
+        description=(
+            "Run regex / Haiku / Opus extraction over every .txt "
+            "transcript under --transcripts and write a single "
+            "corpus_comparison instrument artifact (per-meeting + "
+            "aggregate per-entity F1) plus a Markdown projection. "
+            "Per-entity F1 needs a sibling independent_gold.json; "
+            "gold-less meetings are excluded from the aggregate mean. "
+            "Fail-closed: missing/empty ANTHROPIC_API_KEY or an empty "
+            "transcripts dir halts before any API call with no "
+            "artifact. corpus_status is complete / degraded / rejected."
+        ),
+    )
+    cco.add_argument("--lake", required=True, help="Data lake root.")
+    cco.add_argument(
+        "--transcripts",
+        required=True,
+        help="Directory of .txt transcripts (searched recursively).",
+    )
+
     return parser
 
 
@@ -4762,6 +4799,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if args.command == "compare-extraction":
         return cmd_compare_extraction(args)
+    if args.command == "compare-corpus":
+        return cmd_compare_corpus(args)
     parser.error(f"unknown command: {args.command}")
     return 2
 

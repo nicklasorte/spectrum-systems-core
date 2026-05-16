@@ -24,7 +24,11 @@ import difflib
 import json
 import pathlib
 
-from spectrum_systems_core.config.taxonomy import EXTRACTION_GAP_MIN_LCS
+from spectrum_systems_core.config.taxonomy import (
+    EXTRACTION_GAP_MIN_LCS,
+    MATCH_LCS_THRESHOLD,
+    PARTIAL_LCS_THRESHOLD,
+)
 
 # Categories compared. Each extractor and the gold set carry these
 # three lists; matching is per-category (a decision never matches a
@@ -145,6 +149,195 @@ def _score_extractor(output: dict, gold: dict) -> dict:
         fp += c_fp
         fn += c_fn
     return _prf(tp, fp, fn)
+
+
+# Phase AC.1: the semantic schema version of the per-entity metrics
+# view. This is a PAYLOAD-level marker (string, semantic version),
+# NOT the artifact envelope ``schema_version`` — the system
+# constitution (§6) binds the envelope to an integer. Old
+# extraction_comparison artifacts that predate Phase AC carry no
+# payload ``schema_version`` and no ``per_entity_metrics``; every
+# reader treats their absence as "1.0.0" and falls back to the
+# aggregate-only view (red-team Pass 1 item 5).
+PER_ENTITY_SCHEMA_VERSION = "1.1.0"
+LEGACY_SCHEMA_VERSION = "1.0.0"
+
+
+def _best_gold(extracted_text: str, gold: list[dict]) -> tuple[int, float, str]:
+    """Return ``(best_idx, best_lcs, best_gold_text)`` for the gold item
+    most similar to ``extracted_text``. ``best_idx`` is -1 when ``gold``
+    is empty. Deterministic: ties resolve to the lowest gold index
+    (``>`` strict comparison keeps the first-seen maximum)."""
+    best_idx = -1
+    best_lcs = 0.0
+    best_text = ""
+    for i, gold_item in enumerate(gold):
+        gt = (gold_item or {}).get("text", "") or ""
+        r = _ratio(extracted_text, gt)
+        if r > best_lcs or best_idx == -1:
+            best_idx = i
+            best_lcs = r
+            best_text = gt
+    return best_idx, best_lcs, best_text
+
+
+def _classify_extraction(extracted: list[dict], gold: list[dict]) -> dict:
+    """Three-bucket LCS classification of one category.
+
+    Returns::
+
+      {
+        "true_positive": int,    # matched  (LCS >= MATCH_LCS_THRESHOLD)
+        "partial_match": int,    # PARTIAL <= LCS < MATCH
+        "spurious": int,         # LCS < PARTIAL_LCS_THRESHOLD
+        "false_negative": int,   # gold items never matched by a TP
+        "partial_items": [       # diagnostic, NOT a score input
+            {"extracted_text": str, "best_gold_text": str, "lcs": float}
+        ],
+      }
+
+    Bucket boundaries are inclusive-lower / exclusive-upper:
+
+      - LCS exactly ``MATCH_LCS_THRESHOLD``  → matched (TP).
+      - LCS exactly ``PARTIAL_LCS_THRESHOLD`` → partial.
+      - LCS just below ``PARTIAL_LCS_THRESHOLD`` → spurious.
+
+    Only a matched (TP) item consumes a gold item (greedy, the lowest
+    unconsumed gold index that clears ``MATCH_LCS_THRESHOLD`` wins) so
+    duplicate extractions cannot inflate recall. A partial match does
+    NOT consume gold and does NOT count as a TP — it is recorded for
+    diagnostics and counted as a false positive for precision. Any gold
+    item never consumed by a TP is a false negative.
+    """
+    matched_gold_idx: set[int] = set()
+    tp = partial = spurious = 0
+    partial_items: list[dict] = []
+
+    for extracted_item in extracted:
+        et = (extracted_item or {}).get("text", "") or ""
+        # First try to claim an as-yet-unconsumed gold item at the
+        # match threshold (greedy, lowest index first — matches the
+        # aggregate ``_match_against_gold`` consumption order).
+        claimed = False
+        for i, gold_item in enumerate(gold):
+            if i in matched_gold_idx:
+                continue
+            gt = (gold_item or {}).get("text", "") or ""
+            if _ratio(et, gt) >= MATCH_LCS_THRESHOLD:
+                matched_gold_idx.add(i)
+                tp += 1
+                claimed = True
+                break
+        if claimed:
+            continue
+        # No TP. Bucket by the single best gold neighbour (consumed or
+        # not — a partial/spurious never consumes, so this only labels
+        # the item; it cannot steal a gold slot from a real TP).
+        _, best_lcs, best_text = _best_gold(et, gold)
+        if best_lcs >= PARTIAL_LCS_THRESHOLD:
+            partial += 1
+            partial_items.append(
+                {
+                    "extracted_text": et,
+                    "best_gold_text": best_text,
+                    "lcs": round(best_lcs, 4),
+                }
+            )
+        else:
+            spurious += 1
+
+    fn = len(gold) - len(matched_gold_idx)
+    return {
+        "true_positive": tp,
+        "partial_match": partial,
+        "spurious": spurious,
+        "false_negative": fn,
+        "partial_items": partial_items,
+    }
+
+
+def _per_category_metric(extracted: list[dict], gold: list[dict]) -> dict:
+    """One category → precision/recall/f1 with the three-bucket counts.
+
+    Score formulas (red-team Pass 1: 0.0 on a zero denominator, never
+    NaN, never raise; a ``no_data_for_metric`` finding flags WHICH
+    denominator was empty so a reader never reads 0.0 as "perfectly
+    bad" when it means "nothing to measure"):
+
+      - FP = spurious + partial   (a partial is NOT a true positive)
+      - precision = TP / (TP + FP)   → 0.0 when TP+FP == 0
+      - recall    = TP / (TP + FN)   → 0.0 when TP+FN == 0
+      - f1 = 2*P*R / (P + R)         → 0.0 when P+R == 0
+    """
+    if not isinstance(extracted, list):
+        extracted = []
+    if not isinstance(gold, list):
+        gold = []
+    c = _classify_extraction(extracted, gold)
+    tp = c["true_positive"]
+    fp = c["spurious"] + c["partial_match"]
+    fn = c["false_negative"]
+
+    findings: list[str] = []
+    if (tp + fp) == 0:
+        findings.append("no_data_for_metric:precision_no_extracted_items")
+    if (tp + fn) == 0:
+        findings.append("no_data_for_metric:recall_no_gold_items")
+
+    precision = tp / (tp + fp) if (tp + fp) else 0.0
+    recall = tp / (tp + fn) if (tp + fn) else 0.0
+    f1 = (
+        2 * precision * recall / (precision + recall)
+        if (precision + recall)
+        else 0.0
+    )
+    return {
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "f1": round(f1, 4),
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "partial_match_count": c["partial_match"],
+        "spurious_count": c["spurious"],
+        "partial_items": c["partial_items"],
+        "findings": findings,
+    }
+
+
+def compute_per_entity_metrics(extracted: dict, gold: dict) -> dict:
+    """Per-entity precision/recall/F1 for one extractor against gold.
+
+    ``extracted`` and ``gold`` are both
+    ``{decisions: [...], actions: [...], questions: [...]}`` where each
+    list item is a ``{"text": str, ...}`` dict (extra keys ignored).
+    Matching is strictly per-category — a decision is never scored
+    against a gold action — exactly like the aggregate
+    ``_score_extractor``.
+
+    Returns::
+
+      {
+        "decisions": { precision, recall, f1, tp, fp, fn,
+                       partial_match_count, spurious_count,
+                       partial_items: [...], findings: [...] },
+        "actions":   { ... },
+        "questions": { ... },
+      }
+
+    Zero-denominator behaviour is documented on ``_per_category_metric``:
+    the metric is 0.0 (NEVER NaN, NEVER an exception) and a
+    ``no_data_for_metric:<which>`` finding is attached so a new engineer
+    can tell "no data to compute" apart from "perfectly bad".
+    """
+    extracted = extracted if isinstance(extracted, dict) else {}
+    gold = gold if isinstance(gold, dict) else {}
+    return {
+        cat: _per_category_metric(
+            extracted.get(cat) or [], gold.get(cat) or []
+        )
+        for cat in CATEGORIES
+    }
 
 
 def parse_opus_output(raw_output: str) -> tuple[dict, list[str]]:
@@ -288,12 +481,30 @@ def compute_gap_metrics(
     haiku = _score_extractor(haiku_output, gold)
     opus = _score_extractor(opus_output, gold)
 
+    # Phase AC.1: per-entity drill-down. The aggregate gap fields above
+    # remain the entry point; this is the breakdown a human reads when
+    # the aggregate moves. ``regex``/``haiku``/``opus`` keys per
+    # category so the corpus runner can lift a single F1 directly.
+    regex_pe = compute_per_entity_metrics(regex_output, gold)
+    haiku_pe = compute_per_entity_metrics(haiku_output, gold)
+    opus_pe = compute_per_entity_metrics(opus_output, gold)
+    per_entity = {
+        cat: {
+            "regex": regex_pe[cat],
+            "haiku": haiku_pe[cat],
+            "opus": opus_pe[cat],
+        }
+        for cat in CATEGORIES
+    }
+
     return {
+        "schema_version": PER_ENTITY_SCHEMA_VERSION,
         "regex": regex,
         "haiku": haiku,
         "opus": opus,
         "gap_1_to_2_f1": round(haiku["f1"] - regex["f1"], 4),
         "gap_2_to_3_f1": round(opus["f1"] - haiku["f1"], 4),
+        "per_entity_metrics": per_entity,
         "gold_item_count": total_gold,
         "gold_rubric": gold.get("rubric"),
         "opus_parser_warnings": opus_warnings,
@@ -303,9 +514,15 @@ def compute_gap_metrics(
 
 __all__ = [
     "EXTRACTION_GAP_MIN_LCS",
+    "MATCH_LCS_THRESHOLD",
+    "PARTIAL_LCS_THRESHOLD",
+    "PER_ENTITY_SCHEMA_VERSION",
+    "LEGACY_SCHEMA_VERSION",
     "CATEGORIES",
     "EmptyGoldSetError",
     "parse_opus_output",
     "compute_gap_metrics",
+    "compute_per_entity_metrics",
+    "_classify_extraction",
     "_match_against_gold",
 ]

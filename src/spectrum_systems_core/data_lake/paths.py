@@ -36,6 +36,31 @@ def processed_meeting_dir(lake_root: Path | str, meeting_id: str) -> Path:
     return Path(lake_root) / "processed" / "meetings" / meeting_id
 
 
+def validate_corpus_id(corpus_id: str) -> None:
+    """A corpus id obeys the same charset rule as a meeting id (the
+    Phase AC corpus runner derives it as ``corpus-<16 hex>`` which
+    always matches), so a malformed id fails closed before any path is
+    built."""
+    if not isinstance(corpus_id, str) or not MEETING_ID_PATTERN.match(
+        corpus_id
+    ):
+        raise ValueError(
+            f"invalid corpus_id {corpus_id!r}; must match "
+            f"{MEETING_ID_PATTERN.pattern}"
+        )
+
+
+def processed_corpus_dir(lake_root: Path | str, corpus_id: str) -> Path:
+    """Phase AC: corpus-level instrument records live under
+    ``processed/corpus/<corpus_id>/`` — a sibling of
+    ``processed/meetings/`` so a corpus run is locatable without
+    colliding with any single meeting. Same ``processed/`` tree the
+    data-lake repo bulk-ignores; corpus_comparison is a run-level
+    instrument (Git-tracked: NO), never a promoted product artifact."""
+    validate_corpus_id(corpus_id)
+    return Path(lake_root) / "processed" / "corpus" / corpus_id
+
+
 def artifact_index_path(lake_root: Path | str) -> Path:
     return Path(lake_root) / "indexes" / "meetings" / "artifact_index.jsonl"
 

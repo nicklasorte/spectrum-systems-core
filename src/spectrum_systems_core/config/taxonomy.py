@@ -131,13 +131,35 @@ AMBIGUOUS_VERBS: frozenset = frozenset({
 EXTRACTION_GAP_MIN_LCS = 0.7
 
 
+# Phase AC.1: three-bucket extraction match thresholds. These two
+# constants partition every extracted item into exactly one of three
+# buckets relative to its best per-category gold match:
+#
+#   - matched  : LCS >= MATCH_LCS_THRESHOLD            (true positive)
+#   - partial  : PARTIAL_LCS_THRESHOLD <= LCS < MATCH  (suspicious —
+#                a possible hallucinated paraphrase; NOT a TP)
+#   - spurious : LCS < PARTIAL_LCS_THRESHOLD            (false positive)
+#
+# MATCH_LCS_THRESHOLD intentionally equals EXTRACTION_GAP_MIN_LCS (and
+# therefore the Phase Z ``extraction_precision`` threshold) so the
+# per-entity instrument and the aggregate gap instrument share one
+# paraphrase boundary. Partial matches count as FP for precision — the
+# partial bucket exists for diagnostics, never to inflate scores.
+# ``tests/evals/test_per_entity_metrics.py::test_match_thresholds_pinned``
+# pins both values.
+MATCH_LCS_THRESHOLD = 0.7
+PARTIAL_LCS_THRESHOLD = 0.4
+
+
 __all__ = [
     "AMBIGUOUS_VERBS",
     "CLAIM_TYPES",
     "DECISION_OUTCOME_TYPES",
     "DECISION_VERBS",
     "EXTRACTION_GAP_MIN_LCS",
+    "MATCH_LCS_THRESHOLD",
     "OUTCOME_TO_VERBS",
     "OVERGENERALIZATION_MARKERS",
+    "PARTIAL_LCS_THRESHOLD",
     "REGULATORY_VERBS",
 ]
