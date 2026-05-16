@@ -93,14 +93,20 @@ def _derive_title(input_text: str) -> str:
     return "Untitled meeting"
 
 
-# The nine structured arrays PR #123 added to the schema and the Haiku
-# prompt. The parser carries every one through to the artifact so the
-# strict-schema eval (which validates the WHOLE payload against
-# meeting_minutes.schema.json) sees exactly what the model returned —
-# nothing dropped, nothing invented.
+# The structured arrays the schema + Haiku prompt declare (the nine
+# PR #123 added, plus the three schema_version 1.2.0 additions:
+# claims, sentiment_indicators, meeting_phases). The parser carries
+# every one through to the artifact so the strict-schema eval (which
+# validates the WHOLE payload against meeting_minutes.schema.json)
+# sees exactly what the model returned — nothing dropped, nothing
+# invented. A model-emitted array NOT carried here would be silently
+# discarded, which would make its prompt instruction dead and let a
+# malformed item escape the fail-closed schema gate; that is why each
+# new prompt array is added here in lock-step.
 _STRUCTURED_ARRAYS = (
     "commitments",
     "risks",
+    "claims",
     "cross_references",
     "attendees",
     "topics",
@@ -108,6 +114,8 @@ _STRUCTURED_ARRAYS = (
     "technical_parameters",
     "named_artifacts",
     "scheduled_events",
+    "sentiment_indicators",
+    "meeting_phases",
 )
 
 # The three legacy required arrays. Kept exactly fail-closed: a missing
@@ -206,6 +214,14 @@ def _make_extract(
             "schema_version": "1.1.0" if grounded else "1.0.0",
             "provenance": {"produced_by": PRODUCED_BY},
         }
+        if grounded:
+            # word_level_timestamps is set by the chunker, NOT the
+            # model (the prompt explicitly forbids the model from
+            # emitting it). The current docx inputs carry no
+            # word-level timing, so it is always False here; it is
+            # only added on the grounded path so the ungrounded 1.0.0
+            # payload stays byte-identical (additivity / rollback).
+            payload["word_level_timestamps"] = False
         if meeting_id:
             payload["meeting_id"] = meeting_id
 

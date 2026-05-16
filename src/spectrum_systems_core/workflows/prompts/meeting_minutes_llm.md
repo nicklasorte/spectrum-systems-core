@@ -14,11 +14,12 @@ any other keys. Do not wrap the object in another object.
 
 ```
 {
-  "decisions": ["<verbatim decision text>", {"text":"<verbatim decision text>","verb":"approved","stakeholders":["DoD"],"confidence":0.9}, ...],
+  "decisions": ["<verbatim decision text>", {"text":"<verbatim decision text>","verb":"approved","stakeholders":["DoD"],"confidence":0.9,"rationale":"because the PCC directed it"}, ...],
   "action_items": ["<verbatim or near-verbatim action text>", ...],
   "open_questions": ["<verbatim or near-verbatim question text>", ...],
   "commitments": [{"commitment_id","owner","commitment_text","due","source_speaker"}, ...],
   "risks": [{"risk_id","risk_text","raised_by","severity","mitigation_mentioned"}, ...],
+  "claims": [{"claim_id","claim_text","speaker","external_references","evidence_in_transcript"}, ...],
   "cross_references": [{"ref_id","ref_type","ref_text","ref_date","ref_url"}, ...],
   "attendees": [{"name","agency","role","present"}, ...],
   "topics": [{"topic_id","title","start_timestamp","end_timestamp","summary"}, ...],
@@ -26,6 +27,8 @@ any other keys. Do not wrap the object in another object.
   "technical_parameters": [{"param_id","parameter_name","value","unit","context","speaker"}, ...],
   "named_artifacts": [{"artifact_id","name","artifact_type_description","url","mentioned_by"}, ...],
   "scheduled_events": [{"event_id","title","date","time","location","purpose"}, ...],
+  "sentiment_indicators": [{"turn_id","speaker","sentiment","text_preview"}, ...],
+  "meeting_phases": [{"phase_id","phase_name","start_turn_id","end_turn_id","summary"}, ...],
   "grounding": [{"kind":"decision","text":"<the item text exactly as you emitted it>","source_turns":["t0007"]}, ...]
 }
 ```
@@ -42,6 +45,11 @@ string OR an object `{"text","verb","stakeholders","confidence"}`:
   responsible for this decision; empty array if unclear.
 - `confidence`: your confidence 0.0-1.0 that this is a real decision
   vs. discussion; omit if uncertain.
+- `rationale`: the stated reason WHY this decision was made, as
+  expressed by a speaker. Not background context — the explicit
+  justification. E.g. "because the PCC directed it" or "to align
+  with the OB3 mandate". Null if no rationale was stated — do not
+  infer one.
 
 Use the object form whenever you can attribute stakeholders or a
 confidence; otherwise a plain string is fine. Each `*_id` field is a
@@ -158,5 +166,79 @@ only when the transcript actually states it):
   description.
   Example: `{"event_id":"event-1","title":"next 7 GHz downlink TIG session","date":"before the next session","time":null,"location":null,"purpose":"review revised ERP values"}`
   If no future event is mentioned, return `[]`.
+
+- claim: a factual or analytical assertion made in the meeting,
+  distinct from a decision (which commits the group) and a risk (a
+  flagged problem). `claim_id` is a short slug you assign;
+  `claim_text` is the verbatim or near-verbatim assertion;
+  `speaker` is who made it (or `null`).
+  - `external_references`: list of specific documents, articles,
+    or regulations cited as evidence for this claim. Only include
+    if explicitly named in the transcript. E.g. `["OB3", "ITU
+    Article 21", "Draft 7 GHz Study Plan"]`. Empty array `[]` if
+    none cited — never invent or infer a reference that was not
+    explicitly named.
+  - `evidence_in_transcript`: the `turn_id`s where evidence
+    SUPPORTING this claim was presented, which may differ from the
+    `source_turns` in `grounding` (where the claim was STATED). A
+    claim stated in `t0010` may be supported by technical data in
+    `t0003` and `t0007`. This is NOT the same as `source_turns`:
+    `source_turns` records where the claim was said; this records
+    where its supporting evidence appears. Empty array `[]` if no
+    distinct supporting evidence turn is identifiable — do not
+    infer; do not just copy `source_turns` here.
+  Example: `{"claim_id":"claim-1","claim_text":"The 7 GHz downlink threshold of minus 47 dBm per megahertz protects federal incumbents.","speaker":"NTIA Lead","external_references":["Draft 7 GHz Study Plan"],"evidence_in_transcript":["t0003","t0007"]}`
+  If no claim is asserted, return `[]`.
+
+# New optional fields (schema_version 1.2.0)
+
+These are additive. Legacy artifacts without them are still valid;
+emit the conservative default (`null` / `[]` / object-omitted) and
+NEVER infer a value the transcript does not state.
+
+- `rationale` (on a `decisions` object item): the stated reason WHY
+  the decision was made, as expressed by a speaker — the explicit
+  justification, not background context. E.g. a decision object
+  `{"text":"The group deferred the methodology.","verb":"deferred","rationale":"to align with the OB3 mandate"}`.
+  Use `null` (or omit the key) if no rationale was stated — do not
+  infer one.
+
+- `follow_up_required` (on an `action_items` object item, when you
+  emit the object form): `true` if a human must take action before
+  the next meeting; `false` if the item is completed or
+  informational. Default `true` for open items. E.g.
+  `{"action":"DoD will submit revised ERP values before the next session.","follow_up_required":true}`.
+  `action_items` may still be plain strings; only set this field on
+  the object form. If you cannot tell, use `true` — do not invent a
+  completion the transcript does not state.
+
+- `sentiment_indicators` (top-level array): only populate when a
+  speaker expresses CLEAR disagreement, concern, strong endorsement,
+  uncertainty, or frustration — NOT routine discussion. Federal
+  government meetings have a formal tone; flag ONLY unambiguous
+  signals, never ordinary deliberation, polite hedging, or normal
+  procedural back-and-forth. `sentiment` is exactly one of
+  `"disagreement"`, `"concern"`, `"strong_endorsement"`,
+  `"uncertainty"`, `"frustration"`. `text_preview` is the first 100
+  characters of that turn. E.g. a speaker saying "I strongly object
+  to this approach" →
+  `{"turn_id":"t0042","speaker":"DoD Rep","sentiment":"disagreement","text_preview":"I strongly object to this approach for the 7 GHz downlink threshold."}`,
+  or "I am very concerned about the timeline" → `sentiment:"concern"`.
+  Return `[]` for routine exchanges — when in doubt, do NOT flag.
+
+- `meeting_phases` (top-level array): segment the meeting into its
+  high-level phases in order, using the `start_turn_id` /
+  `end_turn_id` from the turn block. `phase_name` is exactly one of
+  `"opening"` (roll call, admin), `"working_session"` (substantive
+  agenda items), `"q_and_a"` (open questions), `"wrap_up"` (action
+  items, next steps), or `"other"` for anything else. `phase_id` is
+  a short slug you assign; `summary` may be `null`. E.g.
+  `{"phase_id":"phase-1","phase_name":"opening","start_turn_id":"t0000","end_turn_id":"t0004","summary":"Roll call and agenda review for the 7 GHz downlink TIG."}`.
+  Return `[]` if the transcript has no discernible phase structure —
+  do not invent phases.
+
+- Do NOT set `word_level_timestamps` — this field is populated by
+  the ingestion pipeline (the chunker), not by the extraction
+  model. Do not emit it in your JSON at all.
 
 Output the JSON object now.

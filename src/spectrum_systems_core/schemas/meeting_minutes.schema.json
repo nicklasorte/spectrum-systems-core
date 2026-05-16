@@ -17,8 +17,8 @@
     "artifact_type": { "const": "meeting_minutes" },
     "schema_version": {
       "type": "string",
-      "minLength": 1,
-      "description": "Payload schema_version string (e.g. \"1.0.0\", \"1.1.0\"). Kept as a free non-empty string — exactly as meeting_extraction.schema.json does — so a legacy artifact and an artifact carrying the additive arrays below both validate (schema additivity)."
+      "enum": ["1.0.0", "1.1.0", "1.2.0"],
+      "description": "Payload schema_version. 1.0.0 = legacy ungrounded; 1.1.0 = Phase Y grounded (PR #128 source_turns contract — unchanged here); 1.2.0 = additionally permits the optional rationale (decisions) / claims with external_references + evidence_in_transcript / follow_up_required (action_items) / word_level_timestamps / sentiment_indicators / meeting_phases fields. Additivity: every 1.2.0 field is optional, so a legacy 1.0.0 or 1.1.0 artifact validates unchanged, and an artifact may declare 1.2.0 without carrying any new field."
     },
     "title": { "type": "string", "minLength": 1 },
     "summary": { "type": "string" },
@@ -46,6 +46,10 @@
                 "minimum": 0.0,
                 "maximum": 1.0,
                 "description": "Optional. Model confidence 0.0-1.0 that this is a real decision vs. discussion. Null or omitted when uncertain; any number outside [0.0, 1.0] fails the gate."
+              },
+              "rationale": {
+                "type": ["string", "null"],
+                "description": "Optional (schema_version 1.2.0+). The stated reason or justification WHY this decision was made, as expressed in the transcript — the explicit 'why', distinct from background decision context. Null or omitted when no rationale was stated; legacy 1.0.0 / 1.1.0 decisions omit it entirely (additivity)."
               }
             }
           }
@@ -70,7 +74,11 @@
                 "description": "Optional. Default \"open\" when absent (default applied by the producer, not enforced by JSON Schema). Only these three values are valid — e.g. \"done\" fails the gate."
               },
               "owner": { "type": ["string", "null"] },
-              "due": { "type": ["string", "null"] }
+              "due": { "type": ["string", "null"] },
+              "follow_up_required": {
+                "type": "boolean",
+                "description": "Optional (schema_version 1.2.0+). Default true (applied by the producer, not enforced by JSON Schema): true when a human must take action before the next meeting, false for completed or informational items. Legacy action_item objects omit it (additivity)."
+              }
             }
           }
         ]
@@ -134,6 +142,31 @@
             "description": "Optional severity. Null when the transcript does not state one. Any value outside low/medium/high (and null) fails the gate."
           },
           "mitigation_mentioned": { "type": ["string", "null"] }
+        }
+      }
+    },
+
+    "claims": {
+      "type": "array",
+      "description": "Optional, default []. Factual or analytical assertions made in the meeting, distinct from `decisions` (which commit the group) and `risks` (flagged problems). Legacy 1.0.0 / 1.1.0 artifacts omit this array entirely (additivity).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim_id", "claim_text"],
+        "properties": {
+          "claim_id": { "type": "string", "minLength": 1 },
+          "claim_text": { "type": "string", "minLength": 1 },
+          "speaker": { "type": ["string", "null"] },
+          "external_references": {
+            "type": "array",
+            "description": "Optional (schema_version 1.2.0+), default [] (applied by the producer/model, not enforced by JSON Schema). External documents, ITU articles, CFR sections, or other sources cited as evidence for this claim. E.g. [\"ITU Article 21\", \"47 CFR 96.41\", \"OB3 Section 4.2\"]. Empty array when none cited.",
+            "items": { "type": "string" }
+          },
+          "evidence_in_transcript": {
+            "type": "array",
+            "description": "Optional (schema_version 1.2.0+), default [] (applied by the producer/model). turn_ids that provide evidence SUPPORTING this claim — deliberately distinct from the PR #128 grounding/source_turns contract, which records where the claim was STATED. A claim may be stated in one turn but supported by evidence across multiple turns. This field does NOT alter or re-pin the grounding contract.",
+            "items": { "type": "string" }
+          }
         }
       }
     },
@@ -256,6 +289,50 @@
           "time": { "type": ["string", "null"] },
           "location": { "type": ["string", "null"] },
           "purpose": { "type": ["string", "null"] }
+        }
+      }
+    },
+
+    "word_level_timestamps": {
+      "type": "boolean",
+      "description": "Optional (schema_version 1.2.0+), default false. Whether the chunks.jsonl for this transcript carries word-level timestamps. Set by the chunker at ingestion time, NEVER by the extraction model. False for the current docx inputs (no word-level timing data); infrastructure for future diarized transcripts. Legacy artifacts omit it (additivity)."
+    },
+
+    "sentiment_indicators": {
+      "type": "array",
+      "description": "Optional (schema_version 1.2.0+), default []. Speaker turns flagged for notable sentiment. Only populated when a speaker expresses clear disagreement, concern, strong endorsement, uncertainty, or frustration — not routine discussion. Legacy artifacts omit it (additivity).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["turn_id", "speaker", "sentiment", "text_preview"],
+        "properties": {
+          "turn_id": { "type": "string", "minLength": 1 },
+          "speaker": { "type": "string" },
+          "sentiment": {
+            "enum": ["disagreement", "concern", "strong_endorsement", "uncertainty", "frustration"],
+            "description": "Exactly one of the five approved sentiment signals. Any other value (e.g. \"annoyed\") fails the gate."
+          },
+          "text_preview": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+
+    "meeting_phases": {
+      "type": "array",
+      "description": "Optional (schema_version 1.2.0+), default []. High-level phases of the meeting in sequence. Legacy artifacts omit it (additivity).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["phase_id", "phase_name"],
+        "properties": {
+          "phase_id": { "type": "string", "minLength": 1 },
+          "phase_name": {
+            "enum": ["opening", "working_session", "q_and_a", "wrap_up", "other"],
+            "description": "Exactly one of the five approved phase names. Any other value (e.g. \"lunch\") fails the gate."
+          },
+          "start_turn_id": { "type": ["string", "null"] },
+          "end_turn_id": { "type": ["string", "null"] },
+          "summary": { "type": ["string", "null"] }
         }
       }
     },

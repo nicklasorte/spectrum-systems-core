@@ -45,6 +45,39 @@ def test_chunker_emits_agenda_item_id_on_marker_turn():
     assert chunks[0]["agenda_item_id"] == "item-1"
 
 
+# ---- word_level_timestamps (1.2.0 chunker-owned signal) ----------------
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    [
+        # speaker_turn_v1 path
+        "CHAIR: Item 1: 3.5 GHz band sharing.\nALICE: Several options.\n",
+        # blank_line_v1 path
+        "First paragraph of notes.\n\nSecond paragraph of notes.\n",
+        # recursive_512 fallback path (no speaker, no blank lines)
+        "word " * 1200,
+    ],
+)
+def test_every_chunk_carries_word_level_timestamps_false(transcript):
+    """Gate (Step 3): every chunk record carries word_level_timestamps
+    and it is False for the current plain-text / docx inputs (no
+    word-level timing). Absence of the field is a hard failure."""
+    chunks = chunk_transcript(transcript)
+    assert chunks, "expected at least one chunk"
+    for c in chunks:
+        assert "word_level_timestamps" in c, (
+            "chunk missing word_level_timestamps field"
+        )
+        assert c["word_level_timestamps"] is False
+
+
+def test_word_level_timestamps_is_replay_stable():
+    """Adding the field keeps the chunker byte-identical across runs."""
+    transcript = "CHAIR: Item 1.\nALICE: Reply.\nBOB: Another.\n"
+    assert chunk_transcript(transcript) == chunk_transcript(transcript)
+
+
 def test_chunker_propagates_agenda_id_until_new_marker():
     transcript = (
         "CHAIR: I call the meeting to order.\n"
