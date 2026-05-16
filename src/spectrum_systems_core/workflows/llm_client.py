@@ -6,7 +6,7 @@ hard-codes the call site. A client is a callable
     client(*, system: str, user: str) -> str
 
 returning the model's raw text response. Production uses
-:class:`AnthropicJSONClient` (lazy SDK import, ``temperature=0``,
+:class:`AnthropicJSONClient` (lazy SDK import,
 ``claude-haiku-4-5-20251001``). Tests inject a deterministic stub so the
 suite runs with no API key and no network — the same seam pattern used
 by ``ai/adapter.py`` (``api_caller``) and ``create_human_gt_pairs.py``
@@ -58,13 +58,7 @@ class LLMClient(Protocol):
 
 
 class AnthropicJSONClient:
-    """Default production client. Lazily constructs the Anthropic SDK.
-
-    ``temperature=0`` for the most reproducible output the API allows
-    (the data-lake byte-determinism contract does not bind this path —
-    it is feature-flagged off by default — but a deterministic
-    temperature still minimises run-to-run drift).
-    """
+    """Default production client. Lazily constructs the Anthropic SDK."""
 
     def __init__(self, *, model: str = EXTRACTION_MODEL, max_tokens: int = _MAX_TOKENS):
         self._model = model
@@ -84,7 +78,6 @@ class AnthropicJSONClient:
             message = client.messages.create(
                 model=self._model,
                 max_tokens=self._max_tokens,
-                temperature=0,
                 system=system,
                 messages=[{"role": "user", "content": user}],
             )
