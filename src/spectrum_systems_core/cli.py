@@ -2786,6 +2786,10 @@ def meeting_minutes_llm(
     data_lake: str | None = None,
     max_chunks: int | None = None,
     debug_chunks: bool = False,
+    print_raw_response: bool = False,
+    minimal_repro: bool = False,
+    diff_vs_opus: bool = False,
+    test_parser_only: bool = False,
     single_chunk: bool = False,
     print_context: bool = False,
     client=None,
@@ -2842,6 +2846,15 @@ def meeting_minutes_llm(
     — it changes neither the artifact, the evals, nor the exit code; a
     run with it off is byte-identical to before the knob existed.
 
+    ``print_raw_response`` / ``minimal_repro`` / ``diff_vs_opus`` /
+    ``test_parser_only`` (all default ``False``) are the four DEBUG-ONLY
+    diagnostic modes. They are strictly observe-only: they print to
+    stdout and NEVER write an artifact (Mode 1 runs the real extraction
+    but the promoted artifact is deliberately not written; Modes 2/3/4
+    bypass the pipeline and exit). They run independently and in any
+    combination. All default off, so a normal run is byte-identical to
+    before they existed.
+
     ``single_chunk`` (default ``False``) is a DEBUG-ONLY knob forwarded
     to the workflow. When ``True`` only the single largest (by text
     char count) transcript chunk is extracted, so the debug cycle is
@@ -2855,7 +2868,9 @@ def meeting_minutes_llm(
     can confirm the transcript content actually reached the API call.
 
     Exit codes:
-      0 -- promoted artifact written.
+      0 -- promoted artifact written, OR an observe-only diagnostic mode
+           (print-raw-response / minimal-repro / diff-vs-opus /
+           test-parser-only) ran.
       1 -- workflow ran but the control gate blocked promotion.
       2 -- pre-run halt (bad args, missing/empty transcript, missing
            store root, or LLMConfigError).
@@ -2962,6 +2977,33 @@ def meeting_minutes_llm(
 
             client = _stub_client
 
+    # Diagnostic debug modes 2/3/4 bypass the pipeline entirely: each
+    # prints to stdout and the command exits without producing or
+    # writing any artifact (observe-only). They run independently and in
+    # any combination — every requested mode is printed before exit.
+    if test_parser_only or diff_vs_opus or minimal_repro:
+        from .workflows.debug_modes import (
+            build_opus_vs_llm_diff,
+            build_parser_isolation_report,
+            run_minimal_repro,
+        )
+
+        if test_parser_only:
+            print(build_parser_isolation_report(), file=out)
+        if diff_vs_opus:
+            print(
+                build_opus_vs_llm_diff(transcript_text=transcript_text),
+                file=out,
+            )
+        if minimal_repro:
+            print(
+                run_minimal_repro(
+                    transcript_text=transcript_text, client=client
+                ),
+                file=out,
+            )
+        return 0
+
     try:
         result = run_meeting_minutes_llm_workflow(
             transcript_text,
@@ -2972,6 +3014,7 @@ def meeting_minutes_llm(
             env=resolved_env,
             max_chunks=max_chunks,
             debug_chunks=debug_chunks,
+            print_raw_response=print_raw_response,
             single_chunk=single_chunk,
             print_context=print_context,
         )
@@ -2989,6 +3032,27 @@ def meeting_minutes_llm(
     mm = result.meeting_minutes
     mm_payload = mm.payload if isinstance(mm.payload, dict) else {}
     produced_by = (mm_payload.get("provenance") or {}).get("produced_by")
+
+    if print_raw_response:
+        # Mode 1 is observe-only: the verbatim model response was
+        # already printed by the wrapped transport BEFORE parsing. The
+        # real extraction / evals / gate all ran (so the operator sees
+        # the true outcome), but the promoted artifact is deliberately
+        # NOT written — no data-lake mutation from a diagnostic run.
+        decision_payload = (
+            result.control_decision.payload
+            if result.control_decision is not None
+            else {}
+        )
+        print(
+            f"meeting-minutes-llm [{source_id}] OBSERVE-ONLY "
+            f"(print-raw-response) produced_by={produced_by} "
+            f"promoted={result.promoted} "
+            f"decision={decision_payload.get('decision')} "
+            f"(no artifact written)",
+            file=out,
+        )
+        return 0
 
     if not result.promoted:
         decision_payload = (
@@ -4650,6 +4714,46 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     mml.add_argument(
+        "--print-raw-response",
+        action="store_true",
+        default=False,
+        help=(
+            "DEBUG ONLY (Mode 1). Print the verbatim model response to "
+            "stdout BEFORE parsing, for every API call. Observe-only: "
+            "the real extraction runs but NO artifact is written."
+        ),
+    )
+    mml.add_argument(
+        "--minimal-repro",
+        action="store_true",
+        default=False,
+        help=(
+            "DEBUG ONLY (Mode 2). Make ONE direct API call with the real "
+            "prompt file and the first 3 transcript turns, bypassing the "
+            "framework; print the full raw response and exit. Observe-only."
+        ),
+    )
+    mml.add_argument(
+        "--diff-vs-opus",
+        action="store_true",
+        default=False,
+        help=(
+            "DEBUG ONLY (Mode 3). Print a side-by-side diff of the "
+            "meeting_minutes_llm vs Opus-baseline API call parameters "
+            "and exit. Makes NO API call. Observe-only."
+        ),
+    )
+    mml.add_argument(
+        "--test-parser-only",
+        action="store_true",
+        default=False,
+        help=(
+            "DEBUG ONLY (Mode 4). Feed a known-good synthetic response "
+            "through the real parser, print the item counts and exit. "
+            "Makes NO API call. Observe-only."
+        ),
+    )
+    mml.add_argument(
         "--single-chunk",
         action="store_true",
         default=False,
@@ -5074,6 +5178,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             data_lake=args.data_lake,
             max_chunks=args.max_chunks,
             debug_chunks=args.debug_chunks,
+            print_raw_response=args.print_raw_response,
+            minimal_repro=args.minimal_repro,
+            diff_vs_opus=args.diff_vs_opus,
+            test_parser_only=args.test_parser_only,
             single_chunk=args.single_chunk,
             print_context=args.print_context,
         )

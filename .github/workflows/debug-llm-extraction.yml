@@ -31,6 +31,26 @@ on:
         required: false
         type: boolean
         default: false
+      print_raw_response:
+        description: 'Print raw API response before parsing (Mode 1)'
+        required: false
+        type: boolean
+        default: false
+      minimal_repro:
+        description: 'Standalone 3-turn API call bypassing framework (Mode 2)'
+        required: false
+        type: boolean
+        default: false
+      diff_vs_opus:
+        description: 'Diff LLM API call params against Opus baseline (Mode 3)'
+        required: false
+        type: boolean
+        default: false
+      test_parser_only:
+        description: 'Feed synthetic response into real parser, no API call (Mode 4)'
+        required: false
+        type: boolean
+        default: false
       single_chunk:
         description: >-
           DEBUG ONLY. Run extraction on ONLY the single largest
@@ -61,6 +81,10 @@ jobs:
       SOURCE_ID: ${{ github.event.inputs.source_id }}
       MAX_CHUNKS: ${{ github.event.inputs.max_chunks }}
       DEBUG_CHUNKS: ${{ github.event.inputs.debug_chunks }}
+      PRINT_RAW_RESPONSE: ${{ github.event.inputs.print_raw_response }}
+      MINIMAL_REPRO: ${{ github.event.inputs.minimal_repro }}
+      DIFF_VS_OPUS: ${{ github.event.inputs.diff_vs_opus }}
+      TEST_PARSER_ONLY: ${{ github.event.inputs.test_parser_only }}
       SINGLE_CHUNK: ${{ github.event.inputs.single_chunk }}
       PRINT_CONTEXT: ${{ github.event.inputs.print_context }}
     steps:
@@ -92,6 +116,11 @@ jobs:
           if [ "${DEBUG_CHUNKS}" = "true" ]; then
             DEBUG_CHUNKS_ARG=(--debug-chunks)
           fi
+          EXTRA_ARGS=()
+          [ "${PRINT_RAW_RESPONSE}" = "true" ] && EXTRA_ARGS+=(--print-raw-response)
+          [ "${MINIMAL_REPRO}"      = "true" ] && EXTRA_ARGS+=(--minimal-repro)
+          [ "${DIFF_VS_OPUS}"       = "true" ] && EXTRA_ARGS+=(--diff-vs-opus)
+          [ "${TEST_PARSER_ONLY}"   = "true" ] && EXTRA_ARGS+=(--test-parser-only)
           SINGLE_CHUNK_ARG=()
           if [ "${SINGLE_CHUNK}" = "true" ]; then
             SINGLE_CHUNK_ARG=(--single-chunk)
@@ -105,6 +134,7 @@ jobs:
             --data-lake "${DATA_LAKE_PATH}" \
             "${MAX_CHUNKS_ARG[@]}" \
             "${DEBUG_CHUNKS_ARG[@]}" \
+            "${EXTRA_ARGS[@]}" \
             "${SINGLE_CHUNK_ARG[@]}" \
             "${PRINT_CONTEXT_ARG[@]}" \
             >stdout.log 2>stderr.log

@@ -983,6 +983,7 @@ def run_meeting_minutes_llm_workflow(
     env=None,
     max_chunks: int | None = None,
     debug_chunks: bool = False,
+    print_raw_response: bool = False,
     single_chunk: bool = False,
     print_context: bool = False,
 ) -> WorkflowResult:
@@ -1025,6 +1026,13 @@ def run_meeting_minutes_llm_workflow(
     decision, so a run with ``debug_chunks=False`` is byte-identical to
     one before this knob existed (additivity / rollback).
 
+    ``print_raw_response`` (default ``False``) is a DEBUG-ONLY
+    observability knob (Mode 1). When ``True`` the active transport is
+    wrapped so the verbatim model response is printed to stdout BEFORE
+    ``_parse_llm_payload`` runs on it. The wrapper returns the response
+    UNCHANGED, so extraction / evals / promotion are byte-identical to a
+    run with it off — it only observes, exactly like ``debug_chunks``.
+
     ``single_chunk`` (default ``False``) is a DEBUG-ONLY knob. When
     ``True`` the transcript is chunked normally, then ONLY the single
     chunk with the most characters in its ``text`` is kept and the
@@ -1057,7 +1065,6 @@ def run_meeting_minutes_llm_workflow(
     active_client: LLMClient = client or AnthropicJSONClient(
         model=model_id, max_tokens=max_tokens
     )
-
     # --single-chunk capture seam. DEBUG ONLY. When set we wrap the
     # resolved transport so the EXACT bytes the model returned (raw
     # response) can be printed verbatim after the run. The wrapper is
@@ -1079,6 +1086,17 @@ def run_meeting_minutes_llm_workflow(
             return raw
 
         active_client = _capturing_client
+
+    # Mode 1 raw-response printer. Wraps whatever the active transport
+    # now is (the single-chunk capturing client when both are set), so
+    # the verbatim response is printed BEFORE _parse_llm_payload runs.
+    # Pass-through: returns the response UNCHANGED.
+    _raw_printer = None
+    if print_raw_response:
+        from .debug_modes import RawResponsePrintingClient
+
+        _raw_printer = RawResponsePrintingClient(active_client)
+        active_client = _raw_printer
 
     extract = _make_extract(
         client=active_client, meeting_id=meeting_id, model_id=model_id
@@ -1133,6 +1151,11 @@ def run_meeting_minutes_llm_workflow(
         last_line = chunks[-1]["line_end"] if chunks else 0
         input_text = "\n".join(input_text.splitlines()[:last_line])
     grounded = bool(chunks)
+    if _raw_printer is not None:
+        # The workflow makes ONE whole-transcript call; record the
+        # post-truncation chunk count so the printed banner is honest
+        # about the chunk scope the single call covers.
+        _raw_printer.total_chunks = len(chunks)
 
     extra_evals = [
         run_llm_strict_schema_eval,
