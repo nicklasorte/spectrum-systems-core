@@ -109,12 +109,23 @@ def strip_markdown_fence(text: str) -> str:
     Does NOT raise on malformed fences; the downstream ``json.loads``
     will surface the parse failure so it can be counted as
     ``block_reason: parse_error``.
+
+    PR #134 parity: the degenerate single-line ` ```{...}``` ` shape
+    (opening fence with NO newline after it) drops only the three
+    backticks (``text[3:]``), never the body. Returning ``""`` here
+    would turn a fenced-but-recoverable Haiku response into an empty
+    one, which the extract-typed claims parser then logs as
+    ``typed_extraction_llm_json_parse_failed`` and silently treats as
+    zero items. A bare ` ``` ` (no body) still collapses to ``""``
+    because ``"```"[3:] == ""``, so the X-1 "model wrote only a fence"
+    fail-closed case is unchanged. Mirrors
+    ``scripts/create_opus_reference_baselines._strip_fence``.
     """
     if not isinstance(text, str):
         return ""
     text = text.strip()
     if text.startswith("```"):
-        text = text.split("\n", 1)[1] if "\n" in text else ""
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
     if text.endswith("```"):
         text = text.rsplit("```", 1)[0]
     return text.strip()

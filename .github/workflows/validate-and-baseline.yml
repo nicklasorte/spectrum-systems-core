@@ -57,6 +57,14 @@ on:
         options:
           - 'false'
           - 'true'
+      llm_extraction_enabled:
+        description: >-
+          Run the full 13-type Haiku meeting_minutes_llm extraction
+          AFTER the deterministic stages (additive; default off keeps
+          behaviour byte-identical for every existing consumer).
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -205,6 +213,37 @@ jobs:
             --source-id "${TARGET_SOURCE_ID}" \
             --data-lake "${DATA_LAKE_PATH}" \
             --force
+
+      # ------------------------------------------------------------------
+      # 1c. ADDITIVE live-Haiku meeting_minutes_llm extraction.
+      #
+      # Runs ONLY when the operator dispatched with
+      # llm_extraction_enabled=true. It runs AFTER the deterministic
+      # run-pipeline + extract-typed stages above (never instead of
+      # them) so every regex artifact the rest of the pipeline depends
+      # on still exists. It produces a SECOND promoted meeting_minutes
+      # artifact carrying payload.provenance.produced_by ==
+      # "meeting_minutes_llm" at
+      # store/processed/meetings/<source_id>/ — exactly where
+      # scripts/compare_opus_haiku.py looks for the Haiku side of the
+      # Haiku-vs-Opus diff.
+      #
+      # The model is the Haiku model the meeting_minutes_llm workflow's
+      # AnthropicJSONClient resolves from the model registry — there is
+      # no model string in this YAML.
+      #
+      # Fail-closed: the CLI exits non-zero on a missing/empty staged
+      # transcript, an unset ANTHROPIC_API_KEY (LLMConfigError, exit 2),
+      # or a control-blocked run (exit 1). A non-zero exit fails this
+      # step and the whole workflow. The LLM extraction is NEVER
+      # silently skipped while enabled — there is no continue-on-error.
+      # ------------------------------------------------------------------
+      - name: Run LLM extraction (meeting_minutes_llm)
+        if: ${{ inputs.llm_extraction_enabled == true }}
+        run: |
+          python -m spectrum_systems_core.cli meeting-minutes-llm \
+            --source-id "${TARGET_SOURCE_ID}" \
+            --data-lake "${DATA_LAKE_PATH}"
 
       # ------------------------------------------------------------------
       # 2. Verify the 5 wiring signals (X2.7 success criterion).
@@ -385,9 +424,54 @@ jobs:
             store/artifacts/glossary/
 
       # ------------------------------------------------------------------
-      # 5. Self-improvement loop entry: once the baseline is set, kick
+      # 4b. Push the Haiku meeting_minutes_llm artifact so the SEPARATE
+      #     compare-opus-haiku.yml workflow (which clones the data-lake
+      #     fresh) can read it. Without this the artifact would exist
+      #     only on this runner's local clone and the comparison would
+      #     read an absent Haiku side.
+      #
+      #     Gated on llm_extraction_enabled so the default path is
+      #     byte-identical (no extra processed-tree commit when off).
+      #     processed/ is bulk-ignored in nicklasorte/data-lake; git
+      #     cannot re-include a file under an excluded directory, so we
+      #     FIRST re-include the directory chain (directories only) and
+      #     THEN the specific artifact — mirroring the established
+      #     !**/processed/**/source_record.json precedent. Idempotent.
+      # ------------------------------------------------------------------
+      - name: Ensure data-lake .gitignore negates the Haiku artifact
+        if: ${{ success() && inputs.llm_extraction_enabled == true }}
+        env:
+          CLONE_PATH: ${{ github.workspace }}/data-lake
+        run: |
+          set -euo pipefail
+          GI="$CLONE_PATH/.gitignore"
+          touch "$GI"
+          add_rule() {
+            grep -qxF "$1" "$GI" || printf '%s\n' "$1" >> "$GI"
+          }
+          add_rule '!**/processed/**/'
+          add_rule '!**/processed/**/meeting_minutes__*.json'
+          echo "Ensured meeting_minutes__*.json negation in data-lake .gitignore"
+
+      - name: Push Haiku meeting_minutes_llm artifact
+        if: ${{ success() && inputs.llm_extraction_enabled == true }}
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            feat(llm-extraction): Haiku meeting_minutes_llm artifact for ${{ env.TARGET_SOURCE_ID }} [skip ci]
+          add_paths: |
+            .gitignore
+            store/processed/meetings/${{ env.TARGET_SOURCE_ID }}/meeting_minutes__*.json
+
+      # ------------------------------------------------------------------
+      # 5. Self-improvement loop entry: once the baseline is set AND the
+      #    Haiku artifact (if enabled) has been produced + pushed, kick
       #    the Haiku-vs-Opus comparison IFF both the Opus baseline and
       #    a Haiku LLM meeting_minutes artifact exist for the target.
+      #    This step is intentionally LAST so it always fires AFTER the
+      #    LLM extraction + Haiku push above — the comparison is only
+      #    meaningful once the meeting_minutes_llm artifact exists.
       #    A missing input is a clean skip, never a workflow failure —
       #    the comparison/correction loop is opportunistic.
       # ------------------------------------------------------------------

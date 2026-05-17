@@ -66,6 +66,32 @@ def llm_extraction_enabled(
 ) -> bool:
     """Resolve the ``llm_extraction`` flag. Default is ``False``.
 
+    Operational meaning of the flag (read this before flipping it):
+
+    - **Default ``False`` is safe for every existing consumer.** With
+      the flag off the live-LLM path is never constructed; the
+      deterministic regex extractor is the only meeting_minutes
+      producer and behaviour is byte-identical to before this feature
+      existed. Rollback is one config change.
+    - **Set ``True`` via the ``llm_extraction_enabled`` workflow input
+      of ``validate-and-baseline``** to run the full 13-type Haiku
+      extraction as part of the standard validation loop. The workflow
+      input only flips it for that one dispatched run; it does NOT edit
+      the code-level default here.
+    - **When ``True``, the ``meeting_minutes_llm`` workflow runs AFTER
+      the deterministic ``run-pipeline`` / ``extract-typed`` stages,
+      not instead of them.** It is purely additive: it produces a
+      SECOND promoted ``meeting_minutes`` artifact carrying
+      ``payload.provenance.produced_by == "meeting_minutes_llm"``
+      alongside the regex one, so ``scripts/compare_opus_haiku.py`` can
+      diff the Haiku output against the Opus reference baseline. The
+      deterministic stages still produce every artifact other parts of
+      the pipeline depend on.
+    - Fail-closed: with the flag on but ``ANTHROPIC_API_KEY`` absent,
+      :func:`preflight_llm_config` raises :class:`LLMConfigError`
+      BEFORE any artifact is produced. There is no silent fallback to
+      the regex extractor.
+
     Resolution order (first decisive wins):
 
     1. ``override`` — an explicit boolean passed by a caller/test. This
