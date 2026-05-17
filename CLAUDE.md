@@ -277,6 +277,12 @@ pushing a follow-up commit whose message omits the token (the new HEAD
 re-triggers via the `synchronize` event) or by amending the commit
 message and force-pushing the branch.
 
+## Governing Documents
+
+- PR_FAILURE_PROTOCOL.md — failure classification and remediation
+- docs/governance/ENGINEERING_PRINCIPLES.md — engineering
+  principles binding on every session
+
 ## Data-lake separation (non-negotiable)
 
 All pipeline artifacts, transcripts, minutes, and other data files live
