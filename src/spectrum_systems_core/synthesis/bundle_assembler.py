@@ -25,7 +25,7 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 
@@ -33,7 +33,6 @@ from ..config import PHASE_V_FLAG_NAME, FeatureFlag
 from ..ingestion.source_loader import SOURCE_FAMILIES
 from ._paths import synthesis_run_dir, synthesis_schema_path
 from .retrieval_registry import RetrievalRegistry
-
 
 _LOG = logging.getLogger(__name__)
 
@@ -75,8 +74,8 @@ def _execution_fingerprint(*parts: str) -> str:
     return "sha256:" + hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     try:
@@ -94,8 +93,8 @@ def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
     return out
 
 
-def _read_promoted_dir(dir_path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_promoted_dir(dir_path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not dir_path.is_dir():
         return out
     for child in sorted(dir_path.glob("*.json")):
@@ -106,8 +105,8 @@ def _read_promoted_dir(dir_path: Path) -> List[Dict[str, Any]]:
     return out
 
 
-def _iter_processed_dirs(repo_root: Path) -> List[Tuple[str, Path]]:
-    out: List[Tuple[str, Path]] = []
+def _iter_processed_dirs(repo_root: Path) -> list[tuple[str, Path]]:
+    out: list[tuple[str, Path]] = []
     base = repo_root / "processed"
     if not base.is_dir():
         return out
@@ -121,17 +120,17 @@ def _iter_processed_dirs(repo_root: Path) -> List[Tuple[str, Path]]:
     return out
 
 
-def _materiality_rank(claim: Dict[str, Any]) -> int:
+def _materiality_rank(claim: dict[str, Any]) -> int:
     rank = {"high": 0, "medium": 1, "low": 2}
     return rank.get(str(claim.get("materiality") or "low"), 99)
 
 
-def _tier_rank(story: Dict[str, Any]) -> int:
+def _tier_rank(story: dict[str, Any]) -> int:
     rank = {"tier_1": 0, "tier_2": 1, "tier_3": 2}
     return rank.get(str(story.get("tier_guess") or "tier_3"), 99)
 
 
-def _confidence_rank(prediction: Dict[str, Any]) -> int:
+def _confidence_rank(prediction: dict[str, Any]) -> int:
     rank = {"high": 0, "medium": 1, "low": 2}
     return rank.get(str(prediction.get("confidence") or "low"), 99)
 
@@ -142,8 +141,8 @@ class BundleAssembler:
     def __init__(
         self,
         *,
-        data_lake_path: Optional[Path] = None,
-        flag_reader: Optional[FeatureFlag] = None,
+        data_lake_path: Path | None = None,
+        flag_reader: FeatureFlag | None = None,
     ) -> None:
         # Phase S.1: ``data_lake_path`` overrides the env var lookup so
         # tests can drive the assembler against a tmp_path without touching
@@ -159,7 +158,7 @@ class BundleAssembler:
         audience: str,
         purpose: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if audience not in VALID_AUDIENCES:
             return {
                 "status": "failure",
@@ -186,9 +185,9 @@ class BundleAssembler:
         # Hard ceiling: never trust a recipe to set budget above MAX_BUNDLE_TOKENS.
         token_budget = min(token_budget, MAX_BUNDLE_TOKENS)
 
-        items: List[Dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         running_total = 0
-        input_artifact_ids: List[str] = []
+        input_artifact_ids: list[str] = []
 
         for source_spec in recipe["sources"]:
             source_type = source_spec["source_type"]
@@ -350,7 +349,7 @@ class BundleAssembler:
         return {"status": "success", "bundle": bundle, "reason": ""}
 
     def _bundle_hash(
-        self, artifact_ids: List[str], recipe_id: str, audience: str
+        self, artifact_ids: list[str], recipe_id: str, audience: str
     ) -> str:
         seed = "|".join(sorted(artifact_ids)) + f"|{recipe_id}|{audience}"
         return "sha256:" + hashlib.sha256(seed.encode("utf-8")).hexdigest()
@@ -360,7 +359,7 @@ class BundleAssembler:
         source_type: str,
         repo_root: Path,
         promoted_only: bool,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if source_type == "technical_claim":
             return self._collect_claims(repo_root, promoted_only)
         if source_type == "story_candidate":
@@ -373,8 +372,8 @@ class BundleAssembler:
 
     def _collect_claims(
         self, repo_root: Path, promoted_only: bool
-    ) -> List[Dict[str, Any]]:
-        out: List[Dict[str, Any]] = []
+    ) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
         for source_id, source_dir in _iter_processed_dirs(repo_root):
             claims_path = source_dir / "paper" / "claims.jsonl"
             for claim in _read_jsonl(claims_path):
@@ -404,8 +403,8 @@ class BundleAssembler:
 
     def _collect_stories(
         self, repo_root: Path, promoted_only: bool
-    ) -> List[Dict[str, Any]]:
-        out: List[Dict[str, Any]] = []
+    ) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
         for source_id, source_dir in _iter_processed_dirs(repo_root):
             promoted_dir = source_dir / "stories" / "promoted"
             for story in _read_promoted_dir(promoted_dir):
@@ -432,8 +431,8 @@ class BundleAssembler:
 
     def _collect_themes(
         self, repo_root: Path, promoted_only: bool
-    ) -> List[Dict[str, Any]]:
-        out: List[Dict[str, Any]] = []
+    ) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
         for source_id, source_dir in _iter_processed_dirs(repo_root):
             promoted_dir = source_dir / "knowledge" / "promoted"
             for artifact in _read_promoted_dir(promoted_dir):
@@ -463,7 +462,7 @@ class BundleAssembler:
 
     def _collect_objection_predictions(
         self, repo_root: Path
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         # Objection predictions are advisory only and carry status
         # "candidate" / "reviewed" / "dismissed" — never "promoted" or
         # "evidenced". Per FINDING-F-002 the constitution forbids candidates
@@ -476,7 +475,7 @@ class BundleAssembler:
     # Phase S.1: verified meeting_extraction items
     # ------------------------------------------------------------------
 
-    def _resolve_data_lake_path(self) -> Optional[Path]:
+    def _resolve_data_lake_path(self) -> Path | None:
         if self._data_lake_path is not None:
             return Path(self._data_lake_path)
         env = (os.environ.get("DATA_LAKE_PATH") or "").strip()
@@ -484,7 +483,7 @@ class BundleAssembler:
             return Path(env)
         return None
 
-    def _resolve_sdl_root(self) -> Optional[Path]:
+    def _resolve_sdl_root(self) -> Path | None:
         env_sdl = (os.environ.get("SDL_ROOT") or "").strip()
         if env_sdl:
             return Path(env_sdl)
@@ -510,7 +509,7 @@ class BundleAssembler:
 
     def _collect_verified_extraction_items(
         self, *, phase_v_enabled: bool,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Scan ``<sdl_root>/extractions/*_meeting_extraction.json``.
 
         Returns one candidate dict per extracted item (decision / claim /
@@ -521,7 +520,7 @@ class BundleAssembler:
         silently empty the bundle. Items missing ``verification_status``
         are conservatively treated as ``phase_v_verified=False``.
         """
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         sdl_root = self._resolve_sdl_root()
         if sdl_root is None:
             return out
@@ -572,7 +571,7 @@ class BundleAssembler:
         return out
 
     @staticmethod
-    def _verified_excerpt(kind: str, item: Dict[str, Any]) -> str:
+    def _verified_excerpt(kind: str, item: dict[str, Any]) -> str:
         if kind == "decisions":
             return _truncate(str(item.get("decision_text") or ""))
         if kind == "claims":
@@ -585,7 +584,7 @@ class BundleAssembler:
 
     @staticmethod
     def _verified_item_id(
-        source_artifact_id: str, kind: str, item: Dict[str, Any]
+        source_artifact_id: str, kind: str, item: dict[str, Any]
     ) -> str:
         """Build a stable UUID-format id for a verified extraction item.
 

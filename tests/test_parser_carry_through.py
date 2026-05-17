@@ -19,8 +19,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from spectrum_systems_core.evals import (
     EXTRACTION_EMPTY_PROXY_TYPES,
     EXTRACTION_NOT_IN_SOURCE,

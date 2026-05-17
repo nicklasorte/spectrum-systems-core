@@ -11,7 +11,7 @@ import datetime
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import jsonschema
 
@@ -26,8 +26,8 @@ def _now_iso() -> str:
     )
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     with path.open("r", encoding="utf-8") as fh:
@@ -54,10 +54,10 @@ class MitigationOutcomeTracker:
         agency_slug: str,
         paper_source_id: str,
         human_marked_outcome: str,
-        secondary_check_source_id: Optional[str] = None,
-        repo_root: Optional[str] = None,
+        secondary_check_source_id: str | None = None,
+        repo_root: str | None = None,
         outcome_note: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if repo_root is None:
             return {"status": "failure", "reason": "repo_root_required"}
         repo_root_path = Path(repo_root).resolve()
@@ -85,7 +85,7 @@ class MitigationOutcomeTracker:
         )
 
         # Step 2: secondary check.
-        secondary_recurred: Optional[bool] = None
+        secondary_recurred: bool | None = None
         if secondary_check_source_id:
             secondary_recurred = self._check_objection_recurrence(
                 repo_root_path,
@@ -152,7 +152,7 @@ class MitigationOutcomeTracker:
         repo_root: Path,
         paper_source_id: str,
         mitigation_id: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         processed_dir, _ = find_processed_dir(repo_root, paper_source_id)
         if processed_dir is None:
             return None
@@ -166,8 +166,8 @@ class MitigationOutcomeTracker:
         self,
         repo_root: Path,
         paper_source_id: str,
-        prediction_id: Optional[str],
-    ) -> Optional[Dict[str, Any]]:
+        prediction_id: str | None,
+    ) -> dict[str, Any] | None:
         if not prediction_id:
             return None
         processed_dir, _ = find_processed_dir(repo_root, paper_source_id)
@@ -185,7 +185,7 @@ class MitigationOutcomeTracker:
         *,
         secondary_source_id: str,
         agency_slug: str,
-        original_objection_type: Optional[str],
+        original_objection_type: str | None,
     ) -> bool:
         """True iff the secondary source raised the same objection_type from this agency.
 

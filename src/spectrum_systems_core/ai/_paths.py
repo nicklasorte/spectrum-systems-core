@@ -11,8 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
-
+from typing import Any
 
 _AI_SCHEMAS = (
     Path(__file__).resolve().parents[3]
@@ -26,7 +25,7 @@ def ai_schema_path(name: str) -> Path:
     return _AI_SCHEMAS / f"{name}.schema.json"
 
 
-def load_schema(name: str) -> Dict[str, Any]:
+def load_schema(name: str) -> dict[str, Any]:
     return json.loads(ai_schema_path(name).read_text(encoding="utf-8"))
 
 

@@ -8,18 +8,17 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from ._io import parse_iso, read_json, utcnow_iso, write_json
 from ._paths import comparisons_dir, runs_index_path
 from ._schema import validate_harness_artifact
 
-
 _LOG = logging.getLogger(__name__)
 
 
 # (dimension_name, lower_is_better)
-COMPARISON_DIMENSIONS: List[tuple[str, bool]] = [
+COMPARISON_DIMENSIONS: list[tuple[str, bool]] = [
     ("total_cost_usd", True),
     ("eval_pass_count", False),
     ("eval_fail_count", True),
@@ -31,7 +30,7 @@ COMPARISON_DIMENSIONS: List[tuple[str, bool]] = [
 ]
 
 
-def _load_run_view(run_id: str, repo_root: Path) -> Dict[str, Any] | None:
+def _load_run_view(run_id: str, repo_root: Path) -> dict[str, Any] | None:
     """Build a comparison view from synthesis/<run_id>/."""
     run_dir = repo_root / "synthesis" / run_id
     manifest = read_json(run_dir / "run_manifest.json")
@@ -83,9 +82,9 @@ def _direction(value_a: Any, value_b: Any, lower_is_better: bool) -> tuple[Any, 
 
 
 def _summary_and_action(
-    dimensions: List[Dict[str, Any]],
-    view_a: Dict[str, Any],
-    view_b: Dict[str, Any],
+    dimensions: list[dict[str, Any]],
+    view_a: dict[str, Any],
+    view_b: dict[str, Any],
 ) -> tuple[str, str]:
     cost_dim = next(
         (d for d in dimensions if d["dimension_name"] == "total_cost_usd"),
@@ -143,7 +142,7 @@ def _summary_and_action(
 
 
 def _vault_projection(
-    comparison: Dict[str, Any],
+    comparison: dict[str, Any],
     vault_root: str | Path,
 ) -> str:
     target = (
@@ -153,7 +152,7 @@ def _vault_projection(
         / f"{comparison['run_id_a']}_vs_{comparison['run_id_b']}.md"
     )
     target.parent.mkdir(parents=True, exist_ok=True)
-    lines: List[str] = [
+    lines: list[str] = [
         "---",
         f"comparison_id: {comparison['comparison_id']}",
         f"run_id_a: {comparison['run_id_a']}",
@@ -193,7 +192,7 @@ class WorkflowComparator:
         run_id_b: str,
         repo_root: str | Path,
         vault_root: str | Path | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         try:
             if not run_id_a or not run_id_b:
                 return {
@@ -235,7 +234,7 @@ class WorkflowComparator:
                     "reason": f"run manifest not found: {run_id_b}",
                 }
 
-            dimensions: List[Dict[str, Any]] = []
+            dimensions: list[dict[str, Any]] = []
             for name, lower_is_better in COMPARISON_DIMENSIONS:
                 a_val = view_a["values"].get(name)
                 b_val = view_b["values"].get(name)
@@ -251,7 +250,7 @@ class WorkflowComparator:
                 )
 
             summary, action = _summary_and_action(dimensions, view_a, view_b)
-            comparison: Dict[str, Any] = {
+            comparison: dict[str, Any] = {
                 "comparison_id": str(uuid.uuid4()),
                 "run_id_a": run_id_a,
                 "run_id_b": run_id_b,

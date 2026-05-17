@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 
@@ -27,7 +27,7 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _result(name: str, eval_type: str, passed: bool, reason: str) -> Dict[str, Any]:
+def _result(name: str, eval_type: str, passed: bool, reason: str) -> dict[str, Any]:
     return {
         "eval_name": name,
         "eval_type": eval_type,
@@ -48,17 +48,17 @@ class SourceEval:
 
     def run(
         self,
-        source_record: Dict[str, Any],
-        text_units: List[Dict[str, Any]],
+        source_record: dict[str, Any],
+        text_units: list[dict[str, Any]],
         repo_root: str | Path | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = (
             Path(repo_root).resolve()
             if repo_root is not None
             else Path.cwd().resolve()
         )
-        results: List[Dict[str, Any]] = []
-        reason_codes: List[str] = []
+        results: list[dict[str, Any]] = []
+        reason_codes: list[str] = []
 
         # EVAL-SRC-001: schema_conformance
         try:
@@ -150,7 +150,7 @@ class SourceEval:
         # count matches source_record.payload.text_unit_count, so truncated /
         # appended JSONL files cannot slip past with a stale stored count.
         processed_path_value = payload.get("processed_path", "")
-        readable_units: List[Dict[str, Any]] = []
+        readable_units: list[dict[str, Any]] = []
         if isinstance(processed_path_value, str) and processed_path_value:
             jsonl_path = _resolve_path(processed_path_value, repo_root_path) / "text_units.jsonl"
             try:

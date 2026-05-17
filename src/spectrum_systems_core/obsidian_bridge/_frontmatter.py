@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import re
-from typing import Tuple
 
 import yaml
-
 
 _FRONTMATTER_RE = re.compile(
     r"\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\Z",
@@ -13,7 +11,7 @@ _FRONTMATTER_RE = re.compile(
 )
 
 
-def split(text: str) -> Tuple[dict, str]:
+def split(text: str) -> tuple[dict, str]:
     """Return (frontmatter_dict, body) parsed from a Markdown document.
 
     Raises ValueError if no frontmatter block is present or YAML is invalid.

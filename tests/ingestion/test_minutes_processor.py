@@ -6,7 +6,6 @@ fixtures, no LLM calls, no hard-coded UUIDs.
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from pathlib import Path
 

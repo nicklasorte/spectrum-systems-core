@@ -17,6 +17,7 @@ foreign repo) before the PR is opened so the failure is pre-PR, not
 post-CI.
 """
 import pathlib
+
 import pytest
 
 try:

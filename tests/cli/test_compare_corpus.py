@@ -12,7 +12,6 @@ from __future__ import annotations
 import glob
 import io
 import json
-import shutil
 from pathlib import Path
 
 from spectrum_systems_core.data_lake.cli import main as dl_main

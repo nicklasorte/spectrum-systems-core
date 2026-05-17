@@ -6,7 +6,7 @@ import json
 import shutil
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 
 def utcnow_iso() -> str:
@@ -50,7 +50,7 @@ def stage_full_repo_copy(tmp_root: Path) -> Path:
 
 def write_run_history(
     repo_root: Path,
-    entries: List[Dict[str, Any]],
+    entries: list[dict[str, Any]],
 ) -> None:
     runs_dir = repo_root / "harness" / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
@@ -69,7 +69,7 @@ def make_run_entry(
     outcome: str = "success",
     cost_usd: float = 0.01,
     days_ago: int = 0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     iso = iso_days_ago(days_ago)
     return {
         "entry_id": str(uuid.uuid4()),
@@ -97,7 +97,7 @@ def write_eval_history(
     repo_root: Path,
     artifact_type: str,
     eval_name: str,
-    statuses: List[str],
+    statuses: list[str],
 ) -> None:
     """Write harness/evals/<artifact_type>_history.jsonl entries."""
     target = repo_root / "harness" / "evals" / f"{artifact_type}_history.jsonl"

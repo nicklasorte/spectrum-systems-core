@@ -22,7 +22,6 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
-from typing import Tuple
 
 import pytest
 
@@ -33,12 +32,11 @@ from tests.integration.fixtures import (
     make_source_record,
 )
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ID = "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218"
 
 
-def _seed_data_lake(tmp_path: Path) -> Tuple[Path, str]:
+def _seed_data_lake(tmp_path: Path) -> tuple[Path, str]:
     """Build a minimal data-lake with real artifact shapes.
 
     Returns (data_lake_path, source_artifact_id). Tests that need the

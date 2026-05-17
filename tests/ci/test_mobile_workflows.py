@@ -10,7 +10,7 @@ secret; the others must NOT exfiltrate it).
 from __future__ import annotations
 
 import pathlib
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -21,7 +21,7 @@ WORKFLOWS_DIR = (
     pathlib.Path(__file__).resolve().parents[2] / ".github" / "workflows"
 )
 
-MOBILE_WORKFLOW_FILES: Dict[str, str] = {
+MOBILE_WORKFLOW_FILES: dict[str, str] = {
     "select": "select-few-shot-candidates.yml",
     "verify": "verify-few-shot-example.yml",
     "annotate": "annotate-gt-rubric.yml",
@@ -30,12 +30,12 @@ MOBILE_WORKFLOW_FILES: Dict[str, str] = {
 }
 
 
-def _load(name: str) -> Dict[str, Any]:
+def _load(name: str) -> dict[str, Any]:
     path = WORKFLOWS_DIR / MOBILE_WORKFLOW_FILES[name]
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def _trigger(doc: Dict[str, Any]) -> Dict[str, Any]:
+def _trigger(doc: dict[str, Any]) -> dict[str, Any]:
     # PyYAML parses the bare key ``on:`` as a Python ``True`` so we
     # accept both shapes.
     trigger = doc.get("on") if "on" in doc else doc.get(True)

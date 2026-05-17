@@ -10,12 +10,12 @@ from __future__ import annotations
 import datetime
 import json
 import shutil
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from ..obsidian_bridge import _frontmatter
 from ._paths import synthesis_run_dir
-
 
 SYNTHESIS_REVIEW_FORM_TEMPLATE = """---
 run_id: "{run_id}"
@@ -68,13 +68,13 @@ Set `review_status` to: submitted when complete.
 _TIMESTAMP_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 
-def _now_utc(now: Optional[Callable[[], datetime.datetime]] = None) -> datetime.datetime:
+def _now_utc(now: Callable[[], datetime.datetime] | None = None) -> datetime.datetime:
     if now is not None:
         return now()
     return datetime.datetime.utcnow()
 
 
-def _summarize_report(report_draft: Optional[Dict[str, Any]]) -> str:
+def _summarize_report(report_draft: dict[str, Any] | None) -> str:
     if not report_draft:
         return "_no report draft generated for this run_"
     sections = report_draft.get("sections", []) or []
@@ -96,7 +96,7 @@ def _summarize_report(report_draft: Optional[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _summarize_keynote(keynote_scaffold: Optional[Dict[str, Any]]) -> str:
+def _summarize_keynote(keynote_scaffold: dict[str, Any] | None) -> str:
     if not keynote_scaffold:
         return "_no keynote scaffold generated for this run_"
     arc = keynote_scaffold.get("arc", []) or []
@@ -115,10 +115,10 @@ def _summarize_cost(cost_total: float) -> str:
 
 
 def _summarize_what_was_generated(
-    report_draft: Optional[Dict[str, Any]],
-    keynote_scaffold: Optional[Dict[str, Any]],
+    report_draft: dict[str, Any] | None,
+    keynote_scaffold: dict[str, Any] | None,
 ) -> str:
-    parts: List[str] = []
+    parts: list[str] = []
     if report_draft:
         parts.append("- report_draft.json")
     if keynote_scaffold:
@@ -138,13 +138,13 @@ class SynthesisReviewGateway:
         run_id: str,
         audience: str,
         purpose: str,
-        report_draft: Optional[Dict[str, Any]] = None,
-        keynote_scaffold: Optional[Dict[str, Any]] = None,
+        report_draft: dict[str, Any] | None = None,
+        keynote_scaffold: dict[str, Any] | None = None,
         cost_total: float = 0.0,
-        vault_root: Optional[str] = None,
-        repo_root: Optional[str] = None,
+        vault_root: str | None = None,
+        repo_root: str | None = None,
         *,
-        now: Optional[Callable[[], datetime.datetime]] = None,
+        now: Callable[[], datetime.datetime] | None = None,
     ) -> str:
         if not vault_root:
             raise ValueError("vault_root is required to emit a review form")
@@ -176,8 +176,8 @@ class SynthesisReviewGateway:
         repo_root: str,
         *,
         timeout_hours: int = 72,
-        now: Optional[Callable[[], datetime.datetime]] = None,
-    ) -> Dict[str, Any]:
+        now: Callable[[], datetime.datetime] | None = None,
+    ) -> dict[str, Any]:
         review_path = (
             Path(vault_root) / "Reviews" / "Synthesis" / "Pending"
             / f"{run_id}_review.md"
@@ -231,14 +231,14 @@ class SynthesisReviewGateway:
     def _maybe_timeout(
         self,
         review_path: Path,
-        frontmatter: Dict[str, Any],
+        frontmatter: dict[str, Any],
         *,
         run_id: str,
         vault_root: str,
         repo_root: str,
-        now: Optional[Callable[[], datetime.datetime]],
+        now: Callable[[], datetime.datetime] | None,
         timeout_hours: int,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         ingestion_at = str(frontmatter.get("ingestion_at") or "").strip()
         if not ingestion_at:
             return {"status": "awaiting", "decision": "", "reason": "no_ingestion_at"}
@@ -277,7 +277,7 @@ class SynthesisReviewGateway:
         repo_root: str,
         decision: str,
         reviewer_id: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if decision == "approve":
             self._update_artifacts_status(
                 run_id=run_id, repo_root=repo_root, new_status="approved"

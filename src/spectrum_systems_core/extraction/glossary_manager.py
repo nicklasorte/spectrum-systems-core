@@ -25,9 +25,9 @@ Design rules:
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
-
+from typing import Any
 
 _READ_ONLY_HEADER = (
     "TERMINOLOGY FOR THIS SECTION (read-only -- do not include in output):"
@@ -38,9 +38,9 @@ _BLOCK_DELIM = "---"
 class GlossaryManager:
     """Load + retrieve glossary terms for prompt injection."""
 
-    def __init__(self, glossary_path: Optional[str] = None) -> None:
-        self._terms: Dict[str, Dict[str, Any]] = {}
-        self._lower_to_term: Dict[str, str] = {}
+    def __init__(self, glossary_path: str | None = None) -> None:
+        self._terms: dict[str, dict[str, Any]] = {}
+        self._lower_to_term: dict[str, str] = {}
         self._indexed: bool = False
         self.index_built_count: int = 0
         if glossary_path:
@@ -81,7 +81,7 @@ class GlossaryManager:
         self,
         chunk_text: str,
         max_terms: int = 5,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Return up to ``max_terms`` matching glossary_term artifacts.
 
         A term matches if its lowercase form appears as a substring of the
@@ -101,7 +101,7 @@ class GlossaryManager:
             self._build_index()
 
         chunk_lower = chunk_text.lower()
-        matches: List[Dict[str, Any]] = []
+        matches: list[dict[str, Any]] = []
         for term_lower, term in self._lower_to_term.items():
             if term_lower in chunk_lower:
                 matches.append(self._terms[term])
@@ -112,7 +112,7 @@ class GlossaryManager:
 
     # -- formatting -------------------------------------------------------
 
-    def format_for_prompt(self, terms: Iterable[Dict[str, Any]]) -> str:
+    def format_for_prompt(self, terms: Iterable[dict[str, Any]]) -> str:
         """Format ``terms`` as a read-only prompt-injection block.
 
         Empty terms -> empty string. Never raises.
@@ -120,7 +120,7 @@ class GlossaryManager:
         items = list(terms or [])
         if not items:
             return ""
-        lines: List[str] = [_BLOCK_DELIM, _READ_ONLY_HEADER]
+        lines: list[str] = [_BLOCK_DELIM, _READ_ONLY_HEADER]
         for t in items:
             term = t.get("term", "")
             definition = t.get("definition", "")

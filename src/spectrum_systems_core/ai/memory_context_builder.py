@@ -9,11 +9,10 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from ..synthesis import BundleAssembler, BundleEval, RetrievalRegistry
 from .prompt_registry import PromptRegistry
-
 
 _AI_BUNDLE_AUDIENCE = "technical"
 _AI_BUNDLE_PURPOSE = "report"
@@ -45,8 +44,8 @@ class MemoryContextBuilder:
         task_type: str,
         question: str,
         repo_root: str,
-        run_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        run_id: str | None = None,
+    ) -> dict[str, Any]:
         try:
             task_def = PromptRegistry().get(task_type, repo_root=repo_root)
         except ValueError as exc:

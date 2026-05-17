@@ -13,23 +13,24 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 import jsonschema
 
 _LOG = logging.getLogger(__name__)
 
 from ..ingestion._paths import schema_path
-from ._paths import find_processed_dir
+
 # Phase S.0: reuse the Phase X resilience primitives so the story
 # extraction parse path uses the same call order
 # (guard_empty_response -> strip_markdown_fence -> json.loads). Import,
 # never duplicate -- one implementation per primitive.
 from ._chunk_counters import ChunkCounters
 from ._failure_artifacts import emit_story_empty_response, emit_story_parse_failed
+from ._paths import find_processed_dir
 from ._resilience import EmptyResponseError, guard_empty_response, strip_markdown_fence
-
 
 _COMPONENT_NAME = "story_extractor"
 _COMPONENT_VERSION = "1.1.0"
@@ -110,11 +111,11 @@ def _execution_fingerprint(chunk_id: str, source_excerpt: str) -> str:
     return "sha256:" + _sha256_hex(seed.encode("utf-8"))
 
 
-def _failure(reason: str) -> Dict[str, Any]:
+def _failure(reason: str) -> dict[str, Any]:
     return {"status": "failure", "candidates": [], "reason": reason}
 
 
-def _parse_story_response(raw: str) -> List[Dict[str, Any]]:
+def _parse_story_response(raw: str) -> list[dict[str, Any]]:
     """Parse a story extraction response that may arrive in three shapes.
 
     Format A — JSON array (correct):
@@ -142,7 +143,7 @@ def _parse_story_response(raw: str) -> List[Dict[str, Any]]:
         except json.JSONDecodeError:
             pass
 
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         decoder = json.JSONDecoder()
         pos = 0
         while pos < len(stripped):
@@ -164,12 +165,12 @@ def _parse_story_response(raw: str) -> List[Dict[str, Any]]:
 
 
 def _make_blocked_skeleton(
-    chunk: Dict[str, Any],
+    chunk: dict[str, Any],
     *,
     source_id: str,
     source_family: str,
     block_reason: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Skeleton blocked candidate that does NOT need to satisfy the schema.
 
     Blocked candidates are written to candidates.jsonl for debuggability but
@@ -197,7 +198,7 @@ def _make_blocked_skeleton(
 class StoryExtractor:
     """Extract structured story candidates from chunks via the Anthropic API."""
 
-    def __init__(self, api_caller: Optional[Callable[[str], str]] = None):
+    def __init__(self, api_caller: Callable[[str], str] | None = None):
         # Tests inject api_caller; production uses the real Anthropic client.
         self._api_caller = api_caller
         # Phase S.0 counter: every chunk produces exactly one outcome
@@ -209,7 +210,7 @@ class StoryExtractor:
 
     def extract_from_source(
         self, source_id: str, repo_root: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, source_family = find_processed_dir(
             repo_root_path, source_id
@@ -220,7 +221,7 @@ class StoryExtractor:
         if not chunks_path.is_file():
             return _failure("chunks_not_found")
 
-        chunks: List[Dict[str, Any]] = []
+        chunks: list[dict[str, Any]] = []
         try:
             with chunks_path.open("r", encoding="utf-8") as fh:
                 for line in fh:
@@ -249,8 +250,8 @@ class StoryExtractor:
             return _failure(f"schema_unreadable: {exc}")
         validator = jsonschema.Draft202012Validator(schema)
 
-        all_records: List[Dict[str, Any]] = []
-        ok_candidates: List[Dict[str, Any]] = []
+        all_records: list[dict[str, Any]] = []
+        ok_candidates: list[dict[str, Any]] = []
 
         valid_chunk_ids = {c["chunk_id"] for c in chunks if "chunk_id" in c}
 
@@ -459,14 +460,14 @@ class StoryExtractor:
 
     def _assemble_candidate(
         self,
-        parsed: Dict[str, Any],
-        chunk: Dict[str, Any],
+        parsed: dict[str, Any],
+        chunk: dict[str, Any],
         *,
         source_id: str,
         source_family: str,
-        source_turn_ids: List[str],
+        source_turn_ids: list[str],
         source_turn_validation: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         source_excerpt = parsed.get("source_excerpt") or ""
         return {
             "schema_version": _SCHEMA_VERSION,
@@ -525,7 +526,7 @@ class StoryExtractor:
                 messages=[{"role": "user", "content": prompt}],
             )
             # Anthropic SDK returns a list of content blocks; join text blocks.
-            parts: List[str] = []
+            parts: list[str] = []
             for block in message.content:
                 text = getattr(block, "text", None)
                 if isinstance(text, str):

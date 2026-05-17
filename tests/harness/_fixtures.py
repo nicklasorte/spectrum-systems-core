@@ -5,7 +5,7 @@ import datetime
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 
 def utcnow_iso() -> str:
@@ -54,7 +54,7 @@ def write_synthesis_run(
         encoding="utf-8",
     )
 
-    sections: List[Dict[str, Any]] = []
+    sections: list[dict[str, Any]] = []
     for i in range(grounded_sections):
         sections.append(
             {
@@ -125,14 +125,14 @@ def write_synthesis_run(
 def make_failure(
     reason_code: str = "ungrounded_section",
     detail: str = "section context_a was missing inline citation evidence",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {"reason_code": reason_code, "failure_detail": detail}
 
 
-def read_jsonl(path: Path) -> List[Dict[str, Any]]:
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()

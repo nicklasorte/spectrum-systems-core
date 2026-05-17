@@ -31,14 +31,14 @@ import os
 import shutil
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import jsonschema
 
 from ._paths import contracts_root
 
 
-def _resolve_sdl_root(data_lake_path: str) -> Optional[Path]:
+def _resolve_sdl_root(data_lake_path: str) -> Path | None:
     env = os.environ.get("SDL_ROOT", "").strip()
     if env:
         p = Path(env)
@@ -63,7 +63,7 @@ def _now_iso() -> str:
     )
 
 
-def _load_schema() -> Optional[Dict[str, Any]]:
+def _load_schema() -> dict[str, Any] | None:
     try:
         path = (
             contracts_root()
@@ -76,7 +76,7 @@ def _load_schema() -> Optional[Dict[str, Any]]:
         return None
 
 
-def deduplicate_minutes(data_lake_path: str) -> Dict[str, Any]:
+def deduplicate_minutes(data_lake_path: str) -> dict[str, Any]:
     """Retire duplicate minutes_record artifacts grouped by raw_hash.
 
     Returns a dict with keys ``status``, ``groups_found``, ``records_kept``,
@@ -110,7 +110,7 @@ def deduplicate_minutes(data_lake_path: str) -> Dict[str, Any]:
             "reason": "",
         }
 
-    by_hash: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    by_hash: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for path in sorted(minutes_dir.glob("*.json")):
         if not path.is_file():
             continue
@@ -135,8 +135,8 @@ def deduplicate_minutes(data_lake_path: str) -> Dict[str, Any]:
     groups_found = 0
     records_kept = 0
     records_retired = 0
-    retired: List[Dict[str, Any]] = []
-    invalid_kept: List[Dict[str, Any]] = []
+    retired: list[dict[str, Any]] = []
+    invalid_kept: list[dict[str, Any]] = []
 
     for raw_hash, entries in sorted(by_hash.items()):
         if len(entries) < 2:

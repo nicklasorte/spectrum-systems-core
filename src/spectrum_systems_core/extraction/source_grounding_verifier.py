@@ -27,8 +27,7 @@ import os
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
+from typing import Any
 
 _LOG = logging.getLogger(__name__)
 
@@ -99,7 +98,7 @@ def post_hoc_verification_enabled() -> bool:
     return True
 
 
-def _tokenize(text: str) -> List[str]:
+def _tokenize(text: str) -> list[str]:
     if not isinstance(text, str) or not text:
         return []
     return [t.lower() for t in _TOKEN_RE.findall(text)]
@@ -121,7 +120,7 @@ def compute_token_overlap(evidence: str, chunk_text: str) -> float:
     return hits / float(len(ev_tokens))
 
 
-def _resolve_item_evidence(item: Dict[str, Any]) -> str:
+def _resolve_item_evidence(item: dict[str, Any]) -> str:
     """Pull the evidence string off an item.
 
     Stage 1 stamps ``candidate_evidence``. Some upstream extractors use
@@ -135,7 +134,7 @@ def _resolve_item_evidence(item: Dict[str, Any]) -> str:
     return ""
 
 
-def _resolve_item_turn_ids(item: Dict[str, Any]) -> List[str]:
+def _resolve_item_turn_ids(item: dict[str, Any]) -> list[str]:
     for key in ("source_turn_ids", "source_turns"):
         v = item.get(key)
         if isinstance(v, list):
@@ -144,11 +143,11 @@ def _resolve_item_turn_ids(item: Dict[str, Any]) -> List[str]:
 
 
 def verify_source_grounding(
-    item: Dict[str, Any],
-    chunks_by_id: Dict[str, Dict[str, Any]],
+    item: dict[str, Any],
+    chunks_by_id: dict[str, dict[str, Any]],
     *,
     threshold: float = SOURCE_GROUNDING_OVERLAP_THRESHOLD,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Run token-overlap verification for one item.
 
     Returns::
@@ -171,8 +170,8 @@ def verify_source_grounding(
     """
     evidence = _resolve_item_evidence(item)
     cited = _resolve_item_turn_ids(item)
-    missing: List[str] = []
-    chunk_texts: List[str] = []
+    missing: list[str] = []
+    chunk_texts: list[str] = []
     for tid in cited:
         chunk = chunks_by_id.get(tid)
         if not isinstance(chunk, dict):
@@ -201,12 +200,12 @@ def verify_source_grounding(
 
 
 def build_spurious_add_candidate(
-    item: Dict[str, Any],
-    result: Dict[str, Any],
+    item: dict[str, Any],
+    result: dict[str, Any],
     *,
     source_id: str,
-    extraction_run_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    extraction_run_id: str | None = None,
+) -> dict[str, Any]:
     """Build a spurious_add_candidate artifact for one ungrounded item."""
     return {
         "artifact_type": "spurious_add_candidate",
@@ -235,8 +234,8 @@ def build_spurious_add_warning(
     source_id: str,
     confirmed_count: int,
     spurious_count: int,
-    extraction_run_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    extraction_run_id: str | None = None,
+) -> dict[str, Any]:
     """Build the per-transcript ``spurious_add_warning`` artifact.
 
     Only emitted when ``spurious_add_rate > SPURIOUS_ADD_RATE_THRESHOLD``.
@@ -259,13 +258,13 @@ def build_spurious_add_warning(
 
 
 def verify_extraction_grounding(
-    confirmed_items: List[Dict[str, Any]],
-    chunks_by_id: Dict[str, Dict[str, Any]],
+    confirmed_items: list[dict[str, Any]],
+    chunks_by_id: dict[str, dict[str, Any]],
     *,
     source_id: str,
-    extraction_run_id: Optional[str] = None,
+    extraction_run_id: str | None = None,
     threshold: float = SOURCE_GROUNDING_OVERLAP_THRESHOLD,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Run R.3 over an entire transcript's confirmed extraction.
 
     Returns a summary dict with:
@@ -281,8 +280,8 @@ def verify_extraction_grounding(
     finding: a denominator that includes rejected items would dilute the
     rate and hide the regression).
     """
-    annotated: List[Dict[str, Any]] = []
-    candidates: List[Dict[str, Any]] = []
+    annotated: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
     spurious_count = 0
     confirmed_count = 0
 
@@ -317,7 +316,7 @@ def verify_extraction_grounding(
     rate = (
         spurious_count / float(confirmed_count) if confirmed_count > 0 else 0.0
     )
-    warning: Optional[Dict[str, Any]] = None
+    warning: dict[str, Any] | None = None
     if rate > SPURIOUS_ADD_RATE_THRESHOLD and confirmed_count > 0:
         warning = build_spurious_add_warning(
             source_id=source_id,
@@ -337,15 +336,15 @@ def verify_extraction_grounding(
 
 
 def write_grounding_artifacts(
-    summary: Dict[str, Any],
-    sdl_root: Optional[Path],
-) -> Dict[str, List[Path]]:
+    summary: dict[str, Any],
+    sdl_root: Path | None,
+) -> dict[str, list[Path]]:
     """Persist the spurious_add_candidate + warning artifacts to disk.
 
     Failure is logged, never raised. Returns the paths written so
     callers can include them in the run summary.
     """
-    out: Dict[str, List[Path]] = {"candidates": [], "warnings": []}
+    out: dict[str, list[Path]] = {"candidates": [], "warnings": []}
     if sdl_root is None:
         return out
     target_dir = Path(sdl_root) / "grounding"
@@ -379,8 +378,8 @@ def write_grounding_artifacts(
 
 
 def grounding_overlap_percentiles(
-    scores: List[float],
-) -> Dict[str, float]:
+    scores: list[float],
+) -> dict[str, float]:
     """Compute p10/p50/p90 of a list of overlap scores.
 
     Empty input returns zeros for all three percentiles. Single-value
@@ -408,7 +407,7 @@ def grounding_overlap_percentiles(
 
 
 def compute_spurious_add_rate(
-    items: List[Dict[str, Any]],
+    items: list[dict[str, Any]],
 ) -> float:
     """Fraction of items whose ``grounding_verified`` is explicitly False.
 

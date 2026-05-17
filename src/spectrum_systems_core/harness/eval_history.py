@@ -8,11 +8,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from ._io import append_jsonl, read_jsonl, utcnow_iso
 from ._paths import evals_dir
-
 
 _LOG = logging.getLogger(__name__)
 
@@ -21,7 +20,7 @@ class EvalScoreHistory:
     def record_eval_results(
         self,
         run_id: str,
-        eval_results: List[Dict[str, Any]],
+        eval_results: list[dict[str, Any]],
         artifact_type: str,
         repo_root: str | Path,
     ) -> None:
@@ -49,7 +48,7 @@ class EvalScoreHistory:
         artifact_type: str,
         repo_root: str | Path,
         last_n_runs: int = 20,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         target = evals_dir(repo_root) / f"{artifact_type}_history.jsonl"
         records = [
             r for r in read_jsonl(target)
@@ -82,8 +81,8 @@ class EvalScoreHistory:
         self,
         repo_root: str | Path,
         threshold: float = 0.8,
-    ) -> List[Dict[str, Any]]:
-        results: List[Dict[str, Any]] = []
+    ) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
         directory = evals_dir(repo_root)
         if not directory.is_dir():
             return results

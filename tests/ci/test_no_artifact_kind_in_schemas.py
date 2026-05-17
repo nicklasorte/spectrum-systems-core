@@ -9,6 +9,7 @@ as a defined field (not in a description/comment context).
 """
 import json
 import pathlib
+
 import pytest
 
 SCAN_ROOT = pathlib.Path(__file__).resolve().parents[2]

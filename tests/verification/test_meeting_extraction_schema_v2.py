@@ -1,7 +1,6 @@
 """Phase V — meeting_extraction schema v2.0.0 validation."""
 from __future__ import annotations
 
-import copy
 import uuid
 
 import pytest

@@ -6,7 +6,7 @@ import json
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 
 def id_from_prompt(prompt: str, label: str) -> str:
@@ -22,12 +22,12 @@ def write_text_units(
     *,
     family: str,
     source_id: str,
-    texts: List[str],
-) -> List[Dict[str, Any]]:
+    texts: list[str],
+) -> list[dict[str, Any]]:
     """Write processed/<family>/<source_id>/text_units.jsonl. Returns the units."""
     target = repo_root / "processed" / family / source_id
     target.mkdir(parents=True, exist_ok=True)
-    units: List[Dict[str, Any]] = []
+    units: list[dict[str, Any]] = []
     char_offset = 0
     for ordinal, text in enumerate(texts):
         units.append(
@@ -83,8 +83,8 @@ def write_source_record(
     return raw_hash
 
 
-def read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     with path.open("r", encoding="utf-8") as fh:
@@ -104,7 +104,7 @@ def make_claim(
     source_excerpt: str,
     materiality: str = "high",
     claim_type: str = "factual",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     fp = "sha256:" + hashlib.sha256(
         (source_unit_id + claim_text).encode()
     ).hexdigest()
@@ -141,7 +141,7 @@ def make_evidence(
     source_excerpt: str,
     source_record_hash: str,
     evidence_type: str = "direct_support",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     fp = "sha256:" + hashlib.sha256(
         (claim_id + source_unit_id).encode()
     ).hexdigest()
@@ -173,7 +173,7 @@ def make_issue(
     claim_id: str | None = None,
     severity: str = "major",
     status: str = "open",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     fp = "sha256:" + hashlib.sha256(description.encode()).hexdigest()
     return {
         "issue_id": str(uuid.uuid4()),
@@ -205,7 +205,7 @@ def make_revision_instruction(
     claim_id: str | None = None,
     priority: str = "high",
     status: str = "pending",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     fp = "sha256:" + hashlib.sha256(
         (issue_id + instruction_text).encode()
     ).hexdigest()

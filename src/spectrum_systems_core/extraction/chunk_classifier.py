@@ -44,14 +44,15 @@ import logging
 import math
 import re
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set
+from collections.abc import Callable, Sequence
+from typing import Any
 
 _LOG = logging.getLogger(__name__)
 
 
 _MODEL_ID = "claude-haiku-4-5-20251001"
 _SCHEMA_VERSION = "1.0.0"
-_VALID_CLASSIFICATIONS: Set[str] = {"decision", "claim", "action_item", "off_topic"}
+_VALID_CLASSIFICATIONS: set[str] = {"decision", "claim", "action_item", "off_topic"}
 
 # BATCH_SIZE rationale: each chunk contributes ~50-150 prompt tokens (we
 # truncate the chunk text at 500 chars per chunk -- well above the
@@ -86,7 +87,7 @@ _BATCH_LINE_RE = re.compile(
 # of off_topic -> decision. Case-insensitive. Whole-word match. Phrases
 # with spaces (e.g. "action required") are matched as substrings with
 # word boundaries on the outside.
-_REGULATORY_VERBS: Set[str] = {
+_REGULATORY_VERBS: set[str] = {
     "approved",
     "rejected",
     "deferred",
@@ -114,7 +115,7 @@ def _now_iso() -> str:
     )
 
 
-def _default_api_caller(prompt: str) -> Dict[str, Any]:  # noqa: ARG001
+def _default_api_caller(prompt: str) -> dict[str, Any]:  # noqa: ARG001
     """Offline default: classify as off_topic. Never raises."""
     return {"classification": "off_topic", "confidence": None}
 
@@ -140,17 +141,17 @@ class ChunkClassifier:
 
     MODEL_ID: str = _MODEL_ID
     SCHEMA_VERSION: str = _SCHEMA_VERSION
-    REGULATORY_VERBS: Set[str] = _REGULATORY_VERBS
+    REGULATORY_VERBS: set[str] = _REGULATORY_VERBS
     BATCH_SIZE: int = _BATCH_SIZE
     BATCH_CHUNK_TEXT_CAP: int = _BATCH_CHUNK_TEXT_CAP
     DEFAULT_MAX_CONCURRENT: int = _DEFAULT_MAX_CONCURRENT
 
     def __init__(
         self,
-        api_caller: Optional[Callable[[str], Dict[str, Any]]] = None,
-        model: Optional[str] = None,
+        api_caller: Callable[[str], dict[str, Any]] | None = None,
+        model: str | None = None,
         *,
-        agenda_resolver: Optional[Callable[[Dict[str, Any]], Optional[str]]] = None,
+        agenda_resolver: Callable[[dict[str, Any]], str | None] | None = None,
     ) -> None:
         self._api_caller = api_caller or _default_api_caller
         self._model = model or self.MODEL_ID
@@ -162,7 +163,7 @@ class ChunkClassifier:
         # text-in/JSON-out classifier.
         self._agenda_resolver = agenda_resolver
 
-    def _agenda_prompt_line(self, chunk: Dict[str, Any]) -> str:
+    def _agenda_prompt_line(self, chunk: dict[str, Any]) -> str:
         """Return ``"Current agenda item: ...\\n\\n"`` or ``""``.
 
         Centralised so both the per-chunk and the batch prompt paths
@@ -182,7 +183,7 @@ class ChunkClassifier:
             return ""
         return f"Current agenda item: {label.strip()}\n\n"
 
-    def _build_prompt(self, chunk: Dict[str, Any]) -> str:
+    def _build_prompt(self, chunk: dict[str, Any]) -> str:
         text = (chunk or {}).get("text", "")
         return (
             f"{self._agenda_prompt_line(chunk if isinstance(chunk, dict) else {})}"
@@ -220,7 +221,7 @@ class ChunkClassifier:
         return "off_topic"
 
     @staticmethod
-    def _normalize_confidence(value: Any) -> Optional[float]:
+    def _normalize_confidence(value: Any) -> float | None:
         if value is None:
             return None
         try:
@@ -233,11 +234,11 @@ class ChunkClassifier:
 
     def _make_classification_artifact(
         self,
-        chunk: Dict[str, Any],
+        chunk: dict[str, Any],
         raw_classification: str,
         source_id: str,
-        confidence: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        confidence: float | None = None,
+    ) -> dict[str, Any]:
         """Build a chunk_classification artifact from a raw classification.
 
         Applies the regulatory-verb fallback and sets
@@ -275,7 +276,7 @@ class ChunkClassifier:
             },
         }
 
-    def classify(self, chunk: Dict[str, Any], source_id: str) -> Dict[str, Any]:
+    def classify(self, chunk: dict[str, Any], source_id: str) -> dict[str, Any]:
         """Classify ``chunk`` and return a chunk_classification artifact.
 
         Never raises. Caller may pass any dict; only ``chunk_id`` and
@@ -288,7 +289,7 @@ class ChunkClassifier:
         prompt = self._build_prompt(chunk if isinstance(chunk, dict) else {})
 
         raw_classification = "off_topic"
-        confidence: Optional[float] = None
+        confidence: float | None = None
         try:
             resp = self._api_caller(prompt)
             if isinstance(resp, dict):
@@ -315,9 +316,9 @@ class ChunkClassifier:
     # Phase Perf -- batch + async classification.
     # ------------------------------------------------------------------
 
-    def _build_batch_prompt(self, chunks: Sequence[Dict[str, Any]]) -> str:
+    def _build_batch_prompt(self, chunks: Sequence[dict[str, Any]]) -> str:
         """Build the batch classification prompt (one round-trip per batch)."""
-        lines: List[str] = [
+        lines: list[str] = [
             f"Classify each of the following {len(chunks)} meeting "
             "speaker-turn chunks.",
             "For each chunk output exactly one line in this format:",
@@ -357,8 +358,8 @@ class ChunkClassifier:
     def _parse_batch_response(
         self,
         response_text: str,
-        chunks: Sequence[Dict[str, Any]],
-    ) -> Optional[Dict[str, str]]:
+        chunks: Sequence[dict[str, Any]],
+    ) -> dict[str, str] | None:
         """Parse a batch response into a {chunk_id: classification} dict.
 
         Tolerates malformed lines, blank lines, narrative pre/post text,
@@ -377,15 +378,15 @@ class ChunkClassifier:
         if not isinstance(response_text, str):
             return {}
 
-        requested_ids: Set[str] = set()
+        requested_ids: set[str] = set()
         for c in chunks:
             if isinstance(c, dict):
                 cid = str(c.get("chunk_id") or c.get("id") or "")
                 if cid:
                     requested_ids.add(cid)
 
-        parsed: Dict[str, str] = {}
-        seen_cids: Set[str] = set()
+        parsed: dict[str, str] = {}
+        seen_cids: set[str] = set()
         for line in response_text.splitlines():
             m = _BATCH_LINE_RE.match(line)
             if m is None:
@@ -416,17 +417,17 @@ class ChunkClassifier:
 
     def _build_batch_artifacts(
         self,
-        chunks: Sequence[Dict[str, Any]],
-        parsed: Dict[str, str],
+        chunks: Sequence[dict[str, Any]],
+        parsed: dict[str, str],
         source_id: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Map parsed classifications back to artifacts in input order.
 
         Missing chunks (LLM dropped a line) get ``off_topic``, which then
         flows through the regulatory-verb fallback so an "approved" line
         cannot be lost just because the response was short.
         """
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         for chunk in chunks:
             cid = ""
             if isinstance(chunk, dict):
@@ -444,17 +445,17 @@ class ChunkClassifier:
 
     def _per_chunk_fallback(
         self,
-        chunks: Sequence[Dict[str, Any]],
+        chunks: Sequence[dict[str, Any]],
         source_id: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Fall back to per-chunk classification when a batch fails."""
         return [self.classify(chunk, source_id) for chunk in chunks]
 
     def _classify_batch_sync(
         self,
-        chunks: Sequence[Dict[str, Any]],
+        chunks: Sequence[dict[str, Any]],
         source_id: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """One synchronous batch classification call."""
         if not chunks:
             return []
@@ -511,10 +512,10 @@ class ChunkClassifier:
 
     def batch_classify(
         self,
-        chunks: Sequence[Dict[str, Any]],
+        chunks: Sequence[dict[str, Any]],
         source_id: str,
-        cache: Optional["ClassificationCache"] = None,
-    ) -> List[Dict[str, Any]]:
+        cache: ClassificationCache | None = None,
+    ) -> list[dict[str, Any]]:
         """Classify ``chunks`` in batches of ``BATCH_SIZE``.
 
         Returns one artifact per input chunk, in input order. Never raises.
@@ -536,8 +537,8 @@ class ChunkClassifier:
         # only the misses, then re-merge in input order.
         chunks = list(chunks)
         if cache is not None:
-            cached_classifications: Dict[int, str] = {}
-            uncached_indices: List[int] = []
+            cached_classifications: dict[int, str] = {}
+            uncached_indices: list[int] = []
             for idx, chunk in enumerate(chunks):
                 hit = cache.get(chunk)
                 if hit is not None:
@@ -550,7 +551,7 @@ class ChunkClassifier:
             )
             for chunk, art in zip(uncached_chunks, new_artifacts):
                 cache.set(chunk, art["classification"])
-            results: List[Dict[str, Any]] = [None] * len(chunks)  # type: ignore[list-item]
+            results: list[dict[str, Any]] = [None] * len(chunks)  # type: ignore[list-item]
             for idx, chunk in enumerate(chunks):
                 if idx in cached_classifications:
                     results[idx] = self._make_classification_artifact(
@@ -565,10 +566,10 @@ class ChunkClassifier:
 
     def _batch_classify_no_cache(
         self,
-        chunks: Sequence[Dict[str, Any]],
+        chunks: Sequence[dict[str, Any]],
         source_id: str,
-    ) -> List[Dict[str, Any]]:
-        results: List[Dict[str, Any]] = []
+    ) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
         for i in range(0, len(chunks), self.BATCH_SIZE):
             batch = chunks[i : i + self.BATCH_SIZE]
             results.extend(self._classify_batch_sync(batch, source_id))
@@ -576,12 +577,12 @@ class ChunkClassifier:
 
     async def batch_classify_async(
         self,
-        chunks: Sequence[Dict[str, Any]],
+        chunks: Sequence[dict[str, Any]],
         source_id: str,
-        max_concurrent: Optional[int] = None,
-        async_caller: Optional[Callable[[str], Any]] = None,
-        cache: Optional["ClassificationCache"] = None,
-    ) -> List[Dict[str, Any]]:
+        max_concurrent: int | None = None,
+        async_caller: Callable[[str], Any] | None = None,
+        cache: ClassificationCache | None = None,
+    ) -> list[dict[str, Any]]:
         """Async version of ``batch_classify`` -- fan multiple batches out.
 
         Each batch round-trip happens inside an ``asyncio.Semaphore`` whose
@@ -605,8 +606,8 @@ class ChunkClassifier:
 
         # Resolve cache hits up front so we never even queue an API call
         # for a chunk we already have a classification for.
-        cached_indices: Dict[int, str] = {}
-        worklist_indices: List[int] = []
+        cached_indices: dict[int, str] = {}
+        worklist_indices: list[int] = []
         if cache is not None:
             for idx, chunk in enumerate(chunks):
                 hit = cache.get(chunk)
@@ -620,14 +621,14 @@ class ChunkClassifier:
         worklist = [chunks[i] for i in worklist_indices]
 
         # Build the list of batches preserving the original chunk index.
-        batches: List[List[Dict[str, Any]]] = []
-        batch_index_offsets: List[int] = []
+        batches: list[list[dict[str, Any]]] = []
+        batch_index_offsets: list[int] = []
         for i in range(0, len(worklist), self.BATCH_SIZE):
             batches.append(worklist[i : i + self.BATCH_SIZE])
             batch_index_offsets.append(i)
 
         if not batches:
-            results: List[Dict[str, Any]] = []
+            results: list[dict[str, Any]] = []
             for idx, chunk in enumerate(chunks):
                 results.append(
                     self._make_classification_artifact(
@@ -641,7 +642,7 @@ class ChunkClassifier:
         if async_caller is None:
             sync_caller = self._api_caller
 
-            async def _aclassify(batch: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            async def _aclassify(batch: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
                 async with semaphore:
                     try:
                         return await asyncio.to_thread(
@@ -665,7 +666,7 @@ class ChunkClassifier:
             del sync_caller
         else:
 
-            async def _aclassify(batch: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            async def _aclassify(batch: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
                 async with semaphore:
                     prompt = self._build_batch_prompt(batch)
                     try:
@@ -719,7 +720,7 @@ class ChunkClassifier:
         gathered = await asyncio.gather(*(_aclassify(b) for b in batches))
 
         # Stitch new + cached results back into input order.
-        new_artifacts: List[Optional[Dict[str, Any]]] = [None] * len(worklist)
+        new_artifacts: list[dict[str, Any] | None] = [None] * len(worklist)
         for offset, batch_result in zip(batch_index_offsets, gathered):
             for j, art in enumerate(batch_result):
                 new_artifacts[offset + j] = art

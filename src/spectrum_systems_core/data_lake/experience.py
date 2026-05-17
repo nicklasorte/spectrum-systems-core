@@ -49,7 +49,7 @@ def _experience_id_for(result: PipelineResult) -> str:
         f"{result.transcript_input.transcript_hash}:"
         f"{result.transcript_input.metadata_hash}:"
         f"{result.workflow_name}"
-    ).encode("utf-8")
+    ).encode()
     return f"exp-{hashlib.sha256(seed).hexdigest()[:16]}"
 
 

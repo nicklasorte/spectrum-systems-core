@@ -16,28 +16,27 @@ import hashlib
 import json
 import re
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 
+from ..synthesis import DataLakeChecker
 from ._paths import (
     ai_costs_dir,
     ai_failures_dir,
+    ai_monthly_costs_path,
     ai_outputs_dir,
     ai_queries_dir,
-    ai_monthly_costs_path,
     load_schema,
 )
-from ..synthesis import DataLakeChecker
 from .grounding_eval import (
-    AIGroundingEval,
-    MAX_QUERY_COST_USD,
     UUID_PATTERN,
+    AIGroundingEval,
 )
 from .memory_context_builder import MemoryContextBuilder
 from .prompt_registry import PromptRegistry
-
 
 _COMPONENT_NAME = "ai_adapter"
 _COMPONENT_VERSION = "1.0.0"
@@ -64,11 +63,11 @@ def _estimate_cost_usd(input_tokens: int, output_tokens: int) -> float:
     ) / 1_000_000
 
 
-def _extract_citations(raw_response: Dict[str, Any], response_text: str) -> List[str]:
+def _extract_citations(raw_response: dict[str, Any], response_text: str) -> list[str]:
     """Collect citations from both inline `[source: ...]` markers and
     structured fields (citations / supporting_citations / counter_citations
     / basis_citation / story_id)."""
-    seen: List[str] = []
+    seen: list[str] = []
 
     def _add(val: Any) -> None:
         if isinstance(val, str):
@@ -103,7 +102,7 @@ def _extract_citations(raw_response: Dict[str, Any], response_text: str) -> List
     return seen
 
 
-def _validate_or_none(record: Dict[str, Any], schema_name: str) -> Optional[str]:
+def _validate_or_none(record: dict[str, Any], schema_name: str) -> str | None:
     try:
         schema = load_schema(schema_name)
         jsonschema.Draft202012Validator(schema).validate(record)
@@ -119,8 +118,8 @@ class AIAdapter:
 
     def __init__(
         self,
-        api_caller: Optional[Callable[[Dict[str, Any], str], Tuple[str, int, int]]] = None,
-        data_lake_checker: Optional[DataLakeChecker] = None,
+        api_caller: Callable[[dict[str, Any], str], tuple[str, int, int]] | None = None,
+        data_lake_checker: DataLakeChecker | None = None,
     ):
         # api_caller signature: (task_def, prompt) -> (response_text, input_tokens, output_tokens)
         self._api_caller = api_caller
@@ -131,8 +130,8 @@ class AIAdapter:
         task_type: str,
         question: str,
         repo_root: str,
-        vault_root: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        vault_root: str | None = None,
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         query_id = str(uuid.uuid4())
         started_at = _now_iso()
@@ -248,8 +247,8 @@ class AIAdapter:
 
         # 9. VERIFY CITATIONS via DataLake.exists() (FINDING-H-003 / H-004).
         checker = self._data_lake_checker or DataLakeChecker(str(repo_root_path))
-        verified: List[str] = []
-        unverified: List[str] = []
+        verified: list[str] = []
+        unverified: list[str] = []
         for cid in citations:
             if checker.exists(cid):
                 verified.append(cid)
@@ -354,8 +353,8 @@ class AIAdapter:
     # -- helpers --
 
     def _call_api(
-        self, task_def: Dict[str, Any], prompt: str
-    ) -> Tuple[str, int, int]:
+        self, task_def: dict[str, Any], prompt: str
+    ) -> tuple[str, int, int]:
         if self._api_caller is not None:
             return self._api_caller(task_def, prompt)
         import anthropic  # imported lazily so tests run without it
@@ -367,7 +366,7 @@ class AIAdapter:
             temperature=0,
             messages=[{"role": "user", "content": prompt}],
         )
-        parts: List[str] = []
+        parts: list[str] = []
         for block in message.content:
             text = getattr(block, "text", None)
             if isinstance(text, str):
@@ -377,7 +376,7 @@ class AIAdapter:
         output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
         return "\n".join(parts), input_tokens, output_tokens
 
-    def _write_query_record(self, record: Dict[str, Any], repo_root: str) -> None:
+    def _write_query_record(self, record: dict[str, Any], repo_root: str) -> None:
         # Only enforce schema for terminal states; in-flight records have
         # completed_at=None (allowed by the schema).
         violation = _validate_or_none(record, "ai_query_record")
@@ -389,7 +388,7 @@ class AIAdapter:
             encoding="utf-8",
         )
 
-    def _write_output(self, ai_output: Dict[str, Any], repo_root: str) -> None:
+    def _write_output(self, ai_output: dict[str, Any], repo_root: str) -> None:
         target = ai_outputs_dir(repo_root, create=True) / f"{ai_output['output_id']}.json"
         target.write_text(
             json.dumps(ai_output, indent=2, sort_keys=True) + "\n",
@@ -405,7 +404,7 @@ class AIAdapter:
         input_tokens: int,
         output_tokens: int,
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         cost_usd = _estimate_cost_usd(input_tokens, output_tokens)
         record = {
             "cost_id": str(uuid.uuid4()),
@@ -453,7 +452,7 @@ class AIAdapter:
         failure_detail: str,
         raw_response_hash: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         failure = {
             "failure_id": str(uuid.uuid4()),
             "query_id": query_id,
@@ -476,7 +475,7 @@ class AIAdapter:
         task_type: str,
         detail: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         failure = self._write_failure(
             query_id=query_id,
             task_type=task_type or "unknown",
@@ -496,12 +495,12 @@ class AIAdapter:
         self,
         query_id: str,
         task_type: str,
-        task_def: Dict[str, Any],
+        task_def: dict[str, Any],
         question: str,
         started_at: str,
-        context_result: Dict[str, Any],
+        context_result: dict[str, Any],
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         # Persist a query_record for traceability even when the bundle fails.
         record = {
             "query_id": query_id,
@@ -550,12 +549,12 @@ class AIAdapter:
         query_id: str,
         task_type: str,
         question: str,
-        query_record: Dict[str, Any],
+        query_record: dict[str, Any],
         failure_type: str,
         failure_detail: str,
         raw_response_hash: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         query_record["status"] = "blocked"
         query_record["completed_at"] = _now_iso()
         query_record["failure_reason"] = (

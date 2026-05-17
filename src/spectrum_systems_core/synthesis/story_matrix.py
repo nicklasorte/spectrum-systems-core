@@ -7,11 +7,10 @@ wins) and then story_id (lexicographic) for full determinism.
 """
 from __future__ import annotations
 
-import datetime
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 
@@ -19,13 +18,12 @@ from ..ingestion.source_loader import SOURCE_FAMILIES
 from ..utils.text_similarity import jaccard
 from ._paths import synthesis_run_dir, synthesis_schema_path
 
-
 _COMPONENT_NAME = "story_matrix"
 _COMPONENT_VERSION = "1.0.0"
 
 VALID_AUDIENCES = ("technical", "policy", "executive", "public")
 
-AUDIENCE_WEIGHT: Dict[str, Dict[str, float]] = {
+AUDIENCE_WEIGHT: dict[str, dict[str, float]] = {
     "technical": {"tier_1": 1.0, "tier_2": 0.7, "tier_3": 0.3},
     "policy":    {"tier_1": 1.0, "tier_2": 0.8, "tier_3": 0.4},
     "executive": {"tier_1": 1.0, "tier_2": 0.5, "tier_3": 0.1},
@@ -33,8 +31,8 @@ AUDIENCE_WEIGHT: Dict[str, Dict[str, float]] = {
 }
 
 
-def _read_promoted_dir(dir_path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_promoted_dir(dir_path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not dir_path.is_dir():
         return out
     for child in sorted(dir_path.glob("*.json")):
@@ -65,9 +63,9 @@ class StoryMatrix:
         self,
         run_id: str,
         audience: str,
-        themes: List[Dict[str, Any]],
+        themes: list[dict[str, Any]],
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if audience not in VALID_AUDIENCES:
             return {
                 "status": "failure",
@@ -78,7 +76,7 @@ class StoryMatrix:
         repo_root_path = Path(repo_root).resolve()
 
         # Collect promoted stories from every source.
-        stories: List[Dict[str, Any]] = []
+        stories: list[dict[str, Any]] = []
         any_promoted_dir_found = False
         for source_id, source_dir in _iter_processed_dirs(repo_root_path):
             promoted_dir = source_dir / "stories" / "promoted"
@@ -106,10 +104,10 @@ class StoryMatrix:
         )
         validator = jsonschema.Draft202012Validator(schema)
 
-        entries: List[Dict[str, Any]] = []
+        entries: list[dict[str, Any]] = []
         for theme in themes:
             theme_name = str(theme.get("theme_name", ""))
-            best: Dict[str, Any] | None = None
+            best: dict[str, Any] | None = None
             best_score = -1.0
             best_promoted_at = ""
             best_story_id = ""

@@ -10,7 +10,6 @@ from spectrum_systems_core.data_lake import (
     run_transcript_pipeline,
 )
 
-
 SAMPLE_TRANSCRIPT = (
     "Q3 planning sync\n"
     "We reviewed roadmap and budget.\n"

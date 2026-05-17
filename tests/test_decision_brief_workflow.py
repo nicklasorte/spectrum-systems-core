@@ -3,7 +3,6 @@ from spectrum_systems_core.control import decide_control
 from spectrum_systems_core.evals import run_required_evals
 from spectrum_systems_core.workflows import run_decision_brief_workflow
 
-
 SAMPLE_BRIEF = """Adopt SSC-002 second artifact type
 CONTEXT: Constitution requires one envelope and one control model.
 OPTION: Add decision_brief workflow alongside meeting_minutes.

@@ -22,11 +22,11 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
-from ._failure_artifacts import emit_empty_result
 from ._chunk_counters import ChunkCounters
-
+from ._failure_artifacts import emit_empty_result
 
 _LOG = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ def build_candidate_prompt_block() -> str:
 
 
 def build_normalize_prompt(
-    candidates: List[Dict[str, Any]],
+    candidates: list[dict[str, Any]],
     chunk_text: str,
 ) -> str:
     """Stage-2 prompt body.
@@ -71,7 +71,7 @@ def build_normalize_prompt(
     reject each candidate. It MUST NOT add new items -- that is the
     contract that keeps stage 2 cheap (confirm/reject only).
     """
-    lines: List[str] = []
+    lines: list[str] = []
     for idx, c in enumerate(candidates):
         ev = c.get("candidate_evidence") or ""
         text = c.get("text") or c.get("decision_text") or c.get("claim_text") or c.get("action") or ""
@@ -111,9 +111,9 @@ def build_normalize_prompt(
 
 
 def parse_normalize_response(
-    response: Dict[str, Any],
+    response: dict[str, Any],
     candidate_count: int,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Parse the stage-2 response into a fixed-length list of decisions.
 
     Output index ``i`` is the decision for ``candidates[i]``. Indices not
@@ -121,7 +121,7 @@ def parse_normalize_response(
     ``"absent_from_normalize_response"`` so missing entries cannot
     silently auto-confirm (fail-closed).
     """
-    decisions: List[Dict[str, Any]] = [
+    decisions: list[dict[str, Any]] = [
         {"status": STATUS_REJECTED,
          "rejection_reason": "absent_from_normalize_response"}
         for _ in range(candidate_count)
@@ -155,11 +155,11 @@ def parse_normalize_response(
 
 
 def normalize_candidates(
-    candidates: List[Dict[str, Any]],
+    candidates: list[dict[str, Any]],
     chunk_text: str,
     *,
-    api_caller: Optional[Callable[[str], Dict[str, Any]]] = None,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    api_caller: Callable[[str], dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Run stage 2 on a list of candidates.
 
     Returns ``(confirmed, rejected)``. ``confirmed`` items carry a
@@ -179,8 +179,8 @@ def normalize_candidates(
     rejects every candidate so the no-API behaviour is fail-closed,
     NOT auto-confirm.
     """
-    confirmed: List[Dict[str, Any]] = []
-    rejected: List[Dict[str, Any]] = []
+    confirmed: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
 
     if not candidates:
         return confirmed, rejected
@@ -242,10 +242,10 @@ def emit_all_rejected_failure(
     counters: ChunkCounters,
     chunk_id: str,
     source_id: str,
-    extraction_run_id: Optional[str],
-    sdl_root: Optional[Any],
+    extraction_run_id: str | None,
+    sdl_root: Any | None,
     rejection_summary: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """All candidates were rejected: emit empty_result + bump ``other``.
 
     Phase R.1 requires this path so the orchestrator can attribute a

@@ -12,7 +12,6 @@ from spectrum_systems_core.data_lake import (
     run_transcript_pipeline,
 )
 
-
 VALID_METADATA = {
     "meeting_id": "m-fail-1",
     "title": "Fail seed case",

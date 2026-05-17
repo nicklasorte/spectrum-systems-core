@@ -16,10 +16,9 @@ from __future__ import annotations
 
 import datetime
 import logging
-from typing import Iterable, Optional, Sequence
+from collections.abc import Iterable, Sequence
 
 from ._chunk_counters import ChunkCounters
-
 
 _LOG = logging.getLogger(__name__)
 
@@ -68,7 +67,7 @@ def compute_calibration(
     *,
     chunks_blocked: int = 0,
     cutoff: float = HIGH_CONFIDENCE_CUTOFF,
-) -> Optional[dict]:
+) -> dict | None:
     """Return a ``calibration_warning`` artifact dict, or None.
 
     ``items`` should be drawn from SUCCEEDED chunks only -- the caller
@@ -108,9 +107,9 @@ def calibration_from_succeeded(
     claims: Sequence[dict],
     action_items: Sequence[dict],
     *,
-    counters: Optional[ChunkCounters] = None,
+    counters: ChunkCounters | None = None,
     run_id: str = "",
-) -> Optional[dict]:
+) -> dict | None:
     """Compute calibration over decisions + claims + action_items.
 
     Decisions and claims are the X-3 confidence-required items; action

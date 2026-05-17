@@ -8,7 +8,6 @@ artifact shape so a future regression on the wiring surfaces here.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest

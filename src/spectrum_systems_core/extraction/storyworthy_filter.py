@@ -7,12 +7,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from ._paths import find_processed_dir
 
-
-SCORING_RULES: Dict[str, Dict[str, Any]] = {
+SCORING_RULES: dict[str, dict[str, Any]] = {
     "five_second_moment": {
         "keywords": [
             "moment", "suddenly", "realized", "decided", "when", "then",
@@ -59,7 +58,7 @@ def _word_count(text: str) -> int:
     return len([w for w in text.split() if w])
 
 
-def _keyword_score(rule: Dict[str, Any], haystack_lower: str) -> int:
+def _keyword_score(rule: dict[str, Any], haystack_lower: str) -> int:
     for kw in rule["keywords"]:
         if kw in haystack_lower:
             return int(rule["score_if_any"])
@@ -69,14 +68,14 @@ def _keyword_score(rule: Dict[str, Any], haystack_lower: str) -> int:
 class StoryworthyFilter:
     """Score story candidates and assign admit/revise/reject verdicts."""
 
-    def score(self, candidate: Dict[str, Any]) -> Dict[str, Any]:
+    def score(self, candidate: dict[str, Any]) -> dict[str, Any]:
         summary = candidate.get("story_summary", "") or ""
         why = candidate.get("why_it_might_work", "") or ""
         excerpt = candidate.get("source_excerpt", "") or ""
 
         haystack = (summary + " " + why).lower()
 
-        scores: Dict[str, int] = {}
+        scores: dict[str, int] = {}
         for name, rule in SCORING_RULES.items():
             if name == "narrative_compression":
                 wc = _word_count(summary + " " + excerpt)
@@ -102,7 +101,7 @@ class StoryworthyFilter:
 
     def run_on_source(
         self, source_id: str, repo_root: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, _ = find_processed_dir(repo_root_path, source_id)
         if processed_dir is None:
@@ -114,7 +113,7 @@ class StoryworthyFilter:
                 "scored_count": 0,
                 "reason": "candidates_not_found",
             }
-        candidates: List[Dict[str, Any]] = []
+        candidates: list[dict[str, Any]] = []
         try:
             with candidates_path.open("r", encoding="utf-8") as fh:
                 for line in fh:

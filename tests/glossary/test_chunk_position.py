@@ -1,8 +1,6 @@
 """Phase V.4 tests: chunk position + attention-direction block."""
 from __future__ import annotations
 
-import pytest
-
 from spectrum_systems_core.glossary.chunk_position import (
     ATTENTION_DIRECTION_BLOCK,
     POSITION_CLOSING,

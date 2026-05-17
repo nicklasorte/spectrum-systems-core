@@ -16,7 +16,7 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 
@@ -27,17 +27,16 @@ from spectrum_systems_core.paper._paths import paper_schema_path
 
 from ._fixtures import id_from_prompt, read_jsonl, write_text_units
 
-
 # ---------------------------------------------------------------------------
 # Schema-level tests
 # ---------------------------------------------------------------------------
 
 
-def _load(schema_loader, name: str) -> Dict[str, Any]:
+def _load(schema_loader, name: str) -> dict[str, Any]:
     return json.loads(schema_loader(name).read_text(encoding="utf-8"))
 
 
-def _valid_story_skeleton(chunk_id: str) -> Dict[str, Any]:
+def _valid_story_skeleton(chunk_id: str) -> dict[str, Any]:
     return {
         "schema_version": "1.1.0",
         "story_id": str(uuid.uuid4()),
@@ -78,7 +77,7 @@ def _valid_story_skeleton(chunk_id: str) -> Dict[str, Any]:
     }
 
 
-def _valid_claim_skeleton(unit_id: str) -> Dict[str, Any]:
+def _valid_claim_skeleton(unit_id: str) -> dict[str, Any]:
     return {
         "schema_version": "1.1.0",
         "claim_id": str(uuid.uuid4()),
@@ -104,7 +103,7 @@ def _valid_claim_skeleton(unit_id: str) -> Dict[str, Any]:
     }
 
 
-def _valid_assumption_skeleton(unit_id: str) -> Dict[str, Any]:
+def _valid_assumption_skeleton(unit_id: str) -> dict[str, Any]:
     return {
         "schema_version": "1.1.0",
         "assumption_id": str(uuid.uuid4()),
@@ -226,9 +225,9 @@ class AssumptionSchemaSourceTurnIdsTests(unittest.TestCase):
 
 
 def _ok_story_response(
-    excerpt: str, source_turn_ids: List[str] | None
+    excerpt: str, source_turn_ids: list[str] | None
 ) -> str:
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "story_found": True,
         "source_excerpt": excerpt,
         "story_summary": "A short summary of the moment that mattered most.",
@@ -269,7 +268,7 @@ class StoryExtractorSourceTurnIdsTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def _run(self, response_fn) -> Dict[str, Any]:
+    def _run(self, response_fn) -> dict[str, Any]:
         return StoryExtractor(api_caller=response_fn).extract_from_source(
             self.source_id, str(self.repo_root)
         )
@@ -360,9 +359,9 @@ class ClaimExtractorSourceTurnIdsTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def _response(
-        self, source_turn_ids: List[str] | None
+        self, source_turn_ids: list[str] | None
     ) -> str:
-        claim: Dict[str, Any] = {
+        claim: dict[str, Any] = {
             "claim_text": "The agency requires comments by Friday.",
             "claim_type": "factual",
             "materiality": "high",
@@ -452,9 +451,9 @@ class AssumptionExtractorSourceTurnIdsTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def _response(
-        self, source_turn_ids: List[str] | None
+        self, source_turn_ids: list[str] | None
     ) -> str:
-        item: Dict[str, Any] = {
+        item: dict[str, Any] = {
             "assumption_text": "Reviewers have access to the full record.",
             "assumption_type": "scope",
             "risk_if_wrong": "high",

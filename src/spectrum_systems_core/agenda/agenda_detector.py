@@ -32,7 +32,8 @@ import math
 import re
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 _LOG = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ def _now_iso() -> str:
     )
 
 
-def _default_api_caller(prompt: str) -> Dict[str, Any]:  # noqa: ARG001
+def _default_api_caller(prompt: str) -> dict[str, Any]:  # noqa: ARG001
     """Offline default. Returns an empty agenda; never raises."""
     return {"text": "{}"}
 
@@ -77,10 +78,10 @@ class AgendaDetector:
     def __init__(
         self,
         model_registry: Any,
-        sdl_root: Optional[str] = None,
+        sdl_root: str | None = None,
         *,
-        api_caller: Optional[Callable[[str], Dict[str, Any]]] = None,
-        clock: Optional[Callable[[], float]] = None,
+        api_caller: Callable[[str], dict[str, Any]] | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self.model_registry = model_registry
         self.sdl_root = sdl_root
@@ -104,12 +105,12 @@ class AgendaDetector:
 
     def detect(
         self,
-        chunks: Sequence[Dict[str, Any]],
+        chunks: Sequence[dict[str, Any]],
         source_id: str,
         pipeline_run_id: str,
         *,
-        trace_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
         """Detect agenda items.
 
         Returns a dict with keys:
@@ -207,9 +208,9 @@ class AgendaDetector:
 
     def _build_detection_prompt(
         self,
-        intro_chunks: Sequence[Dict[str, Any]],
+        intro_chunks: Sequence[dict[str, Any]],
     ) -> str:
-        lines: List[str] = [
+        lines: list[str] = [
             "You are reading the introduction phase of a federal-policy "
             "working-group meeting transcript.",
             "Identify the DISCRETE agenda items the meeting will cover.",
@@ -247,13 +248,13 @@ class AgendaDetector:
     @staticmethod
     def _parse_detection_response(
         response: Any,
-    ) -> "tuple[List[Dict[str, Any]], Optional[float]]":
+    ) -> tuple[list[dict[str, Any]], float | None]:
         """Tolerantly parse the LLM response. Returns ``([], None)`` if
         nothing usable was returned.
         """
         if response is None:
             return [], None
-        text: Optional[str] = None
+        text: str | None = None
         if isinstance(response, dict):
             for key in ("text", "response", "content"):
                 value = response.get(key)
@@ -285,7 +286,7 @@ class AgendaDetector:
         if not isinstance(raw_items, list):
             return [], None
 
-        items: List[Dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         for raw in raw_items:
             if not isinstance(raw, dict):
                 continue
@@ -306,7 +307,7 @@ class AgendaDetector:
                 "approximate_start_chunk_index": max(0, start_idx),
             })
 
-        confidence: Optional[float] = None
+        confidence: float | None = None
         raw_conf = data.get("detection_confidence")
         if isinstance(raw_conf, (int, float)):
             try:
@@ -324,7 +325,7 @@ class AgendaDetector:
 
     def _validate_detected_items(
         self,
-        detected_items: Sequence[Dict[str, Any]],
+        detected_items: Sequence[dict[str, Any]],
     ) -> bool:
         """Per Attack 1 (RT1): require >=2 DISTINCT labels.
 
@@ -358,13 +359,13 @@ class AgendaDetector:
     def _map_chunks_to_agenda_items(
         self,
         *,
-        chunks: Sequence[Dict[str, Any]],
-        detected_items: Sequence[Dict[str, Any]],
+        chunks: Sequence[dict[str, Any]],
+        detected_items: Sequence[dict[str, Any]],
         source_id: str,
         pipeline_run_id: str,
-        trace_id: Optional[str],
-        confidence: Optional[float],
-    ) -> List[Dict[str, Any]]:
+        trace_id: str | None,
+        confidence: float | None,
+    ) -> list[dict[str, Any]]:
         # Sort detected items by approximate_start_chunk_index so the
         # sequential split below is deterministic.
         sorted_items = sorted(
@@ -379,7 +380,7 @@ class AgendaDetector:
         # Compute boundaries: each agenda item's start = its
         # approximate_start_chunk_index (clamped); its end = the next
         # item's start - 1 (or last chunk for the final item).
-        boundaries: List[int] = []
+        boundaries: list[int] = []
         for it in sorted_items:
             idx = int(it.get("approximate_start_chunk_index") or 0)
             idx = max(0, min(idx, n_chunks - 1))
@@ -398,7 +399,7 @@ class AgendaDetector:
             boundaries.pop()
             sorted_items = sorted_items[: len(boundaries)]
 
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for i, item in enumerate(sorted_items):
             start_idx = boundaries[i]
             end_idx = (
@@ -431,7 +432,7 @@ class AgendaDetector:
         return out
 
     @staticmethod
-    def _chunk_id(chunk: Dict[str, Any]) -> str:
+    def _chunk_id(chunk: dict[str, Any]) -> str:
         return str(chunk.get("chunk_id") or chunk.get("id") or "")
 
     # ------------------------------------------------------------------
@@ -441,13 +442,13 @@ class AgendaDetector:
     def _undetected_result(
         self,
         *,
-        chunks: Sequence[Dict[str, Any]],
+        chunks: Sequence[dict[str, Any]],
         source_id: str,
         pipeline_run_id: str,
-        trace_id: Optional[str],
+        trace_id: str | None,
         duration: float,
         reason: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         items = [
             self._make_undetected_agenda_item(
                 chunks=chunks,
@@ -470,12 +471,12 @@ class AgendaDetector:
     def _make_undetected_agenda_item(
         self,
         *,
-        chunks: Sequence[Dict[str, Any]],
+        chunks: Sequence[dict[str, Any]],
         source_id: str,
         pipeline_run_id: str,
-        trace_id: Optional[str],
+        trace_id: str | None,
         reason: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         start_turn_id = self._chunk_id(chunks[0])
         end_turn_id = self._chunk_id(chunks[-1])
         return {
@@ -515,9 +516,9 @@ def _is_generic_label(label: str) -> bool:
 
 
 def build_chunk_to_agenda_mapping(
-    chunks: Sequence[Dict[str, Any]],
-    agenda_items: Sequence[Dict[str, Any]],
-) -> Dict[str, str]:
+    chunks: Sequence[dict[str, Any]],
+    agenda_items: Sequence[dict[str, Any]],
+) -> dict[str, str]:
     """Build {chunk_id: agenda_item_id} from chunks ordered by chunk_index
     and the agenda_item artifacts.
 
@@ -529,13 +530,13 @@ def build_chunk_to_agenda_mapping(
     if not agenda_items or not chunks:
         return {}
 
-    chunk_id_to_index: Dict[str, int] = {}
+    chunk_id_to_index: dict[str, int] = {}
     for i, chunk in enumerate(chunks):
         cid = AgendaDetector._chunk_id(chunk)
         if cid:
             chunk_id_to_index[cid] = i
 
-    ranges: List["tuple[int, int, str]"] = []
+    ranges: list[tuple[int, int, str]] = []
     for item in agenda_items:
         start_id = item.get("start_turn_id")
         end_id = item.get("end_turn_id")
@@ -551,12 +552,12 @@ def build_chunk_to_agenda_mapping(
         return {}
 
     ranges.sort(key=lambda r: (r[0], r[1]))
-    mapping: Dict[str, str] = {}
+    mapping: dict[str, str] = {}
     for i, chunk in enumerate(chunks):
         cid = AgendaDetector._chunk_id(chunk)
         if not cid:
             continue
-        assigned: Optional[str] = None
+        assigned: str | None = None
         for start_idx, end_idx, item_id in ranges:
             if start_idx <= i <= end_idx:
                 assigned = item_id
@@ -570,8 +571,8 @@ def build_chunk_to_agenda_mapping(
 
 
 def validate_agenda_references(
-    chunks: Sequence[Dict[str, Any]],
-    agenda_items: Sequence[Dict[str, Any]],
+    chunks: Sequence[dict[str, Any]],
+    agenda_items: Sequence[dict[str, Any]],
 ) -> None:
     """Pre-flight check (Attack 12 / RT1).
 

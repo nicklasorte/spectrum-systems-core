@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -20,7 +20,7 @@ def _reset_env(monkeypatch):
     monkeypatch.delenv("BINDING_TUPLE_ENABLED", raising=False)
 
 
-def _approval_decision() -> Dict[str, Any]:
+def _approval_decision() -> dict[str, Any]:
     return {
         "decision_id": "d1",
         "decision_text": "NTIA approved the 7 GHz protection criterion.",
@@ -28,7 +28,7 @@ def _approval_decision() -> Dict[str, Any]:
     }
 
 
-def _deferral_decision() -> Dict[str, Any]:
+def _deferral_decision() -> dict[str, Any]:
     return {
         "decision_id": "d2",
         "decision_text": "The methodology question was deferred.",
@@ -37,7 +37,7 @@ def _deferral_decision() -> Dict[str, Any]:
 
 
 def test_disabled_by_default_zero_calls_null_tuple() -> None:
-    calls: List[str] = []
+    calls: list[str] = []
 
     def fake(prompt: str) -> str:
         calls.append(prompt)

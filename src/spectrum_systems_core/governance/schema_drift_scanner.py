@@ -9,23 +9,21 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 
 from ._io import (
     find_prior_audit,
-    read_json,
     utcnow_iso,
     write_audit_record,
 )
 from ._schema import validate_governance_artifact
 
-
 _LOG = logging.getLogger(__name__)
 
 
-def _walk_schemas(repo_root: Path) -> List[Path]:
+def _walk_schemas(repo_root: Path) -> list[Path]:
     schemas_root = repo_root / "contracts" / "schemas"
     if not schemas_root.is_dir():
         return []
@@ -47,8 +45,8 @@ def _resolve_ref(ref: str, schema_path: Path, repo_root: Path) -> bool:
     return False
 
 
-def _collect_refs(node: Any) -> List[str]:
-    refs: List[str] = []
+def _collect_refs(node: Any) -> list[str]:
+    refs: list[str] = []
     if isinstance(node, dict):
         for k, v in node.items():
             if k == "$ref" and isinstance(v, str):
@@ -61,18 +59,18 @@ def _collect_refs(node: Any) -> List[str]:
     return refs
 
 
-def _list_python_files(repo_root: Path) -> List[Path]:
+def _list_python_files(repo_root: Path) -> list[Path]:
     src = repo_root / "src"
     if not src.is_dir():
         return []
     return [p for p in src.rglob("*.py") if "__pycache__" not in p.parts]
 
 
-def _list_eval_definitions(repo_root: Path) -> List[Dict[str, Any]]:
+def _list_eval_definitions(repo_root: Path) -> list[dict[str, Any]]:
     eval_dir = repo_root / "contracts" / "evals"
     if not eval_dir.is_dir():
         return []
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for path in sorted(eval_dir.glob("*.json")):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -86,9 +84,9 @@ def _list_eval_definitions(repo_root: Path) -> List[Dict[str, Any]]:
 class SchemaDriftScanner:
     """Scan contracts/schemas/ for drift signals. Recommendation only."""
 
-    def scan(self, repo_root: str | Path) -> Dict[str, Any]:
+    def scan(self, repo_root: str | Path) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
-        flagged: List[Dict[str, Any]] = []
+        flagged: list[dict[str, Any]] = []
         broken_refs = 0
         unused = 0
         unparseable = 0
@@ -205,13 +203,13 @@ class SchemaDriftScanner:
 
         prior_audit = find_prior_audit(repo_root_path, "schema_drift")
         prior_value = prior_audit.get("current_value") if prior_audit else None
-        current_value: Dict[str, Any] = {
+        current_value: dict[str, Any] = {
             "total_schemas": len(schemas),
             "broken_refs": broken_refs,
             "unused": unused,
             "unparseable": unparseable,
         }
-        delta: Dict[str, Any] | None = None
+        delta: dict[str, Any] | None = None
         status = "clean"
         if prior_value is not None:
             delta = {

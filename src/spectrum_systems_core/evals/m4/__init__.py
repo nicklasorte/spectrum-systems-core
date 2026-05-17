@@ -12,9 +12,9 @@ core required-field evals in ``evals/runner.py``. Cores's runtime loop
 should never depend on this module; this module reads core artifacts.
 """
 from .aligner import EvalAligner
+from .few_shot import FewShotLoader, load_few_shot_examples
 from .metrics import EvalMetrics
 from .regression_gate import RegressionGate
-from .few_shot import FewShotLoader, load_few_shot_examples
 from .runner import EvalRunner
 
 __all__ = [

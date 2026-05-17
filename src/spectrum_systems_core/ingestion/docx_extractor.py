@@ -13,7 +13,7 @@ This is a pre-processing step only. It:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from docx import Document
 from docx.oxml.ns import qn
@@ -27,8 +27,8 @@ class DocxExtractor:
     def extract(
         self,
         docx_path: str,
-        output_path: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        output_path: str | None = None,
+    ) -> dict[str, Any]:
         """Extract plain text from a .docx file and write it as a .txt file.
 
         Args:
@@ -65,8 +65,8 @@ class DocxExtractor:
     def _extract(
         self,
         docx_path: str,
-        output_path: Optional[str],
-    ) -> Dict[str, Any]:
+        output_path: str | None,
+    ) -> dict[str, Any]:
         src = Path(docx_path)
 
         if not src.is_file():
@@ -109,7 +109,7 @@ class DocxExtractor:
         ``chunk_count`` is the number of non-empty text units (paragraphs +
         emitted table rows) — what was previously called paragraph_count.
         """
-        chunks: List[str] = []
+        chunks: list[str] = []
         table_count = 0
         table_row_count = 0
 
@@ -137,7 +137,7 @@ class DocxExtractor:
                 except Exception:
                     continue
                 for row in table.rows:
-                    row_cells: List[str] = []
+                    row_cells: list[str] = []
                     for cell in row.cells:
                         try:
                             cell_text = cell.text.strip()
@@ -154,8 +154,8 @@ class DocxExtractor:
     def extract_batch(
         self,
         docx_dir: str,
-        output_dir: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        output_dir: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Extract all .docx files in a directory.
 
         Args:
@@ -175,7 +175,7 @@ class DocxExtractor:
             return [_failure(f"directory_not_found:{docx_dir}")]
         docx_files = sorted(src_dir.glob("*.docx"))
 
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         for docx_file in docx_files:
             if output_dir is not None:
                 dest = str(Path(output_dir) / (docx_file.stem + ".txt"))
@@ -186,7 +186,7 @@ class DocxExtractor:
         return results
 
 
-def _failure(reason: str) -> Dict[str, Any]:
+def _failure(reason: str) -> dict[str, Any]:
     return {
         "status": "failure",
         "output_path": None,

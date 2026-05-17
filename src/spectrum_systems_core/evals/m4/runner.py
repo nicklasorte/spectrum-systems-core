@@ -41,7 +41,7 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 
@@ -75,7 +75,7 @@ def _now_iso() -> str:
     )
 
 
-def _load_schema(name: str) -> Optional[Dict[str, Any]]:
+def _load_schema(name: str) -> dict[str, Any] | None:
     path = contracts_root() / "schemas" / "eval" / f"{name}.schema.json"
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -83,7 +83,7 @@ def _load_schema(name: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _write_json(path: Path, obj: Dict[str, Any]) -> bool:
+def _write_json(path: Path, obj: dict[str, Any]) -> bool:
     """Atomic-ish JSON write. Returns True on success."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,7 +96,7 @@ def _write_json(path: Path, obj: Dict[str, Any]) -> bool:
         return False
 
 
-def _resolve_sdl_root(data_lake_path: str) -> Optional[Path]:
+def _resolve_sdl_root(data_lake_path: str) -> Path | None:
     env = os.environ.get("SDL_ROOT", "").strip()
     if env:
         p = Path(env)
@@ -120,12 +120,12 @@ class EvalRunner:
         self,
         data_lake_path: str,
         *,
-        sdl_root: Optional[str] = None,
-        pipeline_run_id: Optional[str] = None,
+        sdl_root: str | None = None,
+        pipeline_run_id: str | None = None,
         prompt_version: str = "unspecified",
-        aligner: Optional[EvalAligner] = None,
-        metrics: Optional[EvalMetrics] = None,
-        gate: Optional[RegressionGate] = None,
+        aligner: EvalAligner | None = None,
+        metrics: EvalMetrics | None = None,
+        gate: RegressionGate | None = None,
     ) -> None:
         self.data_lake_path = str(data_lake_path or "").strip()
         if sdl_root:
@@ -145,18 +145,18 @@ class EvalRunner:
         # deterministic alignment path. Keyed by source_id so the
         # summary builder can pull spurious_add_rate / per_outcome_f1 /
         # review_queue_count back out after per-pair iteration finishes.
-        self._p1_source_aggregates: Dict[str, Dict[str, Any]] = {}
-        self._p1_review_queue: List[Dict[str, Any]] = []
+        self._p1_source_aggregates: dict[str, dict[str, Any]] = {}
+        self._p1_review_queue: list[dict[str, Any]] = []
         self._p1_eval_result_ids: set = set()
 
     def run(
         self,
         *,
-        pair_id_filter: Optional[str] = None,
+        pair_id_filter: str | None = None,
         set_baseline: bool = False,
         is_dry_run: bool = False,
-        source_id_filter: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        source_id_filter: str | None = None,
+    ) -> dict[str, Any]:
         """Run the eval and return a result dict.
 
         ``is_dry_run`` short-circuits the run (eval is skipped, no
@@ -248,12 +248,12 @@ class EvalRunner:
                 "partial_run_detail": partial_detail,
             }
 
-        eval_results: List[Dict[str, Any]] = []
+        eval_results: list[dict[str, Any]] = []
         # Phase O.4: keep the (pair, eval_result) alignment so the
         # summary can carry source_id / ground_truth_text provenance.
         # _evaluate_pair returns None on schema-invalid eval_result; the
         # paired entry is skipped here too.
-        evaluated_pairs: List[Dict[str, Any]] = []
+        evaluated_pairs: list[dict[str, Any]] = []
         for pair in confirmed:
             er = self._evaluate_pair(pair)
             if er is not None:
@@ -279,7 +279,7 @@ class EvalRunner:
         # as gate_decision (RT1 finding: previously the summary said
         # regression_detected=False even when the gate said block).
         baseline_summary = self._load_baseline()
-        baseline_pair_results: List[Dict[str, Any]] = []
+        baseline_pair_results: list[dict[str, Any]] = []
         if baseline_summary is not None:
             baseline_pair_results = self._load_pair_results_for_summary(
                 baseline_summary
@@ -319,7 +319,7 @@ class EvalRunner:
         # Phase X2.4: tag the baseline scope on both the summary and
         # the gate_decision so a reader can answer "what does the
         # baseline cover?" without walking the artifact graph.
-        baseline_scope: Optional[str] = (
+        baseline_scope: str | None = (
             "single_transcript" if source_id_filter else "full_corpus"
         ) if becoming_baseline else None
         summary["baseline_scope"] = baseline_scope
@@ -393,13 +393,13 @@ class EvalRunner:
 
     # -- loaders ----------------------------------------------------------
 
-    def _load_pairs(self) -> List[Dict[str, Any]]:
+    def _load_pairs(self) -> list[dict[str, Any]]:
         if self.sdl_root is None:
             return []
         pairs_dir = self.sdl_root / "ground_truth"
         if not pairs_dir.is_dir():
             return []
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for path in sorted(pairs_dir.glob("*.json")):
             if not path.is_file():
                 continue
@@ -413,8 +413,8 @@ class EvalRunner:
         return out
 
     def _load_source_record(
-        self, source_artifact_id: str, source_id_hint: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+        self, source_artifact_id: str, source_id_hint: str | None = None
+    ) -> dict[str, Any] | None:
         if self.sdl_root is None:
             return None
         # Try flat sdl_root path first.
@@ -475,8 +475,8 @@ class EvalRunner:
             return ""
 
     def _load_extracted_items(
-        self, source_record: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, source_record: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         payload = source_record.get("payload") if source_record else None
         if not isinstance(payload, dict):
             return []
@@ -497,7 +497,7 @@ class EvalRunner:
         )
         if not candidates_path.is_file():
             return []
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         try:
             with candidates_path.open("r", encoding="utf-8") as fh:
                 for line in fh:
@@ -514,7 +514,7 @@ class EvalRunner:
             return []
         return out
 
-    def _evaluate_pair(self, pair: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _evaluate_pair(self, pair: dict[str, Any]) -> dict[str, Any] | None:
         # Phase P1: dispatch on pair shape. New deterministic alignment
         # fires when the pair carries the typed-extraction surface
         # (ground_truth_text + expected_decision_outcome) AND no
@@ -536,7 +536,7 @@ class EvalRunner:
         fixture_chunking_strategy = pair.get("fixture_chunking_strategy")
         fixture_source_id = pair.get("fixture_source_id")
 
-        source_id_hint: Optional[str] = (
+        source_id_hint: str | None = (
             fixture_source_id if isinstance(fixture_source_id, str) else None
         )
         source_record = self._load_source_record(
@@ -621,7 +621,7 @@ class EvalRunner:
     # -- Phase P1: deterministic two-stage alignment ----------------------
 
     @staticmethod
-    def _is_p1_eligible_pair(pair: Dict[str, Any]) -> bool:
+    def _is_p1_eligible_pair(pair: dict[str, Any]) -> bool:
         """True iff the pair should go through the Phase P1 alignment path.
 
         Eligibility requires the new typed-extraction fields to be
@@ -645,12 +645,12 @@ class EvalRunner:
             return False
         return True
 
-    def _gt_pair_review_path(self, pair_id: str) -> Optional[Path]:
+    def _gt_pair_review_path(self, pair_id: str) -> Path | None:
         if self.sdl_root is None or not pair_id:
             return None
         return self.sdl_root / "ground_truth" / f"{pair_id}{_GT_PAIR_REVIEW_SUFFIX}"
 
-    def _load_gt_pair_review(self, pair_id: str) -> Optional[Dict[str, Any]]:
+    def _load_gt_pair_review(self, pair_id: str) -> dict[str, Any] | None:
         path = self._gt_pair_review_path(pair_id)
         if path is None or not path.is_file():
             return None
@@ -661,8 +661,8 @@ class EvalRunner:
         return doc if isinstance(doc, dict) else None
 
     def _load_meeting_extraction_for_pair(
-        self, pair: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+        self, pair: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Load the meeting_extraction artifact tied to ``pair``.
 
         Lookup precedence:
@@ -682,7 +682,7 @@ class EvalRunner:
             return None
         sa_id = pair.get("source_artifact_id")
         source_id = self._resolve_pair_source_id(pair) or ""
-        candidates: List[Path] = []
+        candidates: list[Path] = []
         if isinstance(sa_id, str) and sa_id:
             candidates.append(ext_dir / f"{sa_id}_meeting_extraction.json")
         if source_id:
@@ -714,7 +714,7 @@ class EvalRunner:
         finding_code: str,
         severity: str,
         *,
-        context: Dict[str, Any],
+        context: dict[str, Any],
         remediation: str,
     ) -> None:
         if self.sdl_root is None:
@@ -771,8 +771,8 @@ class EvalRunner:
         )
 
     def _evaluate_pair_p1(
-        self, pair: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+        self, pair: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Phase P1 deterministic two-stage alignment for a single GT pair.
 
         Gates:
@@ -839,7 +839,7 @@ class EvalRunner:
         # carries the matched GT-text record; review_alignments carries
         # the matched extracted decisions.
         alignment_id = str(uuid.uuid4())
-        coverage_alignments: List[Dict[str, Any]] = [
+        coverage_alignments: list[dict[str, Any]] = [
             {
                 "minutes_item_text": pair.get("ground_truth_text") or "",
                 "matched_extracted_item_id": (
@@ -857,7 +857,7 @@ class EvalRunner:
                 "alignment_status": "matched" if matched else "unmatched",
             }
         ]
-        review_alignments: List[Dict[str, Any]] = []
+        review_alignments: list[dict[str, Any]] = []
         if matched:
             for ext_idx in per_pair.get("matched_extracted_indices", []):
                 review_alignments.append(
@@ -938,8 +938,8 @@ class EvalRunner:
         return eval_result
 
     def _compute_p1_source_alignment(
-        self, seed_pair: Dict[str, Any], source_id: str
-    ) -> Dict[str, Any]:
+        self, seed_pair: dict[str, Any], source_id: str
+    ) -> dict[str, Any]:
         """Run compute_alignment for every confirmed P1 pair under ``source_id``.
 
         Caching: the result is keyed by ``source_id`` on
@@ -959,7 +959,7 @@ class EvalRunner:
         # Only include pairs whose review confirms the outcome -- the
         # gate is enforced per-pair, but the aggregates should not pull
         # in rejected pairs either.
-        gt_pool: List[Dict[str, Any]] = []
+        gt_pool: list[dict[str, Any]] = []
         for p in confirmed_for_source:
             review = self._load_gt_pair_review(p.get("pair_id") or "")
             if review is None:
@@ -970,7 +970,7 @@ class EvalRunner:
 
         extraction = self._load_meeting_extraction_for_pair(seed_pair) or {}
         decisions_raw = extraction.get("decisions") if isinstance(extraction, dict) else []
-        decisions: List[Dict[str, Any]] = [
+        decisions: list[dict[str, Any]] = [
             d for d in (decisions_raw or []) if isinstance(d, dict)
         ]
 
@@ -999,7 +999,7 @@ class EvalRunner:
 
         # Index per-pair info, attaching best-score signals from the
         # raw alignment for the on-disk alignment_result payload.
-        per_pair: Dict[str, Dict[str, Any]] = {}
+        per_pair: dict[str, dict[str, Any]] = {}
         for entry in alignment["pairs"]:
             pid = entry["pair_id"]
             matched_idxs = entry.get("matched_extracted_indices") or []
@@ -1066,7 +1066,7 @@ class EvalRunner:
         # the meeting_extraction so the eval_summary carries them
         # through. Missing fields stay None so artifacts written
         # before Phase P3-A still flow through.
-        p3a_passthrough: Dict[str, Any] = {}
+        p3a_passthrough: dict[str, Any] = {}
         if isinstance(extraction, dict):
             for key in (
                 "extraction_mode",
@@ -1084,7 +1084,7 @@ class EvalRunner:
 
         # Phase P2-A: per-decision calibration data, stamped with
         # ``source_id`` so a multi-source summary preserves provenance.
-        calibration_data: List[Dict[str, Any]] = []
+        calibration_data: list[dict[str, Any]] = []
         for entry in alignment.get("calibration_data") or []:
             if not isinstance(entry, dict):
                 continue
@@ -1122,13 +1122,13 @@ class EvalRunner:
 
     def _build_summary(
         self,
-        eval_results: List[Dict[str, Any]],
+        eval_results: list[dict[str, Any]],
         pairs_skipped_pending_review: int,
         is_baseline: bool,
         partial_run_warning: bool = False,
-        partial_run_detail: Optional[Dict[str, Any]] = None,
-        evaluated_pairs: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        partial_run_detail: dict[str, Any] | None = None,
+        evaluated_pairs: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         n = len(eval_results)
         aggregate_coverage = (
             sum(_safe_float(er.get("coverage")) for er in eval_results) / n
@@ -1144,7 +1144,7 @@ class EvalRunner:
             int(er.get("items_requiring_review", 0) or 0) for er in eval_results
         )
 
-        by_strategy: Dict[str, Dict[str, float]] = {}
+        by_strategy: dict[str, dict[str, float]] = {}
         for strategy in (
             "speaker_turn",
             "character_count_fallback",
@@ -1198,7 +1198,7 @@ class EvalRunner:
         # through ``_evaluate_pair_p1`` so legacy fixtures don't poison
         # the new metrics with their inline-text scoring.
         p1_aggregates = self._compute_p1_aggregates(eval_results)
-        summary: Dict[str, Any] = {
+        summary: dict[str, Any] = {
             "eval_summary_id": str(uuid.uuid4()),
             "pipeline_run_id": self.pipeline_run_id,
             "artifact_type": "eval_summary",
@@ -1292,8 +1292,8 @@ class EvalRunner:
 
     @staticmethod
     def _aggregate_p3a_passthrough(
-        p3a_sources: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        p3a_sources: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Aggregate the meeting_extraction passthrough fields across sources.
 
         - ``extraction_mode`` / ``glossary_version``: first non-null
@@ -1325,7 +1325,7 @@ class EvalRunner:
                 "population_rate_note": None,
             }
 
-        def _mean(values: List[float]) -> Optional[float]:
+        def _mean(values: list[float]) -> float | None:
             if not values:
                 return None
             return sum(values) / len(values)
@@ -1336,15 +1336,15 @@ class EvalRunner:
                     return src[key]
             return None
 
-        def _collect_floats(key: str) -> List[float]:
-            out: List[float] = []
+        def _collect_floats(key: str) -> list[float]:
+            out: list[float] = []
             for src in p3a_sources:
                 v = src.get(key)
                 if isinstance(v, (int, float)):
                     out.append(float(v))
             return out
 
-        breakdown_sum: Dict[str, int] = {
+        breakdown_sum: dict[str, int] = {
             "decision": 0, "claim": 0, "action_item": 0, "off_topic": 0,
         }
         any_breakdown = False
@@ -1378,7 +1378,7 @@ class EvalRunner:
 
         # Build the population_rate_note when at least one of the three
         # extended-field rates is reported AND any is below threshold.
-        below: List[str] = []
+        below: list[str] = []
         for key in (
             "stakeholders_populated_rate",
             "rationale_populated_rate",
@@ -1387,14 +1387,14 @@ class EvalRunner:
             value = rates.get(key)
             if isinstance(value, float) and value < RATE_WARN_THRESHOLD:
                 below.append(f"{key}={value:.2f}")
-        pop_note: Optional[str] = None
+        pop_note: str | None = None
         if below:
             pop_note = (
                 "rates < {threshold:.2f} indicate prompt tuning needed: "
                 + ", ".join(below)
             ).format(threshold=RATE_WARN_THRESHOLD)
 
-        out: Dict[str, Any] = {
+        out: dict[str, Any] = {
             "extraction_mode": _first_non_null("extraction_mode"),
             "glossary_version": _first_non_null("glossary_version"),
             "extraction_path_breakdown": (
@@ -1406,8 +1406,8 @@ class EvalRunner:
         return out
 
     def _compute_p1_aggregates(
-        self, eval_results: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, eval_results: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """Aggregate Phase P1 source-level metrics across the run.
 
         ``spurious_add_rate`` is computed from extracted-decision
@@ -1436,9 +1436,9 @@ class EvalRunner:
                 sources_in_run.add(er.get("source_artifact_id") or "")
         total_extracted_global = 0
         unmatched_extracted_global = 0
-        outcome_f1_buckets: Dict[str, List[float]] = {}
+        outcome_f1_buckets: dict[str, list[float]] = {}
         review_queue_total = 0
-        threshold_seen: Optional[float] = None
+        threshold_seen: float | None = None
         # Phase P2: roll up prompt_version + calibration_data across the
         # set of source aggregates this run touched. prompt_version is
         # collapsed to a single string when all sources agree; otherwise
@@ -1446,7 +1446,7 @@ class EvalRunner:
         # on calibration_note (a multi-version mix is a red flag the
         # operator should see).
         prompt_versions_seen: set = set()
-        calibration_records: List[Dict[str, Any]] = []
+        calibration_records: list[dict[str, Any]] = []
         for aggregates in self._p1_source_aggregates.values():
             if aggregates.get("source_id") not in sources_in_run and \
                     not any(
@@ -1484,7 +1484,7 @@ class EvalRunner:
             else 0.0
         )
 
-        prompt_version: Optional[str]
+        prompt_version: str | None
         if len(prompt_versions_seen) == 1:
             prompt_version = next(iter(prompt_versions_seen))
         else:
@@ -1521,8 +1521,8 @@ class EvalRunner:
     # -- Phase P2-C judge calibration ------------------------------------
 
     def _load_judge_scores_for_sources(
-        self, source_ids: List[str]
-    ) -> List[Dict[str, Any]]:
+        self, source_ids: list[str]
+    ) -> list[dict[str, Any]]:
         """Load every ``judge_score`` artifact tied to ``source_ids``.
 
         The runner does not currently invoke the judge in-line, so this
@@ -1544,12 +1544,12 @@ class EvalRunner:
         wanted = {sid for sid in source_ids if isinstance(sid, str) and sid}
         if not wanted:
             return []
-        candidates: List[Path] = []
+        candidates: list[Path] = []
         for sub in ("judge_scores", "judge"):
             d = self.sdl_root / sub
             if d.is_dir():
                 candidates.extend(p for p in d.glob("*.json") if p.is_file())
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for path in candidates:
             try:
                 doc = json.loads(path.read_text(encoding="utf-8"))
@@ -1566,8 +1566,8 @@ class EvalRunner:
 
     def _compute_judge_metrics(
         self,
-        evaluated_pairs: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        evaluated_pairs: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Phase P2-C: judge_human_agreement / judge_pass_rate.
 
         Returns a dict with keys
@@ -1577,7 +1577,7 @@ class EvalRunner:
         records why so a reader of the eval_summary does not have to
         guess.
         """
-        source_ids: List[str] = []
+        source_ids: list[str] = []
         seen: set = set()
         for pair in evaluated_pairs:
             if not isinstance(pair, dict):
@@ -1601,7 +1601,7 @@ class EvalRunner:
         # items_evaluated so a single big run dominates a tiny stale one.
         weighted_pass = 0.0
         total_evaluated = 0
-        items_index: Dict[str, Dict[str, Any]] = {}
+        items_index: dict[str, dict[str, Any]] = {}
         for art in judge_artifacts:
             n = int(art.get("items_evaluated") or 0)
             rate = art.get("aggregate_pass_rate")
@@ -1615,7 +1615,7 @@ class EvalRunner:
                 if isinstance(iid, str) and iid:
                     items_index[iid] = item
 
-        judge_pass_rate: Optional[float] = (
+        judge_pass_rate: float | None = (
             (weighted_pass / total_evaluated) if total_evaluated > 0 else None
         )
 
@@ -1623,7 +1623,7 @@ class EvalRunner:
         # pairs that agree on pass/fail. Requires both ``ground_truth_pass``
         # on the gt_pair AND a matching ``decision_id`` / ``item_id`` in
         # the judge artifact's ``item_scores``.
-        matches: List[bool] = []
+        matches: list[bool] = []
         for pair in evaluated_pairs:
             if not isinstance(pair, dict):
                 continue
@@ -1666,9 +1666,9 @@ class EvalRunner:
 
     def _compute_per_type_metrics(
         self,
-        eval_results: List[Dict[str, Any]],
-        evaluated_pairs: List[Dict[str, Any]],
-    ) -> Tuple[Optional[Dict[str, Dict[str, float]]], Optional[str]]:
+        eval_results: list[dict[str, Any]],
+        evaluated_pairs: list[dict[str, Any]],
+    ) -> tuple[dict[str, dict[str, float]] | None, str | None]:
         """Aggregate coverage/precision/F1 per ``target_type``.
 
         Returns ``(metrics_or_none, reason_or_none)``. The metrics dict
@@ -1698,7 +1698,7 @@ class EvalRunner:
             self._emit_ground_truth_missing_type_finding(len(missing))
             return None, f"target_type_absent_on_{len(missing)}_pairs"
 
-        buckets: Dict[str, Dict[str, float]] = {
+        buckets: dict[str, dict[str, float]] = {
             t: {"prec_sum": 0.0, "rec_sum": 0.0, "pairs": 0}
             for t in SUPPORTED_TYPES
         }
@@ -1710,7 +1710,7 @@ class EvalRunner:
             buckets[t]["prec_sum"] += _safe_float(er.get("precision"))
             buckets[t]["rec_sum"] += _safe_float(er.get("coverage"))
 
-        out: Dict[str, Dict[str, float]] = {}
+        out: dict[str, dict[str, float]] = {}
         for t in SUPPORTED_TYPES:
             n = int(buckets[t]["pairs"])
             if n == 0:
@@ -1738,8 +1738,8 @@ class EvalRunner:
     def _emit_baseline_set_finding(
         self,
         *,
-        summary: Dict[str, Any],
-        baseline_scope: Optional[str],
+        summary: dict[str, Any],
+        baseline_scope: str | None,
     ) -> None:
         """Emit ``baseline_set`` (info severity) after --set-baseline."""
         if self.sdl_root is None:
@@ -1837,14 +1837,14 @@ class EvalRunner:
         """
         if self.sdl_root is None:
             return False
-        candidates: List[Path] = []
+        candidates: list[Path] = []
         for d in (
             self.sdl_root / "orchestration",
             self.sdl_root / "extractions",
         ):
             if d.is_dir():
                 candidates.extend(d.glob("*.json"))
-        latest_status: Optional[str] = None
+        latest_status: str | None = None
         latest_mtime: float = 0.0
         for path in candidates:
             try:
@@ -1903,15 +1903,15 @@ class EvalRunner:
 
     def _build_pair_breakdown(
         self,
-        eval_results: List[Dict[str, Any]],
-        evaluated_pairs: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        eval_results: list[dict[str, Any]],
+        evaluated_pairs: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """One entry per (pair, eval_result). Pairs without a resolvable
         source_id store ``source_id: None`` so the missing-provenance
         signal stays visible in the artifact (and triggers an
         ``eval_pair_missing_source_id`` info finding via
         ``_emit_missing_source_id_findings``)."""
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for er, pair in zip(eval_results, evaluated_pairs):
             pair_id = (
                 er.get("pair_id")
@@ -1950,15 +1950,15 @@ class EvalRunner:
 
     def _compute_per_source_metrics(
         self,
-        pair_breakdown: List[Dict[str, Any]],
-    ) -> Optional[Dict[str, Dict[str, Any]]]:
+        pair_breakdown: list[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]] | None:
         """Aggregate match_score / coverage per source_id.
 
         Suppressed (returns ``None``) when fewer than
         ``_PER_SOURCE_METRICS_MIN_SOURCES`` distinct source_ids are
         present so the rollup never duplicates the aggregate numbers.
         """
-        buckets: Dict[str, Dict[str, float]] = {}
+        buckets: dict[str, dict[str, float]] = {}
         for entry in pair_breakdown:
             sid = entry.get("source_id")
             if not isinstance(sid, str) or not sid:
@@ -1978,7 +1978,7 @@ class EvalRunner:
             b["precision_sum"] += float(entry.get("match_score") or 0.0)
         if len(buckets) < _PER_SOURCE_METRICS_MIN_SOURCES:
             return None
-        out: Dict[str, Dict[str, Any]] = {}
+        out: dict[str, dict[str, Any]] = {}
         for sid, b in buckets.items():
             pairs = int(b["pairs"])
             matched = int(b["matched"])
@@ -1994,7 +1994,7 @@ class EvalRunner:
 
     def _emit_missing_source_id_findings(
         self,
-        pair_breakdown: List[Dict[str, Any]],
+        pair_breakdown: list[dict[str, Any]],
     ) -> None:
         if self.sdl_root is None:
             return
@@ -2042,8 +2042,8 @@ class EvalRunner:
     # -- partial-run detection (Phase O.4) ---------------------------------
 
     def _compute_partial_run_signal(
-        self, confirmed_pairs: List[Dict[str, Any]]
-    ) -> Tuple[bool, Dict[str, Any]]:
+        self, confirmed_pairs: list[dict[str, Any]]
+    ) -> tuple[bool, dict[str, Any]]:
         """Return (partial_run_warning, partial_run_detail).
 
         ``expected`` = number of confirmed ground_truth_pairs.
@@ -2071,8 +2071,8 @@ class EvalRunner:
         # Group pairs by resolved source_id. Pairs that fail to resolve
         # a source_id are tracked separately and reported via their
         # pair_id so the warning still fires loudly.
-        pairs_by_source: Dict[str, List[Dict[str, Any]]] = {}
-        unresolvable_pairs: List[Dict[str, Any]] = []
+        pairs_by_source: dict[str, list[dict[str, Any]]] = {}
+        unresolvable_pairs: list[dict[str, Any]] = []
         for pair in confirmed_pairs:
             sid = self._resolve_pair_source_id(pair)
             if not sid:
@@ -2081,7 +2081,7 @@ class EvalRunner:
             pairs_by_source.setdefault(sid, []).append(pair)
 
         present_pair_count = 0
-        missing_sources: List[str] = []
+        missing_sources: list[str] = []
         for sid, pairs in pairs_by_source.items():
             # A source is "present" if ANY of its pairs (or the on-disk
             # source_record's current sa_id) resolves to an extraction
@@ -2114,7 +2114,7 @@ class EvalRunner:
             },
         )
 
-    def _resolve_pair_source_id(self, pair: Dict[str, Any]) -> str:
+    def _resolve_pair_source_id(self, pair: dict[str, Any]) -> str:
         sid = pair.get("fixture_source_id")
         if isinstance(sid, str) and sid:
             return sid
@@ -2135,7 +2135,7 @@ class EvalRunner:
         return ""
 
     def _meeting_extraction_exists_for_source(
-        self, source_id: str, pair: Dict[str, Any]
+        self, source_id: str, pair: dict[str, Any]
     ) -> bool:
         # Fixture-injected pairs carry their extracted items inline on
         # the pair record itself; for those there is no separate
@@ -2239,7 +2239,7 @@ class EvalRunner:
         assert self.sdl_root is not None
         return self.sdl_root / "evals" / "eval_run_count.json"
 
-    def _load_baseline(self) -> Optional[Dict[str, Any]]:
+    def _load_baseline(self) -> dict[str, Any] | None:
         if self.sdl_root is None:
             return None
         path = self._baseline_path()
@@ -2251,7 +2251,7 @@ class EvalRunner:
             return None
         return rec if isinstance(rec, dict) else None
 
-    def _write_baseline(self, summary: Dict[str, Any]) -> None:
+    def _write_baseline(self, summary: dict[str, Any]) -> None:
         if self.sdl_root is None:
             return
         baseline = dict(summary)
@@ -2285,14 +2285,14 @@ class EvalRunner:
         return count
 
     def _load_pair_results_for_summary(
-        self, summary: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, summary: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         if self.sdl_root is None:
             return []
         ids = summary.get("eval_results") or []
         if not isinstance(ids, list):
             return []
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for eid in ids:
             if not isinstance(eid, str) or not eid:
                 continue
@@ -2310,7 +2310,7 @@ class EvalRunner:
     # -- write + validate --------------------------------------------------
 
     def _validate_and_write(
-        self, schema_name: str, artifact: Dict[str, Any], path: Path
+        self, schema_name: str, artifact: dict[str, Any], path: Path
     ) -> bool:
         schema = _load_schema(schema_name)
         if schema is not None:
@@ -2338,7 +2338,7 @@ def _safe_float(value: Any) -> float:
         return 0.0
 
 
-def format_cli_report(result: Dict[str, Any]) -> str:
+def format_cli_report(result: dict[str, Any]) -> str:
     """Render the eval result as a CLI report (human + machine readable)."""
     if result.get("status") == "skipped":
         return (
@@ -2355,7 +2355,7 @@ def format_cli_report(result: Dict[str, Any]) -> str:
     gate = result.get("gate_decision") or {}
     eval_results = result.get("eval_results") or []
 
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append("=== Ground Truth Eval ===")
     lines.append(f"Pipeline run: {summary.get('pipeline_run_id', '')}")
     lines.append(

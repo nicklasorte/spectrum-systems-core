@@ -8,21 +8,20 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from ..harness.eval_history import EvalScoreHistory
 from ._io import find_prior_audit, utcnow_iso, write_audit_record
 from ._schema import validate_governance_artifact
 
-
 _LOG = logging.getLogger(__name__)
 
 
-def _list_eval_definitions(repo_root: Path) -> List[Dict[str, Any]]:
+def _list_eval_definitions(repo_root: Path) -> list[dict[str, Any]]:
     eval_dir = repo_root / "contracts" / "evals"
     if not eval_dir.is_dir():
         return []
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for path in sorted(eval_dir.glob("*.json")):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -33,7 +32,7 @@ def _list_eval_definitions(repo_root: Path) -> List[Dict[str, Any]]:
     return out
 
 
-def _list_python_files(repo_root: Path) -> List[Path]:
+def _list_python_files(repo_root: Path) -> list[Path]:
     src = repo_root / "src"
     if not src.is_dir():
         return []
@@ -43,9 +42,9 @@ def _list_python_files(repo_root: Path) -> List[Path]:
 class EvalCoverageScanner:
     """Scan eval coverage for uncovered types and degrading evals."""
 
-    def scan(self, repo_root: str | Path) -> Dict[str, Any]:
+    def scan(self, repo_root: str | Path) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
-        flagged: List[Dict[str, Any]] = []
+        flagged: list[dict[str, Any]] = []
 
         evals = _list_eval_definitions(repo_root_path)
         eval_target_types = {

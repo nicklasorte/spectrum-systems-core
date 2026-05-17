@@ -5,7 +5,7 @@ EVAL-MIT-001..004. No LLM. Block on failure.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 
@@ -17,11 +17,11 @@ class MitigationEval:
 
     def run(
         self,
-        mitigations: List[Dict[str, Any]],
-        predictions: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
-        eval_results: List[Dict[str, Any]] = []
-        reason_codes: List[str] = []
+        mitigations: list[dict[str, Any]],
+        predictions: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        eval_results: list[dict[str, Any]] = []
+        reason_codes: list[str] = []
 
         # EVAL-MIT-001: schema_conformance
         try:
@@ -41,7 +41,7 @@ class MitigationEval:
                 "reason_codes": ["schema_unreadable"],
             }
         validator = jsonschema.Draft202012Validator(schema)
-        schema_failures: List[str] = []
+        schema_failures: list[str] = []
         for mit in mitigations:
             try:
                 validator.validate(mit)
@@ -64,7 +64,7 @@ class MitigationEval:
             )
 
         # EVAL-MIT-002: add_evidence requires search terms (FINDING-E-006)
-        offenders: List[str] = []
+        offenders: list[str] = []
         for mit in mitigations:
             if mit.get("mitigation_type") == "add_evidence":
                 terms = mit.get("evidence_search_terms") or []
@@ -91,7 +91,7 @@ class MitigationEval:
             for p in predictions
             if isinstance(p.get("prediction_id"), str)
         }
-        orphans: List[str] = []
+        orphans: list[str] = []
         for mit in mitigations:
             pid = mit.get("prediction_id")
             if pid not in valid_prediction_ids:

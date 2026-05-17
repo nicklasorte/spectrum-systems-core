@@ -23,7 +23,8 @@ import json
 import logging
 import re
 import uuid
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from .model_registry import ModelRegistry
 
@@ -56,11 +57,11 @@ def _now_iso() -> str:
     )
 
 
-def _parse_json_response(text: str) -> Dict[str, Any]:
+def _parse_json_response(text: str) -> dict[str, Any]:
     """Robust JSON-from-LLM parse. Returns ``{}`` on any failure."""
     if not isinstance(text, str) or not text.strip():
         return {}
-    candidates: List[str] = [text]
+    candidates: list[str] = [text]
     stripped = text.strip()
     if stripped.startswith("```"):
         body = stripped[3:]
@@ -108,8 +109,8 @@ class PostHocVerifier:
     def __init__(
         self,
         model_registry: ModelRegistry,
-        sdl_root: Optional[str] = None,
-        api_caller: Optional[Callable[[str], Dict[str, Any]]] = None,
+        sdl_root: str | None = None,
+        api_caller: Callable[[str], dict[str, Any]] | None = None,
     ):
         self.model_registry = model_registry
         self.sdl_root = sdl_root
@@ -128,17 +129,17 @@ class PostHocVerifier:
 
     def verify_extraction(
         self,
-        meeting_extraction: Dict[str, Any],
-        chunks_by_id: Dict[str, Dict[str, Any]],
+        meeting_extraction: dict[str, Any],
+        chunks_by_id: dict[str, dict[str, Any]],
         pipeline_run_id: str,
         *,
-        trace_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        trace_id: str | None = None,
+    ) -> dict[str, Any]:
         """Verify every decision/claim/action_item in ``meeting_extraction``.
 
         Returns a source_verification_result artifact dict.
         """
-        items: List[Tuple[Dict[str, Any], str]] = []
+        items: list[tuple[dict[str, Any], str]] = []
         for item in meeting_extraction.get("decisions", []) or []:
             items.append((item, "decision"))
         for item in meeting_extraction.get("claims", []) or []:
@@ -146,7 +147,7 @@ class PostHocVerifier:
         for item in meeting_extraction.get("action_items", []) or []:
             items.append((item, "action_item"))
 
-        item_verifications: List[Dict[str, Any]] = []
+        item_verifications: list[dict[str, Any]] = []
         halted = False
         for index, (item, item_type) in enumerate(items):
             verification = self._verify_single_item(
@@ -203,10 +204,10 @@ class PostHocVerifier:
 
     def _verify_single_item(
         self,
-        item: Dict[str, Any],
+        item: dict[str, Any],
         item_type: str,
-        chunks_by_id: Dict[str, Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        chunks_by_id: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
         item_id = _coerce_item_id(item)
         item_text = _item_text(item, item_type)
         cited = list(item.get("source_turn_ids") or [])
@@ -328,9 +329,9 @@ class PostHocVerifier:
         self,
         item_text: str,
         item_type: str,
-        cited_turn_texts: Sequence[Dict[str, Any]],
+        cited_turn_texts: Sequence[dict[str, Any]],
     ) -> str:
-        turn_blocks: List[str] = []
+        turn_blocks: list[str] = []
         for t in cited_turn_texts:
             turn_blocks.append(
                 f"  - turn_id: {t['turn_id']}\n"
@@ -375,7 +376,7 @@ class PostHocVerifier:
             f"}}\n"
         )
 
-    def _call_model(self, prompt: str) -> Dict[str, Any]:
+    def _call_model(self, prompt: str) -> dict[str, Any]:
         if self._api_caller is not None:
             response = self._api_caller(prompt)
             if isinstance(response, dict):
@@ -390,7 +391,7 @@ class PostHocVerifier:
             temperature=0,
             messages=[{"role": "user", "content": prompt}],
         )
-        parts: List[str] = []
+        parts: list[str] = []
         for block in getattr(message, "content", []) or []:
             text = getattr(block, "text", None)
             if isinstance(text, str):
@@ -403,10 +404,10 @@ class PostHocVerifier:
 
     def _compute_summary(
         self,
-        item_verifications: Sequence[Dict[str, Any]],
+        item_verifications: Sequence[dict[str, Any]],
         *,
         halted: bool,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         total = len(item_verifications)
         verified = 0
         unsupported = 0
@@ -450,7 +451,7 @@ _VALID_UUID_RE = re.compile(
 )
 
 
-def _coerce_uuid(value: Any, allow_none: bool = False) -> Optional[str]:
+def _coerce_uuid(value: Any, allow_none: bool = False) -> str | None:
     """Return ``value`` if it parses as a UUID; otherwise mint a stable
     uuid5 from its string form.
 
@@ -471,7 +472,7 @@ def _coerce_uuid(value: Any, allow_none: bool = False) -> Optional[str]:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, "phase-v-corr:" + s))
 
 
-def _coerce_item_id(item: Dict[str, Any]) -> str:
+def _coerce_item_id(item: dict[str, Any]) -> str:
     """Return a UUID-shaped id for ``item``.
 
     Items produced by today's extractors do not carry an ``id`` field --
@@ -490,7 +491,7 @@ def _coerce_item_id(item: Dict[str, Any]) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, "phase-v-item:" + seed))
 
 
-def _item_text(item: Dict[str, Any], item_type: str) -> str:
+def _item_text(item: dict[str, Any], item_type: str) -> str:
     if item_type == "decision":
         return str(item.get("decision_text") or "").strip() or "<empty>"
     if item_type == "claim":
@@ -505,13 +506,13 @@ def _build_verification_entry(
     item_id: str,
     item_type: str,
     item_text: str,
-    cited_source_turn_ids: List[str],
+    cited_source_turn_ids: list[str],
     status: str,
-    excerpts: List[str],
+    excerpts: list[str],
     confidence: float,
     rationale: str,
     model_version: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "item_id": item_id,
         "item_type": item_type,

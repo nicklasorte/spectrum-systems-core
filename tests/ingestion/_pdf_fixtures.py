@@ -10,9 +10,8 @@ guaranteed to exceed the threshold when given enough lines.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, List
-
 
 MINIMAL_PDF: bytes = (
     b"%PDF-1.4\n"
@@ -41,7 +40,7 @@ def build_rich_pdf(lines: Iterable[str]) -> bytes:
     Computes object offsets dynamically so the xref table matches whatever
     content stream is produced.
     """
-    body: List[str] = ["BT", "/F1 10 Tf", "50 750 Td"]
+    body: list[str] = ["BT", "/F1 10 Tf", "50 750 Td"]
     for i, line in enumerate(lines):
         safe = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
         if i == 0:
@@ -52,7 +51,7 @@ def build_rich_pdf(lines: Iterable[str]) -> bytes:
     body.append("ET")
     content_bytes = ("\n".join(body) + "\n").encode("latin-1")
 
-    objects: List[bytes] = [
+    objects: list[bytes] = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         (
@@ -70,7 +69,7 @@ def build_rich_pdf(lines: Iterable[str]) -> bytes:
     ]
 
     out = b"%PDF-1.4\n"
-    offsets: List[int] = [0]
+    offsets: list[int] = [0]
     for i, obj in enumerate(objects, start=1):
         offsets.append(len(out))
         out += f"{i} 0 obj\n".encode("ascii") + obj + b"\nendobj\n"

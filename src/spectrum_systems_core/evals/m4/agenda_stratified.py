@@ -16,8 +16,8 @@ The functions in this module are pure helpers. They never raise.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Sequence
-
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 UNCLASSIFIED_SECTION: str = "unclassified"
 
@@ -49,7 +49,7 @@ def build_per_agenda_section_metrics(
     agenda_items: Sequence[Mapping[str, Any]],
     *,
     chunks: Sequence[Mapping[str, Any]] = (),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Reshape ``compute_per_agenda_item_metrics`` output to R.4 format.
 
     Each agenda_id becomes a section keyed by its label (or the id when
@@ -77,7 +77,7 @@ def build_per_agenda_section_metrics(
 
     # Count chunks per agenda for the ``pairs`` field. Chunks without an
     # agenda_item_id are pooled under ``unclassified``.
-    chunk_counts: Dict[str, int] = {}
+    chunk_counts: dict[str, int] = {}
     unclassified_chunks = 0
     for c in chunks or []:
         if not isinstance(c, dict):
@@ -88,7 +88,7 @@ def build_per_agenda_section_metrics(
         else:
             unclassified_chunks += 1
 
-    sections: Dict[str, Any] = {}
+    sections: dict[str, Any] = {}
     for aid, cov in coverage.items():
         label = _label_for_agenda(aid, agenda_items)
         section_key = f"agenda_item_{label}".strip()
@@ -110,7 +110,7 @@ def build_per_agenda_section_metrics(
     return sections
 
 
-def _unclassified_section(chunks: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+def _unclassified_section(chunks: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     return {
         "coverage": 0.0,
         "precision": 0.0,
@@ -120,7 +120,7 @@ def _unclassified_section(chunks: Sequence[Mapping[str, Any]]) -> Dict[str, Any]
 
 def diff_against_baseline(
     current: Mapping[str, Any], baseline: Mapping[str, Any],
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Compare two ``per_agenda_section_metrics`` snapshots safely.
 
     Missing sections in baseline are skipped (not an error). New
@@ -129,9 +129,9 @@ def diff_against_baseline(
     """
     base = baseline or {}
     cur = current or {}
-    new_sections: List[str] = []
-    missing_in_current: List[str] = []
-    common_diffs: Dict[str, Dict[str, float]] = {}
+    new_sections: list[str] = []
+    missing_in_current: list[str] = []
+    common_diffs: dict[str, dict[str, float]] = {}
 
     for section_key, cur_metrics in cur.items():
         if not isinstance(cur_metrics, dict):
@@ -142,7 +142,7 @@ def diff_against_baseline(
             continue
         # Coverage / precision diff (None when baseline entry was
         # ``excluded_small`` rather than a number).
-        diff: Dict[str, float] = {}
+        diff: dict[str, float] = {}
         for metric in ("coverage", "precision"):
             cur_val = cur_metrics.get(metric)
             base_val = base_metrics.get(metric)

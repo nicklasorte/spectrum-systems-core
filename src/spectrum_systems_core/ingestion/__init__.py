@@ -5,18 +5,18 @@ raw source file -> source_record (JSON) -> text_units.jsonl -> eval/control
 
 All modules here are deterministic and fail-closed. No LLM calls.
 """
-from .source_loader import SourceLoader
-from .grounding import GroundingHelper
-from .source_eval import SourceEval
-from .obsidian_projection import ObsidianProjection
-from .promoter import Promoter
-from .pdf_guard import PDFAdmissionGuard
-from .pdf_extractor import PDFExtractor
 from .docx_extractor import DocxExtractor
-from .ingestion_eval import IngestionEval
-from .minutes_processor import MinutesProcessor
-from .minutes_deduplicator import deduplicate_minutes
 from .ground_truth_linker import GroundTruthLinker
+from .grounding import GroundingHelper
+from .ingestion_eval import IngestionEval
+from .minutes_deduplicator import deduplicate_minutes
+from .minutes_processor import MinutesProcessor
+from .obsidian_projection import ObsidianProjection
+from .pdf_extractor import PDFExtractor
+from .pdf_guard import PDFAdmissionGuard
+from .promoter import Promoter
+from .source_eval import SourceEval
+from .source_loader import SourceLoader
 
 __all__ = [
     "SourceLoader",

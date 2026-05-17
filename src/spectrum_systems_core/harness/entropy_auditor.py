@@ -5,16 +5,14 @@ a recommended_action a human acts on via CLI.
 """
 from __future__ import annotations
 
-import datetime
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from . import OVERRIDE_EXPIRY_WARNING_DAYS
 from ._io import (
     append_jsonl,
-    parse_iso,
     read_jsonl,
     utcnow_iso,
 )
@@ -30,15 +28,14 @@ from .eval_history import EvalScoreHistory
 from .outcome_memory import OutcomeMemoryStore
 from .override_store import OverrideStore
 
-
 _LOG = logging.getLogger(__name__)
 _EFFECTIVENESS_THRESHOLD = 0.5
 _ARCHIVE_GROWTH_THRESHOLD = 500
 
 
-def _scan_idle_evals(repo_root: Path) -> List[Dict[str, Any]]:
+def _scan_idle_evals(repo_root: Path) -> list[dict[str, Any]]:
     """EVAL_CASE_NO_RECENT_FAILURES: evals with all-pass in last 30 runs."""
-    flagged: List[Dict[str, Any]] = []
+    flagged: list[dict[str, Any]] = []
     contracts_dir = repo_root / "contracts" / "evals"
     if not contracts_dir.is_dir():
         return flagged
@@ -79,8 +76,8 @@ def _scan_idle_evals(repo_root: Path) -> List[Dict[str, Any]]:
     return flagged
 
 
-def _scan_patterns_without_candidate(repo_root: Path) -> List[Dict[str, Any]]:
-    flagged: List[Dict[str, Any]] = []
+def _scan_patterns_without_candidate(repo_root: Path) -> list[dict[str, Any]]:
+    flagged: list[dict[str, Any]] = []
     patterns = read_jsonl(patterns_path(repo_root))
     for pattern in patterns:
         if int(pattern.get("occurrence_count", 0)) < 3:
@@ -107,8 +104,8 @@ def _scan_patterns_without_candidate(repo_root: Path) -> List[Dict[str, Any]]:
     return flagged
 
 
-def _scan_expiring_overrides(repo_root: Path) -> List[Dict[str, Any]]:
-    flagged: List[Dict[str, Any]] = []
+def _scan_expiring_overrides(repo_root: Path) -> list[dict[str, Any]]:
+    flagged: list[dict[str, Any]] = []
     store = OverrideStore()
     actives = store.get_active_overrides(repo_root)
     for override in actives:
@@ -132,8 +129,8 @@ def _scan_expiring_overrides(repo_root: Path) -> List[Dict[str, Any]]:
     return flagged
 
 
-def _scan_outcome_effectiveness(repo_root: Path) -> List[Dict[str, Any]]:
-    flagged: List[Dict[str, Any]] = []
+def _scan_outcome_effectiveness(repo_root: Path) -> list[dict[str, Any]]:
+    flagged: list[dict[str, Any]] = []
     store = OutcomeMemoryStore()
     for outcome_type in ("revision", "mitigation"):
         stats = store.get_effectiveness_rate(outcome_type, repo_root)
@@ -159,8 +156,8 @@ def _scan_outcome_effectiveness(repo_root: Path) -> List[Dict[str, Any]]:
     return flagged
 
 
-def _scan_archive_growth(repo_root: Path) -> List[Dict[str, Any]]:
-    flagged: List[Dict[str, Any]] = []
+def _scan_archive_growth(repo_root: Path) -> list[dict[str, Any]]:
+    flagged: list[dict[str, Any]] = []
     archive = runs_archive_dir(repo_root)
     if not archive.is_dir():
         return flagged
@@ -202,10 +199,10 @@ class EntropyAuditor:
         self,
         repo_root: str | Path,
         vault_root: str | Path | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         try:
             repo_root_path = Path(repo_root).resolve()
-            flagged: List[Dict[str, Any]] = []
+            flagged: list[dict[str, Any]] = []
             flagged.extend(_scan_idle_evals(repo_root_path))
             flagged.extend(_scan_patterns_without_candidate(repo_root_path))
             flagged.extend(_scan_expiring_overrides(repo_root_path))
@@ -245,7 +242,7 @@ class EntropyAuditor:
 
     def write_entropy_projection(
         self,
-        report: Dict[str, Any],
+        report: dict[str, Any],
         repo_root: str | Path,
         vault_root: str | Path | None = None,
     ) -> str:

@@ -11,10 +11,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ._paths import ai_registry_path
-
 
 _REQUIRED_FIELDS = (
     "version",
@@ -31,8 +30,8 @@ _REQUIRED_FIELDS = (
 class PromptRegistry:
     """Read-only registry of versioned AI task types."""
 
-    _registry: Optional[Dict[str, Any]] = None
-    _registry_root: Optional[str] = None
+    _registry: dict[str, Any] | None = None
+    _registry_root: str | None = None
 
     def load(self, repo_root: str) -> None:
         """Load and validate ai/registry/prompts.json. Cached at class level."""
@@ -84,7 +83,7 @@ class PromptRegistry:
         PromptRegistry._registry = doc
         PromptRegistry._registry_root = repo_root_str
 
-    def _ensure_loaded(self, repo_root: Optional[str]) -> None:
+    def _ensure_loaded(self, repo_root: str | None) -> None:
         if PromptRegistry._registry is not None:
             return
         if not repo_root:
@@ -93,7 +92,7 @@ class PromptRegistry:
             )
         self.load(repo_root)
 
-    def get(self, task_type: str, repo_root: Optional[str] = None) -> Dict[str, Any]:
+    def get(self, task_type: str, repo_root: str | None = None) -> dict[str, Any]:
         """Return the task definition. Raise ValueError on unknown task_type."""
         self._ensure_loaded(repo_root)
         registry = PromptRegistry._registry or {}
@@ -102,7 +101,7 @@ class PromptRegistry:
             raise ValueError(f"unregistered_task_type: {task_type}")
         return dict(task_types[task_type])
 
-    def list_task_types(self, repo_root: Optional[str] = None) -> List[str]:
+    def list_task_types(self, repo_root: str | None = None) -> list[str]:
         self._ensure_loaded(repo_root)
         registry = PromptRegistry._registry or {}
         return sorted((registry.get("task_types") or {}).keys())
@@ -112,7 +111,7 @@ class PromptRegistry:
         task_type: str,
         question: str,
         context: str,
-        repo_root: Optional[str] = None,
+        repo_root: str | None = None,
     ) -> str:
         """Render the prompt template — substitutes {question} and {context} only."""
         task = self.get(task_type, repo_root=repo_root)

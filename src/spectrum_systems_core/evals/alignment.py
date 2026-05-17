@@ -67,7 +67,8 @@ calls with identical inputs always return identical outputs.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Iterable, List, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from ..config.taxonomy import REGULATORY_VERBS
 
@@ -154,7 +155,7 @@ def compute_alignment(
     *,
     threshold: float = ALIGNMENT_THRESHOLD,
     regulatory_verbs: Sequence[str] = REGULATORY_VERBS,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Two-stage deterministic alignment for typed-extraction decisions.
 
     Inputs are sequences of mappings. ``extracted_decisions`` items must
@@ -169,11 +170,11 @@ def compute_alignment(
     n_pairs = len(gt_pairs)
 
     # pair_id -> set of matched extracted indices
-    pair_to_extracted: Dict[str, set] = {}
+    pair_to_extracted: dict[str, set] = {}
     # extracted_index -> set of matched pair_ids
-    extracted_to_pair: Dict[int, set] = {}
+    extracted_to_pair: dict[int, set] = {}
     # per-extracted review queue entries (passed Stage 1, failed Stage 2)
-    review_queue: List[Dict[str, Any]] = []
+    review_queue: list[dict[str, Any]] = []
 
     for ext_idx, decision in enumerate(extracted_decisions):
         ext_outcome = decision.get("decision_outcome") if isinstance(decision, Mapping) else None
@@ -184,7 +185,7 @@ def compute_alignment(
         # Stage 1 candidates: GT pairs whose expected_decision_outcome
         # matches the extracted decision's decision_outcome. Either side
         # missing => no match candidate (fail-closed).
-        stage1_candidates: List[Dict[str, Any]] = []
+        stage1_candidates: list[dict[str, Any]] = []
         for gt in gt_pairs:
             if not isinstance(gt, Mapping):
                 continue
@@ -274,7 +275,7 @@ def compute_alignment(
             if isinstance(outcome, str) and outcome:
                 outcomes.add(outcome)
 
-    per_outcome_f1: Dict[str, float] = {}
+    per_outcome_f1: dict[str, float] = {}
     for outcome in sorted(outcomes):
         gt_pair_ids_for_outcome = {
             gt.get("pair_id")
@@ -300,7 +301,7 @@ def compute_alignment(
         r_o = (len(matched_gt_for_outcome) / gt_total) if gt_total > 0 else 0.0
         per_outcome_f1[outcome] = round(_f1(p_o, r_o), 6)
 
-    pairs_info: List[Dict[str, Any]] = []
+    pairs_info: list[dict[str, Any]] = []
     for gt in gt_pairs:
         if not isinstance(gt, Mapping):
             continue
@@ -323,7 +324,7 @@ def compute_alignment(
     # ``aligned`` flag tracks whether the decision matched ANY GT pair
     # bidirectionally, so a spurious decision (no GT pair matched)
     # surfaces here as aligned=false rather than being silently absent.
-    calibration_data: List[Dict[str, Any]] = []
+    calibration_data: list[dict[str, Any]] = []
     for ext_idx, decision in enumerate(extracted_decisions):
         if not isinstance(decision, Mapping):
             # Keep position parity with extracted_decisions so a

@@ -38,7 +38,7 @@ def _fake_anthropic(stop_reason, text='{"decisions": []}'):
     _Message.stop_reason = stop_reason
 
     class _Messages:
-        def create(self, **kw: object) -> "_Message":
+        def create(self, **kw: object) -> _Message:
             captured.update(kw)
             return _Message()
 
@@ -89,7 +89,7 @@ def test_missing_stop_reason_does_not_raise(monkeypatch):
         content = [_Content()]  # NOTE: no stop_reason attribute
 
     class _Messages:
-        def create(self, **kw: object) -> "_Message":
+        def create(self, **kw: object) -> _Message:
             return _Message()
 
     class _Anthropic:

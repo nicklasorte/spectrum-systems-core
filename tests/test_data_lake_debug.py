@@ -3,7 +3,6 @@ from pathlib import Path
 
 from spectrum_systems_core.data_lake import run_transcript_pipeline
 
-
 VALID_METADATA = {
     "meeting_id": "m-debug-1",
     "title": "Debug case",

@@ -14,12 +14,12 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from spectrum_systems_core.governance.artifact_validator import validate_and_log
 
 
-def _summary_for(payload: Dict[str, Any]) -> str:
+def _summary_for(payload: dict[str, Any]) -> str:
     metadata = payload.get("metadata", {}) or {}
     date = metadata.get("date", "")
     return (
@@ -34,7 +34,7 @@ class _LocalDataLake:
     def __init__(self, root: Path) -> None:
         self.root = root
 
-    def store(self, artifact: Dict[str, Any]) -> str:
+    def store(self, artifact: dict[str, Any]) -> str:
         self.root.mkdir(parents=True, exist_ok=True)
         artifact_id = artifact["artifact_id"]
         validate_and_log(artifact, schema_path=str(self.root / f"{artifact_id}.json"))
@@ -74,7 +74,7 @@ def _load_external_data_lake_class():
 class Promoter:
     """Promote a source_record to the data lake."""
 
-    def promote(self, source_record: Dict[str, Any]) -> Dict[str, Any]:
+    def promote(self, source_record: dict[str, Any]) -> dict[str, Any]:
         try:
             payload = source_record["payload"]
             payload["summary"] = _summary_for(payload)

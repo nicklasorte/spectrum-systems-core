@@ -12,8 +12,9 @@ import hashlib
 import json
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 import jsonschema
 
@@ -61,8 +62,8 @@ def _execution_fingerprint(
     return "sha256:" + _sha256_hex(seed.encode("utf-8"))
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     with path.open("r", encoding="utf-8") as fh:
@@ -80,7 +81,7 @@ def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
 class CommentProcessor:
     """Process agency comments into issue_record artifacts (or warnings)."""
 
-    def __init__(self, api_caller: Optional[Callable[[str], str]] = None):
+    def __init__(self, api_caller: Callable[[str], str] | None = None):
         self._api_caller = api_caller
 
     def process(
@@ -89,7 +90,7 @@ class CommentProcessor:
         source_id: str,
         comment_source_id: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         text = comment_text or ""
         normalized = text.lower()
         raw_hash = "sha256:" + _sha256_hex(text.encode("utf-8"))
@@ -203,7 +204,7 @@ class CommentProcessor:
         comment_source_id: str,
         working_paper_source_id: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         comment_processed, _ = find_processed_dir(repo_root_path, comment_source_id)
         if comment_processed is None:
@@ -266,7 +267,7 @@ class CommentProcessor:
         raw_hash: str,
         repo_root: str,
         reason: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         warning = {
             "warning_id": str(uuid.uuid4()),
             "source_id": paper_source_id,
@@ -322,7 +323,7 @@ class CommentProcessor:
                 temperature=EXTRACTION_TEMPERATURE,
                 messages=[{"role": "user", "content": prompt}],
             )
-            parts: List[str] = []
+            parts: list[str] = []
             for block in message.content:
                 text = getattr(block, "text", None)
                 if isinstance(text, str):

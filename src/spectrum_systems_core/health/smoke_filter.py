@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
@@ -48,7 +48,7 @@ def _on_block(workflow: dict[str, Any]) -> dict[str, Any]:
 
 def detect_smoke_test_path_filter(
     repo_root: Path | str,
-) -> Optional[HealthFinding]:
+) -> HealthFinding | None:
     """Return a halt finding if smoke-test.yml has a ``paths:`` filter.
 
     Returns ``None`` when the file does not exist (caller decides

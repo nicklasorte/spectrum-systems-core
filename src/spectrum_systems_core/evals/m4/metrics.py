@@ -23,8 +23,7 @@ from __future__ import annotations
 
 import datetime
 import uuid
-from typing import Any, Dict
-
+from typing import Any
 
 SCHEMA_VERSION = "1.0.0"
 PRODUCED_BY = "EvalMetrics"
@@ -45,11 +44,11 @@ class EvalMetrics:
 
     def compute(
         self,
-        alignment_result: Dict[str, Any],
+        alignment_result: dict[str, Any],
         *,
         pipeline_run_id: str = "",
         prompt_version: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Return an eval_result artifact dict.
 
         Never raises. Missing alignment_result keys default to safe

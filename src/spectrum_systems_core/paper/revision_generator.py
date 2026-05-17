@@ -12,8 +12,9 @@ import hashlib
 import json
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 import jsonschema
 
@@ -73,8 +74,8 @@ def _execution_fingerprint(issue_id: str, instruction_text: str) -> str:
     return "sha256:" + _sha256_hex(seed.encode("utf-8"))
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     with path.open("r", encoding="utf-8") as fh:
@@ -92,16 +93,16 @@ def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
 class RevisionGenerator:
     """Generate revision_instruction artifacts from open issues."""
 
-    def __init__(self, api_caller: Optional[Callable[[str], str]] = None):
+    def __init__(self, api_caller: Callable[[str], str] | None = None):
         self._api_caller = api_caller
 
     def generate_for_issue(
         self,
-        issue: Dict[str, Any],
-        claims: List[Dict[str, Any]],
+        issue: dict[str, Any],
+        claims: list[dict[str, Any]],
         source_id: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         related_claim = None
         if issue.get("claim_id"):
             for c in claims:
@@ -232,7 +233,7 @@ class RevisionGenerator:
 
     def generate_for_source(
         self, working_paper_source_id: str, repo_root: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, _ = find_processed_dir(
             repo_root_path, working_paper_source_id
@@ -249,7 +250,7 @@ class RevisionGenerator:
         issues = _read_jsonl(paper_dir / "issues.jsonl")
         claims = _read_jsonl(paper_dir / "claims.jsonl")
 
-        instructions: List[Dict[str, Any]] = []
+        instructions: list[dict[str, Any]] = []
         blocked = 0
         for issue in issues:
             if issue.get("status") != "open":
@@ -303,7 +304,7 @@ class RevisionGenerator:
                 temperature=EXTRACTION_TEMPERATURE,
                 messages=[{"role": "user", "content": prompt}],
             )
-            parts: List[str] = []
+            parts: list[str] = []
             for block in message.content:
                 text = getattr(block, "text", None)
                 if isinstance(text, str):

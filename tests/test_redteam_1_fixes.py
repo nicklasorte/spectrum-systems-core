@@ -11,15 +11,14 @@ from pathlib import Path
 from spectrum_systems_core.artifacts import new_artifact
 from spectrum_systems_core.data_lake import (
     AGENCIES_SUBDIR,
-    TOPICS_SUBDIR,
     INDEX_FILENAME,
+    TOPICS_SUBDIR,
     artifact_markdown_path,
     markdown_dir,
     process_meeting,
     render_artifact_markdown,
 )
 from spectrum_systems_core.data_lake.loader import TranscriptInput
-
 
 FIXTURES = Path(__file__).parent / "fixtures" / "golden_meetings"
 

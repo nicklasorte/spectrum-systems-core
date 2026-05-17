@@ -8,10 +8,10 @@ import datetime
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
-def _get_store_root() -> Optional[Path]:
+def _get_store_root() -> Path | None:
     env = os.environ.get("DATA_LAKE_PATH", "")
     if not env or not Path(env).exists():
         return None
@@ -26,7 +26,7 @@ def _now_iso() -> str:
 
 
 def _resolve_processed_path(
-    payload: Dict[str, Any], repo_root: Path
+    payload: dict[str, Any], repo_root: Path
 ) -> Path:
     processed_path = payload.get("processed_path", "")
     p = Path(processed_path)
@@ -47,8 +47,8 @@ class ObsidianProjection:
 
     def write_source_index(
         self,
-        source_record: Dict[str, Any],
-        text_units: List[Dict[str, Any]],
+        source_record: dict[str, Any],
+        text_units: list[dict[str, Any]],
         repo_root: str | Path,
     ) -> str:
         store_root = _get_store_root()
@@ -68,8 +68,8 @@ class ObsidianProjection:
 
     def _render(
         self,
-        source_record: Dict[str, Any],
-        text_units: List[Dict[str, Any]],
+        source_record: dict[str, Any],
+        text_units: list[dict[str, Any]],
     ) -> str:
         payload = source_record["payload"]
         metadata = payload.get("metadata", {})
@@ -136,8 +136,8 @@ class ObsidianProjection:
     def write_book_extraction_index(
         self,
         source_id: str,
-        metadata: Dict[str, Any],
-        extraction_report: Dict[str, Any],
+        metadata: dict[str, Any],
+        extraction_report: dict[str, Any],
         repo_root: str | Path,
     ) -> str:
         """Render a Markdown projection of a Phase B PDF extraction.
@@ -152,7 +152,7 @@ class ObsidianProjection:
         target_dir = store_root / "processed" / "books" / source_id / "markdown"
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / "index.md"
-        pages: List[Dict[str, Any]] = _load_pages(
+        pages: list[dict[str, Any]] = _load_pages(
             store_root / "raw" / "books" / source_id / "pages.jsonl"
         )
         target_path.write_text(
@@ -166,9 +166,9 @@ class ObsidianProjection:
     def _render_book_extraction(
         self,
         source_id: str,
-        metadata: Dict[str, Any],
-        extraction_report: Dict[str, Any],
-        pages: List[Dict[str, Any]],
+        metadata: dict[str, Any],
+        extraction_report: dict[str, Any],
+        pages: list[dict[str, Any]],
     ) -> str:
         title = str(metadata.get("title", source_id))
         date = str(metadata.get("date", ""))
@@ -269,7 +269,7 @@ class ObsidianProjection:
     def write_story_projection(
         self,
         source_id: str,
-        candidates: List[Dict[str, Any]],
+        candidates: list[dict[str, Any]],
         repo_root: str | Path,
         label: str = "",
     ) -> str:
@@ -295,7 +295,7 @@ class ObsidianProjection:
     def _render_story_projection(
         self,
         source_id: str,
-        candidates: List[Dict[str, Any]],
+        candidates: list[dict[str, Any]],
         label: str,
     ) -> str:
         generated_at = _now_iso()
@@ -411,9 +411,9 @@ class ObsidianProjection:
         self,
         source_id: str,
         label: str,
-        concepts: List[Dict[str, Any]],
-        themes: List[Dict[str, Any]],
-        analogies: List[Dict[str, Any]],
+        concepts: list[dict[str, Any]],
+        themes: list[dict[str, Any]],
+        analogies: list[dict[str, Any]],
     ) -> str:
         generated_at = _now_iso()
         lines = [
@@ -435,8 +435,8 @@ class ObsidianProjection:
             "",
         ]
 
-        def _block(title: str, items: List[Dict[str, Any]], name_key: str,
-                   id_key: str) -> List[str]:
+        def _block(title: str, items: list[dict[str, Any]], name_key: str,
+                   id_key: str) -> list[str]:
             out = [f"## {title} ({len(items)})", ""]
             if not items:
                 out.append(f"_No {title.lower()} candidates._")
@@ -502,7 +502,7 @@ class ObsidianProjection:
         self,
         source_id: str,
         label: str,
-        connections: List[Dict[str, Any]],
+        connections: list[dict[str, Any]],
     ) -> str:
         generated_at = _now_iso()
         lines = [
@@ -556,7 +556,7 @@ class ObsidianProjection:
     def write_paper_claims_projection(
         self,
         source_id: str,
-        claims: List[Dict[str, Any]],
+        claims: list[dict[str, Any]],
         repo_root: str | Path,
     ) -> str:
         """Write processed/<family>/<source_id>/paper/markdown/claims.md.
@@ -577,7 +577,7 @@ class ObsidianProjection:
     def _render_claims_projection(
         self,
         source_id: str,
-        claims: List[Dict[str, Any]],
+        claims: list[dict[str, Any]],
     ) -> str:
         generated_at = _now_iso()
         lines = [
@@ -614,7 +614,7 @@ class ObsidianProjection:
     def write_paper_issues_projection(
         self,
         source_id: str,
-        issues: List[Dict[str, Any]],
+        issues: list[dict[str, Any]],
         repo_root: str | Path,
     ) -> str:
         """Write processed/<family>/<source_id>/paper/markdown/issues.md."""
@@ -632,7 +632,7 @@ class ObsidianProjection:
     def _render_issues_projection(
         self,
         source_id: str,
-        issues: List[Dict[str, Any]],
+        issues: list[dict[str, Any]],
     ) -> str:
         generated_at = _now_iso()
         lines = [
@@ -680,8 +680,8 @@ class ObsidianProjection:
     def write_paper_revisions_projection(
         self,
         source_id: str,
-        instructions: List[Dict[str, Any]],
-        diffs: List[Dict[str, Any]],
+        instructions: list[dict[str, Any]],
+        diffs: list[dict[str, Any]],
         repo_root: str | Path,
     ) -> str:
         """Write processed/<family>/<source_id>/paper/markdown/revisions.md.
@@ -704,8 +704,8 @@ class ObsidianProjection:
     def _render_revisions_projection(
         self,
         source_id: str,
-        instructions: List[Dict[str, Any]],
-        diffs: List[Dict[str, Any]],
+        instructions: list[dict[str, Any]],
+        diffs: list[dict[str, Any]],
     ) -> str:
         generated_at = _now_iso()
         diffs_by_inst = {d.get("instruction_id"): d for d in diffs}
@@ -778,10 +778,10 @@ class ObsidianProjection:
 
     def write_agency_profile_projection(
         self,
-        profile: Dict[str, Any],
-        active_positions: List[Dict[str, Any]],
-        all_positions: List[Dict[str, Any]],
-        recent_history: List[Dict[str, Any]],
+        profile: dict[str, Any],
+        active_positions: list[dict[str, Any]],
+        all_positions: list[dict[str, Any]],
+        recent_history: list[dict[str, Any]],
         repo_root: str | Path,
     ) -> str:
         """Write agency/<slug>/markdown/profile.md.
@@ -803,10 +803,10 @@ class ObsidianProjection:
 
     def _render_agency_profile_projection(
         self,
-        profile: Dict[str, Any],
-        active_positions: List[Dict[str, Any]],
-        all_positions: List[Dict[str, Any]],
-        recent_history: List[Dict[str, Any]],
+        profile: dict[str, Any],
+        active_positions: list[dict[str, Any]],
+        all_positions: list[dict[str, Any]],
+        recent_history: list[dict[str, Any]],
     ) -> str:
         generated_at = _now_iso()
         slug = profile.get("agency_slug", "?")
@@ -815,7 +815,7 @@ class ObsidianProjection:
         # Detect stale primary positions (newest per topic with valid_until in past).
         import datetime as _dt
         today = _dt.datetime.now(_dt.timezone.utc).date()
-        by_topic: Dict[str, List[Dict[str, Any]]] = {}
+        by_topic: dict[str, list[dict[str, Any]]] = {}
         for pos in all_positions:
             topic = str(pos.get("topic") or "").strip().lower()
             if not topic:
@@ -907,7 +907,7 @@ class ObsidianProjection:
     def write_objections_projection(
         self,
         paper_source_id: str,
-        predictions: List[Dict[str, Any]],
+        predictions: list[dict[str, Any]],
         repo_root: str | Path,
     ) -> str:
         """Write processed/<family>/<source_id>/paper/markdown/objections.md."""
@@ -925,7 +925,7 @@ class ObsidianProjection:
     def _render_objections_projection(
         self,
         paper_source_id: str,
-        predictions: List[Dict[str, Any]],
+        predictions: list[dict[str, Any]],
     ) -> str:
         generated_at = _now_iso()
         lines = [
@@ -974,8 +974,8 @@ class ObsidianProjection:
     def write_mitigations_projection(
         self,
         paper_source_id: str,
-        mitigations: List[Dict[str, Any]],
-        blocked_reasons: List[str],
+        mitigations: list[dict[str, Any]],
+        blocked_reasons: list[str],
         repo_root: str | Path,
     ) -> str:
         """Write processed/<family>/<source_id>/paper/markdown/mitigations.md."""
@@ -995,8 +995,8 @@ class ObsidianProjection:
     def _render_mitigations_projection(
         self,
         paper_source_id: str,
-        mitigations: List[Dict[str, Any]],
-        blocked_reasons: List[str],
+        mitigations: list[dict[str, Any]],
+        blocked_reasons: list[str],
     ) -> str:
         generated_at = _now_iso()
         lines = [
@@ -1045,7 +1045,7 @@ class ObsidianProjection:
 
     def write_patterns_projection(
         self,
-        patterns: List[Dict[str, Any]],
+        patterns: list[dict[str, Any]],
         repo_root: str | Path,
     ) -> str:
         """Write agency/markdown/patterns.md (cross-agency pattern index)."""
@@ -1061,7 +1061,7 @@ class ObsidianProjection:
 
     def _render_patterns_projection(
         self,
-        patterns: List[Dict[str, Any]],
+        patterns: list[dict[str, Any]],
     ) -> str:
         generated_at = _now_iso()
         lines = [
@@ -1102,7 +1102,7 @@ class ObsidianProjection:
 
     def write_report_projection(
         self,
-        report_draft: Dict[str, Any],
+        report_draft: dict[str, Any],
         repo_root: str | Path,
     ) -> str:
         """Write synthesis/<run_id>/markdown/report.md. VIEW ONLY."""
@@ -1120,7 +1120,7 @@ class ObsidianProjection:
 
     def _render_report_projection(
         self,
-        report_draft: Dict[str, Any],
+        report_draft: dict[str, Any],
     ) -> str:
         generated_at = _now_iso()
         sections = report_draft.get("sections", []) or []
@@ -1164,7 +1164,7 @@ class ObsidianProjection:
 
     def write_keynote_projection(
         self,
-        keynote_scaffold: Dict[str, Any],
+        keynote_scaffold: dict[str, Any],
         repo_root: str | Path,
     ) -> str:
         """Write synthesis/<run_id>/markdown/keynote.md. VIEW ONLY."""
@@ -1182,7 +1182,7 @@ class ObsidianProjection:
 
     def _render_keynote_projection(
         self,
-        keynote_scaffold: Dict[str, Any],
+        keynote_scaffold: dict[str, Any],
     ) -> str:
         generated_at = _now_iso()
         arc = keynote_scaffold.get("arc", []) or []
@@ -1262,7 +1262,7 @@ class ObsidianProjection:
     ) -> str:
         generated_at = _now_iso()
         manifest_path = run_dir / "run_manifest.json"
-        manifest: Dict[str, Any] = {}
+        manifest: dict[str, Any] = {}
         if manifest_path.is_file():
             try:
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -1270,7 +1270,7 @@ class ObsidianProjection:
                 manifest = {}
 
         cost_path = run_dir / "cost.jsonl"
-        cost_lines: List[Dict[str, Any]] = []
+        cost_lines: list[dict[str, Any]] = []
         if cost_path.is_file():
             try:
                 with cost_path.open("r", encoding="utf-8") as fh:
@@ -1359,7 +1359,7 @@ class ObsidianProjection:
         markdown_dir.mkdir(parents=True, exist_ok=True)
         target = markdown_dir / "run_history.md"
         index_path = repo_root_path / "harness" / "runs" / "index.json"
-        index: Dict[str, Any] = {}
+        index: dict[str, Any] = {}
         if index_path.is_file():
             try:
                 index = json.loads(index_path.read_text(encoding="utf-8"))
@@ -1416,7 +1416,7 @@ class ObsidianProjection:
         markdown_dir.mkdir(parents=True, exist_ok=True)
         target = markdown_dir / "eval_history.md"
         evals_dir = repo_root_path / "harness" / "evals"
-        rows: List[Dict[str, Any]] = []
+        rows: list[dict[str, Any]] = []
         if evals_dir.is_dir():
             from ..harness.eval_history import EvalScoreHistory
 
@@ -1540,7 +1540,7 @@ class ObsidianProjection:
         ][-5:]
         generated_at = _now_iso()
 
-        def _fmt_rate(stats: Dict[str, Any]) -> str:
+        def _fmt_rate(stats: dict[str, Any]) -> str:
             r = stats.get("effectiveness_rate")
             if r is None:
                 return "n/a"
@@ -1643,7 +1643,7 @@ class ObsidianProjection:
 
     def write_entropy_projection(
         self,
-        report: Dict[str, Any],
+        report: dict[str, Any],
         repo_root: str | Path,
         vault_root: str | Path | None = None,
     ) -> str:
@@ -1760,7 +1760,7 @@ class ObsidianProjection:
 
     def write_ai_query_projection(
         self,
-        ai_output: Dict[str, Any],
+        ai_output: dict[str, Any],
         question: str,
         task_type: str,
         vault_root: str | Path,
@@ -1833,7 +1833,7 @@ class ObsidianProjection:
 
     def write_certification_projection(
         self,
-        record: Dict[str, Any],
+        record: dict[str, Any],
         vault_root: str | Path,
     ) -> str:
         """Write vault/Certifications/<certification_id>.md (view only).
@@ -1851,8 +1851,8 @@ class ObsidianProjection:
         )
         return str(target)
 
-    def _render_certification_projection(self, record: Dict[str, Any]) -> str:
-        lines: List[str] = []
+    def _render_certification_projection(self, record: dict[str, Any]) -> str:
+        lines: list[str] = []
         lines.append(
             "<!-- VIEW ONLY — generated by GOV10CertificationStep — do not edit -->"
         )
@@ -1896,7 +1896,7 @@ class ObsidianProjection:
 
     def write_formatted_paper_projection(
         self,
-        formatted_artifact: Dict[str, Any],
+        formatted_artifact: dict[str, Any],
         vault_root: str | Path,
     ) -> str:
         """Write vault/Papers/<paper_id>.md (view only)."""
@@ -1912,7 +1912,7 @@ class ObsidianProjection:
         return str(target)
 
     def _render_formatted_paper_projection(
-        self, formatted: Dict[str, Any]
+        self, formatted: dict[str, Any]
     ) -> str:
         meta = formatted.get("publication_metadata") or {}
         prov = formatted.get("provenance") or {}
@@ -1920,7 +1920,7 @@ class ObsidianProjection:
         citations = formatted.get("citations") or []
         references = formatted.get("references") or []
         authors = formatted.get("authors") or []
-        lines: List[str] = []
+        lines: list[str] = []
         lines.append(
             "<!-- VIEW ONLY — generated by PublicationFormatter — "
             "do not edit -->"
@@ -1972,10 +1972,10 @@ class ObsidianProjection:
         return "\n".join(lines)
 
 
-def _load_jsonl(path: Path) -> List[Dict[str, Any]]:
+def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     try:
         with path.open("r", encoding="utf-8") as fh:
             for line in fh:
@@ -2007,10 +2007,10 @@ def _resolve_phase_c_dir(repo_root: Path, source_id: str) -> Path:
     return fallback
 
 
-def _load_pages(pages_path: Path) -> List[Dict[str, Any]]:
+def _load_pages(pages_path: Path) -> list[dict[str, Any]]:
     if not pages_path.is_file():
         return []
-    pages: List[Dict[str, Any]] = []
+    pages: list[dict[str, Any]] = []
     try:
         with pages_path.open("r", encoding="utf-8") as fh:
             for line in fh:

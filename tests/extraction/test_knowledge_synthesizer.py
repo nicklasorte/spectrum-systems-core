@@ -6,7 +6,7 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from spectrum_systems_core.extraction import KnowledgeSynthesizer
 
@@ -20,7 +20,7 @@ def _make_promoted_story(
     tier: str = "tier_1",
     summary: str = "A summary that is over twenty characters in length.",
     excerpt: str = "An excerpt that is grounded in the source.",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "story_id": str(uuid.uuid4()),
         "source_id": source_id,
@@ -59,7 +59,7 @@ def _make_promoted_story(
 
 
 def _write_promoted_stories(
-    repo_root: Path, source_id: str, stories: List[Dict[str, Any]]
+    repo_root: Path, source_id: str, stories: list[dict[str, Any]]
 ) -> None:
     target = repo_root / "processed" / "notes" / source_id / "stories" / "promoted"
     target.mkdir(parents=True, exist_ok=True)

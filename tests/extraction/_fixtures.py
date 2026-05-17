@@ -5,7 +5,7 @@ import json
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 
 def id_from_prompt(prompt: str, label: str) -> str:
@@ -21,16 +21,16 @@ def write_text_units(
     *,
     family: str,
     source_id: str,
-    texts: List[str],
-    page_numbers: List[int] | None = None,
+    texts: list[str],
+    page_numbers: list[int] | None = None,
 ) -> Path:
     """Write processed/<family>/<source_id>/text_units.jsonl."""
     target = repo_root / "processed" / family / source_id
     target.mkdir(parents=True, exist_ok=True)
-    units: List[Dict[str, Any]] = []
+    units: list[dict[str, Any]] = []
     char_offset = 0
     for ordinal, text in enumerate(texts):
-        locator: Dict[str, Any] = {
+        locator: dict[str, Any] = {
             "line_start": ordinal,
             "line_end": ordinal,
             "char_start": char_offset,
@@ -58,8 +58,8 @@ def write_text_units(
     return units_path
 
 
-def read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()

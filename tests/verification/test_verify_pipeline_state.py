@@ -8,16 +8,14 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import jsonschema
-import pytest
 
 from spectrum_systems_core.cli import (
     verify_pipeline_state as verify_pipeline_state_cli,
 )
 from spectrum_systems_core.verification import (
-    emit_actions_summary,
     scan_pipeline_state,
     write_pipeline_state_record,
 )
@@ -39,7 +37,7 @@ def _stage_data_lake(tmp_path: Path) -> Path:
     return root
 
 
-def _write_sdl_artifact(sdl_root: Path, name: str, obj: Dict[str, Any]) -> Path:
+def _write_sdl_artifact(sdl_root: Path, name: str, obj: dict[str, Any]) -> Path:
     sdl_root.mkdir(parents=True, exist_ok=True)
     target = sdl_root / name
     target.write_text(
@@ -48,7 +46,7 @@ def _write_sdl_artifact(sdl_root: Path, name: str, obj: Dict[str, Any]) -> Path:
     return target
 
 
-def _minimal_source_record(source_id: str) -> Dict[str, Any]:
+def _minimal_source_record(source_id: str) -> dict[str, Any]:
     return {
         "artifact_type": "source_record",
         "schema_version": "1.0.0",
@@ -59,7 +57,7 @@ def _minimal_source_record(source_id: str) -> Dict[str, Any]:
 
 def _write_processed_source_record(
     data_lake: Path, source_id: str
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     target = data_lake / "store" / "processed" / "meetings" / source_id
     target.mkdir(parents=True, exist_ok=True)
     record = _minimal_source_record(source_id)
@@ -69,7 +67,7 @@ def _write_processed_source_record(
     return record
 
 
-def _write_minutes_record(sdl_root: Path) -> Dict[str, Any]:
+def _write_minutes_record(sdl_root: Path) -> dict[str, Any]:
     # minutes_record schema in this repo carries artifact_kind only.
     # We give it artifact_type to ensure the scan classifies it.
     sdl_root.mkdir(parents=True, exist_ok=True)

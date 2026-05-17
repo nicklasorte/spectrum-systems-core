@@ -8,7 +8,7 @@ import io
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import jsonschema
 import pytest
@@ -16,7 +16,6 @@ import pytest
 from spectrum_systems_core.cli import link_ground_truth
 from spectrum_systems_core.ingestion._paths import contracts_root
 from spectrum_systems_core.ingestion.ground_truth_linker import GroundTruthLinker
-
 
 # ---------------------------------------------------------------------------
 # Fixtures: minimal data-lake plus helpers to seed transcripts and minutes.
@@ -61,7 +60,7 @@ def _write_transcript(
     if date is not None:
         # YYYYMMDD form is the most common production filename pattern.
         full_title = f"{title} {date.replace('-', '')}"
-    metadata: Dict[str, Any] = {"source_id": source_id, "source_family": "meetings"}
+    metadata: dict[str, Any] = {"source_id": source_id, "source_family": "meetings"}
     rec = {
         "artifact_kind": "source_record",
         "artifact_id": artifact_id,
@@ -89,7 +88,7 @@ def _write_minutes(
 ) -> str:
     """Write a minutes_record artifact to SDL_ROOT/minutes/<id>.json."""
     minutes_id = str(uuid.uuid4())
-    rec: Dict[str, Any] = {
+    rec: dict[str, Any] = {
         "minutes_id": minutes_id,
         "docx_path": "/fake/path.docx",
         "txt_path": "/fake/path.txt",
@@ -423,7 +422,7 @@ def _write_transcript_with_payload(
     data_lake: Path,
     *,
     source_id: str,
-    payload_overrides: Dict[str, Any],
+    payload_overrides: dict[str, Any],
 ) -> str:
     """Write a source_record where the payload can be customised explicitly.
 
@@ -433,7 +432,7 @@ def _write_transcript_with_payload(
     ``payload.metadata.date``.
     """
     artifact_id = str(uuid.uuid4())
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "source_id": source_id,
         "source_family": "meetings",
         "source_type": "transcript",
@@ -523,7 +522,7 @@ def test_no_date_extractable_records_as_unmatched_not_collision(
 
 # Real transcript filenames from production. Pairs the linker must produce
 # when given source_records carrying the original filename in ``title``.
-_REAL_TRANSCRIPT_FILENAMES: List[Tuple[str, str, str]] = [
+_REAL_TRANSCRIPT_FILENAMES: list[tuple[str, str, str]] = [
     # (source_id, transcript filename, expected meeting_date)
     ("m_t01", "20251216 - P2P TIG Meeting 16Dec2025 - Transcript", "2025-12-16"),
     ("m_t02", "7 GHz UL Kickoff transcript 20251217", "2025-12-17"),
@@ -576,7 +575,7 @@ _REAL_TRANSCRIPT_FILENAMES: List[Tuple[str, str, str]] = [
 # except 2026-01-21 which has two minutes (UL TIG Kickoff + adjudication) on
 # the same calendar date as one transcript — the linker rule routes the
 # whole date to ``duplicate_date_collision`` rather than guessing.
-_REAL_MINUTES: List[Tuple[str, str]] = [
+_REAL_MINUTES: list[tuple[str, str]] = [
     # (meeting_name, expected meeting_date)
     ("P2P TIG Kickoff Meeting Minutes 20251216 FINAL", "2025-12-16"),
     ("7 GHz Uplink TIG Kickoff Meeting Minutes 20251217 FINAL", "2025-12-17"),
@@ -799,7 +798,7 @@ def test_family_tokens_drops_study_only_when_paired_with_group() -> None:
 def test_same_day_collision_resolved_by_family_tokens(data_lake: Path) -> None:
     """The 4 confirmed same-day cases from production must produce 4
     pairs (2 for Jan 21, 1 for Dec 18, 1 for Jan 22)."""
-    cases: List[Tuple[str, str, str, str]] = [
+    cases: list[tuple[str, str, str, str]] = [
         # (transcript source_id, transcript title, minutes name, date)
         (
             "m_dec18",
@@ -1014,7 +1013,7 @@ def _write_minutes_with(
     created_at — the dedup unit needs collisions on raw_hash and a
     determined oldest-by-created_at order."""
     minutes_id = str(uuid.uuid4())
-    rec: Dict[str, Any] = {
+    rec: dict[str, Any] = {
         "minutes_id": minutes_id,
         "docx_path": "/fake/path.docx",
         "txt_path": "/fake/path.txt",

@@ -19,18 +19,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-import jsonschema
 import pytest
 
 from spectrum_systems_core.evals.m4.runner import EvalRunner
 from spectrum_systems_core.validation import validate_artifact
 
 from .fixtures import (
-    make_gt_pair_review,
     make_ground_truth_pair_from_decision,
+    make_gt_pair_review,
     make_meeting_extraction_artifact,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "review_gt_pairs.py"

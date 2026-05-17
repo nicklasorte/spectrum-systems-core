@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 from ..harness.run_history import RunHistoryStore
 from . import DIVERGENCE_KEY_FIELDS
@@ -23,13 +23,12 @@ from ._io import (
 from ._paths import skipped_runs_path
 from ._schema import validate_governance_artifact
 
-
 _LOG = logging.getLogger(__name__)
 
 
-def _key_for_run(run: Dict[str, Any]) -> Tuple[str, str, str] | None:
+def _key_for_run(run: dict[str, Any]) -> tuple[str, str, str] | None:
     """Return the (task_type, recipe_id, audience) tuple, or None if any missing."""
-    values: List[str] = []
+    values: list[str] = []
     for field in DIVERGENCE_KEY_FIELDS:
         if field == "task_type":
             value = (
@@ -49,7 +48,7 @@ def _key_for_run(run: Dict[str, Any]) -> Tuple[str, str, str] | None:
     return tuple(values)  # type: ignore[return-value]
 
 
-def _severity_for_outcomes(outcomes: List[str]) -> str:
+def _severity_for_outcomes(outcomes: list[str]) -> str:
     distinct = set(outcomes)
     if "success" in distinct and "blocked" in distinct:
         return "high"
@@ -61,13 +60,13 @@ def _severity_for_outcomes(outcomes: List[str]) -> str:
 class DecisionDivergenceDetector:
     """Detect runs that share an input-class but produced different outcomes."""
 
-    def scan(self, repo_root: str | Path) -> Dict[str, Any]:
+    def scan(self, repo_root: str | Path) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
-        flagged: List[Dict[str, Any]] = []
-        drift_signals: List[Dict[str, Any]] = []
+        flagged: list[dict[str, Any]] = []
+        drift_signals: list[dict[str, Any]] = []
 
         runs = RunHistoryStore().get_recent_runs(repo_root_path, n=1000)
-        groups: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
+        groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
         skipped_count = 0
 
         for run in runs:
@@ -149,14 +148,14 @@ class DecisionDivergenceDetector:
 
         prior_audit = find_prior_audit(repo_root_path, "decision_divergence")
         prior_value = prior_audit.get("current_value") if prior_audit else None
-        current_value: Dict[str, Any] = {
+        current_value: dict[str, Any] = {
             "total_runs_analyzed": len(runs) - skipped_count,
             "total_groups": total_groups,
             "divergent_groups": divergent_groups,
             "divergence_rate": divergence_rate,
             "skipped_runs": skipped_count,
         }
-        delta: Dict[str, Any] | None = None
+        delta: dict[str, Any] | None = None
         if prior_value is not None:
             delta = {
                 "divergent_groups": int(divergent_groups)

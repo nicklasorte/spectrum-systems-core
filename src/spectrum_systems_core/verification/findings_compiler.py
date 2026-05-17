@@ -23,10 +23,10 @@ from __future__ import annotations
 import datetime
 import json
 import logging
-import os
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 
@@ -67,7 +67,7 @@ def _contracts_root() -> Path:
     return Path(__file__).resolve().parents[3] / "contracts"
 
 
-def _safe_div(num: float, den: float) -> Optional[float]:
+def _safe_div(num: float, den: float) -> float | None:
     """Return num / den, or None when den == 0 (divide-by-zero guard)."""
     if den is None or den == 0:
         return None
@@ -78,8 +78,8 @@ def _safe_div(num: float, den: float) -> Optional[float]:
 
 
 def compute_extraction_rates(
-    meeting_extractions: Iterable[Dict[str, Any]],
-) -> Dict[str, Optional[float]]:
+    meeting_extractions: Iterable[dict[str, Any]],
+) -> dict[str, float | None]:
     """Aggregate the three sanity rates across meeting_extraction artifacts.
 
     Returns a dict with float values when the denominator is non-zero
@@ -117,11 +117,11 @@ def compute_extraction_rates(
 
 
 def _load_meeting_extractions_from_sdl(
-    sdl_root: Optional[Path],
-) -> List[Dict[str, Any]]:
+    sdl_root: Path | None,
+) -> list[dict[str, Any]]:
     if sdl_root is None or not sdl_root.is_dir():
         return []
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     candidates = list((sdl_root / "extractions").glob("*.json")) if (
         sdl_root / "extractions"
     ).is_dir() else []
@@ -141,15 +141,15 @@ def _load_meeting_extractions_from_sdl(
 
 
 def _load_latest_eval_summary(
-    sdl_root: Optional[Path],
-) -> Optional[Dict[str, Any]]:
+    sdl_root: Path | None,
+) -> dict[str, Any] | None:
     """Return the most recent ``eval_summary`` artifact, or None."""
     if sdl_root is None or not sdl_root.is_dir():
         return None
     evals_dir = sdl_root / "evals"
     if not evals_dir.is_dir():
         return None
-    best: Optional[Tuple[str, Dict[str, Any]]] = None
+    best: tuple[str, dict[str, Any]] | None = None
     for path in evals_dir.glob("eval_summary_*.json"):
         try:
             obj = json.loads(path.read_text(encoding="utf-8"))
@@ -166,14 +166,14 @@ def _load_latest_eval_summary(
 
 
 def _load_latest_pipeline_state_record(
-    sdl_root: Optional[Path],
-) -> Optional[Dict[str, Any]]:
+    sdl_root: Path | None,
+) -> dict[str, Any] | None:
     if sdl_root is None or not sdl_root.is_dir():
         return None
     target = sdl_root / "verifications"
     if not target.is_dir():
         return None
-    best: Optional[Tuple[str, Dict[str, Any]]] = None
+    best: tuple[str, dict[str, Any]] | None = None
     for path in target.glob("*.json"):
         if path.name.endswith(".invalid.json"):
             continue
@@ -192,11 +192,11 @@ def _load_latest_pipeline_state_record(
 
 
 def _findings_from_pipeline_state(
-    record: Optional[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+    record: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
     if not isinstance(record, dict):
         return []
-    findings: List[Dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
 
     failures = record.get("validation_failures_by_type") or {}
     for artifact_type, count in sorted(failures.items()):
@@ -307,11 +307,11 @@ def _findings_from_pipeline_state(
 
 
 def _findings_from_eval_summary(
-    summary: Optional[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+    summary: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
     if not isinstance(summary, dict):
         return []
-    findings: List[Dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
     if bool(summary.get("partial_run_warning", False)):
         detail = summary.get("partial_run_detail") or {}
         missing = []
@@ -338,9 +338,9 @@ def _findings_from_eval_summary(
 
 
 def _findings_from_rates(
-    rates: Dict[str, Optional[float]],
-) -> List[Dict[str, Any]]:
-    findings: List[Dict[str, Any]] = []
+    rates: dict[str, float | None],
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
     for key, value in rates.items():
         bound = SANITY_BOUNDS.get(key)
         if bound is None or value is None:
@@ -367,15 +367,15 @@ def _findings_from_rates(
 
 
 def _findings_from_orchestration_failures(
-    sdl_root: Optional[Path],
-) -> List[Dict[str, Any]]:
+    sdl_root: Path | None,
+) -> list[dict[str, Any]]:
     """Surface failed source_ids from the latest orchestration_run_record."""
     if sdl_root is None or not sdl_root.is_dir():
         return []
     target = sdl_root / "orchestration"
     if not target.is_dir():
         return []
-    best: Optional[Tuple[str, Dict[str, Any]]] = None
+    best: tuple[str, dict[str, Any]] | None = None
     for path in target.glob("*.json"):
         if path.name.endswith(".invalid.json"):
             continue
@@ -415,12 +415,12 @@ def _findings_from_orchestration_failures(
 def compile_findings(
     *,
     cycle_id: str,
-    pipeline_state_record: Optional[Dict[str, Any]] = None,
-    eval_summary: Optional[Dict[str, Any]] = None,
-    meeting_extractions: Optional[List[Dict[str, Any]]] = None,
-    sdl_root: Optional[Path] = None,
+    pipeline_state_record: dict[str, Any] | None = None,
+    eval_summary: dict[str, Any] | None = None,
+    meeting_extractions: list[dict[str, Any]] | None = None,
+    sdl_root: Path | None = None,
     produced_by: str = DEFAULT_PRODUCED_BY,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build a verification_findings dict ready for write_verification_findings.
 
     Either pass artifacts directly, or pass ``sdl_root`` and let the
@@ -437,7 +437,7 @@ def compile_findings(
 
     rates = compute_extraction_rates(meeting_extractions)
 
-    findings: List[Dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
     findings.extend(_findings_from_pipeline_state(pipeline_state_record))
     findings.extend(_findings_from_eval_summary(eval_summary))
     findings.extend(_findings_from_rates(rates))
@@ -446,7 +446,7 @@ def compile_findings(
     # next_required_actions: copy from the pipeline_state_record so the
     # findings artifact is self-contained (a reader doesn't have to
     # cross-reference two artifacts).
-    next_actions: List[str] = []
+    next_actions: list[str] = []
     if isinstance(pipeline_state_record, dict):
         actions = pipeline_state_record.get("next_required_actions") or []
         if isinstance(actions, list):
@@ -473,9 +473,9 @@ def compile_findings(
 
 
 def _build_metrics_snapshot(
-    eval_summary: Optional[Dict[str, Any]],
-    rates: Dict[str, Optional[float]],
-) -> Dict[str, Any]:
+    eval_summary: dict[str, Any] | None,
+    rates: dict[str, float | None],
+) -> dict[str, Any]:
     """Aggregate metrics into the snapshot used by verification_findings.
 
     Missing eval_summary => every eval-side field is None (schema allows
@@ -501,7 +501,7 @@ def _build_metrics_snapshot(
     }
 
 
-def _safe_number(value: Any) -> Optional[float]:
+def _safe_number(value: Any) -> float | None:
     if value is None:
         return None
     try:
@@ -510,7 +510,7 @@ def _safe_number(value: Any) -> Optional[float]:
         return None
 
 
-def _safe_int(value: Any) -> Optional[int]:
+def _safe_int(value: Any) -> int | None:
     if value is None:
         return None
     try:
@@ -519,15 +519,15 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
-def _safe_bool(value: Any) -> Optional[bool]:
+def _safe_bool(value: Any) -> bool | None:
     if isinstance(value, bool):
         return value
     return None
 
 
 def write_verification_findings(
-    record: Dict[str, Any], *, sdl_root: Path
-) -> Optional[Path]:
+    record: dict[str, Any], *, sdl_root: Path
+) -> Path | None:
     """Validate against schema, write under ``$SDL_ROOT/verifications/``."""
     schema_path = (
         _contracts_root()
@@ -570,9 +570,9 @@ def write_verification_findings(
     return target
 
 
-def format_findings_markdown(record: Dict[str, Any]) -> str:
+def format_findings_markdown(record: dict[str, Any]) -> str:
     """Render verification_findings as a Markdown report for Actions UI."""
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append("## compile-findings")
     lines.append("")
     lines.append(f"- Cycle: `{record.get('cycle_id', '')}`")

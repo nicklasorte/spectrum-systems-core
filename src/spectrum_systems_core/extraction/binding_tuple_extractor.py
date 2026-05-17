@@ -22,11 +22,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 from ..health.finding import HealthFinding
-
 
 _BINDING_TUPLE_ENABLED_ENV: str = "BINDING_TUPLE_ENABLED"
 
@@ -80,11 +80,11 @@ def render_binding_tuple_prompt(decision_text: str) -> str:
     return BINDING_TUPLE_PROMPT_TEMPLATE.format(decision_text=decision_text or "")
 
 
-def _empty_tuple() -> Dict[str, Optional[str]]:
+def _empty_tuple() -> dict[str, str | None]:
     return {field: None for field in BINDING_TUPLE_FIELDS}
 
 
-def parse_binding_tuple_response(text: str) -> Optional[Dict[str, Optional[str]]]:
+def parse_binding_tuple_response(text: str) -> dict[str, str | None] | None:
     """Parse a model JSON response into the binding-tuple dict.
 
     Returns None on parse failure (caller emits
@@ -124,8 +124,8 @@ def parse_binding_tuple_response(text: str) -> Optional[Dict[str, Optional[str]]
 
 
 def _missing_field_for_outcome(
-    tuple_dict: Dict[str, Optional[str]], decision_outcome: str
-) -> Optional[str]:
+    tuple_dict: dict[str, str | None], decision_outcome: str
+) -> str | None:
     if decision_outcome in ACTOR_REQUIRED_OUTCOMES:
         if not tuple_dict.get("actor"):
             return "actor"
@@ -140,16 +140,16 @@ class BindingTupleResult:
     the orchestrator can include it in ``orchestration_result``.
     """
 
-    decisions: List[Dict[str, Any]]
-    findings: List[HealthFinding]
+    decisions: list[dict[str, Any]]
+    findings: list[HealthFinding]
     call_count: int
 
 
 def annotate_decisions(
-    decisions: List[Dict[str, Any]],
+    decisions: list[dict[str, Any]],
     *,
-    api_caller: Optional[Callable[[str], str]] = None,
-    pipeline_run_id: Optional[str] = None,
+    api_caller: Callable[[str], str] | None = None,
+    pipeline_run_id: str | None = None,
 ) -> BindingTupleResult:
     """Annotate each decision with a ``binding_tuple`` sub-object.
 
@@ -161,8 +161,8 @@ def annotate_decisions(
     reported as a finding. Parse failures attach ``binding_tuple:
     None`` so downstream consumers always see the field.
     """
-    annotated: List[Dict[str, Any]] = []
-    findings: List[HealthFinding] = []
+    annotated: list[dict[str, Any]] = []
+    findings: list[HealthFinding] = []
     enabled = binding_tuple_enabled()
 
     if not enabled:

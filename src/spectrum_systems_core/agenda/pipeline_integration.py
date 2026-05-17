@@ -42,22 +42,22 @@ import json
 import logging
 import pathlib
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+from collections.abc import Callable, Sequence
+from typing import Any
 
-from ..config import FeatureFlag, PHASE_W_FLAG_NAME
+from ..config import PHASE_W_FLAG_NAME, FeatureFlag
 from ..verification.model_registry import ModelRegistry
 from .agenda_detector import (
+    UNCATEGORIZED_LABEL,
     AgendaDetector,
     AgendaReferenceError,
-    UNCATEGORIZED_LABEL,
     build_chunk_to_agenda_mapping,
-    validate_agenda_references,
 )
 
 _LOG = logging.getLogger(__name__)
 
 
-def _disabled_metrics() -> Dict[str, Any]:
+def _disabled_metrics() -> dict[str, Any]:
     return {
         "agenda_detection_attempted": False,
         "agenda_detection_succeeded": False,
@@ -73,7 +73,7 @@ def _agenda_dir(sdl_root: pathlib.Path, source_id: str) -> pathlib.Path:
 
 
 def write_agenda_artifact(
-    artifact: Dict[str, Any],
+    artifact: dict[str, Any],
     sdl_root: pathlib.Path,
     source_id: str,
 ) -> pathlib.Path:
@@ -95,16 +95,16 @@ def write_agenda_artifact(
 
 
 def apply_phase_w_if_enabled(
-    chunks: List[Dict[str, Any]],
+    chunks: list[dict[str, Any]],
     source_id: str,
     *,
-    data_lake_path: Union[str, pathlib.Path],
-    sdl_root: Union[str, pathlib.Path],
+    data_lake_path: str | pathlib.Path,
+    sdl_root: str | pathlib.Path,
     pipeline_run_id: str,
-    model_registry: Optional[ModelRegistry] = None,
-    api_caller: Optional[Callable[[str], Dict[str, Any]]] = None,
+    model_registry: ModelRegistry | None = None,
+    api_caller: Callable[[str], dict[str, Any]] | None = None,
     flag_name: str = PHASE_W_FLAG_NAME,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Annotate ``chunks`` with agenda_item_id when the flag is on.
 
     Mutates ``chunks`` in place to set ``agenda_item_id`` on each. When
@@ -128,7 +128,7 @@ def apply_phase_w_if_enabled(
         pipeline_run_id=pipeline_run_id,
     )
 
-    agenda_items: Sequence[Dict[str, Any]] = (
+    agenda_items: Sequence[dict[str, Any]] = (
         detection_result.get("agenda_items") or []
     )
 
@@ -175,12 +175,12 @@ def apply_phase_w_if_enabled(
 
 
 def make_phase_w_agenda_resolver(
-    data_lake_path: Union[str, pathlib.Path],
-    sdl_root: Union[str, pathlib.Path],
+    data_lake_path: str | pathlib.Path,
+    sdl_root: str | pathlib.Path,
     source_id: str,
     *,
     flag_name: str = PHASE_W_FLAG_NAME,
-) -> Callable[[Dict[str, Any]], Optional[str]]:
+) -> Callable[[dict[str, Any]], str | None]:
     """Build the ``chunk -> Optional[str]`` resolver used by ChunkClassifier.
 
     Resolution rules (RT1 attacks 2 + 7):
@@ -206,9 +206,9 @@ def make_phase_w_agenda_resolver(
     """
     flag_on = FeatureFlag(data_lake_path).is_enabled(flag_name)
     sdl_root_path = pathlib.Path(sdl_root)
-    cache: Dict[str, Optional[str]] = {}
+    cache: dict[str, str | None] = {}
 
-    def _resolve(chunk: Dict[str, Any]) -> Optional[str]:
+    def _resolve(chunk: dict[str, Any]) -> str | None:
         if not flag_on:
             return None
         if not isinstance(chunk, dict):
@@ -253,7 +253,7 @@ def make_phase_w_agenda_resolver(
 
 
 def _validate_against_disk(
-    chunks: Sequence[Dict[str, Any]],
+    chunks: Sequence[dict[str, Any]],
     sdl_root: pathlib.Path,
     source_id: str,
 ) -> None:

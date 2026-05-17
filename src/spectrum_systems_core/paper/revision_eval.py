@@ -6,8 +6,7 @@ approves them via the approve-revisions CLI command.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
-
+from typing import Any
 
 _REQUIRED_FIELDS = ("target_section", "instruction_text", "expected_outcome")
 
@@ -17,14 +16,14 @@ class RevisionEval:
 
     def run(
         self,
-        instructions: List[Dict[str, Any]],
-        claims: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
-        eval_results: List[Dict[str, Any]] = []
-        reason_codes: List[str] = []
+        instructions: list[dict[str, Any]],
+        claims: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        eval_results: list[dict[str, Any]] = []
+        reason_codes: list[str] = []
 
         # EVAL-REV-001: required fields present + non-empty.
-        missing_fields: List[str] = []
+        missing_fields: list[str] = []
         for inst in instructions:
             for f in _REQUIRED_FIELDS:
                 value = inst.get(f)
@@ -48,7 +47,7 @@ class RevisionEval:
 
         # EVAL-REV-002: claim_id_exists (orphan check)
         valid_claim_ids = {c.get("claim_id") for c in claims if c.get("claim_id")}
-        orphans: List[str] = []
+        orphans: list[str] = []
         for inst in instructions:
             cid = inst.get("claim_id")
             if cid is None:
@@ -72,7 +71,7 @@ class RevisionEval:
             )
 
         # EVAL-REV-003: temperature_zero
-        non_zero: List[str] = []
+        non_zero: list[str] = []
         for inst in instructions:
             if inst.get("extraction_temperature") != 0:
                 non_zero.append(
@@ -94,7 +93,7 @@ class RevisionEval:
             )
 
         # EVAL-REV-004: pending_status
-        not_pending: List[str] = []
+        not_pending: list[str] = []
         for inst in instructions:
             if inst.get("status") != "pending":
                 not_pending.append(

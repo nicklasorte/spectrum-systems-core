@@ -11,12 +11,12 @@ issue into:
 from __future__ import annotations
 
 import datetime
-import hashlib
 import json
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from ..extraction._paths import find_processed_dir
 from .alias_normalizer import AliasNormalizer
@@ -62,8 +62,8 @@ def _today_date() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     with path.open("r", encoding="utf-8") as fh:
@@ -99,7 +99,7 @@ def _severity_to_objection_type(severity: str) -> str:
 class ProfileBuilder:
     """Lift Phase D agency_comment issues into agency profile state."""
 
-    def __init__(self, api_caller: Optional[Callable[[str], str]] = None):
+    def __init__(self, api_caller: Callable[[str], str] | None = None):
         self._api_caller = api_caller
 
     def ingest_issues_into_profile(
@@ -107,7 +107,7 @@ class ProfileBuilder:
         paper_source_id: str,
         agency_name: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, _ = find_processed_dir(repo_root_path, paper_source_id)
         if processed_dir is None:
@@ -253,7 +253,7 @@ class ProfileBuilder:
         description: str,
         issue_type: str,
         severity: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         if self._api_caller is None:
             return None
         prompt = POSITION_EXTRACTION_PROMPT.format(
@@ -296,7 +296,7 @@ class ProfileBuilder:
                 temperature=EXTRACTION_TEMPERATURE,
                 messages=[{"role": "user", "content": prompt}],
             )
-            parts: List[str] = []
+            parts: list[str] = []
             for block in message.content:
                 text = getattr(block, "text", None)
                 if isinstance(text, str):

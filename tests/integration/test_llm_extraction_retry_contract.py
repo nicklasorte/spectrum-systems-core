@@ -21,7 +21,6 @@ is a deterministic stub (no API key, no network).
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from spectrum_systems_core.workflows import run_meeting_minutes_llm_workflow
 from spectrum_systems_core.workflows.llm_client import LLMClientError

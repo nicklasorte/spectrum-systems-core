@@ -11,13 +11,13 @@ import os
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 
-from ._paths import contracts_root, schema_digest, schema_path
+from ._paths import schema_digest, schema_path
 
-SOURCE_FAMILIES: Tuple[str, ...] = (
+SOURCE_FAMILIES: tuple[str, ...] = (
     "meetings",
     "books",
     "comments",
@@ -42,7 +42,7 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _failure(reason: str, detail: str = "") -> Dict[str, Any]:
+def _failure(reason: str, detail: str = "") -> dict[str, Any]:
     msg = reason if not detail else f"{reason}: {detail}"
     return {
         "status": "failure",
@@ -52,7 +52,7 @@ def _failure(reason: str, detail: str = "") -> Dict[str, Any]:
     }
 
 
-def _blocked(reason: str) -> Dict[str, Any]:
+def _blocked(reason: str) -> dict[str, Any]:
     return {
         "status": "blocked",
         "source_record": None,
@@ -61,7 +61,7 @@ def _blocked(reason: str) -> Dict[str, Any]:
     }
 
 
-def _resolve_store_root() -> Optional[Path]:
+def _resolve_store_root() -> Path | None:
     """Return DATA_LAKE_PATH/store if the env var is set and the directory exists."""
     env = os.environ.get("DATA_LAKE_PATH", "")
     if not env:
@@ -75,7 +75,7 @@ def _resolve_store_root() -> Optional[Path]:
 class SourceLoader:
     """Ingest a raw source from raw/<family>/<source_id>/ into a source_record."""
 
-    def load(self, source_id: str, repo_root: str) -> Dict[str, Any]:
+    def load(self, source_id: str, repo_root: str) -> dict[str, Any]:
         store_root = _resolve_store_root()
         if store_root is None:
             return _blocked("DATA_LAKE_PATH not set or does not exist")
@@ -205,7 +205,7 @@ class SourceLoader:
         processed_dir = store_root / "processed" / source_family / source_id
         processed_path_rel = self._rel(store_root, processed_dir)
 
-        source_record: Dict[str, Any] = {
+        source_record: dict[str, Any] = {
             "artifact_kind": "source_record",
             "artifact_type": "source_record",
             "artifact_id": str(uuid.uuid4()),
@@ -295,7 +295,7 @@ class SourceLoader:
 
     def _find_source_dir(
         self, repo_root: Path, source_id: str
-    ) -> Tuple[Path | None, str | None]:
+    ) -> tuple[Path | None, str | None]:
         for family in SOURCE_FAMILIES:
             candidate = repo_root / "raw" / family / source_id
             if candidate.is_dir():
@@ -308,12 +308,12 @@ class SourceLoader:
         except ValueError:
             return str(target).replace(os.sep, "/")
 
-    def _load_schema(self, name: str) -> Dict[str, Any]:
+    def _load_schema(self, name: str) -> dict[str, Any]:
         return json.loads(schema_path(name).read_text(encoding="utf-8"))
 
     def _split_text_units(
         self, content: str, source_family: str, source_id: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Deterministic split. Meetings → speaker_turns, others → paragraphs."""
         if source_family == "meetings":
             units = self._split_speaker_turns(content, source_id)
@@ -324,10 +324,10 @@ class SourceLoader:
 
     def _split_speaker_turns(
         self, content: str, source_id: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         lines = content.splitlines(keepends=True)
         # Collect (line_index_0_based, char_offset_0_based) for each line.
-        line_offsets: List[int] = []
+        line_offsets: list[int] = []
         offset = 0
         for line in lines:
             line_offsets.append(offset)
@@ -340,7 +340,7 @@ class SourceLoader:
         if not boundary_indices:
             return []
 
-        units: List[Dict[str, Any]] = []
+        units: list[dict[str, Any]] = []
         ordinal = 0
         for idx, start_line in enumerate(boundary_indices):
             end_line = (
@@ -373,16 +373,16 @@ class SourceLoader:
 
     def _split_paragraphs(
         self, content: str, source_id: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         lines = content.splitlines(keepends=True)
-        line_offsets: List[int] = []
+        line_offsets: list[int] = []
         offset = 0
         for line in lines:
             line_offsets.append(offset)
             offset += len(line)
 
         # Group consecutive non-blank lines into paragraphs.
-        units: List[Dict[str, Any]] = []
+        units: list[dict[str, Any]] = []
         ordinal = 0
         i = 0
         n = len(lines)
@@ -420,10 +420,10 @@ class SourceLoader:
 
     def _enrich_book_units_with_pages(
         self,
-        units: List[Dict[str, Any]],
+        units: list[dict[str, Any]],
         source_id: str,
         repo_root: Path,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Set locator.page_number on each book text unit using pages.jsonl.
 
         For each unit, find which page contains its char_start by comparing
@@ -432,7 +432,7 @@ class SourceLoader:
         Never raises. Fails gracefully.
         """
         pages_path = repo_root / "raw" / "books" / source_id / "pages.jsonl"
-        page_ranges: List[Tuple[int, int, int]] = []
+        page_ranges: list[tuple[int, int, int]] = []
         if pages_path.is_file():
             try:
                 with pages_path.open("r", encoding="utf-8") as fh:
@@ -483,7 +483,7 @@ class SourceLoader:
         line_end: int,
         char_start: int,
         char_end: int,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         return {
             "unit_id": str(uuid.uuid4()),
             "source_id": source_id,

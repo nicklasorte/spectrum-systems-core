@@ -6,7 +6,7 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from spectrum_systems_core.extraction import StoryworthyFilter
 
@@ -18,7 +18,7 @@ def _make_candidate(
     excerpt: str = "An excerpt that is long enough.",
     grounded: bool = True,
     status: str = "candidate",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "story_id": str(uuid.uuid4()),
         "source_id": "src",

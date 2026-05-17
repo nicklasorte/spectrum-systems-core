@@ -5,7 +5,6 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Dict
 
 from spectrum_systems_core.paper import ClaimEval, ClaimExtractor
 
@@ -13,7 +12,7 @@ from ._fixtures import id_from_prompt, read_jsonl, write_text_units
 
 
 def _ok_response(excerpt: str, prompt: str = "") -> str:
-    claim: Dict[str, object] = {
+    claim: dict[str, object] = {
         "claim_text": "The agency requires comments by Friday.",
         "claim_type": "factual",
         "materiality": "high",

@@ -11,9 +11,6 @@ import io
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict
-
-import pytest
 
 from spectrum_systems_core.cli import (
     _count_total_extracted_items,

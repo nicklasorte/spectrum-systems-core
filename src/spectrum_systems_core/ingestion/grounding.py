@@ -7,7 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from .source_loader import SOURCE_FAMILIES
 
@@ -26,8 +26,8 @@ def _find_text_units_path(repo_root: Path, source_id: str) -> Path | None:
     return None
 
 
-def _read_text_units(path: Path) -> List[Dict[str, Any]]:
-    units: List[Dict[str, Any]] = []
+def _read_text_units(path: Path) -> list[dict[str, Any]]:
+    units: list[dict[str, Any]] = []
     try:
         with path.open("r", encoding="utf-8") as fh:
             for line in fh:
@@ -48,7 +48,7 @@ class GroundingHelper:
 
     def verify_excerpt(
         self, excerpt: str, source_id: str, repo_root: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         normalized = (excerpt or "").strip()
         excerpt_hash = "sha256:" + _sha256_hex(normalized.encode("utf-8"))
 
@@ -66,7 +66,7 @@ class GroundingHelper:
                 "excerpt_hash": excerpt_hash,
             }
 
-        matching: List[str] = []
+        matching: list[str] = []
         for unit in _read_text_units(path):
             text = unit.get("text", "")
             if isinstance(text, str) and normalized in text:
@@ -81,13 +81,13 @@ class GroundingHelper:
 
     def find_units_by_text(
         self, query: str, source_id: str, repo_root: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if not query:
             return []
         path = _find_text_units_path(Path(repo_root).resolve(), source_id)
         if path is None:
             return []
-        hits: List[Dict[str, Any]] = []
+        hits: list[dict[str, Any]] = []
         for unit in _read_text_units(path):
             text = unit.get("text", "")
             if isinstance(text, str) and query in text:

@@ -4,7 +4,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from spectrum_systems_core.extraction.binding_validator import (
     REGULATORY_VERBS,
@@ -17,8 +17,8 @@ from spectrum_systems_core.extraction.binding_validator import (
 from spectrum_systems_core.validation import validate_artifact
 
 
-def _good_decision(**overrides: Any) -> Dict[str, Any]:
-    base: Dict[str, Any] = {
+def _good_decision(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
         "decision_text": "FCC approved coordination procedures for 12.7 GHz.",
         "decision_type": "approved",
         "stakeholders": ["FCC"],

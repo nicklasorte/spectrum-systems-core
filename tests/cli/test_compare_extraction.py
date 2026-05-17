@@ -10,8 +10,6 @@ import json
 import shutil
 from pathlib import Path
 
-import pytest
-
 from spectrum_systems_core.data_lake import run_transcript_pipeline
 from spectrum_systems_core.data_lake.cli import main as dl_main
 from spectrum_systems_core.extraction.comparison_runner import (

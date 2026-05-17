@@ -11,7 +11,7 @@ from __future__ import annotations
 import datetime
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import jsonschema
 
@@ -39,7 +39,7 @@ class RunManifest:
         audience: str,
         purpose: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if audience not in VALID_AUDIENCES:
             raise ValueError(f"invalid_audience: {audience}")
         if purpose not in VALID_PURPOSES:
@@ -70,7 +70,7 @@ class RunManifest:
         )
         return manifest
 
-    def close_run(self, run_id: str, repo_root: str) -> Dict[str, Any]:
+    def close_run(self, run_id: str, repo_root: str) -> dict[str, Any]:
         run_dir = synthesis_run_dir(Path(repo_root).resolve(), run_id, create=True)
         manifest_path = run_dir / "run_manifest.json"
         if not manifest_path.is_file():

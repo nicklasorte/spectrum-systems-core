@@ -7,7 +7,6 @@ import uuid
 from pathlib import Path
 
 import jsonschema
-import pytest
 
 from spectrum_systems_core.cli import compile_findings_cli
 from spectrum_systems_core.verification import (

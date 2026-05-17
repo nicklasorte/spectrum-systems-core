@@ -22,7 +22,6 @@ from spectrum_systems_core.governance import (
 
 from ._fixtures import stage_full_repo_copy
 
-
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _GOV_PKG = _REPO_ROOT / "src" / "spectrum_systems_core" / "governance"
 

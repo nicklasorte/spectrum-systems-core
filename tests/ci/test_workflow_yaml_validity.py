@@ -8,6 +8,7 @@ This runs locally (no GitHub API call required) so failures surface
 pre-PR, not after the workflow runs and fails mysteriously.
 """
 import pathlib
+
 import pytest
 
 try:

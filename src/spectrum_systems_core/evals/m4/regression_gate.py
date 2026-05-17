@@ -26,8 +26,7 @@ from __future__ import annotations
 import datetime
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 # Thresholds. The 0.15 / 0.20 numbers are the M.4 spec defaults --
 # 15 % is roughly one missed minutes item per pair on a 7-item pair
@@ -120,7 +119,7 @@ class RegressionGate:
     def check_agenda_detection_regression(
         self,
         current_metrics: AgendaDetectionMetrics,
-        baseline_metrics: Optional[Dict[str, Any]] = None,
+        baseline_metrics: dict[str, Any] | None = None,
     ) -> bool:
         """Return True if PASS, False if BLOCK.
 
@@ -172,7 +171,7 @@ class RegressionGate:
 
     def compute_spurious_add_rate(
         self,
-        verification_result: Dict[str, Any],
+        verification_result: dict[str, Any],
     ) -> float:
         """Read ``summary.spurious_add_rate`` from the verification artifact.
 
@@ -191,7 +190,7 @@ class RegressionGate:
     def check_spurious_add_regression(
         self,
         current_rate: float,
-        baseline_rate: Optional[float],
+        baseline_rate: float | None,
     ) -> bool:
         """Return True if PASS (no regression), False if BLOCK.
 
@@ -212,13 +211,13 @@ class RegressionGate:
 
     def evaluate(
         self,
-        current_summary: Dict[str, Any],
-        baseline_summary: Optional[Dict[str, Any]],
+        current_summary: dict[str, Any],
+        baseline_summary: dict[str, Any] | None,
         run_count: int,
         *,
-        current_pair_results: Optional[List[Dict[str, Any]]] = None,
-        baseline_pair_results: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        current_pair_results: list[dict[str, Any]] | None = None,
+        baseline_pair_results: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Return a gate_decision dict.
 
         ``current_pair_results`` and ``baseline_pair_results`` are lists
@@ -308,13 +307,13 @@ class RegressionGate:
     def _decision(
         self,
         eval_summary_id: str,
-        baseline_eval_summary_id: Optional[str],
+        baseline_eval_summary_id: str | None,
         *,
         decision: str,
         reason: str,
         run_count: int,
-        regression_detail: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        regression_detail: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         return {
             "gate_decision_id": str(uuid.uuid4()),
             "eval_summary_id": eval_summary_id,
@@ -331,16 +330,16 @@ class RegressionGate:
 
     def _regression_detail(
         self,
-        current_pair_results: List[Dict[str, Any]],
-        baseline_pair_results: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        baseline_by_pair: Dict[str, Dict[str, Any]] = {}
+        current_pair_results: list[dict[str, Any]],
+        baseline_pair_results: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        baseline_by_pair: dict[str, dict[str, Any]] = {}
         for er in baseline_pair_results:
             pid = er.get("pair_id")
             if isinstance(pid, str) and pid:
                 baseline_by_pair[pid] = er
 
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for er in current_pair_results:
             pid = er.get("pair_id")
             if not isinstance(pid, str) or not pid:

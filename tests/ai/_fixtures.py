@@ -11,14 +11,13 @@ import json
 import shutil
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from tests.synthesis._fixtures import (
     write_evidenced_claim,
     write_promoted_story,
     write_promoted_theme,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "ai"
@@ -56,16 +55,16 @@ def setup_phase_h_repo(temp_root: Path) -> Path:
 
 def seed_promoted_artifacts(
     temp_root: Path,
-    story_id: Optional[str] = None,
-    extra_story_ids: Optional[List[str]] = None,
-    extra_claim_ids: Optional[List[str]] = None,
-    extra_theme_ids: Optional[List[str]] = None,
-) -> Dict[str, List[str]]:
+    story_id: str | None = None,
+    extra_story_ids: list[str] | None = None,
+    extra_claim_ids: list[str] | None = None,
+    extra_theme_ids: list[str] | None = None,
+) -> dict[str, list[str]]:
     """Create promoted/evidenced artifacts so the bundle has >=3 items."""
     temp_root = Path(temp_root).resolve()
-    story_ids: List[str] = []
-    claim_ids: List[str] = []
-    theme_ids: List[str] = []
+    story_ids: list[str] = []
+    claim_ids: list[str] = []
+    theme_ids: list[str] = []
 
     if story_id is None:
         story_id = str(uuid.uuid4())
@@ -95,13 +94,13 @@ def seed_promoted_artifacts(
 class FakeDataLakeChecker:
     """Stand-in for synthesis.DataLakeChecker that uses a hardcoded set."""
 
-    def __init__(self, known_ids: Optional[Dict[str, bool]] = None):
+    def __init__(self, known_ids: dict[str, bool] | None = None):
         self._known = dict(known_ids or {})
 
     def add(self, artifact_id: str, exists: bool = True) -> None:
         self._known[artifact_id] = exists
 
-    def add_many(self, ids: List[str]) -> None:
+    def add_many(self, ids: list[str]) -> None:
         for aid in ids:
             self._known[aid] = True
 
@@ -109,7 +108,7 @@ class FakeDataLakeChecker:
         return bool(self._known.get(artifact_id, False))
 
 
-def load_fixture(name: str) -> Dict[str, Any]:
+def load_fixture(name: str) -> dict[str, Any]:
     return json.loads((FIXTURES_DIR / f"{name}.json").read_text(encoding="utf-8"))
 
 
@@ -125,11 +124,11 @@ class CountingAPICaller:
         self.response_text = response_text
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
-        self.calls: List[Tuple[Dict[str, Any], str]] = []
+        self.calls: list[tuple[dict[str, Any], str]] = []
 
     def __call__(
-        self, task_def: Dict[str, Any], prompt: str
-    ) -> Tuple[str, int, int]:
+        self, task_def: dict[str, Any], prompt: str
+    ) -> tuple[str, int, int]:
         self.calls.append((task_def, prompt))
         return self.response_text, self.input_tokens, self.output_tokens
 

@@ -13,7 +13,6 @@ from spectrum_systems_core.health.stale_artifact import (
     majority_stale,
 )
 
-
 NOW = datetime(2026, 5, 12, 12, 0, tzinfo=timezone.utc)
 
 

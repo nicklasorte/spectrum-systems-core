@@ -9,8 +9,9 @@ calibration analysis.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any
 
 import jsonschema
 import pytest
@@ -28,7 +29,6 @@ from spectrum_systems_core.extraction.decision_extractor import (
     DecisionExtractor,
 )
 
-
 SCHEMA_PATH = (
     Path(__file__).resolve().parents[2]
     / "contracts"
@@ -38,17 +38,17 @@ SCHEMA_PATH = (
 )
 
 
-def _capture_prompt() -> tuple[List[str], Callable[[str], Dict[str, Any]]]:
-    captured: List[str] = []
+def _capture_prompt() -> tuple[list[str], Callable[[str], dict[str, Any]]]:
+    captured: list[str] = []
 
-    def caller(prompt: str) -> Dict[str, Any]:
+    def caller(prompt: str) -> dict[str, Any]:
         captured.append(prompt)
         return {"items": []}
 
     return captured, caller
 
 
-def _chunk(cid: str = "c1") -> Dict[str, Any]:
+def _chunk(cid: str = "c1") -> dict[str, Any]:
     return {"chunk_id": cid, "speaker": "S", "text": "Plan approved."}
 
 
@@ -121,7 +121,7 @@ def test_schema_rejects_item_without_confidence() -> None:
 # Threshold flagging: extractor produces flagged items below threshold.
 
 def test_low_confidence_decision_flagged_for_review() -> None:
-    def caller(prompt: str) -> Dict[str, Any]:  # noqa: ARG001
+    def caller(prompt: str) -> dict[str, Any]:  # noqa: ARG001
         return {"items": [{
             "decision_text": "weak signal",
             "decision_type": "noted",
@@ -142,7 +142,7 @@ def test_low_confidence_decision_flagged_for_review() -> None:
 
 
 def test_high_confidence_item_not_auto_flagged() -> None:
-    def caller(prompt: str) -> Dict[str, Any]:  # noqa: ARG001
+    def caller(prompt: str) -> dict[str, Any]:  # noqa: ARG001
         return {"items": [{
             "decision_text": "strong signal",
             "decision_type": "approved",
@@ -162,7 +162,7 @@ def test_high_confidence_item_not_auto_flagged() -> None:
 
 def test_zero_confidence_item_flagged_not_dropped() -> None:
     """confidence=0.0 must NOT silently drop the item -- flag for HITL."""
-    def caller(prompt: str) -> Dict[str, Any]:  # noqa: ARG001
+    def caller(prompt: str) -> dict[str, Any]:  # noqa: ARG001
         return {"items": [{
             "decision_text": "ambiguous",
             "decision_type": "noted",
@@ -181,7 +181,7 @@ def test_zero_confidence_item_flagged_not_dropped() -> None:
 
 def test_missing_confidence_defaults_to_zero_and_flags() -> None:
     """If the model omits confidence, treat as 0.0 -> flag for review."""
-    def caller(prompt: str) -> Dict[str, Any]:  # noqa: ARG001
+    def caller(prompt: str) -> dict[str, Any]:  # noqa: ARG001
         return {"items": [{
             "decision_text": "model forgot to score",
             "decision_type": "noted",
@@ -204,7 +204,7 @@ def test_low_confidence_count_recorded_in_meeting_extraction() -> None:
         ExtractionMerger,
     )
 
-    def caller_mixed(prompt: str) -> Dict[str, Any]:  # noqa: ARG001
+    def caller_mixed(prompt: str) -> dict[str, Any]:  # noqa: ARG001
         return {"items": [
             {
                 "decision_text": "above threshold",

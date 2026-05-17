@@ -20,10 +20,9 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from ..config.taxonomy import REGULATORY_VERBS
-
 
 _LOG = logging.getLogger(__name__)
 
@@ -87,7 +86,7 @@ def _count_regulatory_verbs(text: str) -> int:
     return len(found)
 
 
-def validate_decision_binding(decision: Dict[str, Any]) -> Dict[str, Any]:
+def validate_decision_binding(decision: dict[str, Any]) -> dict[str, Any]:
     """Validate the binding of a single decision item.
 
     Returns::
@@ -119,7 +118,7 @@ def validate_decision_binding(decision: Dict[str, Any]) -> Dict[str, Any]:
             "warnings": ["decision_not_a_dict"],
         }
 
-    missing: List[str] = []
+    missing: list[str] = []
     for field in REQUIRED_DECISION_FIELDS:
         if field == "source_turns":
             # The extraction merger writes ``source_turn_ids``; accept
@@ -145,7 +144,7 @@ def validate_decision_binding(decision: Dict[str, Any]) -> Dict[str, Any]:
     binding_ambiguous = verb_count > 1
     regulatory_verb_found = verb_count == 1
 
-    warnings: List[str] = []
+    warnings: list[str] = []
     if missing:
         warnings.append(f"missing_required_fields:{','.join(missing)}")
     if binding_weak:
@@ -165,12 +164,12 @@ def validate_decision_binding(decision: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def build_binding_warning(
-    decision: Dict[str, Any],
-    result: Dict[str, Any],
+    decision: dict[str, Any],
+    result: dict[str, Any],
     *,
     source_id: str,
-    extraction_run_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    extraction_run_id: str | None = None,
+) -> dict[str, Any]:
     """Build a binding_warning artifact for a decision that flunked.
 
     The artifact is a *warning* — not a halt — so the orchestrator does
@@ -196,11 +195,11 @@ def build_binding_warning(
 
 
 def annotate_and_collect_warnings(
-    decisions: List[Dict[str, Any]],
+    decisions: list[dict[str, Any]],
     *,
     source_id: str,
-    extraction_run_id: Optional[str] = None,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    extraction_run_id: str | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Run binding validation across every decision in the list.
 
     Each decision is annotated in-place with a ``binding_valid`` flag
@@ -213,8 +212,8 @@ def annotate_and_collect_warnings(
     artifacts, etc.). The decision objects are NOT removed -- binding
     is a warning, not a halt.
     """
-    annotated: List[Dict[str, Any]] = []
-    warnings: List[Dict[str, Any]] = []
+    annotated: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
     for d in decisions or []:
         result = validate_decision_binding(d)
         out = dict(d) if isinstance(d, dict) else {}
@@ -236,9 +235,9 @@ def annotate_and_collect_warnings(
 
 
 def write_binding_warnings(
-    warnings: List[Dict[str, Any]],
-    sdl_root: Optional[Path],
-) -> List[Path]:
+    warnings: list[dict[str, Any]],
+    sdl_root: Path | None,
+) -> list[Path]:
     """Persist binding_warning artifacts under ``<sdl_root>/binding/``.
 
     Failure to write is logged but never raised. The warnings list
@@ -253,7 +252,7 @@ def write_binding_warnings(
     except OSError as exc:
         _LOG.warning("binding_warning_dir_create_failed: %s", exc)
         return []
-    out: List[Path] = []
+    out: list[Path] = []
     for w in warnings:
         path = target_dir / f"{w['binding_warning_id']}.json"
         try:
@@ -271,10 +270,10 @@ def write_binding_warnings(
 
 
 def build_taxonomy_finding(
-    decision: Dict[str, Any],
-    result: Dict[str, Any],
+    decision: dict[str, Any],
+    result: dict[str, Any],
     *,
-    pipeline_run_id: Optional[str] = None,
+    pipeline_run_id: str | None = None,
 ):
     """Build a ``taxonomy_regulatory_verb_missing`` HealthFinding.
 

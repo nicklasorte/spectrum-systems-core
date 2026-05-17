@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 import uuid
-from typing import Any, Dict, List
+from typing import Any
 
 from spectrum_systems_core.extraction.chunker import (
     MAX_CHUNK_CHARS,
@@ -18,7 +18,7 @@ from spectrum_systems_core.validation import (
 )
 
 
-def _chunk(text: str, chunk_id: str | None = None) -> Dict[str, Any]:
+def _chunk(text: str, chunk_id: str | None = None) -> dict[str, Any]:
     cid = chunk_id or str(uuid.uuid4())
     return {
         "chunk_id": cid,

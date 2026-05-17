@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import pathlib
 
-
 SCHEMAS_DIR = (
     pathlib.Path(__file__).resolve().parent.parent / "contracts" / "schemas"
 )

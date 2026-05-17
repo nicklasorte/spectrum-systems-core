@@ -10,18 +10,17 @@ import datetime
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from ..harness.run_history import RunHistoryStore
 from . import COST_TREND_WINDOW_DAYS
 from ._io import find_prior_audit, parse_iso, utcnow_iso, write_audit_record
 from ._schema import validate_governance_artifact
 
-
 _LOG = logging.getLogger(__name__)
 
 
-def _timestamp_for(run: Dict[str, Any]) -> datetime.datetime | None:
+def _timestamp_for(run: dict[str, Any]) -> datetime.datetime | None:
     for key in ("completed_at", "started_at", "recorded_at"):
         ts = parse_iso(run.get(key))
         if ts is not None:
@@ -44,15 +43,15 @@ def _trend_status(delta_pct: float | None) -> tuple[str, str | None]:
 class CostTrendReporter:
     """30-day window comparison reporter."""
 
-    def scan(self, repo_root: str | Path) -> Dict[str, Any]:
+    def scan(self, repo_root: str | Path) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
-        flagged: List[Dict[str, Any]] = []
-        drift_signals: List[Dict[str, Any]] = []
+        flagged: list[dict[str, Any]] = []
+        drift_signals: list[dict[str, Any]] = []
 
         runs = RunHistoryStore().get_recent_runs(
             repo_root_path, n=10_000
         )
-        timed: List[tuple[datetime.datetime, Dict[str, Any]]] = []
+        timed: list[tuple[datetime.datetime, dict[str, Any]]] = []
         for run in runs:
             ts = _timestamp_for(run)
             if ts is not None:
@@ -73,7 +72,7 @@ class CostTrendReporter:
         prior_value = prior_audit.get("current_value") if prior_audit else None
 
         if history_span_days < 2 * COST_TREND_WINDOW_DAYS:
-            current_value: Dict[str, Any] = {
+            current_value: dict[str, Any] = {
                 "status": "insufficient_history",
                 "current_30d_total": None,
                 "prior_30d_total": None,

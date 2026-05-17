@@ -11,12 +11,12 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from spectrum_systems_core.ingestion import ObsidianProjection
 
 
-def _make_candidate(*, status: str, story_id: str, excerpt: str) -> Dict[str, Any]:
+def _make_candidate(*, status: str, story_id: str, excerpt: str) -> dict[str, Any]:
     return {
         "story_id": story_id,
         "source_id": "src",
@@ -69,7 +69,7 @@ class StoryProjectionTests(unittest.TestCase):
         """RT2-004: blocked candidates' excerpts must not appear."""
         ok_id = str(uuid.uuid4())
         bad_id = str(uuid.uuid4())
-        candidates: List[Dict[str, Any]] = [
+        candidates: list[dict[str, Any]] = [
             _make_candidate(
                 status="candidate", story_id=ok_id,
                 excerpt="A grounded excerpt that exists in source text.",
@@ -158,7 +158,7 @@ class MarkdownAuthorityLeakTests(unittest.TestCase):
         line also calls .read_text / open / Path(...).read_*, flag it.
         """
         src_root = Path(__file__).resolve().parents[2] / "src"
-        offenders: List[str] = []
+        offenders: list[str] = []
         needles = ("stories.md", "knowledge.md", "connections.md")
         for path in src_root.rglob("*.py"):
             if path.name == "obsidian_projection.py":

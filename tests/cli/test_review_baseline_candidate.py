@@ -6,8 +6,6 @@ import json
 import uuid
 from pathlib import Path
 
-import pytest
-
 from spectrum_systems_core.cli import review_baseline_candidate
 
 

@@ -33,11 +33,6 @@ from ..artifacts import Artifact
 from ..config import LLMConfigError, preflight_llm_config
 from ..config.taxonomy import UNCLASSIFIED_DECISION_VERB
 from ..data_lake.chunker import chunk_transcript
-from ..validation import (
-    ArtifactValidationError,
-    SchemaNotFoundError,
-    validate_artifact,
-)
 from ..evals import (
     EXTRACTION_NOT_IN_SOURCE,
     REGULATORY_VERB_EVAL_TYPE,
@@ -52,6 +47,11 @@ from ..evals import (
     run_llm_within_source_eval,
     run_source_turn_validity_eval_from_chunks,
     run_tlc_routed_eval,
+)
+from ..validation import (
+    ArtifactValidationError,
+    SchemaNotFoundError,
+    validate_artifact,
 )
 from ._loop import run_governed_loop
 from .llm_client import AnthropicJSONClient, LLMClient, LLMClientError

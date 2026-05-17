@@ -37,11 +37,11 @@ import math
 import re
 import uuid
 from collections import Counter
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from collections.abc import Sequence
+from typing import Any, Union
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-
 
 # Phase W.5: minimum chunks per agenda for the per-slice metric to be
 # reported. Smaller agendas are still COUNTED (in
@@ -95,17 +95,17 @@ def _now_iso() -> str:
     )
 
 
-def _tokenize(text: str) -> List[str]:
+def _tokenize(text: str) -> list[str]:
     return [t for t in _TOKEN_RE.findall(text or "")]
 
 
-def _content_tokens(text: str) -> List[str]:
+def _content_tokens(text: str) -> list[str]:
     """Lowercased content tokens with stopwords removed.
 
     Numbers, proper nouns, and domain terms are kept (they carry signal).
     Pure-stopword overlap should never satisfy the lexical floor.
     """
-    out: List[str] = []
+    out: list[str] = []
     for tok in _tokenize(text):
         low = tok.lower()
         if low in _STOPWORDS and low not in _DOMAIN_TERMS:
@@ -114,7 +114,7 @@ def _content_tokens(text: str) -> List[str]:
     return out
 
 
-def _split_minutes_items(minutes_text: str) -> List[str]:
+def _split_minutes_items(minutes_text: str) -> list[str]:
     """Split a minutes blob into items.
 
     Heuristic that handles both the M4 fixture format (one item per line,
@@ -126,7 +126,7 @@ def _split_minutes_items(minutes_text: str) -> List[str]:
     """
     if not minutes_text:
         return []
-    out: List[str] = []
+    out: list[str] = []
     for raw_line in minutes_text.splitlines():
         line = raw_line.strip()
         if not line:
@@ -157,17 +157,17 @@ class EvalAligner:
 
     def align(
         self,
-        extracted_items: Sequence[Dict[str, Any]],
+        extracted_items: Sequence[dict[str, Any]],
         minutes_text: str,
         source_id: str,
         minutes_artifact_id: str,
         *,
-        source_artifact_id: Optional[str] = None,
-        pair_id: Optional[str] = None,
+        source_artifact_id: str | None = None,
+        pair_id: str | None = None,
         chunking_strategy: str = "unknown",
         artifact_source: str = "story_artifacts",
         eval_input_warning: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Return an alignment_result artifact dict.
 
         Never raises. If alignment fails on a particular item the item is
@@ -217,8 +217,8 @@ class EvalAligner:
 
     @staticmethod
     def items_from_meeting_extraction(
-        meeting_extraction: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
+        meeting_extraction: dict[str, Any],
+    ) -> list[dict[str, Any]]:
         """Flatten a meeting_extraction into the {text, source_turn_ids, ...}
         shape that ``align()`` consumes.
 
@@ -231,11 +231,11 @@ class EvalAligner:
         entry. This is the calibration hook: do low-confidence items align
         worse than high-confidence ones?
         """
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         if not isinstance(meeting_extraction, dict):
             return out
 
-        def _carry(it: Dict[str, Any]) -> Dict[str, Any]:
+        def _carry(it: dict[str, Any]) -> dict[str, Any]:
             return {
                 "items_requiring_review": bool(
                     it.get("items_requiring_review", False)
@@ -293,7 +293,7 @@ class EvalAligner:
 
     @staticmethod
     def has_zero_typed_inputs(
-        meeting_extraction: Dict[str, Any],
+        meeting_extraction: dict[str, Any],
     ) -> bool:
         """True iff the meeting_extraction has zero decisions AND zero claims.
 
@@ -308,15 +308,15 @@ class EvalAligner:
 
     def align_from_meeting_extraction(
         self,
-        meeting_extraction: Dict[str, Any],
+        meeting_extraction: dict[str, Any],
         minutes_text: str,
         source_id: str,
         minutes_artifact_id: str,
         *,
-        source_artifact_id: Optional[str] = None,
-        pair_id: Optional[str] = None,
+        source_artifact_id: str | None = None,
+        pair_id: str | None = None,
         chunking_strategy: str = "unknown",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Align from a Phase M3 meeting_extraction artifact.
 
         This is the production entry point for the typed-extraction path.
@@ -407,9 +407,9 @@ class EvalAligner:
     def _coverage_alignment(
         self,
         minutes_items: Sequence[str],
-        extracted_items: Sequence[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        out: List[Dict[str, Any]] = []
+        extracted_items: Sequence[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
         for minutes_item in minutes_items:
             best_idx, best_sim, best_overlap = -1, 0.0, 0
             for idx, ex in enumerate(extracted_items):
@@ -432,7 +432,7 @@ class EvalAligner:
                         best_sim >= self.SEMANTIC_THRESHOLD
                         and best_overlap >= self.MIN_CONTENT_WORD_OVERLAP
                     )
-            entry: Dict[str, Any] = {
+            entry: dict[str, Any] = {
                 "minutes_item_text": minutes_item,
                 "matched_extracted_item_id": None,
                 "matched_extracted_item_text": None,
@@ -449,10 +449,10 @@ class EvalAligner:
 
     def _review_alignment(
         self,
-        extracted_items: Sequence[Dict[str, Any]],
+        extracted_items: Sequence[dict[str, Any]],
         minutes_items: Sequence[str],
-    ) -> List[Dict[str, Any]]:
-        out: List[Dict[str, Any]] = []
+    ) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
         for ex in extracted_items:
             best_idx, best_sim, best_overlap = -1, 0.0, 0
             for idx, minutes_item in enumerate(minutes_items):
@@ -474,7 +474,7 @@ class EvalAligner:
                         best_sim >= self.SEMANTIC_THRESHOLD
                         and best_overlap >= self.MIN_CONTENT_WORD_OVERLAP
                     )
-            entry: Dict[str, Any] = {
+            entry: dict[str, Any] = {
                 "extracted_item_id": ex["id"],
                 "extracted_item_text": ex["text"],
                 "source_turn_ids": list(ex.get("source_turn_ids", []) or []),
@@ -499,9 +499,9 @@ class EvalAligner:
 
 
 def _normalize_extracted_items(
-    items: Sequence[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+    items: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     for i, raw in enumerate(items or []):
         if not isinstance(raw, dict):
             continue
@@ -569,8 +569,8 @@ _AgendaMetric = Union[float, str]  # number or "excluded_small"
 
 def _agenda_for_turns(
     turn_ids: Sequence[str],
-    chunk_to_agenda: Dict[str, str],
-) -> Optional[str]:
+    chunk_to_agenda: dict[str, str],
+) -> str | None:
     """Pick the most common agenda id across ``turn_ids``.
 
     Returns ``None`` when none of the turns resolve to an agenda. Ties
@@ -585,12 +585,12 @@ def _agenda_for_turns(
 
 
 def compute_per_agenda_item_metrics(
-    alignment_result: Dict[str, Any],
-    chunks: Sequence[Dict[str, Any]],
-    agenda_items: Sequence[Dict[str, Any]],
+    alignment_result: dict[str, Any],
+    chunks: Sequence[dict[str, Any]],
+    agenda_items: Sequence[dict[str, Any]],
     *,
     min_chunks_per_agenda: int = MIN_CHUNKS_PER_AGENDA,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Slice ``alignment_result`` by agenda_item.
 
     Used by the eval pipeline to expose hidden stratification: per-
@@ -611,8 +611,8 @@ def compute_per_agenda_item_metrics(
           "agenda_items_evaluated_count": int,
         }
     """
-    chunk_to_agenda: Dict[str, str] = {}
-    agenda_chunk_counts: Dict[str, int] = {}
+    chunk_to_agenda: dict[str, str] = {}
+    agenda_chunk_counts: dict[str, int] = {}
     for chunk in chunks or []:
         if not isinstance(chunk, dict):
             continue
@@ -631,14 +631,14 @@ def compute_per_agenda_item_metrics(
     # Build extracted_item_id -> source_turn_ids map from review_alignments
     # so coverage_alignments (which only know matched_extracted_item_id)
     # can resolve to an agenda.
-    ext_id_to_turns: Dict[str, List[str]] = {}
+    ext_id_to_turns: dict[str, list[str]] = {}
     for ra in review_alignments:
         eid = ra.get("extracted_item_id")
         if isinstance(eid, str) and eid:
             ext_id_to_turns[eid] = list(ra.get("source_turn_ids") or [])
 
     # Group review_alignments by agenda.
-    review_buckets: Dict[str, Tuple[int, int]] = {}
+    review_buckets: dict[str, tuple[int, int]] = {}
     for ra in review_alignments:
         agenda_id = _agenda_for_turns(
             ra.get("source_turn_ids") or [], chunk_to_agenda,
@@ -652,7 +652,7 @@ def compute_per_agenda_item_metrics(
         review_buckets[agenda_id] = (matched, total)
 
     # Group coverage_alignments by agenda via matched_extracted_item_id.
-    cov_buckets: Dict[str, Tuple[int, int]] = {}
+    cov_buckets: dict[str, tuple[int, int]] = {}
     for ca in coverage_alignments:
         ext_id = ca.get("matched_extracted_item_id")
         if isinstance(ext_id, str) and ext_id:
@@ -669,8 +669,8 @@ def compute_per_agenda_item_metrics(
             matched += 1
         cov_buckets[agenda_id] = (matched, total)
 
-    out_coverage: Dict[str, _AgendaMetric] = {}
-    out_precision: Dict[str, _AgendaMetric] = {}
+    out_coverage: dict[str, _AgendaMetric] = {}
+    out_precision: dict[str, _AgendaMetric] = {}
     excluded = 0
     evaluated = 0
     for item in agenda_items or []:
@@ -696,7 +696,7 @@ def compute_per_agenda_item_metrics(
     }
 
 
-def _numeric_values(d: Dict[str, _AgendaMetric]) -> List[float]:
+def _numeric_values(d: dict[str, _AgendaMetric]) -> list[float]:
     return [v for v in (d or {}).values() if isinstance(v, (int, float))]
 
 
@@ -712,10 +712,10 @@ def _population_std_dev(values: Sequence[float]) -> float:
 
 
 def compute_agenda_stratification(
-    per_agenda_metrics: Dict[str, Any],
+    per_agenda_metrics: dict[str, Any],
     *,
     threshold: float = HIDDEN_STRATIFICATION_STD_THRESHOLD,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Aggregate per-agenda metrics into an eval_summary fragment.
 
     Returns::

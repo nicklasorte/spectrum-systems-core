@@ -17,8 +17,7 @@ import hashlib
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 GLOSSARY_SCHEMA_VERSION: str = "1.0.0"
 GLOSSARY_ARTIFACT_TYPE: str = "spectrum_glossary"
@@ -42,7 +41,7 @@ _LOG = logging.getLogger(__name__)
 
 
 def compute_glossary_content_hash(
-    glossary_version: str, terms: List[Dict[str, Any]]
+    glossary_version: str, terms: list[dict[str, Any]]
 ) -> str:
     """Compute the deterministic SHA-256 content hash for the glossary.
 
@@ -58,7 +57,7 @@ def compute_glossary_content_hash(
 
 def load_versioned_glossary(
     glossary_root: Path | str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Load ``spectrum_glossary_v1.json`` from ``glossary_root``.
 
     Returns the parsed artifact dict on success.
@@ -78,13 +77,13 @@ def load_versioned_glossary(
         return None
 
 
-def validate_term(term: Dict[str, Any]) -> List[str]:
+def validate_term(term: dict[str, Any]) -> list[str]:
     """Return a list of validation error strings for ``term``.
 
     Empty list means the term is well-formed. The caller decides what
     to do with non-empty results (raise, log, emit finding).
     """
-    errors: List[str] = []
+    errors: list[str] = []
     for field in REQUIRED_TERM_FIELDS:
         if field not in term:
             errors.append(f"missing_field:{field}")

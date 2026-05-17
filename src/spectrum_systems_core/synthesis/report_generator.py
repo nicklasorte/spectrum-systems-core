@@ -14,14 +14,14 @@ import json
 import os
 import re
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 
 from ._paths import synthesis_run_dir, synthesis_schema_path
 from .cost_recorder import append_cost_record
-
 
 _COMPONENT_NAME = "report_generator"
 _COMPONENT_VERSION = "1.0.0"
@@ -81,8 +81,8 @@ def _execution_fingerprint(*parts: str) -> str:
     return "sha256:" + hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
 
-def _build_context_excerpt(bundle: Dict[str, Any]) -> str:
-    parts: List[str] = []
+def _build_context_excerpt(bundle: dict[str, Any]) -> str:
+    parts: list[str] = []
     for item in bundle.get("items", []):
         parts.append(
             f"- artifact_id: {item['artifact_id']} | "
@@ -93,8 +93,8 @@ def _build_context_excerpt(bundle: Dict[str, Any]) -> str:
     return "\n\n".join(parts)
 
 
-def _extract_citations(text: str) -> List[str]:
-    seen: List[str] = []
+def _extract_citations(text: str) -> list[str]:
+    seen: list[str] = []
     for match in CITATION_RE.findall(text or ""):
         cid = match.strip()
         if cid and cid not in seen:
@@ -107,9 +107,7 @@ class ReportGenerator:
 
     def __init__(
         self,
-        api_caller: Optional[
-            Callable[[str], Tuple[str, int, int]]
-        ] = None,
+        api_caller: Callable[[str], tuple[str, int, int]] | None = None,
     ):
         # api_caller signature: (prompt) -> (text, input_tokens, output_tokens)
         self._api_caller = api_caller
@@ -117,10 +115,10 @@ class ReportGenerator:
     def generate(
         self,
         run_id: str,
-        bundle: Dict[str, Any],
+        bundle: dict[str, Any],
         audience: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
 
         if self._api_caller is None:
@@ -141,7 +139,7 @@ class ReportGenerator:
                 }
 
         context_excerpt = _build_context_excerpt(bundle)
-        sections: List[Dict[str, Any]] = []
+        sections: list[dict[str, Any]] = []
         for section_type in SECTION_TYPES:
             section_title = SECTION_TITLE_BY_TYPE[section_type]
             prompt = REPORT_SECTION_PROMPT.format(
@@ -247,19 +245,19 @@ class ReportGenerator:
 
         return {"status": "success", "draft_id": draft["draft_id"], "reason": ""}
 
-    def _build_default_api_caller(self) -> Callable[[str], Tuple[str, int, int]]:
+    def _build_default_api_caller(self) -> Callable[[str], tuple[str, int, int]]:
         import anthropic
 
         client = anthropic.Anthropic()
 
-        def _call(prompt: str) -> Tuple[str, int, int]:
+        def _call(prompt: str) -> tuple[str, int, int]:
             message = client.messages.create(
                 model=GENERATION_MODEL,
                 max_tokens=MAX_TOKENS_PER_SECTION,
                 temperature=GENERATION_TEMPERATURE,
                 messages=[{"role": "user", "content": prompt}],
             )
-            parts: List[str] = []
+            parts: list[str] = []
             for block in message.content:
                 text = getattr(block, "text", None)
                 if isinstance(text, str):

@@ -4,8 +4,8 @@ from __future__ import annotations
 import pytest
 
 from spectrum_systems_core.artifacts import new_artifact
-from spectrum_systems_core.control import decide_control
 from spectrum_systems_core.config.taxonomy import UNCLASSIFIED_DECISION_VERB
+from spectrum_systems_core.control import decide_control
 from spectrum_systems_core.evals import (
     DECISIONS_FIELD_MISSING,
     REGULATORY_VERB_EVAL_TYPE,

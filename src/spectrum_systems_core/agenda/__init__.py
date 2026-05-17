@@ -10,9 +10,9 @@ Public API::
     from spectrum_systems_core.agenda import AgendaDetector, AgendaReferenceError
 """
 from .agenda_detector import (
+    UNCATEGORIZED_LABEL,
     AgendaDetector,
     AgendaReferenceError,
-    UNCATEGORIZED_LABEL,
     build_chunk_to_agenda_mapping,
     validate_agenda_references,
 )

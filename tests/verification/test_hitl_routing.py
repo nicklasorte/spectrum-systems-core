@@ -16,8 +16,6 @@ import json
 import pathlib
 import uuid
 
-import pytest
-
 from spectrum_systems_core.config.feature_flag import PHASE_V_FLAG_NAME
 from spectrum_systems_core.verification.pipeline_integration import (
     apply_phase_v_if_enabled,

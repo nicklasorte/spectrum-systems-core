@@ -17,10 +17,9 @@ import datetime
 import json
 import logging
 import os
-import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 
@@ -76,7 +75,7 @@ def _contracts_root() -> Path:
     return Path(__file__).resolve().parents[3] / "contracts"
 
 
-def _resolve_sdl_root(data_lake_path: Optional[str]) -> Optional[Path]:
+def _resolve_sdl_root(data_lake_path: str | None) -> Path | None:
     env = os.environ.get("SDL_ROOT", "").strip()
     if env:
         return Path(env)
@@ -85,7 +84,7 @@ def _resolve_sdl_root(data_lake_path: Optional[str]) -> Optional[Path]:
     return None
 
 
-def _resolve_store_root(data_lake_path: Optional[str]) -> Optional[Path]:
+def _resolve_store_root(data_lake_path: str | None) -> Path | None:
     if not data_lake_path:
         return None
     base = Path(data_lake_path) / "store"
@@ -101,7 +100,7 @@ def _is_config_or_sidecar(path: Path) -> bool:
     return False
 
 
-def _iter_json_files(root: Path) -> List[Path]:
+def _iter_json_files(root: Path) -> list[Path]:
     """Walk ``root`` and yield JSON files we should consider as artifacts.
 
     Skips hidden directories, build/cache dirs, and known non-artifact
@@ -109,7 +108,7 @@ def _iter_json_files(root: Path) -> List[Path]:
     """
     if not root.is_dir():
         return []
-    out: List[Path] = []
+    out: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         # Mutate in place so os.walk honors the skip.
         dirnames[:] = sorted(
@@ -126,7 +125,7 @@ def _iter_json_files(root: Path) -> List[Path]:
     return sorted(out)
 
 
-def _index_schemas(contracts_root: Path) -> Dict[Tuple[str, str], Dict[str, Any]]:
+def _index_schemas(contracts_root: Path) -> dict[tuple[str, str], dict[str, Any]]:
     """Index schemas by (artifact_type_const, schema_version_const).
 
     We rely on each schema having an ``artifact_type`` property with a
@@ -135,7 +134,7 @@ def _index_schemas(contracts_root: Path) -> Dict[Tuple[str, str], Dict[str, Any]
     written before artifact_type was introduced or describe non-artifact
     payloads, and we don't auto-validate them.
     """
-    out: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    out: dict[tuple[str, str], dict[str, Any]] = {}
     schemas_root = contracts_root / "schemas"
     if not schemas_root.is_dir():
         return out
@@ -163,7 +162,7 @@ def _index_schemas(contracts_root: Path) -> Dict[Tuple[str, str], Dict[str, Any]
 
 def _classify_artifact(
     obj: Any,
-) -> Tuple[Optional[str], Optional[str], str, str]:
+) -> tuple[str | None, str | None, str, str]:
     """Return (artifact_type, schema_version, kind_flag, raw_kind).
 
     ``kind_flag`` is one of:
@@ -204,7 +203,7 @@ def _classify_artifact(
 
 
 def _validate_against_schema(
-    schema: Optional[Dict[str, Any]], obj: Dict[str, Any]
+    schema: dict[str, Any] | None, obj: dict[str, Any]
 ) -> str:
     """Return 'valid', 'invalid', or 'schema_not_found'."""
     if schema is None:
@@ -224,7 +223,7 @@ def _is_chunks_jsonl_path(p: Path) -> bool:
     return p.name == "chunks.jsonl"
 
 
-def _count_chunks_jsonl(store_root: Optional[Path]) -> int:
+def _count_chunks_jsonl(store_root: Path | None) -> int:
     if store_root is None:
         return 0
     processed = store_root / "processed"
@@ -237,7 +236,7 @@ def _count_chunks_jsonl(store_root: Optional[Path]) -> int:
     return n
 
 
-def _list_raw_dir(store_root: Optional[Path], subdir: str) -> List[Path]:
+def _list_raw_dir(store_root: Path | None, subdir: str) -> list[Path]:
     if store_root is None:
         return []
     p = store_root / "raw" / subdir
@@ -247,13 +246,13 @@ def _list_raw_dir(store_root: Optional[Path], subdir: str) -> List[Path]:
 
 
 def _compute_next_required_actions(
-    artifacts_by_type: Dict[str, int],
+    artifacts_by_type: dict[str, int],
     artifacts_with_artifact_kind_only: int,
-    expected: Dict[str, Any],
+    expected: dict[str, Any],
     total_artifacts_scanned: int,
-) -> List[str]:
+) -> list[str]:
     """Order matters: actions are presented in the suggested execution order."""
-    actions: List[str] = []
+    actions: list[str] = []
 
     if artifacts_with_artifact_kind_only > 0:
         actions.append("run migrate-artifact-kind workflow")
@@ -280,10 +279,10 @@ def _compute_next_required_actions(
 
 def scan_pipeline_state(
     *,
-    data_lake_path: Optional[str],
+    data_lake_path: str | None,
     validate_schemas: bool = True,
-    sdl_root: Optional[str] = None,
-) -> Dict[str, Any]:
+    sdl_root: str | None = None,
+) -> dict[str, Any]:
     """Inspect SDL_ROOT (and the store/ tree) and return the state record.
 
     The returned dict is the unwritten ``pipeline_state_record`` body —
@@ -293,7 +292,7 @@ def scan_pipeline_state(
     Never raises. Empty SDL_ROOT yields a warning ("sdl_root_empty") and
     ``total_artifacts_scanned == 0``. The caller decides what to do.
     """
-    warnings: List[str] = []
+    warnings: list[str] = []
     record_id = str(uuid.uuid4())
     created_at = _now_iso()
 
@@ -303,9 +302,9 @@ def scan_pipeline_state(
     )
     store_root = _resolve_store_root(data_lake_path)
 
-    artifacts_by_type: Dict[str, int] = {}
-    artifacts_by_schema_version: Dict[str, int] = {}
-    validation_failures_by_type: Dict[str, int] = {}
+    artifacts_by_type: dict[str, int] = {}
+    artifacts_by_schema_version: dict[str, int] = {}
+    validation_failures_by_type: dict[str, int] = {}
     artifacts_with_artifact_kind_only = 0
     artifacts_with_both_fields = 0
     artifacts_with_artifact_type_only = 0
@@ -313,7 +312,7 @@ def scan_pipeline_state(
 
     schemas_index = _index_schemas(_contracts_root())
 
-    scan_roots: List[Path] = []
+    scan_roots: list[Path] = []
     if resolved_sdl is not None and resolved_sdl.is_dir():
         scan_roots.append(resolved_sdl)
     # Also scan the store/processed/ tree because some artifacts (like
@@ -387,7 +386,7 @@ def scan_pipeline_state(
     # next_required_actions rather than failing the scan.
     confirmed_pair_count = 0
     confirmed_pair_count = _count_confirmed_pairs(resolved_sdl)
-    expected_artifacts: Dict[str, Any] = {
+    expected_artifacts: dict[str, Any] = {
         "source_record_count": _count_source_records_on_disk(store_root),
         "minutes_record_count": artifacts_by_type.get("minutes_record", 0),
         "confirmed_pair_count": confirmed_pair_count,
@@ -410,7 +409,7 @@ def scan_pipeline_state(
         total_artifacts_scanned=total,
     )
 
-    record: Dict[str, Any] = {
+    record: dict[str, Any] = {
         "pipeline_state_record_id": record_id,
         "artifact_type": "pipeline_state_record",
         "schema_version": SCHEMA_VERSION,
@@ -432,7 +431,7 @@ def scan_pipeline_state(
     return record
 
 
-def _count_source_records_on_disk(store_root: Optional[Path]) -> int:
+def _count_source_records_on_disk(store_root: Path | None) -> int:
     """Count source_record.json files under store/processed/<family>/<sid>/."""
     if store_root is None:
         return 0
@@ -451,7 +450,7 @@ def _count_source_records_on_disk(store_root: Optional[Path]) -> int:
     return n
 
 
-def _count_confirmed_pairs(sdl_root: Optional[Path]) -> int:
+def _count_confirmed_pairs(sdl_root: Path | None) -> int:
     if sdl_root is None or not sdl_root.is_dir():
         return 0
     pairs_dir = sdl_root / "ground_truth"
@@ -468,15 +467,15 @@ def _count_confirmed_pairs(sdl_root: Optional[Path]) -> int:
     return n
 
 
-def _baseline_present(sdl_root: Optional[Path]) -> bool:
+def _baseline_present(sdl_root: Path | None) -> bool:
     if sdl_root is None:
         return False
     return (sdl_root / "evals" / "baseline_eval_summary.json").is_file()
 
 
 def write_pipeline_state_record(
-    record: Dict[str, Any], *, sdl_root: Path
-) -> Optional[Path]:
+    record: dict[str, Any], *, sdl_root: Path
+) -> Path | None:
     """Write the record under ``$SDL_ROOT/verifications/<id>.json``.
 
     Validates against the contract schema first. If validation fails,
@@ -524,9 +523,9 @@ def write_pipeline_state_record(
     return target
 
 
-def emit_actions_summary(record: Dict[str, Any]) -> str:
+def emit_actions_summary(record: dict[str, Any]) -> str:
     """Render a Markdown summary for the GitHub Actions step output."""
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append("## verify-pipeline-state")
     lines.append("")
     lines.append(f"- SDL root: `{record.get('sdl_root', '')}`")

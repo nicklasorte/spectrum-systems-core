@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 import yaml
@@ -16,11 +16,10 @@ import yaml
 from . import _frontmatter
 from ._paths import schema_path
 
-
 _SCHEMA_NAME = "vault_index_note"
 
 
-def _load_schema() -> Dict[str, Any]:
+def _load_schema() -> dict[str, Any]:
     return json.loads(schema_path(_SCHEMA_NAME).read_text(encoding="utf-8"))
 
 
@@ -40,12 +39,12 @@ class VaultIndexWriter:
         pipeline_run_id: str,
         data_lake_ref: str,
         source_note_vault_path: str,
-        eval_results: List[Dict[str, Any]],
+        eval_results: list[dict[str, Any]],
         reviewer_id: str,
         review_decision: str,
         artifact_summary: str,
         vault_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         # Step 1: idempotency check
         promoted_dir = os.path.join(vault_root, "Artifacts", "Promoted")
         dest = os.path.join(promoted_dir, f"{promoted_artifact_id}.md")
@@ -57,7 +56,7 @@ class VaultIndexWriter:
             }
 
         # Step 2: build frontmatter
-        frontmatter: Dict[str, Any] = {
+        frontmatter: dict[str, Any] = {
             "artifact_id": promoted_artifact_id,
             "artifact_type": artifact_type,
             "schema_version": schema_version,

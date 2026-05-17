@@ -10,32 +10,32 @@ Read-only inspection of pipeline state. Implements:
 Neither module ever writes to the data lake outside of
 ``$SDL_ROOT/verifications/``. Neither raises.
 """
-from .state_scanner import (
-    scan_pipeline_state,
-    write_pipeline_state_record,
-    emit_actions_summary,
-)
 from .findings_compiler import (
     compile_findings,
-    write_verification_findings,
     format_findings_markdown,
+    write_verification_findings,
 )
+from .model_registry import ModelRegistry, ModelRegistryError
 from .next_phase_handoff import (
     build_next_phase_briefing,
     write_next_phase_briefing,
+)
+from .pipeline_integration import (
+    VerificationIncompleteError,
+    apply_phase_v_if_enabled,
+    write_verification_result,
 )
 from .post_hoc_verifier import (
     EARLY_HALT_SAMPLE_SIZE,
     EARLY_HALT_UNSUPPORTED_THRESHOLD,
     PostHocVerifier,
 )
-from .model_registry import ModelRegistry, ModelRegistryError
-from .verification_gate import GateDecision, VerificationGate
-from .pipeline_integration import (
-    VerificationIncompleteError,
-    apply_phase_v_if_enabled,
-    write_verification_result,
+from .state_scanner import (
+    emit_actions_summary,
+    scan_pipeline_state,
+    write_pipeline_state_record,
 )
+from .verification_gate import GateDecision, VerificationGate
 
 __all__ = [
     "scan_pipeline_state",

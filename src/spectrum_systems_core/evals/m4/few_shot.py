@@ -29,7 +29,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import jsonschema
 
@@ -41,7 +41,7 @@ SCHEMA_FILE = "few_shot_examples.schema.json"
 SEED_FILENAME = "extraction_few_shot_v1.json"
 
 
-def _load_schema() -> Optional[Dict[str, Any]]:
+def _load_schema() -> dict[str, Any] | None:
     schema_path = contracts_root() / "schemas" / "eval" / SCHEMA_FILE
     try:
         return json.loads(schema_path.read_text(encoding="utf-8"))
@@ -50,7 +50,7 @@ def _load_schema() -> Optional[Dict[str, Any]]:
 
 
 def _resolve_seed_path(
-    data_lake_path: Optional[str], explicit_path: Optional[str]
+    data_lake_path: str | None, explicit_path: str | None
 ) -> Path:
     if explicit_path:
         return Path(explicit_path)
@@ -80,9 +80,9 @@ class FewShotLoader:
         self,
         prompt_schema_version: str,
         *,
-        data_lake_path: Optional[str] = None,
-        seed_path: Optional[str] = None,
-    ) -> Tuple[Optional[Dict[str, Any]], str]:
+        data_lake_path: str | None = None,
+        seed_path: str | None = None,
+    ) -> tuple[dict[str, Any] | None, str]:
         """Return ``(artifact, status)``.
 
         Status values: ``ok``, ``missing``, ``unreadable``,
@@ -128,9 +128,9 @@ class FewShotLoader:
 def load_few_shot_examples(
     prompt_schema_version: str,
     *,
-    data_lake_path: Optional[str] = None,
-    seed_path: Optional[str] = None,
-) -> Tuple[Optional[Dict[str, Any]], str]:
+    data_lake_path: str | None = None,
+    seed_path: str | None = None,
+) -> tuple[dict[str, Any] | None, str]:
     """Convenience function. Equivalent to ``FewShotLoader().load(...)``."""
     return FewShotLoader().load(
         prompt_schema_version,
@@ -140,7 +140,7 @@ def load_few_shot_examples(
 
 
 def format_examples_for_prompt(
-    artifact: Dict[str, Any], example_type: Optional[str] = None
+    artifact: dict[str, Any], example_type: str | None = None
 ) -> str:
     """Render a few_shot_examples artifact as a prompt-ready string.
 

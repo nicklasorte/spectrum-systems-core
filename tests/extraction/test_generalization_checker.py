@@ -1,8 +1,6 @@
 """Phase V.6 tests: scope overgeneralization detector."""
 from __future__ import annotations
 
-import pytest
-
 from spectrum_systems_core.config.taxonomy import OVERGENERALIZATION_MARKERS
 from spectrum_systems_core.extraction.generalization_checker import (
     BAND_PATTERN,

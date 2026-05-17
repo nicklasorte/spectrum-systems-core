@@ -22,8 +22,8 @@ import datetime
 import json
 import logging
 import os
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator, Optional
 
 _LOG = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ def reload_from_env() -> None:
 # Per-call context. Extractors set it via ``call_context`` so the
 # API caller wrapper can look up chunk_id / source_id / sdl_root
 # without changing every api_caller signature.
-_CALL_CONTEXT: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+_CALL_CONTEXT: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
     "raw_response_log_call_context", default=None,
 )
 
@@ -126,7 +126,7 @@ def call_context(
     *,
     chunk_id: str = "",
     source_id: str = "",
-    sdl_root: Optional[Path] = None,
+    sdl_root: Path | None = None,
     call_type: str = "extraction",
     model: str = "",
 ) -> Iterator[None]:
@@ -159,9 +159,9 @@ def current_context() -> dict:
 def write_log_from_context(
     raw: str,
     *,
-    call_type_override: Optional[str] = None,
-    model_override: Optional[str] = None,
-) -> Optional[Path]:
+    call_type_override: str | None = None,
+    model_override: str | None = None,
+) -> Path | None:
     """Hot-path entry point used by api caller wrappers.
 
     Disabled-mode early-out happens here, before any context lookup.
@@ -186,7 +186,7 @@ def _now_iso() -> str:
     )
 
 
-def classify_response(raw: object, max_chars_limit: Optional[int] = None) -> str:
+def classify_response(raw: object, max_chars_limit: int | None = None) -> str:
     """Return one of ``ALLOWED_RESPONSE_TYPES`` for ``raw``.
 
     Classification order (the first rule that matches wins):
@@ -256,7 +256,7 @@ def build_log_artifact(
     source_id: str,
     model: str,
     call_type: str,
-    max_chars_limit: Optional[int] = None,
+    max_chars_limit: int | None = None,
 ) -> dict:
     """Assemble the ``raw_api_response_log`` artifact dict."""
     if call_type not in ALLOWED_CALL_TYPES:
@@ -298,8 +298,8 @@ def write_log(
     source_id: str,
     model: str,
     call_type: str,
-    sdl_root: Optional[Path] = None,
-) -> Optional[Path]:
+    sdl_root: Path | None = None,
+) -> Path | None:
     """Persist a raw_api_response_log artifact when logging is enabled.
 
     Returns the write path on success, ``None`` otherwise. Disabled-mode

@@ -9,13 +9,12 @@ import datetime
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from . import OVERRIDE_DEFAULT_EXPIRY_DAYS, OVERRIDE_EXPIRY_WARNING_DAYS
-from ._io import parse_iso, read_json, utcnow_iso, write_json
+from ._io import parse_iso, read_json, write_json
 from ._paths import overrides_archive_dir, overrides_dir
 from ._schema import validate_harness_artifact
-
 
 _LOG = logging.getLogger(__name__)
 
@@ -30,7 +29,7 @@ class OverrideStore:
         overriding_human_id: str,
         repo_root: str | Path,
         expires_days: int | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         try:
             now = datetime.datetime.now(datetime.timezone.utc)
             days = (
@@ -82,11 +81,11 @@ class OverrideStore:
                 "reason": str(exc),
             }
 
-    def get_active_overrides(self, repo_root: str | Path) -> List[Dict[str, Any]]:
+    def get_active_overrides(self, repo_root: str | Path) -> list[dict[str, Any]]:
         directory = overrides_dir(repo_root)
         if not directory.is_dir():
             return []
-        active: List[Dict[str, Any]] = []
+        active: list[dict[str, Any]] = []
         now = datetime.datetime.now(datetime.timezone.utc)
         for path in sorted(directory.glob("*.json")):
             override = read_json(path)
@@ -102,7 +101,7 @@ class OverrideStore:
             active.append(override)
         return active
 
-    def check_override_warning(self, override: Dict[str, Any]) -> bool:
+    def check_override_warning(self, override: dict[str, Any]) -> bool:
         expires_at = parse_iso(override.get("expires_at"))
         if expires_at is None:
             return False
@@ -112,7 +111,7 @@ class OverrideStore:
 
     def _archive_override(
         self,
-        override: Dict[str, Any],
+        override: dict[str, Any],
         original_path: Path,
         repo_root: str | Path,
     ) -> None:

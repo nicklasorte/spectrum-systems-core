@@ -9,15 +9,14 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
-from ..harness.override_store import OverrideStore
 from ..harness._io import read_json
 from ..harness._paths import overrides_archive_dir
+from ..harness.override_store import OverrideStore
 from . import EXCEPTION_ACCUMULATION_THRESHOLD
 from ._io import find_prior_audit, utcnow_iso, write_audit_record
 from ._schema import validate_governance_artifact
-
 
 _LOG = logging.getLogger(__name__)
 
@@ -50,8 +49,8 @@ def _keyword(decision_context: str, num_words: int = 5) -> str:
     return " ".join(words[:num_words])
 
 
-def _load_archived_overrides(repo_root: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _load_archived_overrides(repo_root: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     archive = overrides_archive_dir(repo_root)
     if not archive.is_dir():
         return out
@@ -65,16 +64,16 @@ def _load_archived_overrides(repo_root: Path) -> List[Dict[str, Any]]:
 class ExceptionAccumulationTracker:
     """Find override patterns to promote to policy."""
 
-    def scan(self, repo_root: str | Path) -> Dict[str, Any]:
+    def scan(self, repo_root: str | Path) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
-        flagged: List[Dict[str, Any]] = []
-        drift_signals: List[Dict[str, Any]] = []
+        flagged: list[dict[str, Any]] = []
+        drift_signals: list[dict[str, Any]] = []
 
         actives = OverrideStore().get_active_overrides(repo_root_path)
         archived = _load_archived_overrides(repo_root_path)
-        all_overrides: List[Dict[str, Any]] = list(actives) + list(archived)
+        all_overrides: list[dict[str, Any]] = list(actives) + list(archived)
 
-        groups: Dict[tuple, List[Dict[str, Any]]] = {}
+        groups: dict[tuple, list[dict[str, Any]]] = {}
         for override in all_overrides:
             keyword = _keyword(str(override.get("decision_context", "")))
             eval_id = str(override.get("overridden_eval_or_block", ""))
@@ -122,7 +121,7 @@ class ExceptionAccumulationTracker:
 
         prior_audit = find_prior_audit(repo_root_path, "exception_accumulation")
         prior_value = prior_audit.get("current_value") if prior_audit else None
-        current_value: Dict[str, Any] = {
+        current_value: dict[str, Any] = {
             "total_overrides": len(all_overrides),
             "total_groups": len(groups),
             "accumulated_groups": accumulated_groups,

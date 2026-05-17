@@ -222,13 +222,13 @@ def test_real_golden_transcripts_still_validate(fixture_dir):
 def test_llm_workflow_happy_path_payload_validates():
     """The live-LLM workflow's happy-path payload shape (provenance,
     string content arrays) also conforms to the extended schema."""
+    from spectrum_systems_core.workflows import run_meeting_minutes_llm_workflow
     from tests.llm_stub import (
         DEC18_ACTION_ITEMS,
         DEC18_DECISIONS,
         DEC18_OPEN_QUESTIONS,
         json_stub,
     )
-    from spectrum_systems_core.workflows import run_meeting_minutes_llm_workflow
 
     transcript = (
         pathlib.Path(__file__).resolve().parent

@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from ._io import read_json, utcnow_iso, write_json
 from ._paths import (
@@ -20,13 +20,12 @@ from ._paths import (
 )
 from ._schema import validate_governance_artifact
 
-
 _LOG = logging.getLogger(__name__)
 
 
 def _find_candidate_path(
     candidate_id: str, repo_root: Path
-) -> tuple[Path | None, Dict[str, Any] | None]:
+) -> tuple[Path | None, dict[str, Any] | None]:
     proposed = candidates_dir(repo_root) / f"{candidate_id}.json"
     if proposed.is_file():
         return proposed, read_json(proposed)
@@ -44,8 +43,8 @@ def apply_compression(
     note: str = "",
     auto_confirm: bool = False,
     repo_root: str | Path | None = None,
-    out_lines: List[str] | None = None,
-) -> Dict[str, Any]:
+    out_lines: list[str] | None = None,
+) -> dict[str, Any]:
     """Apply a compression candidate. NEVER auto-deletes (FINDING-I-006)."""
     repo_root_path = Path(repo_root or Path.cwd()).resolve()
     ensure_governance_tree(repo_root_path)

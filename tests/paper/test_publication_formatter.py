@@ -5,15 +5,13 @@ import json
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
-import pytest
 
 from spectrum_systems_core.paper.publication_formatter import (
     PublicationFormatter,
 )
-
 
 _FAMILY = "working_papers"
 _METADATA_TITLE = "A Working Paper on Spectrum Coordination"
@@ -25,7 +23,7 @@ _METADATA_ABSTRACT = (
 )
 
 
-def _formatted_schema() -> Dict[str, Any]:
+def _formatted_schema() -> dict[str, Any]:
     return json.loads(
         Path("contracts/schemas/paper/formatted_paper_artifact.schema.json")
         .read_text(encoding="utf-8")
@@ -36,14 +34,14 @@ def _write_revised_draft(
     repo_root: Path,
     *,
     source_id: str,
-    revised_sections: Dict[str, str],
-    applied_instruction_ids: List[str] | None = None,
+    revised_sections: dict[str, str],
+    applied_instruction_ids: list[str] | None = None,
     schema_version: str = "1.0.0",
     omit_source_id: bool = False,
 ) -> Path:
     paper_dir = repo_root / "processed" / _FAMILY / source_id / "paper"
     paper_dir.mkdir(parents=True, exist_ok=True)
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "schema_version": schema_version,
         "generated_at": "2026-05-09T00:00:00+00:00",
         "revised_sections": revised_sections,
@@ -64,7 +62,7 @@ def _write_paper_metadata(
     *,
     source_id: str,
     title: str = _METADATA_TITLE,
-    authors: List[str] | None = None,
+    authors: list[str] | None = None,
     abstract: str = _METADATA_ABSTRACT,
 ) -> Path:
     paper_dir = repo_root / "processed" / _FAMILY / source_id / "paper"
@@ -87,7 +85,7 @@ def _write_paper_metadata(
 
 
 def _section_with_citations(
-    source_artifact_ids: List[str],
+    source_artifact_ids: list[str],
     body_template: str,
 ) -> str:
     markers = "".join(f"[source: {sid}]" for sid in source_artifact_ids)
@@ -98,8 +96,8 @@ def _setup_basic_paper(
     repo_root: Path,
     *,
     source_id: str | None = None,
-    sources: List[str] | None = None,
-) -> tuple[str, List[str]]:
+    sources: list[str] | None = None,
+) -> tuple[str, list[str]]:
     if source_id is None:
         source_id = str(uuid.uuid4())
     if sources is None:

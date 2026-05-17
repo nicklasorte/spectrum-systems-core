@@ -7,26 +7,25 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from spectrum_systems_core.extraction.low_confidence_gate import (
     CORRECTION_CANDIDATE_TTL_DAYS_ENV,
-    LOW_CONFIDENCE_GATE_ENABLED_ENV,
     LOW_CONF_CONFIDENCE_THRESHOLD_ENV,
     LOW_CONF_RATE_LIMIT_ENV,
+    LOW_CONFIDENCE_GATE_ENABLED_ENV,
     build_correction_candidate,
     check_low_confidence,
     count_pending_candidates,
     scan_expired_candidates,
-    write_correction_candidate,
 )
 from spectrum_systems_core.validation import validate_artifact
 
 
 def _extraction_artifact(
-    decisions: List[Dict[str, Any]],
-    claims: List[Dict[str, Any]],
-) -> Dict[str, Any]:
+    decisions: list[dict[str, Any]],
+    claims: list[dict[str, Any]],
+) -> dict[str, Any]:
     return {
         "artifact_type": "meeting_extraction",
         "decisions": decisions,

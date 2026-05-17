@@ -24,8 +24,9 @@ that dimension yet.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any
 
 from ..health.finding import HealthFinding
 from .judge import (
@@ -33,7 +34,6 @@ from .judge import (
     JUDGE_CALIBRATION_WARN_THRESHOLD,
     JudgeRunResult,
 )
-
 
 CALIBRATION_SCHEMA_VERSION: str = "1.0.0"
 PRODUCED_BY: str = "JudgeCalibrationRunner"
@@ -44,14 +44,14 @@ class JudgeCalibrationRecord:
     record_id: str
     judge_score_id: str
     pairs_compared: int
-    agreement_rate_overall: Optional[float]
-    agreement_rate_verb_discrimination: Optional[float]
+    agreement_rate_overall: float | None
+    agreement_rate_verb_discrimination: float | None
     verb_discrimination_pairs: int
     calibration_status: str  # ok | warn | failed
-    findings: List[HealthFinding] = field(default_factory=list)
+    findings: list[HealthFinding] = field(default_factory=list)
 
 
-def _agreement(matches: List[bool]) -> Optional[float]:
+def _agreement(matches: list[bool]) -> float | None:
     if not matches:
         return None
     return sum(1 for m in matches if m) / float(len(matches))
@@ -59,7 +59,7 @@ def _agreement(matches: List[bool]) -> Optional[float]:
 
 def _judge_pass_for_item(
     judge_result: JudgeRunResult, item_id: str
-) -> Optional[bool]:
+) -> bool | None:
     for s in judge_result.item_scores:
         if s.item_id == item_id:
             if s.judge_decision == "unparseable":
@@ -70,9 +70,9 @@ def _judge_pass_for_item(
 
 def calibrate(
     judge_result: JudgeRunResult,
-    ground_truth_pairs: Sequence[Dict[str, Any]],
+    ground_truth_pairs: Sequence[dict[str, Any]],
     *,
-    pipeline_run_id: Optional[str] = None,
+    pipeline_run_id: str | None = None,
 ) -> JudgeCalibrationRecord:
     """Compute agreement between the judge and the ground truth.
 
@@ -87,8 +87,8 @@ def calibrate(
     are silently skipped (the judge may have judged a subset of the
     items the GT covers).
     """
-    overall_matches: List[bool] = []
-    verb_matches: List[bool] = []
+    overall_matches: list[bool] = []
+    verb_matches: list[bool] = []
     verb_pairs_count = 0
 
     for pair in ground_truth_pairs:
@@ -115,7 +115,7 @@ def calibrate(
     overall = _agreement(overall_matches)
     verb = _agreement(verb_matches)
 
-    findings: List[HealthFinding] = []
+    findings: list[HealthFinding] = []
     status = "ok"
     if overall is None:
         # No comparable pairs at all: the calibration step is "unrun"
@@ -169,7 +169,7 @@ def calibrate(
 
 def calibration_to_artifact(
     record: JudgeCalibrationRecord,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "artifact_type": "judge_calibration_record",
         "schema_version": CALIBRATION_SCHEMA_VERSION,

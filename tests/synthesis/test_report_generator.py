@@ -6,17 +6,16 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
 
 from spectrum_systems_core.synthesis.report_generator import (
-    ReportGenerator,
     SECTION_TYPES,
+    ReportGenerator,
 )
 
 from ._fixtures import make_bundle, make_bundle_item
 
 
-def _scripted_caller(answers: List[tuple]):
+def _scripted_caller(answers: list[tuple]):
     """Return an api_caller that returns one answer per call."""
     iter_answers = iter(answers)
 
@@ -43,7 +42,7 @@ class ReportGeneratorTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def _scripted_with_citations(self) -> List[tuple]:
+    def _scripted_with_citations(self) -> list[tuple]:
         cited = self.items[0]["artifact_id"]
         return [
             (

@@ -4,20 +4,16 @@ from __future__ import annotations
 import datetime
 import io
 import json
-import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import jsonschema
-import pytest
 
 from spectrum_systems_core.cli import next_phase_handoff_cli
 from spectrum_systems_core.verification.next_phase_handoff import (
     build_next_phase_briefing,
-    write_next_phase_briefing,
 )
-
 
 CONTRACT_DIR = (
     Path(__file__).resolve().parents[2]
@@ -27,7 +23,7 @@ CONTRACT_DIR = (
 )
 
 
-def _load_schema() -> Dict[str, Any]:
+def _load_schema() -> dict[str, Any]:
     return json.loads(
         (CONTRACT_DIR / "next_phase_briefing.schema.json").read_text(
             encoding="utf-8"
@@ -40,7 +36,7 @@ def _seed_pipeline_state_record(
     *,
     record_id: str | None = None,
     artifact_kind_only: int = 0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     verif = sdl / "verifications"
     verif.mkdir(parents=True, exist_ok=True)
     rid = record_id or str(uuid.uuid4())
@@ -81,7 +77,7 @@ def _seed_pipeline_state_record(
     return record
 
 
-def _seed_eval_summary(sdl: Path) -> Dict[str, Any]:
+def _seed_eval_summary(sdl: Path) -> dict[str, Any]:
     evals = sdl / "evals"
     evals.mkdir(parents=True, exist_ok=True)
     rec = {

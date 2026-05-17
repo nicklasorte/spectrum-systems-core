@@ -22,8 +22,9 @@ Rules:
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from ..artifacts import Artifact
 from .loader import TranscriptInput

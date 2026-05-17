@@ -17,17 +17,27 @@ import os
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 
 from ._paths import contracts_root
 from .date_utils import (
     COMPACT_DATE_RE as _COMPACT_DATE_RE,
+)
+from .date_utils import (
     DAY_MONTH_YEAR_RE as _DAY_MONTH_YEAR_RE,
+)
+from .date_utils import (
     MONTH_DAY_YEAR_RE as _MONTH_DAY_YEAR_RE,
+)
+from .date_utils import (
     NUMERIC_DATE_RE as _NUMERIC_DATE_RE,
+)
+from .date_utils import (
     extract_meeting_date as _extract_date_from_string,
+)
+from .date_utils import (
     extract_prose_date as _extract_prose_date,
 )
 from .docx_extractor import DocxExtractor
@@ -54,7 +64,7 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def extract_meeting_date(filename: str, text: str) -> Optional[str]:
+def extract_meeting_date(filename: str, text: str) -> str | None:
     """Extract a meeting_date as ``YYYY-MM-DD`` from filename, then body text.
 
     Filename is tried first via the shared ``date_utils.extract_meeting_date``
@@ -88,10 +98,10 @@ def extract_meeting_name(filename: str) -> str:
 class MinutesProcessor:
     """Process meeting-minutes .docx files into minutes_record artifacts."""
 
-    def __init__(self, docx_extractor: Optional[DocxExtractor] = None) -> None:
+    def __init__(self, docx_extractor: DocxExtractor | None = None) -> None:
         self._extractor = docx_extractor or DocxExtractor()
 
-    def process(self, docx_path: str, data_lake_path: str) -> Dict[str, Any]:
+    def process(self, docx_path: str, data_lake_path: str) -> dict[str, Any]:
         try:
             return self._process(docx_path, data_lake_path)
         except Exception as exc:  # defensive: never raise
@@ -100,7 +110,7 @@ class MinutesProcessor:
                 reason=f"unexpected_error:{exc}",
             )
 
-    def process_directory(self, data_lake_path: str) -> List[Dict[str, Any]]:
+    def process_directory(self, data_lake_path: str) -> list[dict[str, Any]]:
         """Process every .docx under ``store/raw/minutes/``.
 
         Returns ``[]`` when the directory is missing or empty — that is a
@@ -115,7 +125,7 @@ class MinutesProcessor:
             base = Path(data_lake_path) / "store" / "raw" / "minutes"
             if not base.is_dir():
                 return []
-            results: List[Dict[str, Any]] = []
+            results: list[dict[str, Any]] = []
             for docx in sorted(base.glob("*.docx")):
                 results.append(self.process(str(docx), data_lake_path))
             return results
@@ -124,7 +134,7 @@ class MinutesProcessor:
 
     # -- internals ---------------------------------------------------------
 
-    def _process(self, docx_path: str, data_lake_path: str) -> Dict[str, Any]:
+    def _process(self, docx_path: str, data_lake_path: str) -> dict[str, Any]:
         src = Path(docx_path)
         if not src.is_file():
             return _failure(docx_path=docx_path, reason=f"file_not_found:{docx_path}")
@@ -169,7 +179,7 @@ class MinutesProcessor:
 
         minutes_id = str(uuid.uuid4())
 
-        record: Dict[str, Any] = {
+        record: dict[str, Any] = {
             "minutes_id": minutes_id,
             "docx_path": str(src),
             "txt_path": str(txt_path),
@@ -254,7 +264,7 @@ class MinutesProcessor:
         }
 
 
-def _resolve_sdl_root(data_lake_path: str) -> Optional[Path]:
+def _resolve_sdl_root(data_lake_path: str) -> Path | None:
     """Resolve the SDL_ROOT.
 
     Precedence: ``SDL_ROOT`` env var, else ``<data_lake_path>/store/artifacts``
@@ -282,7 +292,7 @@ def _resolve_sdl_root(data_lake_path: str) -> Optional[Path]:
     return candidate
 
 
-def _load_schema() -> Dict[str, Any]:
+def _load_schema() -> dict[str, Any]:
     schema_file = (
         contracts_root() / "schemas" / "ingestion" / "minutes_record.schema.json"
     )
@@ -293,13 +303,13 @@ def _failure(
     *,
     docx_path: str,
     reason: str,
-    txt_path: Optional[str] = None,
-    meeting_date: Optional[str] = None,
-    meeting_name: Optional[str] = None,
+    txt_path: str | None = None,
+    meeting_date: str | None = None,
+    meeting_name: str | None = None,
     text_unit_count: int = 0,
     character_count: int = 0,
     table_count: int = 0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "status": "failure",
         "minutes_id": "",
@@ -315,7 +325,7 @@ def _failure(
     }
 
 
-def _blocked(**kwargs: Any) -> Dict[str, Any]:
+def _blocked(**kwargs: Any) -> dict[str, Any]:
     result = _failure(**kwargs)
     result["status"] = "blocked"
     return result
@@ -323,7 +333,7 @@ def _blocked(**kwargs: Any) -> Dict[str, Any]:
 
 def _find_existing_minutes_by_hash(
     sdl_root: Path, raw_hash: str
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Return summary of an existing minutes_record whose raw_hash matches.
 
     Reads ``<sdl_root>/minutes/*.json`` non-recursively (so files under
@@ -361,8 +371,8 @@ def _skipped(
     *,
     docx_path: str,
     txt_path: str,
-    existing: Dict[str, Any],
-) -> Dict[str, Any]:
+    existing: dict[str, Any],
+) -> dict[str, Any]:
     """Result dict for an idempotent skip (already_processed).
 
     Carries the existing record's identifiers so callers can tell which

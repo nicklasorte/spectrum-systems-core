@@ -19,7 +19,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 SOURCE_ID = "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218"
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "wipe_eval_artifacts.py"
 

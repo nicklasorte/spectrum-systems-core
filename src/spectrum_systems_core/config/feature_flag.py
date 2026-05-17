@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import logging
 import pathlib
-from typing import Union
 
 _LOG = logging.getLogger(__name__)
 
@@ -29,7 +28,7 @@ class FeatureFlag:
     (missing file, malformed JSON, missing key) resolves to False.
     """
 
-    def __init__(self, data_lake_path: Union[str, pathlib.Path]):
+    def __init__(self, data_lake_path: str | pathlib.Path):
         self.data_lake_path = pathlib.Path(data_lake_path)
 
     def _flag_path(self, flag_name: str) -> pathlib.Path:

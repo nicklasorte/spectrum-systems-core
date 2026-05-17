@@ -4,15 +4,14 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any
 
 from spectrum_systems_core.extraction.source_grounding_verifier import (
-    POST_HOC_VERIFICATION_ENABLED_ENV,
     SOURCE_GROUNDING_OVERLAP_THRESHOLD,
     SPURIOUS_ADD_RATE_THRESHOLD,
-    build_spurious_add_candidate,
     compute_token_overlap,
     post_hoc_verification_enabled,
     verify_extraction_grounding,
@@ -23,8 +22,8 @@ from spectrum_systems_core.validation import validate_artifact
 
 
 @contextmanager
-def _env(**vars: Optional[str]) -> Iterator[None]:
-    prev: Dict[str, Optional[str]] = {}
+def _env(**vars: str | None) -> Iterator[None]:
+    prev: dict[str, str | None] = {}
     for k, v in vars.items():
         prev[k] = os.environ.get(k)
         if v is None:
@@ -41,7 +40,7 @@ def _env(**vars: Optional[str]) -> Iterator[None]:
                 os.environ[k] = p
 
 
-def _chunk(chunk_id: str, text: str) -> Dict[str, Any]:
+def _chunk(chunk_id: str, text: str) -> dict[str, Any]:
     return {"chunk_id": chunk_id, "text": text}
 
 

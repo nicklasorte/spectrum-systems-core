@@ -1,7 +1,6 @@
 """Locate the contracts/ directory regardless of install layout."""
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 

@@ -6,7 +6,7 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from spectrum_systems_core.extraction import ConnectionEngine
 
@@ -19,7 +19,7 @@ def _make_story(
     theme: str = "agency comments review process",
     summary: str = "A summary that is over twenty characters in length.",
     why: str = "Because of the strong moment described here.",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "story_id": str(uuid.uuid4()),
         "source_id": source_id,
@@ -58,7 +58,7 @@ def _make_story(
 
 
 def _write_promoted(
-    repo_root: Path, source_id: str, stories: List[Dict[str, Any]]
+    repo_root: Path, source_id: str, stories: list[dict[str, Any]]
 ) -> None:
     target = repo_root / "processed" / "notes" / source_id / "stories" / "promoted"
     target.mkdir(parents=True, exist_ok=True)

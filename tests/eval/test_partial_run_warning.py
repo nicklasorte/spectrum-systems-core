@@ -4,18 +4,14 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
-
-import jsonschema
-import pytest
+from typing import Any
 
 from spectrum_systems_core.evals.m4 import EvalRunner
-
 
 CONTRACT_DIR = Path(__file__).resolve().parents[2] / "contracts" / "schemas"
 
 
-def _confirmed_pair(source_id: str) -> Dict[str, Any]:
+def _confirmed_pair(source_id: str) -> dict[str, Any]:
     """A confirmed pair that does NOT carry fixture_extracted_items, so the
     runner must look on disk for a meeting_extraction artifact."""
     return {
@@ -28,7 +24,7 @@ def _confirmed_pair(source_id: str) -> Dict[str, Any]:
     }
 
 
-def _write_pair(sdl_root: Path, pair: Dict[str, Any]) -> Path:
+def _write_pair(sdl_root: Path, pair: dict[str, Any]) -> Path:
     target = sdl_root / "ground_truth"
     target.mkdir(parents=True, exist_ok=True)
     fp = target / f"{pair['pair_id']}.json"
@@ -182,7 +178,7 @@ def test_zero_confirmed_pairs_does_not_divide_by_zero(tmp_path: Path) -> None:
 
 def _write_production_pair(
     sdl_root: Path, source_id: str, source_artifact_id: str
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """A confirmed production-style pair: no fixture_extracted_items;
     carries the slug source_id field plus a per-run source_artifact_id.
     Returns the pair dict so the test can inspect it."""

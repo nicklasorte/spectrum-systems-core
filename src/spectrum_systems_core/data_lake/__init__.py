@@ -2,67 +2,56 @@
 
 See docs/contracts/data_lake_contract.md for the binding layout and rules.
 """
-from .paths import (
-    raw_meeting_dir,
-    raw_transcript_path,
-    raw_metadata_path,
-    processed_meeting_dir,
-    processed_corpus_dir,
-    validate_corpus_id,
-    artifact_index_path,
-    eval_candidates_dir,
-    failures_dir,
-    reviewed_evals_dir,
-    EVAL_CANDIDATES_SUBDIR,
-    FAILURES_SUBDIR,
-    REVIEWED_EVALS_SUBDIR,
-    LEARNING_SUBDIRS,
+from .chunker import (
+    NO_SPEAKER_DETECTED_FINDING,
+    NO_SPEAKER_STRUCTURE_FINDING,
+    chunk_transcript,
+    chunker_health,
+    speaker_null_rate,
 )
-from .loader import (
-    TranscriptInput,
-    REQUIRED_METADATA_FIELDS,
-    ALLOWED_SOURCE_TYPES,
-    load_meeting,
-    load_meeting_from_dir,
-    LoaderError,
+from .cli import (
+    DEFAULT_WORKFLOWS,
+    ProcessMeetingResult,
+    process_meeting,
+    process_meeting_llm,
 )
-from .writer import (
-    write_promoted_artifact,
-    write_learning_artifact,
-    WriterError,
-    LEARNING_ARTIFACT_TYPES,
+from .cli import (
+    main as cli_main,
 )
-from .serialize import canonical_json, slugify, artifact_to_dict
+from .debug import DEBUG_SCHEMA_VERSION, build_debug_report
+from .eval_history import (
+    EVAL_HISTORY_FILENAME,
+    EVAL_HISTORY_SCHEMA_VERSION,
+    build_eval_records,
+    eval_history_path,
+    write_eval_history,
+)
+from .experience import (
+    EXPERIENCE_HISTORY_FILENAME,
+    EXPERIENCE_SCHEMA_VERSION,
+    build_experience_record,
+    experience_history_path,
+    write_experience_history,
+)
+from .extract import build_grounded_payload, supported_workflow
+from .failure_seed import (
+    ALLOWED_REVIEW_STATUSES,
+    EVAL_CASE_CANDIDATE_TYPE,
+    FAILURE_RECORD_TYPE,
+    REVIEWED_EVAL_CASE_FIELDS,
+    REVIEWED_EVAL_CASE_TYPE,
+    candidate_eval_case_from_failure,
+    is_eligible_for_regression,
+    is_required_eval,
+    record_failure,
+    review_eval_candidate,
+)
 from .grounding import (
     GROUNDING_KEY,
     MEETING_ID_KEY,
     evaluate_grounding,
-    grounding_span,
     excerpt_is_in_transcript,
-)
-from .extract import build_grounded_payload, supported_workflow
-from .chunker import (
-    chunk_transcript,
-    chunker_health,
-    speaker_null_rate,
-    NO_SPEAKER_DETECTED_FINDING,
-    NO_SPEAKER_STRUCTURE_FINDING,
-)
-from .manifest import (
-    MANIFEST_SCHEMA_VERSION,
-    REQUIRED_MANIFEST_FIELDS,
-    ManifestError,
-    build_manifest,
-    derive_run_id,
-    manifest_to_json,
-    validate_manifest,
-)
-from .debug import build_debug_report, DEBUG_SCHEMA_VERSION
-from .pipeline import (
-    PipelineResult,
-    SOURCE_RECORD_TYPE,
-    run_transcript_pipeline,
-    source_record_path,
+    grounding_span,
 )
 from .index import (
     INDEX_FIELDS,
@@ -72,23 +61,22 @@ from .index import (
     read_artifact_index,
     write_artifact_index,
 )
-from .query import (
-    QueryError,
-    QueryResult,
-    SUPPORTED_FILTERS,
-    query,
+from .loader import (
+    ALLOWED_SOURCE_TYPES,
+    REQUIRED_METADATA_FIELDS,
+    LoaderError,
+    TranscriptInput,
+    load_meeting,
+    load_meeting_from_dir,
 )
-from .failure_seed import (
-    FAILURE_RECORD_TYPE,
-    EVAL_CASE_CANDIDATE_TYPE,
-    REVIEWED_EVAL_CASE_TYPE,
-    ALLOWED_REVIEW_STATUSES,
-    REVIEWED_EVAL_CASE_FIELDS,
-    candidate_eval_case_from_failure,
-    is_required_eval,
-    is_eligible_for_regression,
-    record_failure,
-    review_eval_candidate,
+from .manifest import (
+    MANIFEST_SCHEMA_VERSION,
+    REQUIRED_MANIFEST_FIELDS,
+    ManifestError,
+    build_manifest,
+    derive_run_id,
+    manifest_to_json,
+    validate_manifest,
 )
 from .markdown import (
     AGENCIES_SUBDIR,
@@ -118,6 +106,34 @@ from .markdown import (
     write_index_markdown,
     write_topic_markdown,
 )
+from .paths import (
+    EVAL_CANDIDATES_SUBDIR,
+    FAILURES_SUBDIR,
+    LEARNING_SUBDIRS,
+    REVIEWED_EVALS_SUBDIR,
+    artifact_index_path,
+    eval_candidates_dir,
+    failures_dir,
+    processed_corpus_dir,
+    processed_meeting_dir,
+    raw_meeting_dir,
+    raw_metadata_path,
+    raw_transcript_path,
+    reviewed_evals_dir,
+    validate_corpus_id,
+)
+from .pipeline import (
+    SOURCE_RECORD_TYPE,
+    PipelineResult,
+    run_transcript_pipeline,
+    source_record_path,
+)
+from .query import (
+    SUPPORTED_FILTERS,
+    QueryError,
+    QueryResult,
+    query,
+)
 from .run_history import (
     RUN_HISTORY_FILENAME,
     RUN_HISTORY_SCHEMA_VERSION,
@@ -128,26 +144,12 @@ from .run_history import (
     write_run_history,
     write_run_note_markdown,
 )
-from .experience import (
-    EXPERIENCE_HISTORY_FILENAME,
-    EXPERIENCE_SCHEMA_VERSION,
-    build_experience_record,
-    experience_history_path,
-    write_experience_history,
-)
-from .eval_history import (
-    EVAL_HISTORY_FILENAME,
-    EVAL_HISTORY_SCHEMA_VERSION,
-    build_eval_records,
-    eval_history_path,
-    write_eval_history,
-)
-from .cli import (
-    DEFAULT_WORKFLOWS,
-    ProcessMeetingResult,
-    main as cli_main,
-    process_meeting,
-    process_meeting_llm,
+from .serialize import artifact_to_dict, canonical_json, slugify
+from .writer import (
+    LEARNING_ARTIFACT_TYPES,
+    WriterError,
+    write_learning_artifact,
+    write_promoted_artifact,
 )
 
 __all__ = [

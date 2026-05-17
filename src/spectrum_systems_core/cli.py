@@ -18,11 +18,23 @@ import re
 import shutil
 import sys
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any
 
 import yaml
 
+from .agency import (
+    AgencyEval,
+    MitigationEval,
+    MitigationOutcomeTracker,
+    MitigationSuggester,
+    ObjectionEval,
+    ObjectionPredictor,
+    PatternIndexer,
+    ProfileBuilder,
+)
+from .ai import AIAdapter, PromptRegistry
 from .extraction import (
     Chunker,
     StoryEval,
@@ -30,9 +42,19 @@ from .extraction import (
     StoryReviewGateway,
     StoryworthyFilter,
 )
+from .governance import GovernanceDashboard
+from .governance.apply_compression import apply_compression as _apply_compression
+from .harness import (
+    EntropyAuditor,
+    EvalScoreHistory,
+    FailurePatternIndex,
+    OutcomeMemoryStore,
+    OverrideStore,
+    RunHistoryStore,
+    WorkflowComparator,
+)
 from .ingestion import (
     DocxExtractor,
-    GroundingHelper,
     GroundTruthLinker,
     MinutesProcessor,
     ObsidianProjection,
@@ -42,17 +64,7 @@ from .ingestion import (
     SourceLoader,
     deduplicate_minutes,
 )
-from .agency import (
-    AgencyEval,
-    AgencyProfileStore,
-    MitigationEval,
-    MitigationOutcomeTracker,
-    MitigationSuggester,
-    ObjectionEval,
-    ObjectionPredictor,
-    PatternIndexer,
-    ProfileBuilder,
-)
+from .orchestration import PipelineOrchestrator
 from .paper import (
     AssumptionExtractor,
     ClaimEval,
@@ -68,6 +80,8 @@ from .paper import (
     RevisionWorkflow,
 )
 from .synthesis import (
+    VALID_AUDIENCES,
+    VALID_PURPOSES,
     BundleAssembler,
     BundleEval,
     GroundingEval,
@@ -78,24 +92,8 @@ from .synthesis import (
     StoryMatrix,
     SynthesisReviewGateway,
     ThemeSynthesizer,
-    VALID_AUDIENCES,
-    VALID_PURPOSES,
     total_cost_usd,
 )
-from .harness import (
-    EntropyAuditor,
-    EvalScoreHistory,
-    FailurePatternIndex,
-    OutcomeMemoryStore,
-    OverrideStore,
-    RunHistoryStore,
-    WorkflowComparator,
-)
-from .ai import AIAdapter, PromptRegistry
-from .governance import GovernanceDashboard
-from .governance.apply_compression import apply_compression as _apply_compression
-from .orchestration import PipelineOrchestrator
-
 
 _AI_ADVISORY_BANNER = "⚠️ AI output is advisory only. Review before acting."
 
@@ -117,7 +115,7 @@ _CLM_STATUS_SYMBOLS = {
 }
 
 
-def _format_chunk_summary(result: Dict[str, Any], *, prefix: str = "") -> str:
+def _format_chunk_summary(result: dict[str, Any], *, prefix: str = "") -> str:
     """Render ``Chunks: attempted=N succeeded=N blocked=N <clm-symbol>``.
 
     Reads ``chunks_attempted`` / ``chunks_succeeded`` / ``chunks_blocked``
@@ -136,7 +134,7 @@ def _format_chunk_summary(result: Dict[str, Any], *, prefix: str = "") -> str:
     )
 
 
-def _require_data_lake_store(out_stream=None) -> Optional[Path]:
+def _require_data_lake_store(out_stream=None) -> Path | None:
     """Return DATA_LAKE_PATH/store, or print an error and return None."""
     out = out_stream if out_stream is not None else sys.stdout
     env = os.environ.get("DATA_LAKE_PATH", "")
@@ -157,7 +155,7 @@ def _slugify(name: str) -> str:
     return _SLUG_RE.sub("-", lowered).strip("-_") or "note"
 
 
-def _split_frontmatter(text: str) -> tuple[Dict[str, Any], str]:
+def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     """Return (frontmatter_dict, body) — empty dict if no frontmatter."""
     pattern = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\Z", re.DOTALL)
     match = pattern.match(text)
@@ -495,7 +493,7 @@ def promote_knowledge(
         print(f"error: {jsonl_path} not found", file=out)
         return 1
 
-    records: list[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     with jsonl_path.open("r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -765,7 +763,7 @@ def approve_revisions(
         repo_root_path, source_id, "revision_instructions.jsonl"
     )
 
-    selected: list[Dict[str, Any]]
+    selected: list[dict[str, Any]]
     if all_pending:
         selected = [i for i in instructions if i.get("status") == "pending"]
     elif instruction_ids:
@@ -916,7 +914,7 @@ Approval is required before the revision is applied.
 """
 
 
-def _render_revision_review_form(instruction: Dict[str, Any]) -> str:
+def _render_revision_review_form(instruction: dict[str, Any]) -> str:
     return _REVISION_REVIEW_FORM_TEMPLATE.format(
         instruction_id=instruction.get("instruction_id", ""),
         issue_id=instruction.get("issue_id", ""),
@@ -1175,7 +1173,7 @@ def predict_objections(
     from .extraction._paths import find_processed_dir as _fpd
 
     processed_dir, _ = _fpd(repo_root_path, paper_source_id)
-    mitigations: list[Dict[str, Any]] = []
+    mitigations: list[dict[str, Any]] = []
     if processed_dir is not None:
         m_path = processed_dir / "paper" / "objections" / "mitigations.jsonl"
         if m_path.is_file():
@@ -1267,7 +1265,7 @@ def track_outcome(
 
 def _load_paper_jsonl(
     repo_root: Path, source_id: str, filename: str
-) -> list[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     from .extraction._paths import find_processed_dir
 
     processed_dir, _ = find_processed_dir(repo_root, source_id)
@@ -1276,7 +1274,7 @@ def _load_paper_jsonl(
     path = processed_dir / "paper" / filename
     if not path.is_file():
         return []
-    out: list[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -1290,7 +1288,7 @@ def _write_paper_jsonl(
     repo_root: Path,
     source_id: str,
     filename: str,
-    records: list[Dict[str, Any]],
+    records: list[dict[str, Any]],
 ) -> None:
     from .extraction._paths import find_processed_dir
 
@@ -1307,7 +1305,7 @@ def _write_paper_jsonl(
             )
 
 
-def _load_candidates(repo_root: Path, source_id: str) -> list[Dict[str, Any]]:
+def _load_candidates(repo_root: Path, source_id: str) -> list[dict[str, Any]]:
     from .extraction._paths import find_processed_dir
     processed_dir, _ = find_processed_dir(repo_root, source_id)
     if processed_dir is None:
@@ -1315,7 +1313,7 @@ def _load_candidates(repo_root: Path, source_id: str) -> list[Dict[str, Any]]:
     path = processed_dir / "stories" / "candidates.jsonl"
     if not path.is_file():
         return []
-    out: list[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -1390,10 +1388,10 @@ def synthesize(
 
     matrix_result = StoryMatrix().build(run_id, audience, themes, str(repo_root))
 
-    report_summary: Dict[str, Any] = {}
-    keynote_summary: Dict[str, Any] = {}
-    report_draft: Dict[str, Any] = {}
-    keynote_scaffold: Dict[str, Any] = {}
+    report_summary: dict[str, Any] = {}
+    keynote_summary: dict[str, Any] = {}
+    report_draft: dict[str, Any] = {}
+    keynote_scaffold: dict[str, Any] = {}
 
     if purpose in ("report", "both"):
         report_result = ReportGenerator().generate(
@@ -1548,7 +1546,7 @@ def _record_synthesis_run_in_harness(
                 pass
 
         # Ingest failures (ungrounded sections).
-        failures: list[Dict[str, Any]] = []
+        failures: list[dict[str, Any]] = []
         if report_path.is_file():
             try:
                 report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -1668,7 +1666,7 @@ def record_run(
         except (OSError, json.JSONDecodeError):
             pass
 
-    failures: list[Dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
     if report_path.is_file():
         try:
             report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -1897,7 +1895,7 @@ def promote_eval_case(
     if not candidates_path.is_file():
         print(f"error: candidates file not found: {candidates_path}", file=out)
         return 1
-    candidates: list[Dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
     with candidates_path.open("r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -2017,9 +2015,9 @@ def audit_entropy(
     return 0
 
 
-def _load_agency_outcomes(repo_root: Path) -> list[Dict[str, Any]]:
+def _load_agency_outcomes(repo_root: Path) -> list[dict[str, Any]]:
     """Scan agency/<slug>/mitigation_outcomes.jsonl across all slugs."""
-    out: list[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     agency_root = repo_root / "agency"
     if not agency_root.is_dir():
         return out
@@ -2557,7 +2555,7 @@ def list_source_ids(
         print(f"error: data lake path does not exist: {resolved}", file=out)
         return 1
 
-    source_ids: List[str] = []
+    source_ids: list[str] = []
     transcripts_dir = Path(resolved) / "store" / "raw" / "transcripts"
     if transcripts_dir.exists():
         all_files = sorted(
@@ -2566,7 +2564,7 @@ def list_source_ids(
         )
         # 1. Filter "minutes" .docx/.txt and ignore other extensions
         #    (mirrors PipelineOrchestrator.scan()).
-        files: List[Path] = []
+        files: list[Path] = []
         for p in all_files:
             ext = p.suffix.lower()
             if ext not in (".docx", ".txt"):
@@ -2578,7 +2576,7 @@ def list_source_ids(
         # 2. Prefer .docx; skip .txt whose stem has a .docx peer.
         docx_stems = {p.stem for p in files if p.suffix.lower() == ".docx"}
         seen_stems: set = set()
-        ordered: List[Path] = []
+        ordered: list[Path] = []
         for p in files:
             ext = p.suffix.lower()
             if ext == ".docx":
@@ -2594,7 +2592,7 @@ def list_source_ids(
 
         # 3. Drop slug collisions (orchestrator treats them as
         #    unprocessable; a matrix job would race the rejection).
-        sid_to_paths: Dict[str, List[Path]] = {}
+        sid_to_paths: dict[str, list[Path]] = {}
         for p in ordered:
             sid_to_paths.setdefault(_slugify(p.stem), []).append(p)
         for p in ordered:
@@ -2692,10 +2690,10 @@ def extract_typed(
            DATA_LAKE_PATH unset).
     """
     import sys
-    from pathlib import Path as _Path
+
     from .extraction.typed_extraction_runner import (
-        _resolve_store_root,
         _SOURCE_FAMILIES,
+        _resolve_store_root,
         run_typed_extraction,
     )
 
@@ -3125,7 +3123,7 @@ def link_ground_truth(
     print("=== Ground Truth Linker ===", file=out)
 
     # Optional MinutesProcessor pass.
-    minutes_results: list[Dict[str, Any]] = []
+    minutes_results: list[dict[str, Any]] = []
     if process_minutes:
         minutes_results = MinutesProcessor().process_directory(resolved)
         successes = [r for r in minutes_results if r.get("status") == "success"]
@@ -3233,7 +3231,7 @@ def link_ground_truth(
 
 def _resolve_pipeline_run_id_from_orchestration(
     data_lake_path: str,
-) -> Optional[str]:
+) -> str | None:
     """Read the latest orchestration_run_record run_id, if available.
 
     The orchestration_run_record uses ``run_id`` rather than the
@@ -3271,7 +3269,7 @@ def _resolve_pipeline_run_id_from_orchestration(
 
 
 def _orchestration_record_is_dry_run(
-    data_lake_path: str, pipeline_run_id: Optional[str]
+    data_lake_path: str, pipeline_run_id: str | None
 ) -> bool:
     """If the orchestration_run_record for ``pipeline_run_id`` says
     dry_run=true, return True. Defaults to False if the record cannot
@@ -3302,13 +3300,13 @@ def _orchestration_record_is_dry_run(
 
 def eval_ground_truth(
     *,
-    data_lake: Optional[str] = None,
-    pipeline_run_id: Optional[str] = None,
-    pair_id: Optional[str] = None,
+    data_lake: str | None = None,
+    pipeline_run_id: str | None = None,
+    pair_id: str | None = None,
     prompt_version: str = "unspecified",
     set_baseline: bool = False,
     is_dry_run: bool = False,
-    specific_source_id: Optional[str] = None,
+    specific_source_id: str | None = None,
     out_stream=None,
 ) -> int:
     """Phase M.4: evaluate the pipeline against confirmed ground_truth pairs.
@@ -3399,8 +3397,8 @@ def _set_baseline_handoff_reminder() -> str:
 
 
 def _resolve_verification_sdl(
-    data_lake: Optional[str], out
-) -> tuple[Optional[Path], Optional[str]]:
+    data_lake: str | None, out
+) -> tuple[Path | None, str | None]:
     """Resolve (sdl_root, data_lake_path) for the verification commands.
 
     Returns ``(None, None)`` and prints to ``out`` if nothing can be
@@ -3409,7 +3407,7 @@ def _resolve_verification_sdl(
     """
     resolved_lake = data_lake or os.environ.get("DATA_LAKE_PATH", "") or ""
     env_sdl = os.environ.get("SDL_ROOT", "").strip()
-    sdl_root: Optional[Path] = None
+    sdl_root: Path | None = None
     if env_sdl:
         sdl_root = Path(env_sdl)
     elif resolved_lake:
@@ -3431,7 +3429,7 @@ def _resolve_verification_sdl(
 
 def verify_pipeline_state(
     *,
-    data_lake: Optional[str] = None,
+    data_lake: str | None = None,
     validate_schemas: bool = True,
     emit_actions_summary: bool = False,
     no_write_artifact: bool = False,
@@ -3450,9 +3448,13 @@ def verify_pipeline_state(
     on every trigger.
     """
     from .verification import (
-        scan_pipeline_state as _scan,
-        write_pipeline_state_record as _write,
         emit_actions_summary as _emit,
+    )
+    from .verification import (
+        scan_pipeline_state as _scan,
+    )
+    from .verification import (
+        write_pipeline_state_record as _write,
     )
 
     out = out_stream if out_stream is not None else sys.stdout
@@ -3503,8 +3505,8 @@ def verify_pipeline_state(
 
 def review_baseline_candidate(
     *,
-    data_lake: Optional[str] = None,
-    eval_summary_id: Optional[str] = None,
+    data_lake: str | None = None,
+    eval_summary_id: str | None = None,
     out_stream=None,
 ) -> int:
     """Phase O.5 — print PASS/REVIEW sanity-bound checklist.
@@ -3644,7 +3646,7 @@ def review_baseline_candidate(
 
 
 def _count_total_extracted_items(
-    meeting_extractions: List[Dict[str, Any]],
+    meeting_extractions: list[dict[str, Any]],
 ) -> int:
     """Sum decisions + claims + action_items across meeting_extractions.
 
@@ -3663,8 +3665,8 @@ def _count_total_extracted_items(
 
 
 def _list_source_ids_missing_chunks(
-    data_lake_path: Optional[str],
-) -> List[str]:
+    data_lake_path: str | None,
+) -> list[str]:
     """Return sorted source_ids that have a source_record but no chunks.jsonl.
 
     Walks ``<data_lake>/store/processed/<family>/<source_id>/`` and reports
@@ -3677,7 +3679,7 @@ def _list_source_ids_missing_chunks(
     processed = Path(data_lake_path) / "store" / "processed"
     if not processed.is_dir():
         return []
-    missing: List[str] = []
+    missing: list[str] = []
     for family_dir in sorted(processed.iterdir()):
         if not family_dir.is_dir():
             continue
@@ -3697,7 +3699,7 @@ _RUNBOOK_REL_PATH = "docs/runbooks/verification-cycle-recovery.md"
 
 def check_preflight(
     *,
-    data_lake: Optional[str] = None,
+    data_lake: str | None = None,
     allow_mixed_migration: bool = False,
     out_stream=None,
 ) -> int:
@@ -3821,8 +3823,8 @@ def check_preflight(
 
 def next_phase_handoff_cli(
     *,
-    data_lake: Optional[str] = None,
-    cycle_id: Optional[str] = None,
+    data_lake: str | None = None,
+    cycle_id: str | None = None,
     freshness_hours: int = 24,
     out_stream=None,
 ) -> int:
@@ -3881,15 +3883,19 @@ def next_phase_handoff_cli(
 
 def compile_findings_cli(
     *,
-    data_lake: Optional[str] = None,
-    cycle_id: Optional[str] = None,
+    data_lake: str | None = None,
+    cycle_id: str | None = None,
     out_stream=None,
 ) -> int:
     """Phase O.6 — write verification_findings artifact + Markdown summary."""
     from .verification import (
         compile_findings as _compile,
-        write_verification_findings as _write,
+    )
+    from .verification import (
         format_findings_markdown as _format,
+    )
+    from .verification import (
+        write_verification_findings as _write,
     )
 
     out = out_stream if out_stream is not None else sys.stdout

@@ -14,9 +14,9 @@ surface prompt-tuning needs, not block the run.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Dict, Sequence
-
+from typing import Any
 
 # Rates strictly below this threshold emit a warn finding. 0.8 is
 # a pragmatic threshold: most prompts that produce an empty
@@ -32,7 +32,7 @@ class PopulationRates:
     decisions_total: int
     claims_total: int
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "stakeholders_populated_rate": self.stakeholders_populated_rate,
             "rationale_populated_rate": self.rationale_populated_rate,
@@ -62,8 +62,8 @@ def _value_is_populated(value: Any) -> bool:
 
 
 def compute_population_rates(
-    decisions: Sequence[Dict[str, Any]],
-    claims: Sequence[Dict[str, Any]],
+    decisions: Sequence[dict[str, Any]],
+    claims: Sequence[dict[str, Any]],
 ) -> PopulationRates:
     """Compute per-field population rates across the extracted items.
 
@@ -106,7 +106,7 @@ def below_threshold_fields(
     rates: PopulationRates,
     *,
     threshold: float = RATE_WARN_THRESHOLD,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Return the rates strictly below ``threshold`` (only the
     fields that have a denominator > 0).
 
@@ -114,7 +114,7 @@ def below_threshold_fields(
     ``low_field_population_rate`` finding. The decision is fail-OPEN:
     a finding is surfaced for diagnosis but never halts the run.
     """
-    out: Dict[str, float] = {}
+    out: dict[str, float] = {}
     if rates.decisions_total > 0:
         if rates.stakeholders_populated_rate < threshold:
             out["stakeholders_populated_rate"] = rates.stakeholders_populated_rate

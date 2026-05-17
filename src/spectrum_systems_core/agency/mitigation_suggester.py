@@ -11,8 +11,9 @@ import hashlib
 import json
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 import jsonschema
 
@@ -70,8 +71,8 @@ def _now_iso() -> str:
     )
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     with path.open("r", encoding="utf-8") as fh:
@@ -94,14 +95,14 @@ def _execution_fingerprint(*parts: str) -> str:
 class MitigationSuggester:
     """One suggestion per candidate prediction. Writes mitigations.jsonl."""
 
-    def __init__(self, api_caller: Optional[Callable[[str], str]] = None):
+    def __init__(self, api_caller: Callable[[str], str] | None = None):
         self._api_caller = api_caller
 
     def suggest_for_predictions(
         self,
         paper_source_id: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, _ = find_processed_dir(repo_root_path, paper_source_id)
         if processed_dir is None:
@@ -172,8 +173,8 @@ class MitigationSuggester:
         mitigations_written = 0
         blocked_count = 0
         warnings = 0
-        new_mitigations: List[Dict[str, Any]] = []
-        blocked_reasons: List[str] = []
+        new_mitigations: list[dict[str, Any]] = []
+        blocked_reasons: list[str] = []
 
         for prediction in candidates:
             prediction_id = prediction.get("prediction_id")
@@ -317,7 +318,7 @@ class MitigationSuggester:
                 temperature=EXTRACTION_TEMPERATURE,
                 messages=[{"role": "user", "content": prompt}],
             )
-            parts: List[str] = []
+            parts: list[str] = []
             for block in message.content:
                 text = getattr(block, "text", None)
                 if isinstance(text, str):

@@ -5,7 +5,7 @@ EVAL-OBJ-001..005. No LLM. Block-on-failure for all five.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 
@@ -15,9 +15,9 @@ from ._paths import agency_schema_path
 class ObjectionEval:
     """Run schema + integrity checks on a list of objection_prediction dicts."""
 
-    def run(self, predictions: List[Dict[str, Any]]) -> Dict[str, Any]:
-        eval_results: List[Dict[str, Any]] = []
-        reason_codes: List[str] = []
+    def run(self, predictions: list[dict[str, Any]]) -> dict[str, Any]:
+        eval_results: list[dict[str, Any]] = []
+        reason_codes: list[str] = []
 
         # EVAL-OBJ-001: schema_conformance
         try:
@@ -37,7 +37,7 @@ class ObjectionEval:
                 "reason_codes": ["schema_unreadable"],
             }
         validator = jsonschema.Draft202012Validator(schema)
-        schema_failures: List[str] = []
+        schema_failures: list[str] = []
         for pred in predictions:
             try:
                 validator.validate(pred)
@@ -60,7 +60,7 @@ class ObjectionEval:
             )
 
         # EVAL-OBJ-002: high_confidence_requires_evidence (FINDING-E-001)
-        offenders: List[str] = []
+        offenders: list[str] = []
         for pred in predictions:
             if (
                 pred.get("confidence") == "high"

@@ -11,8 +11,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 
 def _write_glossary(path: Path, version: int, term_count: int = 1) -> None:
     artifact = {

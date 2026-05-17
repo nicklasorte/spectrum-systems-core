@@ -11,13 +11,10 @@ import io
 import shutil
 from pathlib import Path
 
-import pytest
-
 from spectrum_systems_core.cli import (
     _set_baseline_handoff_reminder,
     eval_ground_truth,
 )
-
 
 FIXTURE_DIR = (
     Path(__file__).resolve().parents[1] / "fixtures" / "eval" / "ground_truth"

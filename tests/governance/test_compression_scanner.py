@@ -1,7 +1,6 @@
 """Tests for CompressionScanner — Phase I."""
 from __future__ import annotations
 
-import shutil
 import tempfile
 import unittest
 from pathlib import Path

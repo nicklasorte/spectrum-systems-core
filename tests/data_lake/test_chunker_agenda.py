@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -13,7 +12,6 @@ from spectrum_systems_core.data_lake.chunker import (
     _detect_agenda_item,
     chunk_transcript,
 )
-
 
 # ---- detector unit cases ------------------------------------------------
 

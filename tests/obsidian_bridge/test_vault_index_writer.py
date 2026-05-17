@@ -8,10 +8,10 @@ import unittest
 import uuid
 from unittest import mock
 
+from spectrum_systems_core.obsidian_bridge import _frontmatter
 from spectrum_systems_core.obsidian_bridge.vault_index_writer import (
     VaultIndexWriter,
 )
-from spectrum_systems_core.obsidian_bridge import _frontmatter
 
 
 def _seed_source_note(vault_root: str, source_rel: str) -> None:

@@ -23,11 +23,11 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from ..config.taxonomy import OVERGENERALIZATION_MARKERS
 from ..health.finding import HealthFinding
-
 
 _LOG = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ def _enabled() -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
-def find_band_refs(text: str) -> List[str]:
+def find_band_refs(text: str) -> list[str]:
     """Return all specific-band references found in ``text``.
 
     Empty list when ``text`` is None / empty or carries no
@@ -60,7 +60,7 @@ def find_band_refs(text: str) -> List[str]:
     return [m.group(0) for m in BAND_PATTERN.finditer(text)]
 
 
-def find_overgeneralization_markers(text: str) -> List[str]:
+def find_overgeneralization_markers(text: str) -> list[str]:
     """Return the markers from ``OVERGENERALIZATION_MARKERS`` that
     occur in ``text`` (case-insensitive)."""
     if not isinstance(text, str) or not text.strip():
@@ -70,12 +70,12 @@ def find_overgeneralization_markers(text: str) -> List[str]:
 
 
 def check_generalization_bias(
-    source_text: Optional[str],
-    extracted_text: Optional[str],
+    source_text: str | None,
+    extracted_text: str | None,
     item_id: str,
     *,
-    pipeline_run_id: Optional[str] = None,
-) -> Optional[HealthFinding]:
+    pipeline_run_id: str | None = None,
+) -> HealthFinding | None:
     """Return a ``scope_overgeneralization`` finding or None.
 
     Returns None when:
@@ -112,18 +112,18 @@ def check_generalization_bias(
 
 
 def scan_items(
-    items: Sequence[Dict[str, Any]],
+    items: Sequence[dict[str, Any]],
     *,
     source_text_key: str,
     extracted_text_key: str,
-    pipeline_run_id: Optional[str] = None,
-) -> List[HealthFinding]:
+    pipeline_run_id: str | None = None,
+) -> list[HealthFinding]:
     """Convenience: scan a list of dicts and return findings.
 
     Each item must carry an ``id`` (or ``decision_id`` / ``claim_id``)
     field; falls back to the index as a string.
     """
-    out: List[HealthFinding] = []
+    out: list[HealthFinding] = []
     for idx, item in enumerate(items or []):
         if not isinstance(item, dict):
             continue

@@ -12,7 +12,7 @@ import json
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 
@@ -32,8 +32,8 @@ def _now_iso() -> str:
     )
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     with path.open("r", encoding="utf-8") as fh:
@@ -48,7 +48,7 @@ def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
     return out
 
 
-def _topic_keywords(text_a: str, text_b: str) -> List[str]:
+def _topic_keywords(text_a: str, text_b: str) -> list[str]:
     """The shared word set (length >= MIN_WORD_LENGTH) — used as topic_keywords."""
     a = {w for w in _TOPIC_TOKEN.findall((text_a or "").lower()) if len(w) >= MIN_WORD_LENGTH}
     b = {w for w in _TOPIC_TOKEN.findall((text_b or "").lower()) if len(w) >= MIN_WORD_LENGTH}
@@ -65,10 +65,10 @@ class PatternIndexer:
         # insufficient.
         return jaccard(text_a, text_b, min_word_length=MIN_WORD_LENGTH)
 
-    def build_patterns(self, repo_root: str) -> Dict[str, Any]:
+    def build_patterns(self, repo_root: str) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         agency_root = repo_root_path / "agency"
-        all_entries: List[Dict[str, Any]] = []
+        all_entries: list[dict[str, Any]] = []
         if agency_root.is_dir():
             for sub in sorted(agency_root.iterdir()):
                 if not sub.is_dir():
@@ -91,7 +91,7 @@ class PatternIndexer:
             }
         validator = jsonschema.Draft202012Validator(schema)
 
-        patterns: List[Dict[str, Any]] = []
+        patterns: list[dict[str, Any]] = []
         seen_pairs: set = set()
         for i in range(len(all_entries)):
             for j in range(i + 1, len(all_entries)):

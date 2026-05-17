@@ -1,11 +1,6 @@
 """Phase V.2 tests: per-chunk term injection."""
 from __future__ import annotations
 
-import os
-from typing import List
-
-import pytest
-
 from spectrum_systems_core.glossary.term_injector import (
     MAX_DEFINITION_CHARS,
     build_terminology_block,

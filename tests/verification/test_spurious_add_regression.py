@@ -1,8 +1,6 @@
 """Phase V — RegressionGate.check_spurious_add_regression tests."""
 from __future__ import annotations
 
-import pytest
-
 from spectrum_systems_core.evals.m4.regression_gate import (
     SPURIOUS_ADD_ABSOLUTE_CEILING,
     SPURIOUS_ADD_TOLERANCE,

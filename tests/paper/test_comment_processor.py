@@ -13,7 +13,6 @@ from spectrum_systems_core.paper import (
 )
 
 from ._fixtures import (
-    make_claim,
     make_issue,
     read_jsonl,
     write_source_record,

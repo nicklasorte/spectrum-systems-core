@@ -20,9 +20,7 @@ import json
 import pathlib
 import subprocess
 import sys
-from typing import Any, Dict, List
-
-import pytest
+from typing import Any
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _SCRIPT_PATH = _REPO_ROOT / "scripts" / "validate_data_lake.py"
@@ -35,12 +33,11 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 import validate_data_lake as vdl  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Fixture builders
 # ---------------------------------------------------------------------------
 
-def _valid_few_shot_doc() -> Dict[str, Any]:
+def _valid_few_shot_doc() -> dict[str, Any]:
     return {
         "artifact_type": "decision_few_shot_examples",
         "schema_version": "1.0.0",
@@ -79,7 +76,7 @@ def _valid_few_shot_doc() -> Dict[str, Any]:
     }
 
 
-def _valid_glossary_doc() -> Dict[str, Any]:
+def _valid_glossary_doc() -> dict[str, Any]:
     return {
         "artifact_type": "spectrum_glossary",
         "schema_version": "1.0.0",
@@ -116,12 +113,12 @@ def _build_valid_lake(root: pathlib.Path) -> pathlib.Path:
     return root
 
 
-def _run_in_process(data_lake: pathlib.Path) -> List[vdl.CheckResult]:
+def _run_in_process(data_lake: pathlib.Path) -> list[vdl.CheckResult]:
     return vdl.run_checks(data_lake)
 
 
 def _result_by_name(
-    results: List[vdl.CheckResult], name: str
+    results: list[vdl.CheckResult], name: str
 ) -> vdl.CheckResult:
     for r in results:
         if r.name == name:
@@ -348,7 +345,7 @@ def _write_orchestration_result(
 ) -> pathlib.Path:
     orch = lake / "store" / "artifacts" / "orchestration"
     orch.mkdir(parents=True, exist_ok=True)
-    doc: Dict[str, Any] = {
+    doc: dict[str, Any] = {
         "artifact_type": "orchestration_result",
         "schema_version": "1.0.0",
         "run_id": "r-1",

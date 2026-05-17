@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 import jsonschema
-import pytest
 
 from spectrum_systems_core.evals.m4 import EvalAligner
 

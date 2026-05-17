@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Any
 
 from .finding import HealthFinding
 
@@ -29,7 +29,7 @@ _LOG = logging.getLogger(__name__)
 _ITEM_KEYS = ("decisions", "claims", "action_items")
 
 
-def _missing_confidence(item: Dict[str, Any]) -> bool:
+def _missing_confidence(item: dict[str, Any]) -> bool:
     """An item is missing confidence when the field is absent OR not numeric."""
     if "confidence" not in item:
         return True
@@ -40,10 +40,10 @@ def _missing_confidence(item: Dict[str, Any]) -> bool:
 
 
 def scan_extractions(
-    data_lake_path: Union[str, Path],
+    data_lake_path: str | Path,
     *,
     pipeline_run_id: str | None = None,
-) -> List[HealthFinding]:
+) -> list[HealthFinding]:
     """Scan every meeting_extraction artifact under
     ``<data_lake>/store/artifacts/extractions/`` and report any item
     that is missing the ``confidence`` field.
@@ -54,7 +54,7 @@ def scan_extractions(
     """
     dl = Path(data_lake_path)
     ext_dir = dl / "store" / "artifacts" / "extractions"
-    findings: List[HealthFinding] = []
+    findings: list[HealthFinding] = []
     if not ext_dir.is_dir():
         return findings
     for path in sorted(ext_dir.glob("*_meeting_extraction.json")):

@@ -9,7 +9,6 @@ from spectrum_systems_core.data_lake import (
     load_meeting_from_dir,
 )
 
-
 VALID_METADATA = {
     "meeting_id": "m-2026-05-09-alpha",
     "title": "Alpha planning",

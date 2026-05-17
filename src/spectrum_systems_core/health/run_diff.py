@@ -19,10 +19,9 @@ import argparse
 import datetime
 import json
 import logging
-import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 from .finding import HealthFinding, write_finding
 from .run_summary import emit_step_summary
@@ -50,7 +49,7 @@ def _now_iso() -> str:
     )
 
 
-def _summary_path(data_lake_path: Union[str, Path], run_id: str) -> Path:
+def _summary_path(data_lake_path: str | Path, run_id: str) -> Path:
     return (
         Path(data_lake_path)
         / "store"
@@ -61,9 +60,9 @@ def _summary_path(data_lake_path: Union[str, Path], run_id: str) -> Path:
 
 
 def _load_summary(
-    data_lake_path: Union[str, Path],
+    data_lake_path: str | Path,
     run_id: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     path = _summary_path(data_lake_path, run_id)
     if not path.is_file():
         return None
@@ -78,8 +77,8 @@ def _load_summary(
 
 
 def _index_transcripts(
-    summary: Dict[str, Any],
-) -> Dict[str, Dict[str, Any]]:
+    summary: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
     return {
         str(t.get("source_id") or ""): t
         for t in summary.get("transcripts") or []
@@ -87,19 +86,19 @@ def _index_transcripts(
     }
 
 
-def _stage_status(t: Optional[Dict[str, Any]]) -> Optional[str]:
+def _stage_status(t: dict[str, Any] | None) -> str | None:
     if not isinstance(t, dict):
         return None
     return t.get("stage_status")
 
 
-def _stage_improved(a: Optional[str], b: Optional[str]) -> bool:
+def _stage_improved(a: str | None, b: str | None) -> bool:
     ra = _STAGE_RANK.get(a or "missing", -1)
     rb = _STAGE_RANK.get(b or "missing", -1)
     return rb > ra
 
 
-def _findings_set(summary: Dict[str, Any]) -> List[str]:
+def _findings_set(summary: dict[str, Any]) -> list[str]:
     return [
         str(f.get("finding_code") or "")
         for f in summary.get("health_findings") or []
@@ -107,7 +106,7 @@ def _findings_set(summary: Dict[str, Any]) -> List[str]:
     ]
 
 
-def _eval_metrics(summary: Dict[str, Any]) -> Tuple[Optional[float], Optional[float]]:
+def _eval_metrics(summary: dict[str, Any]) -> tuple[float | None, float | None]:
     em = summary.get("eval_metrics")
     if not isinstance(em, dict):
         return None, None
@@ -122,8 +121,8 @@ def _eval_metrics(summary: Dict[str, Any]) -> Tuple[Optional[float], Optional[fl
 def diff_runs(
     run_a_id: str,
     run_b_id: str,
-    data_lake_path: Union[str, Path],
-) -> Dict[str, Any]:
+    data_lake_path: str | Path,
+) -> dict[str, Any]:
     """Compute a ``pipeline_run_diff`` between two summary artifacts.
 
     Raises :class:`PipelineRunSummaryMissing` if either summary is
@@ -132,7 +131,7 @@ def diff_runs(
     """
     summary_a = _load_summary(data_lake_path, run_a_id)
     summary_b = _load_summary(data_lake_path, run_b_id)
-    missing: List[str] = []
+    missing: list[str] = []
     if summary_a is None:
         missing.append(run_a_id)
     if summary_b is None:
@@ -146,7 +145,7 @@ def diff_runs(
     a_tx = _index_transcripts(summary_a)
     b_tx = _index_transcripts(summary_b)
     all_sids = sorted(set(a_tx.keys()) | set(b_tx.keys()))
-    per_transcript_diff: List[Dict[str, Any]] = []
+    per_transcript_diff: list[dict[str, Any]] = []
     for sid in all_sids:
         a = a_tx.get(sid)
         b = b_tx.get(sid)
@@ -190,7 +189,7 @@ def diff_runs(
     breakdown_a = summary_a.get("block_reason_breakdown") or {}
     breakdown_b = summary_b.get("block_reason_breakdown") or {}
     all_reasons = sorted(set(breakdown_a.keys()) | set(breakdown_b.keys()))
-    block_reason_diff: Dict[str, Dict[str, int]] = {}
+    block_reason_diff: dict[str, dict[str, int]] = {}
     for reason in all_reasons:
         a = int(breakdown_a.get(reason, 0) or 0)
         b = int(breakdown_b.get(reason, 0) or 0)
@@ -203,7 +202,7 @@ def diff_runs(
 
     cov_a, prec_a = _eval_metrics(summary_a)
     cov_b, prec_b = _eval_metrics(summary_b)
-    eval_diff: Optional[Dict[str, Any]] = None
+    eval_diff: dict[str, Any] | None = None
     if cov_a is not None or cov_b is not None or prec_a is not None or prec_b is not None:
         eval_diff = {
             "coverage_a": cov_a,
@@ -255,9 +254,9 @@ def _truncate(value: str, limit: int = _MARKDOWN_SOURCE_ID_LIMIT) -> str:
     return value[: limit - 3] + "..."
 
 
-def render_markdown(diff: Dict[str, Any]) -> str:
+def render_markdown(diff: dict[str, Any]) -> str:
     """Render a markdown report for ``$GITHUB_STEP_SUMMARY``."""
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(
         f"## Pipeline Run Diff: {diff.get('run_a_id')} → {diff.get('run_b_id')}"
     )
@@ -340,10 +339,10 @@ def render_markdown(diff: Dict[str, Any]) -> str:
 
 
 def write_diff_artifact(
-    diff: Dict[str, Any],
+    diff: dict[str, Any],
     *,
-    data_lake_path: Union[str, Path],
-) -> Optional[Path]:
+    data_lake_path: str | Path,
+) -> Path | None:
     target_dir = (
         Path(data_lake_path)
         / "store"
@@ -382,9 +381,9 @@ def write_diff_artifact(
 
 def _emit_missing_finding(
     *,
-    data_lake_path: Union[str, Path],
+    data_lake_path: str | Path,
     run_id: str,
-    pipeline_run_id: Optional[str],
+    pipeline_run_id: str | None,
 ) -> None:
     try:
         write_finding(
@@ -407,7 +406,7 @@ def _emit_missing_finding(
         _LOG.warning("pipeline_run_summary_missing_write_failed: %s", exc)
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="spectrum_systems_core.health.run_diff",
         description=(

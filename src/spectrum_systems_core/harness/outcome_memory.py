@@ -11,23 +11,22 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 from ..utils.text_similarity import jaccard
 from ._io import append_jsonl, read_jsonl, utcnow_iso
 from ._paths import outcomes_memory_path
 from ._schema import validate_harness_artifact
 
-
 _LOG = logging.getLogger(__name__)
 _PATTERN_KEYWORD_MIN_LEN = 4
 _PATTERN_KEYWORD_MAX = 10
 
 
-def _pattern_keywords(text: str) -> List[str]:
+def _pattern_keywords(text: str) -> list[str]:
     if not text:
         return []
-    seen: List[str] = []
+    seen: list[str] = []
     seen_set: set[str] = set()
     for raw in text.split():
         word = "".join(c.lower() for c in raw if c.isalnum())
@@ -45,10 +44,10 @@ def _pattern_keywords(text: str) -> List[str]:
 class OutcomeMemoryStore:
     def record_revision_outcome(
         self,
-        revision_diff: Dict[str, Any],
-        instruction: Dict[str, Any],
+        revision_diff: dict[str, Any],
+        instruction: dict[str, Any],
         repo_root: str | Path,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         try:
             action_taken = str(instruction.get("instruction_text") or "")
             human_marked = (
@@ -97,9 +96,9 @@ class OutcomeMemoryStore:
 
     def record_mitigation_outcome(
         self,
-        outcome_record: Dict[str, Any],
+        outcome_record: dict[str, Any],
         repo_root: str | Path,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         try:
             mitigation_text = self._load_mitigation_text(
                 outcome_record.get("mitigation_id") or "",
@@ -179,12 +178,12 @@ class OutcomeMemoryStore:
         action_text: str,
         repo_root: str | Path,
         top_n: int = 5,
-    ) -> List[Tuple[Dict[str, Any], float]]:
+    ) -> list[tuple[dict[str, Any], float]]:
         records = read_jsonl(outcomes_memory_path(repo_root))
         if not records:
             return []
         action_words = " ".join(_pattern_keywords(action_text))
-        scored: List[Tuple[Dict[str, Any], float]] = []
+        scored: list[tuple[dict[str, Any], float]] = []
         for rec in records:
             keywords = " ".join(rec.get("pattern_keywords") or [])
             score = jaccard(action_words, keywords, min_word_length=1)
@@ -197,7 +196,7 @@ class OutcomeMemoryStore:
         self,
         outcome_type: str,
         repo_root: str | Path,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         records = [
             r for r in read_jsonl(outcomes_memory_path(repo_root))
             if r.get("outcome_type") == outcome_type

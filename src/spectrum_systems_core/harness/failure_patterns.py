@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from ..utils.text_similarity import jaccard
 from . import MIN_CLUSTER_SIZE, PATTERN_JACCARD_THRESHOLD
@@ -27,7 +27,6 @@ from ._paths import (
 )
 from ._schema import validate_harness_artifact
 
-
 _LOG = logging.getLogger(__name__)
 
 
@@ -35,9 +34,9 @@ class FailurePatternIndex:
     def ingest_failures(
         self,
         run_id: str,
-        failures: List[Dict[str, Any]],
+        failures: list[dict[str, Any]],
         repo_root: str | Path,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Cluster failures into patterns. Never raises."""
         try:
             patterns = read_jsonl(patterns_path(repo_root))
@@ -145,9 +144,9 @@ class FailurePatternIndex:
 
     def propose_eval_candidate(
         self,
-        pattern: Dict[str, Any],
+        pattern: dict[str, Any],
         repo_root: str | Path,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Propose an eval_case_candidate. Never writes to contracts/evals/."""
         if pattern.get("eval_candidate_id"):
             return {"status": "skipped", "candidate_id": None}
@@ -215,7 +214,7 @@ class FailurePatternIndex:
 
     def get_top_patterns(
         self, repo_root: str | Path, n: int = 10
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         patterns = read_jsonl(patterns_path(repo_root))
         patterns.sort(
             key=lambda p: int(p.get("occurrence_count", 0)),

@@ -3,10 +3,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
-
-DEFAULT_METADATA: Dict[str, Any] = {
+DEFAULT_METADATA: dict[str, Any] = {
     "description": "",
     "author": "",
     "tags": [],
@@ -21,14 +20,14 @@ def write_source(
     family: str,
     source_id: str,
     content: str,
-    metadata_overrides: Dict[str, Any] | None = None,
+    metadata_overrides: dict[str, Any] | None = None,
     filename: str = "source.txt",
 ) -> Path:
     target = repo_root / "raw" / family / source_id
     target.mkdir(parents=True, exist_ok=True)
     (target / filename).write_text(content, encoding="utf-8")
 
-    metadata: Dict[str, Any] = dict(DEFAULT_METADATA)
+    metadata: dict[str, Any] = dict(DEFAULT_METADATA)
     metadata.update(
         {
             "source_id": source_id,

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import unittest
-from typing import Any, Dict, List
+from typing import Any
 
 from spectrum_systems_core.extraction.atomic_decomposition import (
     ATOMIC_DECOMPOSITION_ENABLED_ENV,
@@ -25,9 +25,9 @@ class FeatureFlagTests(unittest.TestCase):
         self.assertFalse(atomic_decomposition_enabled())
 
     def test_no_calls_when_disabled(self) -> None:
-        call_log: List[str] = []
+        call_log: list[str] = []
 
-        def caller(prompt: str) -> Dict[str, Any]:
+        def caller(prompt: str) -> dict[str, Any]:
             call_log.append(prompt)
             return {"atomic_facts": ["x"]}
 
@@ -45,7 +45,7 @@ class FeatureFlagTests(unittest.TestCase):
 class DecomposeOneTests(unittest.TestCase):
 
     def test_returns_list_when_caller_succeeds(self) -> None:
-        def caller(prompt: str) -> Dict[str, Any]:
+        def caller(prompt: str) -> dict[str, Any]:
             return {"atomic_facts": ["FCC approved band plan A.", "Effective 2026."]}
 
         facts = decompose_one("FCC approved band plan A, effective 2026.", caller)
@@ -55,7 +55,7 @@ class DecomposeOneTests(unittest.TestCase):
         self.assertEqual(decompose_one("", lambda p: {"atomic_facts": ["x"]}), [])
 
     def test_caller_raises_returns_empty(self) -> None:
-        def caller(prompt: str) -> Dict[str, Any]:
+        def caller(prompt: str) -> dict[str, Any]:
             raise RuntimeError("boom")
 
         self.assertEqual(decompose_one("decision text", caller), [])
@@ -64,7 +64,7 @@ class DecomposeOneTests(unittest.TestCase):
         self.assertEqual(decompose_one("decision text", lambda p: "not a dict"), [])
 
     def test_filters_non_string_entries(self) -> None:
-        def caller(prompt: str) -> Dict[str, Any]:
+        def caller(prompt: str) -> dict[str, Any]:
             return {"atomic_facts": ["good", 42, "", "  ", "another good"]}
 
         self.assertEqual(
@@ -82,7 +82,7 @@ class DecomposeDecisionsWithFlagOnTests(unittest.TestCase):
         os.environ.pop(ATOMIC_DECOMPOSITION_ENABLED_ENV, None)
 
     def test_atomic_facts_attached_when_present(self) -> None:
-        def caller(prompt: str) -> Dict[str, Any]:
+        def caller(prompt: str) -> dict[str, Any]:
             return {"atomic_facts": ["fact 1"]}
 
         decisions = [
@@ -97,7 +97,7 @@ class DecomposeDecisionsWithFlagOnTests(unittest.TestCase):
         self.assertEqual(findings, [])
 
     def test_empty_response_emits_warn_finding(self) -> None:
-        def caller(prompt: str) -> Dict[str, Any]:
+        def caller(prompt: str) -> dict[str, Any]:
             return {"atomic_facts": []}
 
         decisions = [{"decision_text": "x", "confidence": 0.9}]
@@ -114,7 +114,7 @@ class DecomposeDecisionsWithFlagOnTests(unittest.TestCase):
         """RT pass 2: a failed call must NOT block other decisions in the same run."""
         call_index = {"i": 0}
 
-        def caller(prompt: str) -> Dict[str, Any]:
+        def caller(prompt: str) -> dict[str, Any]:
             call_index["i"] += 1
             if call_index["i"] == 1:
                 raise RuntimeError("first call fails")

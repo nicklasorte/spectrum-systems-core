@@ -9,11 +9,10 @@ import logging
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from ._io import find_prior_audit, utcnow_iso, write_audit_record
 from ._schema import validate_governance_artifact
-
 
 _LOG = logging.getLogger(__name__)
 
@@ -32,7 +31,7 @@ PROMPT_LIKE_PATTERN = re.compile(
 )
 
 
-ANTI_PATTERNS: Dict[str, Dict[str, Any]] = {
+ANTI_PATTERNS: dict[str, dict[str, Any]] = {
     "uuid_literal_in_source": {
         "pattern": UUID_LITERAL_PATTERN,
         "include_paths": ["src/spectrum_systems_core/"],
@@ -83,7 +82,7 @@ ANTI_PATTERNS: Dict[str, Dict[str, Any]] = {
 }
 
 
-def _path_starts_with_any(rel_path: str, prefixes: List[str]) -> bool:
+def _path_starts_with_any(rel_path: str, prefixes: list[str]) -> bool:
     """Path-prefix match (FINDING-I-003 RT3-006). Not substring."""
     normalized = rel_path.replace("\\", "/")
     for prefix in prefixes:
@@ -97,8 +96,8 @@ def _path_starts_with_any(rel_path: str, prefixes: List[str]) -> bool:
     return False
 
 
-def _python_files(repo_root: Path) -> List[Path]:
-    out: List[Path] = []
+def _python_files(repo_root: Path) -> list[Path]:
+    out: list[Path] = []
     for path in sorted(repo_root.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
@@ -114,9 +113,9 @@ def _line_for_offset(text: str, offset: int) -> int:
 class HiddenLogicScanner:
     """Scan all .py files for ANTI_PATTERNS — fixed and exact."""
 
-    def scan(self, repo_root: str | Path) -> Dict[str, Any]:
+    def scan(self, repo_root: str | Path) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
-        flagged: List[Dict[str, Any]] = []
+        flagged: list[dict[str, Any]] = []
         files_scanned = 0
 
         files = _python_files(repo_root_path)
@@ -131,8 +130,8 @@ class HiddenLogicScanner:
             except OSError:
                 continue
             for pattern_name, definition in ANTI_PATTERNS.items():
-                include_paths: List[str] = list(definition.get("include_paths") or [])
-                exclude_paths: List[str] = list(definition.get("exclude_paths") or [])
+                include_paths: list[str] = list(definition.get("include_paths") or [])
+                exclude_paths: list[str] = list(definition.get("exclude_paths") or [])
                 if include_paths and not _path_starts_with_any(rel_path, include_paths):
                     continue
                 if _path_starts_with_any(rel_path, exclude_paths):
@@ -157,7 +156,7 @@ class HiddenLogicScanner:
 
         prior_audit = find_prior_audit(repo_root_path, "hidden_logic_creep")
         prior_value = prior_audit.get("current_value") if prior_audit else None
-        current_value: Dict[str, Any] = {
+        current_value: dict[str, Any] = {
             "files_scanned": files_scanned,
             "total_flags": len(flagged),
             "high_severity": sum(1 for f in flagged if f["severity"] == "high"),

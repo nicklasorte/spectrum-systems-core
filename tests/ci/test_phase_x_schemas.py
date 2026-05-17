@@ -20,7 +20,6 @@ import pathlib
 import jsonschema
 import pytest
 
-
 SCHEMAS_DIR = (
     pathlib.Path(__file__).resolve().parents[2]
     / "src"

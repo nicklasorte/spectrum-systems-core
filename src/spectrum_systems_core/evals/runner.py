@@ -3,6 +3,8 @@ from __future__ import annotations
 from ..artifacts import Artifact, new_artifact
 from .regulatory_verb import (
     DECISION_BEARING_ARTIFACT_TYPES as _VERB_GUARD_TYPES,
+)
+from .regulatory_verb import (
     run_regulatory_verb_eval,
 )
 

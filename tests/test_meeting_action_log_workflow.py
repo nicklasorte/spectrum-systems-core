@@ -2,7 +2,6 @@ from spectrum_systems_core.artifacts import new_artifact
 from spectrum_systems_core.evals import run_required_evals
 from spectrum_systems_core.workflows import run_meeting_action_log_workflow
 
-
 SAMPLE_INPUT = """Q3 planning action log
 MEETING_REF: meeting-2026-05-09
 ACTION: Owner Alice ships SSC-002 docs

@@ -19,10 +19,10 @@ so the operator sees the impact.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 from ..health.finding import HealthFinding
 
@@ -54,15 +54,15 @@ def atomic_decomposition_enabled() -> bool:
     return raw in _ENABLED_VALUES
 
 
-def _default_api_caller(prompt: str) -> Dict[str, Any]:  # noqa: ARG001
+def _default_api_caller(prompt: str) -> dict[str, Any]:  # noqa: ARG001
     """Offline default: return an empty list of facts. Never raises."""
     return {"atomic_facts": []}
 
 
 def decompose_one(
     decision_text: str,
-    api_caller: Optional[Callable[[str], Dict[str, Any]]] = None,
-) -> List[str]:
+    api_caller: Callable[[str], dict[str, Any]] | None = None,
+) -> list[str]:
     """Return the list of atomic facts for ``decision_text``.
 
     Never raises. On any failure (non-dict response, missing field,
@@ -83,7 +83,7 @@ def decompose_one(
     raw = resp.get("atomic_facts")
     if not isinstance(raw, list):
         return []
-    out: List[str] = []
+    out: list[str] = []
     for item in raw:
         if isinstance(item, str) and item.strip():
             out.append(item.strip())
@@ -91,12 +91,12 @@ def decompose_one(
 
 
 def decompose_decisions(
-    decisions: List[Dict[str, Any]],
+    decisions: list[dict[str, Any]],
     *,
-    api_caller: Optional[Callable[[str], Dict[str, Any]]] = None,
-    pipeline_run_id: Optional[str] = None,
+    api_caller: Callable[[str], dict[str, Any]] | None = None,
+    pipeline_run_id: str | None = None,
     source_id: str = "",
-) -> Tuple[List[Dict[str, Any]], List[HealthFinding], int]:
+) -> tuple[list[dict[str, Any]], list[HealthFinding], int]:
     """Decompose every decision in the list when the feature flag is on.
 
     Returns ``(annotated_decisions, findings, call_count)``. When the
@@ -114,8 +114,8 @@ def decompose_decisions(
                 out.append(clone)
         return out, [], 0
 
-    findings: List[HealthFinding] = []
-    annotated: List[Dict[str, Any]] = []
+    findings: list[HealthFinding] = []
+    annotated: list[dict[str, Any]] = []
     call_count = 0
 
     for d in decisions:

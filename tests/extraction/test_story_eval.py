@@ -4,9 +4,8 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from spectrum_systems_core.extraction import Chunker, StoryEval, StoryExtractor
 
@@ -53,14 +52,14 @@ class StoryEvalTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def _load_candidates(self) -> List[Dict[str, Any]]:
+    def _load_candidates(self) -> list[dict[str, Any]]:
         path = (
             self.repo_root / "processed" / "notes" / self.source_id
             / "stories" / "candidates.jsonl"
         )
         return read_jsonl(path)
 
-    def _run_extractor(self, excerpt: str) -> List[Dict[str, Any]]:
+    def _run_extractor(self, excerpt: str) -> list[dict[str, Any]]:
         result = StoryExtractor(
             api_caller=lambda p: _make_response(excerpt, p)
         ).extract_from_source(self.source_id, str(self.repo_root))

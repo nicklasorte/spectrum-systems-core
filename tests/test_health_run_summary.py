@@ -3,9 +3,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
-
-import pytest
 
 from spectrum_systems_core.health import run_summary as rs
 
@@ -18,7 +15,7 @@ def _write_orchestration(
     chunks_succeeded: int,
     chunks_blocked: int,
     stage_status: str,
-    block_reasons: Dict[str, int] | None = None,
+    block_reasons: dict[str, int] | None = None,
     run_id: str | None = None,
 ) -> None:
     orch_dir = data_lake / "store" / "artifacts" / "orchestration"

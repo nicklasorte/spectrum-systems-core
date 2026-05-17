@@ -10,7 +10,7 @@ from pathlib import Path
 from spectrum_systems_core.synthesis.theme_synthesizer import ThemeSynthesizer
 from spectrum_systems_core.utils.text_similarity import jaccard
 
-from ._fixtures import write_evidenced_claim, write_promoted_theme
+from ._fixtures import write_promoted_theme
 
 
 class ThemeSynthesizerTests(unittest.TestCase):

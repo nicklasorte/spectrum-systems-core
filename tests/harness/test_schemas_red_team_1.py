@@ -4,7 +4,6 @@ from __future__ import annotations
 import datetime
 import unittest
 import uuid
-from pathlib import Path
 
 import jsonschema
 

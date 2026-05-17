@@ -21,7 +21,6 @@ from spectrum_systems_core.verification.pipeline_integration import (
     apply_phase_v_if_enabled,
 )
 from spectrum_systems_core.verification.post_hoc_verifier import (
-    PostHocVerifier,
     _coerce_uuid,
 )
 from spectrum_systems_core.verification.verification_gate import (

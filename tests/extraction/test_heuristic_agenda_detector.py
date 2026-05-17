@@ -23,7 +23,6 @@ from spectrum_systems_core.extraction.heuristic_agenda_detector import (
 )
 from spectrum_systems_core.health.finding import ALL_FINDING_CODES
 
-
 # --- Headers ---------------------------------------------------------
 
 

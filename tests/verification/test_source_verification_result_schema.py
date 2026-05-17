@@ -12,7 +12,6 @@ from spectrum_systems_core.verification._schemas import (
     validate_source_verification_result,
 )
 
-
 _BASE_ITEM = {
     "item_id": str(uuid.uuid4()),
     "item_type": "claim",

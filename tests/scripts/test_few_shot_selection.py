@@ -14,7 +14,7 @@ import json
 import sys
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -27,7 +27,6 @@ import select_few_shot_examples as selector  # noqa: E402
 import verify_example as verifier  # noqa: E402
 
 from spectrum_systems_core.validation import validate_artifact
-
 from tests.integration.fixtures import (
     make_meeting_extraction_artifact,
     make_source_record,
@@ -38,7 +37,7 @@ from tests.integration.fixtures import (
 # Defaults to ``"noted"`` so an unknown outcome still yields a
 # schema-valid decision (the script then routes it through the
 # non-target-outcome path).
-_DECISION_TYPE_BY_OUTCOME: Dict[str, str] = {
+_DECISION_TYPE_BY_OUTCOME: dict[str, str] = {
     "approval": "approved",
     "rejection": "rejected",
     "deferral": "deferred",
@@ -53,9 +52,9 @@ def _make_decision(
     outcome: str,
     confidence: float,
     decision_text: str,
-    turn_ids: List[str],
+    turn_ids: list[str],
     speaker: str = "Chair",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build a meeting_extraction-schema-valid decision dict.
 
     Only fields declared in ``meeting_extraction.schema.json`` are
@@ -76,7 +75,7 @@ def _make_decision(
     }
 
 
-def _write_extraction(data_lake: Path, source_id: str, decisions: List[Dict[str, Any]]) -> None:
+def _write_extraction(data_lake: Path, source_id: str, decisions: list[dict[str, Any]]) -> None:
     """Seed a data-lake with a real-shape meeting_extraction artifact.
 
     Writes both ``source_record.json`` (so the script's slug ->
@@ -433,7 +432,7 @@ def test_marker_removed_on_successful_overwrite(tmp_path: Path) -> None:
 # ----- verification ----------------------------------------------
 
 
-def _seed_unverified_artifact(path: Path, example_id: str = "ex1") -> Dict[str, Any]:
+def _seed_unverified_artifact(path: Path, example_id: str = "ex1") -> dict[str, Any]:
     doc = {
         "artifact_type": "decision_few_shot_examples",
         "schema_version": "1.0.0",
@@ -552,7 +551,7 @@ def test_verify_unknown_example_returns_error(
 # --- Codex P2 fix: grounded examples beat ungrounded examples ----------
 
 
-def _ungrounded(**kwargs: Any) -> Dict[str, Any]:
+def _ungrounded(**kwargs: Any) -> dict[str, Any]:
     d = _make_decision(**kwargs)
     d["grounding_verified"] = False
     return d

@@ -16,8 +16,6 @@ import argparse
 import logging
 import os
 import sys
-from pathlib import Path
-from typing import Optional
 
 from .eval_integrity import (
     EVAL_INTEGRITY_ENV_VAR,
@@ -65,7 +63,7 @@ def _upstream_gate(args: argparse.Namespace) -> int:
         args.pipeline_run_id, args.data_lake
     )
     persist_findings(findings, data_lake_path=args.data_lake)
-    blocked_message: Optional[str] = None
+    blocked_message: str | None = None
     if not should_run:
         blocked_message = (
             "Eval blocked: synthesize failed upstream. Fix synthesize "

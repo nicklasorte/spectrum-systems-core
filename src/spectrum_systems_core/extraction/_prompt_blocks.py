@@ -31,9 +31,7 @@ import hashlib
 from ..config.taxonomy import (
     DECISION_OUTCOME_TYPES,
     OUTCOME_TO_VERBS,
-    REGULATORY_VERBS,
 )
-
 
 # Prompt-schema version the typed extractors expect from FewShotLoader.
 # Bumping this disables few-shot injection until the seed is re-authored

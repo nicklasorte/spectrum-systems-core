@@ -7,15 +7,15 @@ All AI outputs are advisory only. No autonomous writes outside ai/.
 The PromptRegistry is the only source of prompts. The AIAdapter is the only
 call site for AI memory queries.
 """
+from .adapter import AIAdapter
 from .grounding_eval import (
-    AIGroundingEval,
     MAX_QUERY_COST_USD,
     MAX_QUERY_TOKENS,
     UUID_PATTERN,
+    AIGroundingEval,
 )
 from .memory_context_builder import MemoryContextBuilder
 from .prompt_registry import PromptRegistry
-from .adapter import AIAdapter
 
 __all__ = [
     "AIAdapter",

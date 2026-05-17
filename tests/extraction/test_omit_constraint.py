@@ -7,7 +7,8 @@ position would otherwise pass a naive substring check.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 
@@ -22,16 +23,15 @@ from spectrum_systems_core.extraction.decision_extractor import (
     DecisionExtractor,
 )
 
-
 _OMIT_MARKER = "CRITICAL CONSTRAINT"
 _OMIT_DO_NOT_INFER = "Do not infer"
 _OMIT_TAG = "OMIT IF NOT IN TRANSCRIPT"
 
 
-def _capture_prompt() -> tuple[List[str], Callable[[str], Dict[str, Any]]]:
-    captured: List[str] = []
+def _capture_prompt() -> tuple[list[str], Callable[[str], dict[str, Any]]]:
+    captured: list[str] = []
 
-    def caller(prompt: str) -> Dict[str, Any]:
+    def caller(prompt: str) -> dict[str, Any]:
         captured.append(prompt)
         return {"items": []}
 
@@ -41,7 +41,7 @@ def _capture_prompt() -> tuple[List[str], Callable[[str], Dict[str, Any]]]:
 _DISTINCT_CHUNK_TEXT = "ZZZ_DISTINCT_SENTINEL_CHUNK_TEXT_QQQ"
 
 
-def _chunk() -> Dict[str, Any]:
+def _chunk() -> dict[str, Any]:
     return {"chunk_id": "c1", "speaker": "S", "text": _DISTINCT_CHUNK_TEXT}
 
 

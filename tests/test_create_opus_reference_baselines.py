@@ -21,6 +21,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import create_opus_reference_baselines as cob  # noqa: E402
+
 from tests.integration.fixtures import make_source_record  # noqa: E402
 
 MODEL = "claude-opus-4-6"
@@ -1095,6 +1096,7 @@ def test_opus_47_no_sampling_params_in_api_call(
     """For claude-opus-4-7, temperature/top_p/top_k must not reach the SDK."""
     import sys
     import types
+
     from spectrum_systems_core.workflows import llm_client
 
     captured: dict = {}

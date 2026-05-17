@@ -8,8 +8,6 @@ from __future__ import annotations
 import json
 import pathlib
 
-import pytest
-
 from spectrum_systems_core.config.feature_flag import (
     PHASE_V_FLAG_NAME,
     FeatureFlag,

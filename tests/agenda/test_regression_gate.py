@@ -7,8 +7,6 @@ isolation.
 """
 from __future__ import annotations
 
-import pytest
-
 from spectrum_systems_core.evals.m4.regression_gate import (
     AgendaDetectionMetrics,
     RegressionGate,

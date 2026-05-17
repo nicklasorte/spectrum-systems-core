@@ -12,7 +12,6 @@ import unittest
 
 from spectrum_systems_core.evals.m4.aligner import EvalAligner
 
-
 _MEETING_EXTRACTION_WITH_ITEMS = {
     "meeting_extraction_id": "11111111-1111-1111-1111-111111111111",
     "source_artifact_id": "22222222-2222-2222-2222-222222222222",

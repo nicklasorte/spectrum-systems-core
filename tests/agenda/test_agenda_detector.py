@@ -9,14 +9,14 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
 from spectrum_systems_core.agenda import (
+    UNCATEGORIZED_LABEL,
     AgendaDetector,
     AgendaReferenceError,
-    UNCATEGORIZED_LABEL,
     validate_agenda_references,
 )
 from spectrum_systems_core.agenda.agenda_detector import (
@@ -27,14 +27,14 @@ from spectrum_systems_core.agenda.agenda_detector import (
 class _StubRegistry:
     def __init__(self, model: str = "claude-sonnet-4-6"):
         self._model = model
-        self.calls: List[str] = []
+        self.calls: list[str] = []
 
-    def get(self, task_type: str) -> Dict[str, str]:
+    def get(self, task_type: str) -> dict[str, str]:
         self.calls.append(task_type)
         return {"model": self._model, "version": "1.0.0"}
 
 
-def _chunks(n: int, prefix: str = "c") -> List[Dict[str, Any]]:
+def _chunks(n: int, prefix: str = "c") -> list[dict[str, Any]]:
     return [
         {"chunk_id": f"{prefix}-{i:03d}", "chunk_index": i,
          "source_id": "src", "text": f"chunk {i} body text"}
@@ -42,8 +42,8 @@ def _chunks(n: int, prefix: str = "c") -> List[Dict[str, Any]]:
     ]
 
 
-def _api_returning(payload: Dict[str, Any]):
-    def caller(_prompt: str) -> Dict[str, Any]:
+def _api_returning(payload: dict[str, Any]):
+    def caller(_prompt: str) -> dict[str, Any]:
         return {"text": json.dumps(payload)}
     return caller
 
@@ -186,7 +186,7 @@ def test_artifact_records_actual_model_used():
 
 
 def test_api_failure_returns_undetected():
-    def boom(_prompt: str) -> Dict[str, Any]:
+    def boom(_prompt: str) -> dict[str, Any]:
         raise RuntimeError("api 500")
 
     detector = AgendaDetector(
@@ -210,7 +210,7 @@ def test_max_duration_enforced():
     def fake_clock():
         return next(ticks)
 
-    def slow_caller(_prompt: str) -> Dict[str, Any]:
+    def slow_caller(_prompt: str) -> dict[str, Any]:
         return {"text": json.dumps({
             "agenda_items": [
                 {"ordinal": 1, "label": "FSS Protection",
@@ -261,6 +261,7 @@ def test_malformed_response_returns_undetected():
 def test_produced_artifacts_validate_against_schema():
     import json
     import pathlib
+
     import jsonschema
 
     schema = json.loads(
@@ -293,6 +294,7 @@ def test_produced_artifacts_validate_against_schema():
 def test_undetected_artifact_validates_against_schema():
     import json
     import pathlib
+
     import jsonschema
 
     schema = json.loads(

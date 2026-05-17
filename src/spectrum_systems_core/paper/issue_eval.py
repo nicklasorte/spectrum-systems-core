@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 
@@ -15,8 +15,8 @@ from ..extraction._paths import find_processed_dir
 from ._paths import paper_schema_path
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     with path.open("r", encoding="utf-8") as fh:
@@ -36,13 +36,13 @@ class IssueEval:
 
     def run(
         self,
-        issues: List[Dict[str, Any]],
+        issues: list[dict[str, Any]],
         *,
         working_paper_source_id: str | None = None,
         repo_root: str | None = None,
-    ) -> Dict[str, Any]:
-        eval_results: List[Dict[str, Any]] = []
-        reason_codes: List[str] = []
+    ) -> dict[str, Any]:
+        eval_results: list[dict[str, Any]] = []
+        reason_codes: list[str] = []
 
         # EVAL-ISSUE-001: schema_conformance
         try:
@@ -62,7 +62,7 @@ class IssueEval:
                 "reason_codes": ["schema_unreadable"],
             }
         validator = jsonschema.Draft202012Validator(schema)
-        schema_failures: List[str] = []
+        schema_failures: list[str] = []
         for issue in issues:
             try:
                 validator.validate(issue)
@@ -117,7 +117,7 @@ class IssueEval:
                     c.get("claim_id") for c in claims if c.get("claim_id")
                 }
 
-        orphans: List[str] = []
+        orphans: list[str] = []
         for issue in issues:
             cid = issue.get("claim_id")
             if cid is None:
@@ -148,7 +148,7 @@ class IssueEval:
             )
 
         # EVAL-ISSUE-004: source traceability.
-        traceability_failures: List[str] = []
+        traceability_failures: list[str] = []
         for issue in issues:
             if issue.get("issue_type") == "agency_comment":
                 continue

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -10,7 +10,6 @@ from spectrum_systems_core.verification.post_hoc_verifier import (
     EARLY_HALT_SAMPLE_SIZE,
     PostHocVerifier,
 )
-
 
 # --------------------------------------------------------------------- #
 # Tiny stand-ins for the real ModelRegistry so tests don't need files.
@@ -21,15 +20,15 @@ class _Registry:
     """Records every ``get`` call and returns the configured spec."""
 
     def __init__(self, spec=None):
-        self.calls: List[str] = []
+        self.calls: list[str] = []
         self._spec = spec or {"model": "claude-sonnet-4-6", "version": "test"}
 
-    def get(self, task_type: str) -> Dict[str, str]:
+    def get(self, task_type: str) -> dict[str, str]:
         self.calls.append(task_type)
         return dict(self._spec)
 
 
-def _chunks(turn_text: Dict[str, str]) -> Dict[str, Dict[str, Any]]:
+def _chunks(turn_text: dict[str, str]) -> dict[str, dict[str, Any]]:
     return {
         tid: {
             "chunk_id": tid,
@@ -41,7 +40,7 @@ def _chunks(turn_text: Dict[str, str]) -> Dict[str, Dict[str, Any]]:
     }
 
 
-def _meeting_extraction(*, decisions=None, claims=None, action_items=None) -> Dict[str, Any]:
+def _meeting_extraction(*, decisions=None, claims=None, action_items=None) -> dict[str, Any]:
     return {
         "meeting_extraction_id": str(uuid.uuid4()),
         "source_artifact_id": str(uuid.uuid4()),
@@ -182,7 +181,7 @@ def test_verify_api_failure_returns_verification_failed():
         _claim("DoD agreed.", ["t-1"]),
     ])
 
-    def _boom(prompt: str) -> Dict[str, Any]:
+    def _boom(prompt: str) -> dict[str, Any]:
         raise RuntimeError("api on fire")
 
     verifier = PostHocVerifier(_Registry(), sdl_root="/x", api_caller=_boom)
@@ -233,9 +232,9 @@ def test_no_cited_turns_returns_unsupported_without_call():
             "confidence": 0.5,
         },
     ])
-    calls: List[str] = []
+    calls: list[str] = []
 
-    def caller(prompt: str) -> Dict[str, Any]:
+    def caller(prompt: str) -> dict[str, Any]:
         calls.append(prompt)
         return {}
 
@@ -297,7 +296,7 @@ def test_summary_counts_all_status_buckets():
         # Triggers api-failure path:
     ])
 
-    def caller(prompt: str) -> Dict[str, Any]:
+    def caller(prompt: str) -> dict[str, Any]:
         try:
             return next(sequence)
         except StopIteration:

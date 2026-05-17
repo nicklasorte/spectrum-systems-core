@@ -10,15 +10,13 @@ warning to the logger.
 """
 from __future__ import annotations
 
-import logging
 import os
 import unittest
 from unittest import mock
 
-from spectrum_systems_core.schemas import schema_path
 from spectrum_systems_core.validation import (
-    ArtifactValidationError,
     SCHEMA_VALIDATION_ENV_VAR,
+    ArtifactValidationError,
     SchemaNotFoundError,
     _load_schema,
     validate_artifact,

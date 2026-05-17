@@ -51,7 +51,6 @@ from spectrum_systems_core.evals import (
     run_source_turn_validity_eval,
 )
 
-
 FIXTURES = Path(__file__).parent / "fixtures" / "phase_y"
 
 
@@ -255,8 +254,8 @@ def test_unresolved_turn_id_drives_pipeline_rejection(tmp_path, monkeypatch):
     """End-to-end: monkeypatch the source-turn matcher to fabricate a
     turn_id that does not exist in the source_record. The pipeline must
     reject the target — assert ``status == 'rejected'`` specifically."""
-    from spectrum_systems_core.workflows import extraction as _extraction
     from spectrum_systems_core.data_lake import extract as _extract_module
+    from spectrum_systems_core.workflows import extraction as _extraction
 
     def _fake_match(_text, _chunks):
         return _extraction.MatchResult(
@@ -303,6 +302,7 @@ def test_invalid_source_record_drives_pipeline_rejection(tmp_path):
     # cannot easily inject corruption before evals run via fixture
     # alone. Instead, simulate by patching the eval call site.
     import unittest.mock as _mock
+
     from spectrum_systems_core.data_lake import pipeline as _pipeline_module
 
     def _broken_eval(target, _path):
@@ -519,9 +519,9 @@ def test_missing_source_turns_on_1_1_0_drives_rejection(tmp_path):
     """End-to-end: required-field eval fail → control blocks → target
     is in ``rejected`` status. Asserts ``status == 'rejected'``
     specifically — not just ``not promoted``."""
+    from spectrum_systems_core.artifacts import ArtifactStore
     from spectrum_systems_core.control import decide_control
     from spectrum_systems_core.promotion import promote_if_allowed
-    from spectrum_systems_core.artifacts import ArtifactStore
 
     target = new_artifact(
         artifact_type="meeting_minutes",

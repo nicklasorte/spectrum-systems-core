@@ -26,9 +26,8 @@ Design rules honoured here:
 from __future__ import annotations
 
 import os
-from typing import Mapping, Optional, Union
-
 import pathlib
+from collections.abc import Mapping
 
 from .feature_flag import FeatureFlag
 
@@ -61,8 +60,8 @@ class LLMConfigError(RuntimeError):
 
 def llm_extraction_enabled(
     *,
-    override: Optional[bool] = None,
-    data_lake_path: Optional[Union[str, pathlib.Path]] = None,
+    override: bool | None = None,
+    data_lake_path: str | pathlib.Path | None = None,
 ) -> bool:
     """Resolve the ``llm_extraction`` flag. Default is ``False``.
 
@@ -117,7 +116,7 @@ def llm_extraction_enabled(
 def preflight_llm_config(
     *,
     enabled: bool,
-    env: Optional[Mapping[str, str]] = None,
+    env: Mapping[str, str] | None = None,
 ) -> None:
     """Fail-closed pre-run config gate. Call BEFORE producing any artifact.
 

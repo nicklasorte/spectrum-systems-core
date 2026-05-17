@@ -6,7 +6,7 @@ import hashlib
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 
 def _now_iso() -> str:
@@ -25,7 +25,7 @@ def write_paper_issue_records(
     *,
     family: str,
     paper_source_id: str,
-    issues: List[Dict[str, Any]],
+    issues: list[dict[str, Any]],
 ) -> Path:
     """Write processed/<family>/<paper_source_id>/paper/issues.jsonl."""
     target = repo_root / "processed" / family / paper_source_id / "paper"
@@ -42,7 +42,7 @@ def write_paper_claims(
     *,
     family: str,
     paper_source_id: str,
-    claims: List[Dict[str, Any]],
+    claims: list[dict[str, Any]],
 ) -> Path:
     target = repo_root / "processed" / family / paper_source_id / "paper"
     target.mkdir(parents=True, exist_ok=True)
@@ -60,7 +60,7 @@ def make_agency_comment_issue(
     severity: str = "major",
     issue_id: str | None = None,
     comment_source_id: str = "comment-source-A",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     iid = issue_id or str(uuid.uuid4())
     fp = "sha256:" + hashlib.sha256((description + iid).encode()).hexdigest()
     return {
@@ -96,7 +96,7 @@ def make_position_entry(
     valid_until: str | None = None,
     superseded_by: str | None = None,
     source_issue_id: str | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "position_id": str(uuid.uuid4()),
         "agency_slug": agency_slug,
@@ -113,7 +113,7 @@ def make_position_entry(
     }
 
 
-def make_claim(*, claim_text: str, materiality: str = "high") -> Dict[str, Any]:
+def make_claim(*, claim_text: str, materiality: str = "high") -> dict[str, Any]:
     cid = str(uuid.uuid4())
     fp = "sha256:" + hashlib.sha256(cid.encode()).hexdigest()
     unit_id = str(uuid.uuid4())
@@ -151,7 +151,7 @@ def write_objection_history_entry(
     paper_source_id: str = "paper-A",
     raised_at: str | None = None,
     entry_id: str | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     target = repo_root / "agency" / agency_slug
     target.mkdir(parents=True, exist_ok=True)
     entry = {
@@ -172,8 +172,8 @@ def write_objection_history_entry(
     return entry
 
 
-def read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     with path.open("r", encoding="utf-8") as fh:
@@ -190,11 +190,11 @@ def make_prediction(
     agency_slug: str,
     paper_source_id: str = "paper-A",
     confidence: str = "medium",
-    evidence_basis: List[str] | None = None,
+    evidence_basis: list[str] | None = None,
     objection_type: str = "methodology_concern",
     extraction_temperature: int = 0,
     recency_cutoff_applied: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     pid = str(uuid.uuid4())
     fp = "sha256:" + hashlib.sha256(pid.encode()).hexdigest()
     if evidence_basis is None:
@@ -233,9 +233,9 @@ def make_mitigation(
     prediction_id: str,
     agency_slug: str,
     mitigation_type: str = "revise_claim",
-    evidence_search_terms: List[str] | None = None,
+    evidence_search_terms: list[str] | None = None,
     extraction_temperature: int = 0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     mid = str(uuid.uuid4())
     fp = "sha256:" + hashlib.sha256(mid.encode()).hexdigest()
     if evidence_search_terms is None:

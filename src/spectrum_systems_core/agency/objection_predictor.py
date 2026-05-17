@@ -13,8 +13,9 @@ import hashlib
 import json
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 import jsonschema
 
@@ -79,8 +80,8 @@ def _now_iso() -> str:
     )
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     with path.open("r", encoding="utf-8") as fh:
@@ -110,7 +111,7 @@ def _truncate(text: str, limit: int) -> str:
 class ObjectionPredictor:
     """Generate objection_prediction artifacts using Haiku."""
 
-    def __init__(self, api_caller: Optional[Callable[[str], str]] = None):
+    def __init__(self, api_caller: Callable[[str], str] | None = None):
         self._api_caller = api_caller
 
     def predict_for_paper(
@@ -118,7 +119,7 @@ class ObjectionPredictor:
         paper_source_id: str,
         agency_slug: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, _ = find_processed_dir(repo_root_path, paper_source_id)
         if processed_dir is None:
@@ -164,7 +165,7 @@ class ObjectionPredictor:
         # Top 5 high-materiality claims first, then anything else if fewer.
         materiality_rank = {"high": 0, "medium": 1, "low": 2}
 
-        def _rank(c: Dict[str, Any]) -> int:
+        def _rank(c: dict[str, Any]) -> int:
             return materiality_rank.get(str(c.get("materiality") or "low"), 99)
 
         sorted_claims = sorted(all_claims, key=_rank)[:5]
@@ -261,7 +262,7 @@ class ObjectionPredictor:
             for t in referenced_topics_raw
             if isinstance(t, (str, int, float))
         }
-        evidence_basis: List[str] = []
+        evidence_basis: list[str] = []
         for pos in active_positions:
             topic = str(pos.get("topic") or "").strip().lower()
             if topic and topic in referenced_topics:
@@ -384,7 +385,7 @@ class ObjectionPredictor:
                 temperature=EXTRACTION_TEMPERATURE,
                 messages=[{"role": "user", "content": prompt}],
             )
-            parts: List[str] = []
+            parts: list[str] = []
             for block in message.content:
                 text = getattr(block, "text", None)
                 if isinstance(text, str):

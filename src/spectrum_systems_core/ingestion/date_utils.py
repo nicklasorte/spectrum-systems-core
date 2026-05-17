@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import datetime
 import re
-from typing import Optional
 
 _MONTHS = {
     "jan": 1, "january": 1,
@@ -71,14 +70,14 @@ def _two_digit_to_full_year(y: int) -> int:
     return y
 
 
-def _safe_iso_date(year: int, month: int, day: int) -> Optional[str]:
+def _safe_iso_date(year: int, month: int, day: int) -> str | None:
     try:
         return datetime.date(year, month, day).isoformat()
     except (ValueError, TypeError):
         return None
 
 
-def extract_meeting_date(text: Optional[str]) -> Optional[str]:
+def extract_meeting_date(text: str | None) -> str | None:
     """Return the first recognised date in ``text`` as ``YYYY-MM-DD``, else ``None``.
 
     Tries all four regex families in order. Never raises. Empty /
@@ -177,7 +176,7 @@ def _is_date_token(token: str) -> bool:
     return False
 
 
-def family_tokens(text: Optional[str]) -> set[str]:
+def family_tokens(text: str | None) -> set[str]:
     """Extract significant lowercase tokens from a meeting filename / title.
 
     Used by GroundTruthLinker to disambiguate same-day collisions. The
@@ -215,7 +214,7 @@ def family_tokens(text: Optional[str]) -> set[str]:
     return out
 
 
-def extract_prose_date(text: Optional[str]) -> Optional[str]:
+def extract_prose_date(text: str | None) -> str | None:
     """Conservative date scan for free-form body text.
 
     Only ``Month D, YYYY`` and ``D Mon YYYY`` patterns are tried —

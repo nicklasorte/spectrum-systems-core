@@ -13,8 +13,9 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable, List, Optional
+from typing import Any
 
 from .finding import HealthFinding, write_finding
 
@@ -72,7 +73,7 @@ def _sentinel_present(
     return True
 
 
-def _read_flag(path: Path) -> Optional[dict[str, Any]]:
+def _read_flag(path: Path) -> dict[str, Any] | None:
     """Return parsed JSON dict or None on any failure.
 
     Per Red Team Pass 1: a malformed flag file is treated as missing
@@ -95,8 +96,8 @@ def check_feature_flags(
     data_lake_path: str | Path,
     *,
     required: Iterable[str] = REQUIRED_FEATURE_FLAGS,
-    pipeline_run_id: Optional[str] = None,
-) -> List[HealthFinding]:
+    pipeline_run_id: str | None = None,
+) -> list[HealthFinding]:
     """Audit required feature flags. Returns one finding per problem."""
     findings: list[HealthFinding] = []
     for flag_name in required:
@@ -144,7 +145,7 @@ def check_feature_flags(
 def run_preflight(
     data_lake_path: str | Path,
     *,
-    pipeline_run_id: Optional[str] = None,
+    pipeline_run_id: str | None = None,
     out_stream=None,
 ) -> int:
     """Entry point. Writes findings and returns an exit code.
@@ -190,7 +191,7 @@ def run_preflight(
 
 
 def _print_text_summary(
-    findings: List[HealthFinding], out
+    findings: list[HealthFinding], out
 ) -> None:
     if not findings:
         print("preflight: all checks passed.", file=out)
@@ -204,7 +205,7 @@ def _print_text_summary(
         )
 
 
-def _write_github_summary(findings: List[HealthFinding]) -> None:
+def _write_github_summary(findings: list[HealthFinding]) -> None:
     """Append a Markdown table to ``$GITHUB_STEP_SUMMARY`` if set."""
     gh_path = os.environ.get("GITHUB_STEP_SUMMARY", "").strip()
     if not gh_path:
