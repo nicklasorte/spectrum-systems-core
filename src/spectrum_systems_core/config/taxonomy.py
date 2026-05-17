@@ -110,6 +110,41 @@ DECISION_VERBS: frozenset = frozenset({
 })
 
 
+# Decision-licensing verbs the meeting_minutes_llm extraction PROMPT
+# itself sanctions but that are absent from ``REGULATORY_VERBS`` /
+# ``DECISION_VERBS``. The prompt's own decision category definition
+# enumerates "something the meeting decided, approved, rejected,
+# deferred, adopted, or AGREED" and instructs the model to emit "the
+# governing decision verb actually used in the transcript". A
+# correctly-extracted object-form decision the model faithfully labels
+# with the real decision verb used ("agreed" / "decided" / a direct
+# decision synonym) was hard-blocked by ``regulatory_verb`` because the
+# eval's classified set omitted these — the exact prompt↔eval taxonomy
+# drift CLAUDE.md forbids (the IDENTICAL decision in plain-string form
+# already promotes; the eval never verb-checks string decisions, so the
+# block was an object-vs-string inconsistency, not a trust property).
+#
+# This is a CLOSED, curated set of unambiguous DECISION acts (the
+# decision side of the constitution's "considered vs decided" line),
+# NOT an open synonym pile: a hallucinated / garbage verb
+# ("frobnicated") and a missing verb still fall through to the
+# fail-closed block / PR #144 sentinel exactly as before. Widening the
+# classified-pass set with verbs the prompt already sanctions removes
+# the drift WITHOUT weakening the gate — the same reconciliation
+# PR #146 applied for ``adopted`` / ``authorized`` / ``ratified``.
+# Updating this list is a policy change and requires a PR — same
+# governance as ``REGULATORY_VERBS``.
+DECISION_SYNONYM_VERBS: frozenset = frozenset({
+    "agreed",      # prompt decision definition enumerates it explicitly
+    "decided",     # prompt: "something the meeting DECIDED"
+    "endorsed",    # decision-side synonym of approved / adopted
+    "concurred",   # formal agreement on the record = a decision
+    "confirmed",   # decision-side confirmation of a position
+    "finalized",   # decision-side: the group finalized X
+    "resolved",    # formal "resolved that ..." decision verb
+})
+
+
 # Phase Z.2: verbs the regulatory_verb eval treats as "informal" — the
 # decision item exists, but the verb does not by itself license a
 # regulatory classification. Spectrum policy transcripts mix informal
@@ -172,6 +207,7 @@ __all__ = [
     "AMBIGUOUS_VERBS",
     "CLAIM_TYPES",
     "DECISION_OUTCOME_TYPES",
+    "DECISION_SYNONYM_VERBS",
     "DECISION_VERBS",
     "EXTRACTION_GAP_MIN_LCS",
     "MATCH_LCS_THRESHOLD",

@@ -61,6 +61,30 @@ class CanonicalTaxonomySourceTests(unittest.TestCase):
             taxonomy.UNCLASSIFIED_DECISION_VERB, taxonomy.AMBIGUOUS_VERBS
         )
 
+    def test_decision_synonym_verbs_invariants(self) -> None:
+        # DECISION_SYNONYM_VERBS removes the prompt↔eval drift that
+        # hard-blocked correctly-extracted object decisions the model
+        # labelled with a prompt-sanctioned verb (e.g. "agreed"). The
+        # invariants that keep it non-weakening:
+        #  * non-empty and lowercased (curated, closed set);
+        #  * disjoint from the indeterminate-verb sentinel (a real
+        #    decision verb must never collide with the "no verb claim"
+        #    marker);
+        #  * disjoint from AMBIGUOUS_VERBS so each member cleanly PASSES
+        #    rather than being downgraded to a non-blocking warn.
+        self.assertTrue(taxonomy.DECISION_SYNONYM_VERBS)
+        self.assertTrue(
+            all(v == v.lower() for v in taxonomy.DECISION_SYNONYM_VERBS)
+        )
+        self.assertNotIn(
+            taxonomy.UNCLASSIFIED_DECISION_VERB,
+            taxonomy.DECISION_SYNONYM_VERBS,
+        )
+        self.assertEqual(
+            taxonomy.DECISION_SYNONYM_VERBS & taxonomy.AMBIGUOUS_VERBS,
+            frozenset(),
+        )
+
 
 class TaxonomyHaltFindingTests(unittest.TestCase):
     """Phase T.1: the finding-builder respects the env flag."""

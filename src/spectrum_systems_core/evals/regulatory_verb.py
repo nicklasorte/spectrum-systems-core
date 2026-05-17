@@ -59,6 +59,7 @@ import re
 from ..artifacts import Artifact, new_artifact
 from ..config.taxonomy import (
     AMBIGUOUS_VERBS,
+    DECISION_SYNONYM_VERBS,
     DECISION_VERBS,
     REGULATORY_VERBS,
     UNCLASSIFIED_DECISION_VERB,
@@ -84,7 +85,22 @@ EVAL_TYPE = "regulatory_verb"
 # weakening the gate: a verb absent from the canonical taxonomy (a
 # hallucination such as ``frobnicated``) still falls through to the
 # fail-closed block.
-CLASSIFIED_DECISION_VERBS: frozenset = frozenset(REGULATORY_VERBS) | DECISION_VERBS
+#
+# ``DECISION_SYNONYM_VERBS`` is unioned in for the SAME reason: the
+# meeting_minutes_llm extraction prompt's own decision definition
+# sanctions "agreed" / "decided" (and direct decision synonyms), and
+# instructs the model to emit the governing verb actually used in the
+# transcript. A correctly-extracted object decision the model
+# faithfully labelled "agreed" was hard-blocked here while the
+# IDENTICAL decision in plain-string form promoted (string decisions
+# are never verb-checked) — a prompt↔eval drift / object-vs-string
+# inconsistency, not a trust property. Recognising the closed, curated
+# decision-synonym set the prompt already sanctions removes that drift
+# without weakening the gate: a hallucinated/garbage verb still blocks
+# and a missing verb still routes through the PR #144 sentinel.
+CLASSIFIED_DECISION_VERBS: frozenset = (
+    frozenset(REGULATORY_VERBS) | DECISION_VERBS | DECISION_SYNONYM_VERBS
+)
 
 # Artifact types that carry regulatory decisions. Other types skip the
 # eval cleanly — they have nothing for it to inspect.
@@ -306,6 +322,7 @@ __all__ = [
     "CLASSIFIED_DECISION_VERBS",
     "DECISIONS_FIELD_MISSING",
     "DECISION_BEARING_ARTIFACT_TYPES",
+    "DECISION_SYNONYM_VERBS",
     "DECISION_VERBS",
     "EVAL_TYPE",
     "UNCLASSIFIED_DECISION_VERB",
