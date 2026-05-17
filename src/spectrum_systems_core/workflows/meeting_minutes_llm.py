@@ -825,6 +825,7 @@ def run_meeting_minutes_llm_workflow(
     env=None,
     max_chunks: int | None = None,
     debug_chunks: bool = False,
+    print_raw_response: bool = False,
 ) -> WorkflowResult:
     """Produce a promoted ``meeting_minutes`` artifact via a live model.
 
@@ -864,6 +865,13 @@ def run_meeting_minutes_llm_workflow(
     not touch the payload, the content_hash, the eval_results or the
     decision, so a run with ``debug_chunks=False`` is byte-identical to
     one before this knob existed (additivity / rollback).
+
+    ``print_raw_response`` (default ``False``) is a DEBUG-ONLY
+    observability knob (Mode 1). When ``True`` the active transport is
+    wrapped so the verbatim model response is printed to stdout BEFORE
+    ``_parse_llm_payload`` runs on it. The wrapper returns the response
+    UNCHANGED, so extraction / evals / promotion are byte-identical to a
+    run with it off — it only observes, exactly like ``debug_chunks``.
     """
     # Resolve the extraction model FIRST — before any artifact is
     # produced and regardless of whether the transport is injected (a
@@ -877,6 +885,12 @@ def run_meeting_minutes_llm_workflow(
     active_client: LLMClient = client or AnthropicJSONClient(
         model=model_id, max_tokens=max_tokens
     )
+    _raw_printer = None
+    if print_raw_response:
+        from .debug_modes import RawResponsePrintingClient
+
+        _raw_printer = RawResponsePrintingClient(active_client)
+        active_client = _raw_printer
     extract = _make_extract(
         client=active_client, meeting_id=meeting_id, model_id=model_id
     )
@@ -904,6 +918,11 @@ def run_meeting_minutes_llm_workflow(
         last_line = chunks[-1]["line_end"] if chunks else 0
         input_text = "\n".join(input_text.splitlines()[:last_line])
     grounded = bool(chunks)
+    if _raw_printer is not None:
+        # The workflow makes ONE whole-transcript call; record the
+        # post-truncation chunk count so the printed banner is honest
+        # about the chunk scope the single call covers.
+        _raw_printer.total_chunks = len(chunks)
 
     extra_evals = [
         run_llm_strict_schema_eval,
