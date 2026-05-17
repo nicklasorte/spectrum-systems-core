@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/cross_meeting_synthesis.schema.json",
+  "title": "cross_meeting_synthesis",
+  "description": "Cross-meeting synthesis over the promoted meeting_minutes corpus. Written by scripts/create_cross_meeting_synthesis.py (the create-cross-meeting-synthesis workflow). ONE JSON object per file. This is a corpus-level instrument artifact, NOT a promoted product artifact: it is produced by a single Opus pass over STRUCTURED promoted meeting_minutes artifacts (never raw transcripts), it never enters indexes/meetings/artifact_index.jsonl, and it is never read back into the governed loop. The model_id is NEVER hardcoded: the workflow resolves it from ai/registry/model_registry.json and the script stamps it here. Deterministic envelope fields (source_ids, corpus_span, provenance) are computed by the script, not the model; open_actions[].status is recomputed deterministically by the script from closed_meeting corpus membership so a later-meeting closure can never be mislabelled open.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "source_ids",
+    "model_id",
+    "synthesized_at",
+    "corpus_span",
+    "decision_threads",
+    "open_actions",
+    "claim_drift",
+    "unresolved_questions",
+    "narrative_summary",
+    "provenance"
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "nullable_date": {
+      "type": ["string", "null"],
+      "description": "ISO-8601 calendar date YYYY-MM-DD, or null when the meeting carries no derivable date."
+    }
+  },
+  "properties": {
+    "artifact_type": { "const": "cross_meeting_synthesis" },
+    "schema_version": { "const": "1.0.0" },
+    "source_ids": {
+      "type": "array",
+      "description": "The source_id slugs whose promoted meeting_minutes artifacts were read. Sorted and de-duplicated by the script.",
+      "minItems": 2,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "model_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The Opus model string resolved from ai/registry/model_registry.json and passed via --model. Stamped so a past synthesis keeps its exact model after the registry rolls forward."
+    },
+    "synthesized_at": { "type": "string", "minLength": 1 },
+    "corpus_span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "earliest_meeting",
+        "latest_meeting",
+        "total_meetings",
+        "total_items_read"
+      ],
+      "properties": {
+        "earliest_meeting": { "$ref": "#/$defs/nullable_date" },
+        "latest_meeting": { "$ref": "#/$defs/nullable_date" },
+        "total_meetings": { "type": "integer", "minimum": 2 },
+        "total_items_read": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "decision_threads": {
+      "type": "array",
+      "description": "Threads of related decisions tracked across meetings.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["thread_id", "topic", "decisions", "open", "summary"],
+        "properties": {
+          "thread_id": { "$ref": "#/$defs/uuid" },
+          "topic": { "type": "string", "minLength": 1 },
+          "decisions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["source_id", "meeting_date", "text", "regulatory_verb", "status"],
+              "properties": {
+                "source_id": { "type": "string", "minLength": 1 },
+                "meeting_date": { "$ref": "#/$defs/nullable_date" },
+                "text": { "type": "string", "minLength": 1 },
+                "regulatory_verb": { "type": ["string", "null"] },
+                "status": {
+                  "enum": ["active", "superseded", "deferred", "resolved"]
+                }
+              }
+            }
+          },
+          "open": { "type": "boolean" },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+    "open_actions": {
+      "type": "array",
+      "description": "Action registry across the corpus. status is recomputed deterministically by the script from closed_meeting corpus membership, never trusted from the model.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action_id",
+          "text",
+          "owner",
+          "assigned_meeting",
+          "assigned_date",
+          "closed_meeting",
+          "closed_date",
+          "status"
+        ],
+        "properties": {
+          "action_id": { "$ref": "#/$defs/uuid" },
+          "text": { "type": "string", "minLength": 1 },
+          "owner": { "type": "string" },
+          "assigned_meeting": { "type": "string", "minLength": 1 },
+          "assigned_date": { "$ref": "#/$defs/nullable_date" },
+          "closed_meeting": { "type": ["string", "null"] },
+          "closed_date": { "$ref": "#/$defs/nullable_date" },
+          "status": { "enum": ["open", "closed", "unclear"] }
+        }
+      }
+    },
+    "claim_drift": {
+      "type": "array",
+      "description": "Claims tracked across meetings with drift detection.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim_id", "topic", "instances", "drift_detected", "drift_summary"],
+        "properties": {
+          "claim_id": { "$ref": "#/$defs/uuid" },
+          "topic": { "type": "string", "minLength": 1 },
+          "instances": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["source_id", "meeting_date", "text", "speaker"],
+              "properties": {
+                "source_id": { "type": "string", "minLength": 1 },
+                "meeting_date": { "$ref": "#/$defs/nullable_date" },
+                "text": { "type": "string", "minLength": 1 },
+                "speaker": { "type": "string" }
+              }
+            }
+          },
+          "drift_detected": { "type": "boolean" },
+          "drift_summary": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "unresolved_questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question_id", "text", "raised_meeting", "raised_date", "resolution", "resolved"],
+        "properties": {
+          "question_id": { "$ref": "#/$defs/uuid" },
+          "text": { "type": "string", "minLength": 1 },
+          "raised_meeting": { "type": "string", "minLength": 1 },
+          "raised_date": { "$ref": "#/$defs/nullable_date" },
+          "resolution": { "type": ["string", "null"] },
+          "resolved": { "type": "boolean" }
+        }
+      }
+    },
+    "narrative_summary": {
+      "type": "string",
+      "minLength": 100,
+      "description": "2-3 paragraph narrative of the TIG process arc. Enforced non-empty and >= 100 chars by the script before the artifact is written (red-team: an empty or trivial narrative is a fail-closed halt, never a silent write)."
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["produced_by", "input_artifact_ids"],
+      "properties": {
+        "produced_by": { "const": "cross_meeting_synthesis_workflow" },
+        "input_artifact_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

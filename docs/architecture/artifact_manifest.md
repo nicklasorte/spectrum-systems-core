@@ -652,6 +652,61 @@ calling `git check-ignore`.
   cost-vs-quality analysis instrument, never read back into the
   governed loop.
 
+### cross_meeting_synthesis
+- **Writer:** `scripts/create_cross_meeting_synthesis.py` (the
+  create-cross-meeting-synthesis workflow). ONE JSON object per file.
+  A SINGLE Opus pass over EVERY promoted `meeting_minutes` artifact in
+  the data-lake (the STRUCTURED product artifacts — it NEVER opens a
+  raw transcript or raw metadata; the meeting date is derived from the
+  promoted artifact's own `source_id` slug). The Opus model string is
+  NEVER hardcoded: the workflow resolves it from
+  `ai/registry/model_registry.json` (the `complex_reasoning` key — the
+  opus entry, which names exactly this cross-system-reasoning task) at
+  run time and the script stamps it into the artifact as `model_id`,
+  so a past synthesis keeps its exact model even after the registry is
+  rolled forward. The cross-meeting analogue of `comparison_result` /
+  `corpus_comparison`: an instrument artifact, NOT a promoted product,
+  never read back into the governed loop, never in the artifact index.
+  Halts fail-closed with `insufficient_corpus` when fewer than
+  `max(--min-meetings, 2)` promoted `meeting_minutes` artifacts exist
+  (a single meeting cannot be synthesized across).
+- **Path template:** `data-lake/store/artifacts/synthesis/cross_meeting_synthesis_<datestamp>.json`
+  (timestamped per run; a synthesis is written once and never
+  overwritten — the Opus pass is not byte-stable, exactly like
+  `opus_reference_minutes`).
+- **Schema:** `src/spectrum_systems_core/schemas/cross_meeting_synthesis.schema.json`
+  — a flat artifact (`artifact_type` const + string
+  `schema_version: "1.0.0"` + the synthesis fields), the same shape
+  pattern `comparison_result.schema.json` uses. The script validates
+  its OWN output against this schema via
+  `_artifact_validator.validate_artifact` before writing; it also
+  validates every promoted `meeting_minutes` it reads (the flat
+  `{"artifact_type": "meeting_minutes", **payload}` form) before
+  reading any field (CLAUDE.md read-path co-requirement). Every
+  `*_id` is re-stamped with a frozen-namespace UUID5, every `*_date`
+  is overridden with the date the script derives from the cited
+  `source_id`, `open_actions[].status` is recomputed from
+  `closed_meeting` corpus membership, and `decision_threads[].open`
+  is recomputed from decision status — so model id/date/status quality
+  can never corrupt the artifact and a closure recorded in any meeting
+  (the whole corpus is read in one pass) can never be mislabelled
+  "open".
+- **Git-tracked:** YES — it lives under `store/artifacts/`, the same
+  committed tree as `meeting_extraction` /
+  `decision_few_shot_examples` / `ground_truth_pair` (NOT under
+  `processed/`, which the data-lake repo bulk-ignores). The
+  create-cross-meeting-synthesis workflow idempotently ensures the
+  data-lake `.gitignore` carries `!**/artifacts/**/` (re-include the
+  directory chain) and `!**/artifacts/synthesis/*.json` before the
+  push, and the script's own `gitignore_blocks_artifact` guard refuses
+  to leave behind an artifact git cannot commit. When the data-lake
+  clone is absent (e.g. the pytest CI job) `_gitignore_audit.py` skips
+  this path cleanly, exactly as it does for every other `data-lake/`
+  entry.
+- **Readers:** none in-loop. The cross_meeting_synthesis is a
+  human cross-meeting analysis instrument, never read back into the
+  governed loop and never an eval input.
+
 ## Runtime / debug artifacts (intentionally NOT git-tracked)
 
 These are recorded here for completeness so future authors do not
