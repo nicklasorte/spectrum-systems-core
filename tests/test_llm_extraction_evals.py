@@ -5,6 +5,10 @@ unpromoted artifact).
 """
 from __future__ import annotations
 
+import json as _json
+
+import pytest
+
 from spectrum_systems_core.evals import (
     EXTRACTION_EMPTY_WITH_CONTENT,
     EXTRACTION_NOT_IN_SOURCE,
@@ -348,3 +352,74 @@ def test_optionc_text_derived_verb_is_not_overridden_by_sentinel():
     verb = _eval(result, "regulatory_verb")
     assert verb["status"] == "pass"
     assert verb["reason_codes"] == []
+
+
+# ---- Full-transcript output-truncation regression ----------------------
+#
+# At full-transcript scale the schema_version 1.3.0 extraction (~24
+# structured arrays) exceeds a too-small client token budget and is cut
+# off mid-emit into invalid JSON. _parse_llm_payload returns None and
+# the producer emits a base payload with NO decisions/action_items/
+# open_questions, so required_meeting_minutes_fields + regulatory_verb +
+# llm_extraction_strict_schema (+ nonempty) ALL fail together. This is
+# the reported production block; the PR #144 verb sentinel cannot help
+# because parsed is None. These two tests pin both the fail-closed
+# block AND that an untruncated full extraction promotes.
+
+
+def _truncated(client) -> str:
+    """A full valid extraction severed mid-emit (what a token-cap cut
+    does), so json.loads() raises -> _parse_llm_payload returns None."""
+    full = client(system="s", user="\n".join(f"[t{i:04d}] x" for i in range(3)))
+    cut = full[: len(full) - 120]
+    with pytest.raises(_json.JSONDecodeError):
+        _json.loads(cut)
+    return cut
+
+
+def test_full_scale_output_truncation_blocks_fail_closed():
+    full_client = json_stub(
+        **_base_kwargs([
+            DEC18_DECISIONS[0],
+            {"text": _INSRC_NO_VERB, "stakeholders": ["DoD"], "confidence": 0.6},
+        ])
+    )
+    result = run_meeting_minutes_llm_workflow(
+        DEC18, client=text_stub(_truncated(full_client))
+    )
+    assert result.promoted is False
+    assert _decision(result) == "block"
+    failed = {
+        e.payload["eval_type"]
+        for e in result.eval_results
+        if e.payload.get("status") == "fail"
+    }
+    # The exact reported production reason codes, all together.
+    assert {
+        "required_meeting_minutes_fields",
+        "regulatory_verb",
+        STRICT_SCHEMA_EVAL_TYPE,
+    }.issubset(failed)
+
+
+def test_full_scale_untruncated_extraction_promotes():
+    # Same full extraction, NOT truncated -> the governed loop promotes
+    # it on merit; the PR #144 sentinel composes (object decision with
+    # no verb gets the explicit unclassified marker).
+    result = run_meeting_minutes_llm_workflow(
+        DEC18,
+        client=json_stub(
+            **_base_kwargs([
+                DEC18_DECISIONS[0],
+                {"text": _INSRC_NO_VERB,
+                 "stakeholders": ["DoD"], "confidence": 0.6},
+            ])
+        ),
+    )
+    assert result.promoted is True
+    assert _decision(result) == "allow"
+    stamped = [
+        d for d in result.meeting_minutes.payload["decisions"]
+        if isinstance(d, dict) and d.get("verb") == "unclassified"
+    ]
+    assert len(stamped) == 1
