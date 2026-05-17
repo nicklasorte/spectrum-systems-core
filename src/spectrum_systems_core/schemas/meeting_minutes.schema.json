@@ -17,8 +17,8 @@
     "artifact_type": { "const": "meeting_minutes" },
     "schema_version": {
       "type": "string",
-      "enum": ["1.0.0", "1.1.0", "1.2.0"],
-      "description": "Payload schema_version. 1.0.0 = legacy ungrounded; 1.1.0 = Phase Y grounded (PR #128 source_turns contract — unchanged here); 1.2.0 = additionally permits the optional rationale (decisions) / claims with external_references + evidence_in_transcript / follow_up_required (action_items) / word_level_timestamps / sentiment_indicators / meeting_phases fields. Additivity: every 1.2.0 field is optional, so a legacy 1.0.0 or 1.1.0 artifact validates unchanged, and an artifact may declare 1.2.0 without carrying any new field."
+      "enum": ["1.0.0", "1.1.0", "1.2.0", "1.3.0"],
+      "description": "Payload schema_version. 1.0.0 = legacy ungrounded; 1.1.0 = Phase Y grounded (PR #128 source_turns contract — unchanged here); 1.2.0 = additionally permits the optional rationale (decisions) / claims with external_references + evidence_in_transcript / follow_up_required (action_items) / word_level_timestamps / sentiment_indicators / meeting_phases fields; 1.3.0 = additionally permits eight new optional cross-meeting arrays (issue_registry_entry, position_statement, dissent_or_objection, agenda_item, precedent_reference, external_stakeholder_input, glossary_definition, procedural_ruling) plus the optional claim_complexity field on claims items. Additivity: every 1.2.0 AND 1.3.0 field is optional, so a legacy 1.0.0 / 1.1.0 / 1.2.0 artifact validates unchanged on the 1.3.0 schema, and an artifact may declare 1.3.0 without carrying any new field."
     },
     "title": { "type": "string", "minLength": 1 },
     "summary": { "type": "string" },
@@ -166,6 +166,10 @@
             "type": "array",
             "description": "Optional (schema_version 1.2.0+), default [] (applied by the producer/model). turn_ids that provide evidence SUPPORTING this claim — deliberately distinct from the PR #128 grounding/source_turns contract, which records where the claim was STATED. A claim may be stated in one turn but supported by evidence across multiple turns. This field does NOT alter or re-pin the grounding contract.",
             "items": { "type": "string" }
+          },
+          "claim_complexity": {
+            "enum": ["atomic", "compound"],
+            "description": "Optional (schema_version 1.3.0+). atomic = single independently verifiable fact; compound = bundles multiple facts that should be split. Default \"atomic\" (applied by the producer/model, not enforced by JSON Schema): the key is OPTIONAL so every legacy 1.0.0 / 1.1.0 / 1.2.0 claim — and any claim that simply omits it — validates unchanged. Only these two values are valid; any other (e.g. \"wrong\") fails the gate."
           }
         }
       }
@@ -333,6 +337,221 @@
           "start_turn_id": { "type": ["string", "null"] },
           "end_turn_id": { "type": ["string", "null"] },
           "summary": { "type": ["string", "null"] }
+        }
+      }
+    },
+
+    "issue_registry_entry": {
+      "type": "array",
+      "description": "Optional (schema_version 1.3.0+), default []. Substantive technical or policy problems being worked across multiple meetings; an issue persists until resolved. DISTINCT from `open_questions` (a procedural question raised in one meeting) and `decisions` (a resolution). Legacy 1.0.0 / 1.1.0 / 1.2.0 artifacts omit it entirely (additivity — the array is optional, so absence validates).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["issue_id", "title", "description", "issue_type", "raised_by", "status"],
+        "properties": {
+          "issue_id": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "description": { "type": "string", "minLength": 1 },
+          "issue_type": {
+            "enum": ["technical", "policy", "procedural", "regulatory", "coordination"],
+            "description": "Exactly one of the five approved issue types. Any other value fails the gate."
+          },
+          "raised_by": { "type": "string", "minLength": 1 },
+          "status": {
+            "enum": ["open", "in_progress", "resolved", "deferred"],
+            "description": "Exactly one of the four approved statuses. Any other value (e.g. \"done\") fails the gate."
+          },
+          "resolution_summary": { "type": ["string", "null"] },
+          "related_decisions": {
+            "type": "array",
+            "description": "Optional, default []. Decision text or ids this issue is related to.",
+            "items": { "type": "string" }
+          },
+          "source_turns": {
+            "type": "array",
+            "description": "Optional, default []. turn_ids supporting this entry.",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "position_statement": {
+      "type": "array",
+      "description": "Optional (schema_version 1.3.0+), default []. An agency's or participant's stated stance on a topic that may recur or evolve across meetings — a declared position, NOT a decision (a stance, not a resolution). Legacy artifacts omit it (additivity).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["position_id", "agency", "speaker", "topic", "position_text", "position_type"],
+        "properties": {
+          "position_id": { "type": "string", "minLength": 1 },
+          "agency": { "type": "string", "minLength": 1 },
+          "speaker": { "type": "string", "minLength": 1 },
+          "topic": { "type": "string", "minLength": 1 },
+          "position_text": { "type": "string", "minLength": 1 },
+          "position_type": {
+            "enum": ["support", "opposition", "conditional", "neutral", "unclear"],
+            "description": "Exactly one of the five approved position types. Any other value fails the gate."
+          },
+          "caveats": { "type": ["string", "null"] },
+          "source_turns": {
+            "type": "array",
+            "description": "Optional, default []. turn_ids supporting this statement.",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "dissent_or_objection": {
+      "type": "array",
+      "description": "Optional (schema_version 1.3.0+), default []. A formal disagreement explicitly registered on the record by a participant. DISTINCT from `risks` (a flagged potential problem) and `sentiment_indicators` (tone). Legacy artifacts omit it (additivity).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["dissent_id", "objector", "agency", "objection_text", "objection_topic"],
+        "properties": {
+          "dissent_id": { "type": "string", "minLength": 1 },
+          "objector": { "type": "string", "minLength": 1 },
+          "agency": { "type": "string", "minLength": 1 },
+          "objection_text": { "type": "string", "minLength": 1 },
+          "objection_topic": { "type": "string", "minLength": 1 },
+          "resolution": { "type": ["string", "null"] },
+          "resolved": {
+            "type": "boolean",
+            "description": "Optional. Default false (applied by the producer/model, not enforced by JSON Schema)."
+          },
+          "source_turns": {
+            "type": "array",
+            "description": "Optional, default []. turn_ids supporting this objection.",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "agenda_item": {
+      "type": "array",
+      "description": "Optional (schema_version 1.3.0+), default []. Formal agenda structure recoverable from the transcript (numbered or titled sections) — the organizational spine for cross-meeting document structure, NOT the substantive content (that stays in `topics` / `decisions`). Legacy artifacts omit it (additivity).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item_id", "title"],
+        "properties": {
+          "item_id": { "type": "string", "minLength": 1 },
+          "item_number": { "type": ["string", "null"] },
+          "title": { "type": "string", "minLength": 1 },
+          "presenter": { "type": ["string", "null"] },
+          "allocated_minutes": { "type": ["integer", "null"] },
+          "start_turn_id": { "type": ["string", "null"] },
+          "end_turn_id": { "type": ["string", "null"] },
+          "outcome": { "type": ["string", "null"] }
+        }
+      }
+    },
+
+    "precedent_reference": {
+      "type": "array",
+      "description": "Optional (schema_version 1.3.0+), default []. A speaker's reference to a prior meeting, prior decision, or prior study used as justification for a current position or direction. At scale these form a citation graph across the TIG process. Legacy artifacts omit it (additivity).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ref_id", "speaker", "reference_text", "purpose"],
+        "properties": {
+          "ref_id": { "type": "string", "minLength": 1 },
+          "speaker": { "type": "string", "minLength": 1 },
+          "reference_text": { "type": "string", "minLength": 1 },
+          "referenced_meeting_date": { "type": ["string", "null"] },
+          "referenced_decision_or_study": { "type": ["string", "null"] },
+          "purpose": {
+            "enum": ["justification", "contrast", "correction", "context", "unknown"],
+            "description": "Exactly one of the five approved purposes. Any other value fails the gate."
+          },
+          "source_turns": {
+            "type": "array",
+            "description": "Optional, default []. turn_ids supporting this reference.",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "external_stakeholder_input": {
+      "type": "array",
+      "description": "Optional (schema_version 1.3.0+), default []. Input relayed from parties NOT present in the meeting (industry associations, ITU, congressional offices, OSD). Only when a speaker explicitly relays it — a bare document mention with no relayed content is NOT stakeholder input. Legacy artifacts omit it (additivity).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["input_id", "stakeholder", "relayed_by", "input_text", "input_type"],
+        "properties": {
+          "input_id": { "type": "string", "minLength": 1 },
+          "stakeholder": { "type": "string", "minLength": 1 },
+          "relayed_by": { "type": "string", "minLength": 1 },
+          "input_text": { "type": "string", "minLength": 1 },
+          "input_type": {
+            "enum": ["industry_comment", "itu_submission", "congressional_direction", "agency_guidance", "public_comment", "other"],
+            "description": "Exactly one of the six approved input types. Any other value fails the gate."
+          },
+          "document_reference": { "type": ["string", "null"] },
+          "source_turns": {
+            "type": "array",
+            "description": "Optional, default []. turn_ids where the input was relayed.",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "glossary_definition": {
+      "type": "array",
+      "description": "Optional (schema_version 1.3.0+), default []. A term formally defined or clarified for the purpose of this study. At scale this builds a living domain glossary from the TIG process. Legacy artifacts omit it (additivity).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["definition_id", "term", "definition", "defined_by"],
+        "properties": {
+          "definition_id": { "type": "string", "minLength": 1 },
+          "term": { "type": "string", "minLength": 1 },
+          "definition": { "type": "string", "minLength": 1 },
+          "defined_by": { "type": "string", "minLength": 1 },
+          "context": { "type": ["string", "null"] },
+          "authoritative": {
+            "type": "boolean",
+            "description": "Optional. Default false (applied by the producer/model, not enforced by JSON Schema); true only when the speaker indicated this is the official/working definition for the study."
+          },
+          "source_turns": {
+            "type": "array",
+            "description": "Optional, default []. turn_ids where the term was defined.",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "procedural_ruling": {
+      "type": "array",
+      "description": "Optional (schema_version 1.3.0+), default []. A chair / co-lead ruling on meeting procedure, scope boundaries, or process — DISTINCT from a `decisions` item (substantive). Establishes the governance framework. Legacy artifacts omit it (additivity).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ruling_id", "ruling_text", "ruled_by", "ruling_type"],
+        "properties": {
+          "ruling_id": { "type": "string", "minLength": 1 },
+          "ruling_text": { "type": "string", "minLength": 1 },
+          "ruled_by": { "type": "string", "minLength": 1 },
+          "ruling_type": {
+            "enum": ["scope_boundary", "process_rule", "meeting_procedure", "participation_rule", "classification_handling", "other"],
+            "description": "Exactly one of the six approved ruling types. Any other value fails the gate."
+          },
+          "binding": {
+            "type": "boolean",
+            "description": "Optional. Default true (applied by the producer/model, not enforced by JSON Schema)."
+          },
+          "source_turns": {
+            "type": "array",
+            "description": "Optional, default []. turn_ids supporting this ruling.",
+            "items": { "type": "string" }
+          }
         }
       }
     },

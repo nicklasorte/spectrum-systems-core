@@ -111,10 +111,10 @@ There is no fallback to the regex extractor.
 
 ---
 
-## meeting_minutes content arrays (schema versions 1.0.0, 1.1.0, 1.2.0)
+## meeting_minutes content arrays (schema versions 1.0.0, 1.1.0, 1.2.0, 1.3.0)
 
-The `meeting_minutes.schema.json` defines 15 content arrays. Three are
-required (legacy); twelve are optional structured arrays added
+The `meeting_minutes.schema.json` defines 23 content arrays. Three are
+required (legacy); twenty are optional structured arrays added
 incrementally.
 
 | Array | Status | Primary text field | Notes |
@@ -134,11 +134,23 @@ incrementally.
 | `claims` | Optional (1.2.0) | `claim_text` | Factual/analytical assertions; omitted by legacy 1.0.0/1.1.0 artifacts (additivity); adds `external_references`, `evidence_in_transcript` |
 | `sentiment_indicators` | Optional (1.2.0) | `text_preview` | Speaker turns flagged for notable sentiment; exactly 5 approved values |
 | `meeting_phases` | Optional (1.2.0) | `phase_name` | High-level meeting phases in sequence; exactly 5 approved values |
+| `issue_registry_entry` | Optional (1.3.0) | `title` | Substantive cross-meeting technical/policy problems; distinct from `open_questions` (procedural) and `decisions` (resolutions) |
+| `position_statement` | Optional (1.3.0) | `position_text` | Agency-attributed stances that recur/evolve across meetings; not decisions |
+| `dissent_or_objection` | Optional (1.3.0) | `objection_text` | Formal on-the-record objections; distinct from `risks` and `sentiment_indicators` |
+| `agenda_item` | Optional (1.3.0) | `title` | Formal agenda structure (item number/presenter); the cross-meeting document spine |
+| `precedent_reference` | Optional (1.3.0) | `reference_text` | References to prior meetings/decisions/studies used as justification (citation graph) |
+| `external_stakeholder_input` | Optional (1.3.0) | `input_text` | Input relayed from parties not in the room (industry/ITU/congressional/OSD) |
+| `glossary_definition` | Optional (1.3.0) | `term` | Terms formally defined in the meeting; builds a living domain glossary |
+| `procedural_ruling` | Optional (1.3.0) | `ruling_text` | Chair rulings on procedure/scope; distinct from substantive `decisions` |
 
-Additivity: every 1.2.0 field is optional, so a legacy 1.0.0 or 1.1.0
-artifact validates against the 1.2.0 schema unchanged. The strict-schema
-eval validates the full payload against `meeting_minutes.schema.json`
-before promotion.
+`claims` items also gain an optional `claim_complexity` enum
+(`atomic` / `compound`, 1.3.0) — optional on every claim, so legacy
+claims without it validate unchanged.
+
+Additivity: every 1.2.0 AND 1.3.0 field is optional, so a legacy
+1.0.0 / 1.1.0 / 1.2.0 artifact validates against the 1.3.0 schema
+unchanged. The strict-schema eval validates the full payload against
+`meeting_minutes.schema.json` before promotion.
 
 ---
 

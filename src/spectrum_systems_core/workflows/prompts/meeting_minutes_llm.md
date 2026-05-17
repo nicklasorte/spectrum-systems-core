@@ -19,7 +19,7 @@ any other keys. Do not wrap the object in another object.
   "open_questions": ["<verbatim or near-verbatim question text>", ...],
   "commitments": [{"commitment_id","owner","commitment_text","due","source_speaker"}, ...],
   "risks": [{"risk_id","risk_text","raised_by","severity","mitigation_mentioned"}, ...],
-  "claims": [{"claim_id","claim_text","speaker","external_references","evidence_in_transcript"}, ...],
+  "claims": [{"claim_id","claim_text","speaker","external_references","evidence_in_transcript","claim_complexity"}, ...],
   "cross_references": [{"ref_id","ref_type","ref_text","ref_date","ref_url"}, ...],
   "attendees": [{"name","agency","role","present"}, ...],
   "topics": [{"topic_id","title","start_timestamp","end_timestamp","summary"}, ...],
@@ -29,6 +29,14 @@ any other keys. Do not wrap the object in another object.
   "scheduled_events": [{"event_id","title","date","time","location","purpose"}, ...],
   "sentiment_indicators": [{"turn_id","speaker","sentiment","text_preview"}, ...],
   "meeting_phases": [{"phase_id","phase_name","start_turn_id","end_turn_id","summary"}, ...],
+  "issue_registry_entry": [{"issue_id","title","description","issue_type","raised_by","status","resolution_summary","related_decisions","source_turns"}, ...],
+  "position_statement": [{"position_id","agency","speaker","topic","position_text","position_type","caveats","source_turns"}, ...],
+  "dissent_or_objection": [{"dissent_id","objector","agency","objection_text","objection_topic","resolution","resolved","source_turns"}, ...],
+  "agenda_item": [{"item_id","item_number","title","presenter","allocated_minutes","start_turn_id","end_turn_id","outcome"}, ...],
+  "precedent_reference": [{"ref_id","speaker","reference_text","referenced_meeting_date","referenced_decision_or_study","purpose","source_turns"}, ...],
+  "external_stakeholder_input": [{"input_id","stakeholder","relayed_by","input_text","input_type","document_reference","source_turns"}, ...],
+  "glossary_definition": [{"definition_id","term","definition","defined_by","context","authoritative","source_turns"}, ...],
+  "procedural_ruling": [{"ruling_id","ruling_text","ruled_by","ruling_type","binding","source_turns"}, ...],
   "grounding": [{"kind":"decision","text":"<the item text exactly as you emitted it>","source_turns":["t0007"]}, ...]
 }
 ```
@@ -240,5 +248,91 @@ NEVER infer a value the transcript does not state.
 - Do NOT set `word_level_timestamps` — this field is populated by
   the ingestion pipeline (the chunker), not by the extraction
   model. Do not emit it in your JSON at all.
+
+# New optional fields (schema_version 1.3.0)
+
+These eight arrays plus `claim_complexity` are additive. Legacy
+artifacts without them are still valid. For EVERY array below: if the
+category is not present in the transcript, return an empty array `[]`
+— do NOT infer, do NOT manufacture an item to avoid an empty array.
+Every emitted item still needs a `grounding` entry (use the array key
+as the `kind`, e.g. `"issue_registry_entry"`, `"procedural_ruling"`).
+
+- `issue_registry_entry`: an issue is a substantive technical or
+  policy problem being worked across multiple meetings — NOT a
+  question asked in this meeting, but an unresolved problem the TIG is
+  collectively trying to solve. Extract only if explicitly identified
+  as an ongoing problem, not a one-off procedural question (those go
+  in `open_questions`). If no such ongoing problem is stated, return
+  `[]` — do not infer.
+  Example: `{"issue_id":"issue-1","title":"Aggregate interference modeling methodology","description":"The TIG has not agreed on what propagation model to use for the 7 GHz downlink protection-zone analysis.","issue_type":"technical","raised_by":"DoD Rep","status":"open","resolution_summary":null,"related_decisions":[],"source_turns":["t0012"]}`
+
+- `position_statement`: a position is an agency's or participant's
+  stated stance on a topic that may persist or evolve across meetings
+  — not a decision, a declared position. Extract ONLY if the speaker
+  is clearly speaking FOR their agency or organization (explicit
+  agency attribution required), not asking a question or musing
+  personally. If no agency-attributed position is stated, return `[]`
+  — do not infer.
+  Example: `{"position_id":"pos-1","agency":"DoW","speaker":"DoW Rep","topic":"Classified system parameters","position_text":"DoW's position is that classified system parameters cannot be shared in this forum.","position_type":"opposition","caveats":null,"source_turns":["t0021"]}`
+
+- `dissent_or_objection`: a dissent is when a participant EXPLICITLY
+  registers disagreement or objection, putting it on the record.
+  Distinct from `sentiment_indicators` (tone/feeling) and `risks`
+  (a flagged potential problem) — this is a formal on-the-record
+  objection. Federal government meetings have a formal tone; flag
+  ONLY unambiguous objections ("I want to note for the record that
+  our agency objects to..."), never routine questions, concerns, or
+  ordinary deliberation. Empty array `[]` for routine exchanges —
+  when in doubt, do NOT flag.
+  Example: `{"dissent_id":"dis-1","objector":"NTIA Lead","agency":"NTIA","objection_text":"I want to note for the record that NTIA objects to adopting the threshold before the aggregate study is complete.","objection_topic":"Adopting the 7 GHz downlink threshold","resolution":null,"resolved":false,"source_turns":["t0044"]}`
+
+- `agenda_item`: formal agenda structure recoverable from the
+  transcript — numbered items, titled sections, or explicitly
+  introduced topics. Include `start_turn_id` / `end_turn_id` if
+  identifiable. Extract the STRUCTURE, not the content (content goes
+  in `topics` and `decisions`). If no agenda structure is discernible,
+  return `[]` — do not invent numbering.
+  Example: `{"item_id":"ag-1","item_number":"Agenda Item 3","title":"Study Plan Content Review","presenter":"NTIA Lead","allocated_minutes":30,"start_turn_id":"t0030","end_turn_id":"t0058","outcome":"Study plan draft accepted for circulation."}`
+
+- `precedent_reference`: when a speaker references a prior meeting,
+  prior decision, or prior study to justify a current position or
+  direction. Extract the reference, the speaker, and WHY they cited
+  it (`justification` / `contrast` / `correction` / `context` /
+  `unknown`). If no prior work is referenced, return `[]` — do not
+  infer a precedent.
+  Example: `{"ref_id":"prec-1","speaker":"Chair Smith","reference_text":"as we agreed at the December working group meeting","referenced_meeting_date":"2025-12-18","referenced_decision_or_study":"the December coordination-distance agreement","purpose":"justification","source_turns":["t0009"]}`
+
+- `external_stakeholder_input`: input relayed from parties NOT in the
+  room — industry associations, ITU, congressional offices, OSD. Only
+  extract if a speaker EXPLICITLY says they are relaying input from an
+  external party AND relays its content. Do NOT extract a reference to
+  a document alone — there must be relayed content, not just a
+  citation. If no external input is relayed, return `[]` — do not
+  infer.
+  Example: `{"input_id":"ext-1","stakeholder":"CTIA","relayed_by":"FCC Rep","input_text":"CTIA submitted comments saying the proposed protection zone is larger than necessary for the 7 GHz downlink band.","input_type":"industry_comment","document_reference":"CTIA comment filing","source_turns":["t0037"]}`
+
+- `glossary_definition`: when a term is formally defined or clarified
+  FOR THE PURPOSE OF THIS STUDY. Set `authoritative=true` only if the
+  speaker indicates this is the working/official definition for the
+  study. If no term is explicitly defined, return `[]` — do not coin
+  a definition.
+  Example: `{"definition_id":"gl-1","term":"protection zone","definition":"For our purposes, the area within which interference must be managed to protect federal incumbents.","defined_by":"NTIA Lead","context":"Clarified before the protection-zone analysis discussion.","authoritative":true,"source_turns":["t0026"]}`
+
+- `procedural_ruling`: when the chair or co-lead rules on meeting
+  procedure, scope, or process. Distinct from a `decisions` item
+  (substantive) — this establishes the governance framework. If no
+  explicit procedural ruling was made, return `[]` — do not infer one
+  from ordinary facilitation.
+  Example: `{"ruling_id":"rul-1","ruling_text":"This TIG is scoped to 7250-7400 MHz only; we will not discuss classified parameters in this forum.","ruled_by":"Chair Smith","ruling_type":"scope_boundary","binding":true,"source_turns":["t0005"]}`
+
+- `claim_complexity` (on each `claims` item): set to `"atomic"` if
+  the claim states a single independently verifiable fact, or
+  `"compound"` if it bundles multiple facts that should be split.
+  E.g. "the meeting is unclassified" is atomic; "the downlink TIG
+  covers 7250-7400 MHz and focuses on FSS and MSS operations" is
+  compound (two facts). Default to `"atomic"` if unclear. This is
+  the only valid pair of values — never emit any other string. It is
+  optional on every claim; a claim that omits it is still valid.
 
 Output the JSON object now.

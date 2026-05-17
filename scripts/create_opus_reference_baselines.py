@@ -178,6 +178,19 @@ _PRIMARY_TEXT_FIELD: Dict[str, Optional[str]] = {
     "claims": "claim_text",
     "sentiment_indicators": "text_preview",
     "meeting_phases": "phase_name",
+    # 1.3.0 additions (eight new cross-meeting arrays). Same rule:
+    # every value is a schema-*required* string with minLength 1, so
+    # extraction_types() never raises unmapped_extraction_type and a
+    # schema-valid item never HALTs the baseline (asserted in
+    # tests/test_meeting_minutes_schema.py).
+    "issue_registry_entry": "title",
+    "position_statement": "position_text",
+    "dissent_or_objection": "objection_text",
+    "agenda_item": "title",
+    "precedent_reference": "reference_text",
+    "external_stakeholder_input": "input_text",
+    "glossary_definition": "term",
+    "procedural_ruling": "ruling_text",
 }
 
 # Retained only so ``compare_opus_haiku.py`` can mirror it and
@@ -622,6 +635,15 @@ _GROUND_TRUTH_TEXT_FIELDS = (
     "risk_text",
     "reference_text",
     "parameter_name",
+    # 1.3.0 type-specific primary text fields, listed before the
+    # generic name/title fallbacks so e.g. a position_statement
+    # resolves on position_text rather than a uuid id appearing first
+    # in the model's object.
+    "position_text",
+    "objection_text",
+    "input_text",
+    "ruling_text",
+    "term",
     "name",
     "title",
     "phase_name",

@@ -116,6 +116,20 @@ _STRUCTURED_ARRAYS = (
     "scheduled_events",
     "sentiment_indicators",
     "meeting_phases",
+    # schema_version 1.3.0 additions (eight new cross-meeting arrays).
+    # Added in lock-step with the prompt: a model-emitted value reaches
+    # the artifact and is validated fail-closed by the strict-schema
+    # eval (an explicit null or a malformed item blocks promotion,
+    # never silently dropped — which would also make the new prompt
+    # instructions dead).
+    "issue_registry_entry",
+    "position_statement",
+    "dissent_or_objection",
+    "agenda_item",
+    "precedent_reference",
+    "external_stakeholder_input",
+    "glossary_definition",
+    "procedural_ruling",
 )
 
 # The three legacy required arrays. Kept exactly fail-closed: a missing
