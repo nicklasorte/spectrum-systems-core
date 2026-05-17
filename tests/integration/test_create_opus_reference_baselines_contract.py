@@ -319,6 +319,94 @@ def test_subprocess_empty_object_warns_returncode_zero(
     assert summary["per_transcript"][0]["total"] == 0
 
 
+_STRUCTURED_DECISION = {
+    "text": "The TIG approved the 7 GHz downlink threshold.",
+    "verb": "approved",
+    "stakeholders": ["DoD", "NTIA"],
+    "confidence": 0.9,
+    "rationale": "The PCC directed it.",
+}
+
+_STRUCTURED_STUB_RESPONSE = json.dumps(
+    {
+        # The exact shape the canonical prompt asks Opus for: a
+        # ``decisions`` array whose item is a structured object, not a
+        # string. This used to halt malformed_llm_response.
+        "decisions": [_STRUCTURED_DECISION],
+        "action_items": [
+            {"text": "NTIA to circulate the methodology.", "owner": "NTIA"}
+        ],
+        "open_questions": [{"question_text": "Coordination distance?"}],
+        "commitments": [],
+        "risks": [],
+        "cross_references": [],
+        "attendees": [],
+        "topics": [],
+        "regulatory_references": [],
+        "technical_parameters": [
+            {
+                "param_id": "p-1",
+                "parameter_name": "downlink threshold",
+                "value": "minus 47 dBm/MHz",
+            }
+        ],
+        "named_artifacts": [],
+        "scheduled_events": [],
+    }
+)
+
+
+def test_subprocess_structured_object_items_recovered(
+    tmp_path: Path,
+) -> None:
+    """End-to-end at the subprocess boundary: a fully structured-object
+    response (the canonical prompt's object form) is written, NOT
+    halted, and ``item_data`` keeps every original field verbatim."""
+    dl = _seed(tmp_path)
+    result = _run_with_stub(
+        ["--data-lake", str(dl), "--model", MODEL, "--no-skip-existing"],
+        _STRUCTURED_STUB_RESPONSE,
+    )
+    assert result.returncode == 0, (
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    out = _out(dl)
+    assert out.is_file(), "structured-object response must still write"
+    rows = [
+        json.loads(ln)
+        for ln in out.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    # 1 decision + 1 action + 1 question + 1 technical_parameter
+    assert len(rows) == 4
+    by_type = {r["extraction_type"]: r for r in rows}
+
+    # decisions: structured object resolved on ``text``; item_data is
+    # the full object, every field preserved (nothing lost).
+    dec = by_type["decisions"]
+    assert dec["ground_truth_text"] == _STRUCTURED_DECISION["text"]
+    assert dec["item_data"] == _STRUCTURED_DECISION
+
+    # action_items dict -> ``text`` field, owner preserved in item_data.
+    act = by_type["action_items"]
+    assert act["ground_truth_text"] == "NTIA to circulate the methodology."
+    assert act["item_data"]["owner"] == "NTIA"
+
+    # open_questions dict -> ``question_text``.
+    assert by_type["open_questions"]["ground_truth_text"] == (
+        "Coordination distance?"
+    )
+
+    # technical_parameters dict -> ``parameter_name`` (priority list).
+    tp = by_type["technical_parameters"]
+    assert tp["ground_truth_text"] == "downlink threshold"
+    assert tp["item_data"]["value"] == "minus 47 dBm/MHz"
+
+    for r in rows:
+        assert r["status"] == "reference_only"
+        assert isinstance(r["item_data"], dict)
+
+
 def test_subprocess_unrecoverable_halts_no_partial(
     tmp_path: Path,
 ) -> None:

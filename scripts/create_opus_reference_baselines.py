@@ -27,11 +27,18 @@ written):
   transcript slug and is deliberately NOT required on the record.
 * The model transport fails -> ``llm_transport_error`` (no fallback to a
   weaker model, no partial file).
-* The model returns non-JSON / a non-object / a content array that is
-  not a list / a structured item missing its schema-required primary
-  text field -> ``malformed_llm_response`` (the whole transcript's file
-  is never written — no partial JSONL). Before this halt the parser
-  tries, in order: markdown-fence stripping, truncation back to the
+* The model returns non-JSON / a non-object / a content key whose value
+  is not a list -> ``malformed_llm_response`` (the whole transcript's
+  file is never written — no partial JSONL). Individual items are NEVER
+  a halt: the canonical prompt lets the model return either a plain
+  string OR a structured object for every type (``decisions`` items in
+  particular arrive as ``{"text","verb","stakeholders","confidence",
+  "rationale"}``), so ``extract_ground_truth_text`` tolerantly reads the
+  best text field from any dict (priority field list, then the first
+  string value, then ``str(item)``) and the full original item is kept
+  verbatim in ``item_data`` so nothing is lost. Before the response-level
+  halt the parser tries, in order: markdown-fence stripping, truncation
+  back to the
   last balanced ``}`` (recovers a valid object followed by trailing
   prose/markdown), then ONE simplified "JSON only" retry seeded with
   just the first 200 chars of the failed response. Only when all three
@@ -138,11 +145,19 @@ _MEETING_MINUTES_SCHEMA = (
     / "meeting_minutes.schema.json"
 )
 
-# Primary text field per extraction type (the field that becomes
-# ``ground_truth_text``). ``None`` means the item is a plain string
-# (the three legacy arrays). Every non-``None`` field is a
-# schema-*required* field of that type, so a missing value is a
-# malformed-response signal, not a sparse-but-valid item.
+# Declares every extraction type this workflow knows about. It no
+# longer drives text extraction — ``extract_ground_truth_text`` reads
+# the best text field tolerantly from any item shape — but it is still
+# load-bearing for two reasons that must NOT regress:
+#   1. ``extraction_types()`` raises ``unmapped_extraction_type`` for any
+#      schema array property absent from this map, so a new schema type
+#      can never be silently skipped.
+#   2. ``compare_opus_haiku.py`` mirrors this map and
+#      ``test_compare_opus_haiku.py`` asserts the two stay byte-equal —
+#      changing a value here without mirroring it there breaks that
+#      cross-script contract.
+# ``None`` historically meant "plain string array"; the value is now
+# only consulted by the two invariants above, never to gate an item.
 _PRIMARY_TEXT_FIELD: Dict[str, Optional[str]] = {
     "decisions": None,
     "action_items": None,
@@ -165,11 +180,10 @@ _PRIMARY_TEXT_FIELD: Dict[str, Optional[str]] = {
     "meeting_phases": "phase_name",
 }
 
-# Object-form fallbacks for the three legacy arrays: the schema allows
-# action_items / open_questions items to be a structured object as well
-# as a string. The prompt asks for strings, but if a structured object
-# arrives we read its schema-required text field rather than silently
-# dropping a real item.
+# Retained only so ``compare_opus_haiku.py`` can mirror it and
+# ``test_compare_opus_haiku.py`` can assert the two scripts stay in
+# sync. ``extract_ground_truth_text`` no longer consults this map —
+# structured items are read tolerantly via the priority field list.
 _LEGACY_OBJECT_TEXT_FIELD: Dict[str, str] = {
     "action_items": "action",
     "open_questions": "question_text",
@@ -594,41 +608,63 @@ def parse_response_with_recovery(
     )
 
 
-def _primary_text(etype: str, item: Any) -> str:
-    """The ground_truth_text for one item, or HALT if malformed.
+# Text fields tried, in priority order, when an item is a structured
+# object. This single list covers every extraction type — the canonical
+# prompt lets the model return a structured object for ANY type, so the
+# reader must not be keyed on a per-type field. The order is the union
+# of every type's schema-required primary text field, most-specific
+# first, so e.g. a ``risk`` object resolves on ``risk_text`` before any
+# generic ``name``/``title`` fallback could shadow it.
+_GROUND_TRUTH_TEXT_FIELDS = (
+    "text",
+    "question_text",
+    "commitment_text",
+    "risk_text",
+    "reference_text",
+    "parameter_name",
+    "name",
+    "title",
+    "phase_name",
+    "reference",
+)
 
-    String-typed arrays: the item must be a non-empty string. Structured
-    arrays: the schema-required primary text field must be a non-empty
-    string. Anything else is a malformed response — we do not emit a
-    baseline line with an empty/synthetic primary text.
+
+def extract_ground_truth_text(item: Any, extraction_type: str) -> str:
+    """Best-effort ``ground_truth_text`` for one item. NEVER halts.
+
+    The canonical extraction prompt lets the model return, for every
+    type, either a plain verbatim string OR a structured object (e.g. a
+    ``decisions`` item arriving as ``{"text","verb","stakeholders",
+    "confidence","rationale"}``). A structured item is a valid response,
+    not a malformed one, so this function tolerantly extracts the best
+    text it can and the caller keeps the full original item verbatim in
+    ``item_data`` — no information is lost and no real item is dropped.
+
+    Resolution order:
+
+    1. A plain string is returned as-is.
+    2. For a dict, the first present, non-empty *string* field from
+       ``_GROUND_TRUTH_TEXT_FIELDS`` (priority order) wins.
+    3. Else the first non-empty string value anywhere in the dict.
+    4. Else (no string content / a non-dict, non-string item) the
+       ``str()`` of the item — a last-resort, never-empty fallback so
+       the line is still written rather than silently dropped.
+
+    ``extraction_type`` is accepted for call-site symmetry and so a
+    future per-type override has a seam; the tolerant logic above is
+    deliberately type-agnostic because the prompt's object form is.
     """
-    field = _PRIMARY_TEXT_FIELD[etype]
-    if field is None:
-        if isinstance(item, str) and item.strip():
-            return item.strip()
-        if isinstance(item, dict):
-            fb = _LEGACY_OBJECT_TEXT_FIELD.get(etype)
-            if fb is not None:
-                val = item.get(fb)
-                if isinstance(val, str) and val.strip():
-                    return val.strip()
-        raise ReferenceBaselineError(
-            "malformed_llm_response",
-            f"{etype} item is not a usable string: {item!r}",
-        )
-    if not isinstance(item, dict):
-        raise ReferenceBaselineError(
-            "malformed_llm_response",
-            f"{etype} item is {type(item).__name__}, expected object",
-        )
-    val = item.get(field)
-    if not isinstance(val, str) or not val.strip():
-        raise ReferenceBaselineError(
-            "malformed_llm_response",
-            f"{etype} item missing required text field {field!r}: "
-            f"{item!r}",
-        )
-    return val.strip()
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        for field in _GROUND_TRUTH_TEXT_FIELDS:
+            val = item.get(field)
+            if isinstance(val, str) and val:
+                return val
+        for val in item.values():
+            if isinstance(val, str) and val:
+                return val
+    return str(item)
 
 
 def build_records(
@@ -643,9 +679,14 @@ def build_records(
 ) -> List[Dict[str, Any]]:
     """Build every JSONL record for one transcript, or HALT.
 
-    All records are built in memory first. The caller only writes the
-    file if this returns without raising — so a malformed item anywhere
-    means the transcript's JSONL is never written (no partial output).
+    Individual items NEVER halt: ``extract_ground_truth_text`` reads any
+    string-or-object item tolerantly (the canonical prompt allows a
+    structured object for every type) and the full original item is
+    preserved verbatim in ``item_data``. The only halt here is a content
+    KEY whose value is not a list (a response-shape error, not an item
+    error). All records are built in memory first, so any halt — here or
+    in the upstream response parse — means the transcript's JSONL is
+    never written (no partial output).
     """
     records: List[Dict[str, Any]] = []
     for etype in types:
@@ -661,7 +702,12 @@ def build_records(
                 f"{etype!r} is {type(value).__name__}, expected a list",
             )
         for index, item in enumerate(value):
-            ground_truth_text = _primary_text(etype, item)
+            ground_truth_text = extract_ground_truth_text(item, etype)
+            # Keep the full original item verbatim so nothing the model
+            # returned is lost. A dict is stored as-is; a string (or any
+            # non-dict) is wrapped as ``{"text": item}`` so ``item_data``
+            # is always a JSON object with the original value recoverable.
+            item_data = item if isinstance(item, dict) else {"text": item}
             pair_id = str(
                 uuid.uuid5(
                     _OPUS_REF_NAMESPACE,
@@ -675,7 +721,7 @@ def build_records(
                     "source_artifact_id": source_artifact_id,
                     "extraction_type": etype,
                     "ground_truth_text": ground_truth_text,
-                    "item_data": item,
+                    "item_data": item_data,
                     "human_authored": False,
                     "model_authored": True,
                     "model_id": model,
