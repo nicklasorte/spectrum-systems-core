@@ -51,6 +51,15 @@ from .llm_extraction import (
     EXTRACTION_NOT_IN_SOURCE,
     GT_COVERAGE_THRESHOLD,
 )
+from .tlc_router import (
+    run_tlc_routed_eval,
+    HIGH_STAKES_TYPES,
+    STANDARD_TYPES,
+    TLC_ROUTED_EVAL_TYPE,
+    TLC_PAYLOAD_NOT_OBJECT,
+    TLC_UNKNOWN_TYPE_PREFIX,
+    TLC_SUBEVAL_FAIL_PREFIX,
+)
 
 __all__ = [
     "run_required_evals",
@@ -96,4 +105,11 @@ __all__ = [
     "EXTRACTION_EMPTY_PROXY_TYPES",
     "EXTRACTION_NOT_IN_SOURCE",
     "GT_COVERAGE_THRESHOLD",
+    "run_tlc_routed_eval",
+    "HIGH_STAKES_TYPES",
+    "STANDARD_TYPES",
+    "TLC_ROUTED_EVAL_TYPE",
+    "TLC_PAYLOAD_NOT_OBJECT",
+    "TLC_UNKNOWN_TYPE_PREFIX",
+    "TLC_SUBEVAL_FAIL_PREFIX",
 ]
