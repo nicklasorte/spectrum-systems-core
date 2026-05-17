@@ -30,6 +30,11 @@ from pathlib import Path
 from ..artifacts import Artifact
 from ..config import preflight_llm_config
 from ..data_lake.chunker import chunk_transcript
+from ..validation import (
+    ArtifactValidationError,
+    SchemaNotFoundError,
+    validate_artifact,
+)
 from ..evals import (
     run_grounding_coverage_eval,
     run_llm_gt_coverage_eval,
@@ -136,6 +141,70 @@ _STRUCTURED_ARRAYS = (
 # key or a non-list value is still ``None`` (block via schema_violation).
 _LEGACY_ARRAYS = ("decisions", "action_items", "open_questions")
 
+# artifact_type the assembled payload is validated against — the SAME
+# constant the strict-schema eval uses (evals/llm_extraction.py
+# ``_MEETING_MINUTES_TYPE``). The retry pre-check below MUST use the same
+# validator so it can never accept a payload the in-loop gate would
+# reject (no second control model — the eval stays authoritative).
+_MEETING_MINUTES_TYPE = "meeting_minutes"
+
+# Bounded re-prompt budget: one initial call plus at most ONE corrective
+# retry. This addresses an imperfect FIRST Haiku response (a parse miss
+# or a single schema-violating field) without weakening any gate — if
+# the corrected response is still malformed, the last candidate is
+# returned unchanged and the governed loop's fail-closed evals block it
+# exactly as before. Bounded so a persistently-bad model cannot loop.
+_MAX_LLM_ATTEMPTS = 2
+
+_PARSE_FAIL_REASON = (
+    "the response was not a single JSON object carrying the three "
+    "required arrays decisions, action_items, open_questions"
+)
+
+# Deterministic, clearly delimited correction block appended to the
+# user message on the one retry. Deterministic given the reason, so a
+# stubbed (test) client stays replay-stable and the suite remains
+# hermetic; a real model receives the precise schema error to self-fix.
+_CORRECTION_HEADER = (
+    "\n\n=== YOUR PREVIOUS RESPONSE WAS REJECTED — RETURN CORRECTED "
+    "STRICT JSON ONLY ===\n"
+    "It did not pass the meeting_minutes schema gate. Reason:\n"
+    "{reason}\n"
+    "Return the FULL corrected JSON object: every required key, STRICT "
+    "JSON only, no prose, no code fences. Do not repeat the error above "
+    "and do not add keys the schema does not define.\n"
+)
+
+
+def _schema_reject_reason(payload: dict) -> str | None:
+    """Return why ``payload`` would fail the strict-schema gate, or
+    ``None`` when it passes.
+
+    Validates the SAME flat projection
+    (``{"artifact_type": ..., **payload}``) against the SAME schema the
+    in-loop ``run_llm_strict_schema_eval`` uses, so this producer-side
+    pre-check can never green-light a payload the authoritative gate
+    would block. Never raises (mirrors the eval's fail-closed contract):
+    any unexpected validator error is itself a rejection reason, so a
+    broken validator triggers a retry / block rather than a silent pass.
+
+    When schema validation is disabled by the operator
+    (``SCHEMA_VALIDATION_ENABLED=false``) ``validate_artifact`` returns
+    without checking; this returns ``None`` (no retry) and the in-loop
+    eval is bypassed by the same env var — behaviour is identical to the
+    pre-retry code path, i.e. the deliberate operator bypass is honoured
+    consistently in both places."""
+    flat = {"artifact_type": _MEETING_MINUTES_TYPE, **payload}
+    try:
+        validate_artifact(flat, _MEETING_MINUTES_TYPE)
+    except ArtifactValidationError as exc:
+        return str(exc)
+    except SchemaNotFoundError:
+        return "meeting_minutes schema file not found"
+    except Exception as exc:  # noqa: BLE001 — producer never raises
+        return f"validator_error:{type(exc).__name__}"
+    return None
+
 
 def _parse_llm_payload(raw: str) -> dict | None:
     """Parse the model text into the full meeting_minutes content
@@ -214,11 +283,7 @@ def _make_extract(
     client: LLMClient,
     meeting_id: str | None,
 ):
-    def _extract(
-        input_text: str, chunks: list[dict] | None = None
-    ) -> dict:
-        title = _derive_title(input_text)
-        grounded = bool(chunks)
+    def _base_payload(title: str, grounded: bool) -> dict:
         payload: dict = {
             "title": title,
             "summary": title,
@@ -238,39 +303,74 @@ def _make_extract(
             payload["word_level_timestamps"] = False
         if meeting_id:
             payload["meeting_id"] = meeting_id
+        return payload
+
+    def _extract(
+        input_text: str, chunks: list[dict] | None = None
+    ) -> dict:
+        title = _derive_title(input_text)
+        grounded = bool(chunks)
 
         # The model is shown the raw transcript FIRST (verbatim evals
         # bind to it) then the turn-segmented block so it can cite
-        # turn_ids. Same chunks → same user message (replay-stable).
-        user = (
+        # turn_ids. Same chunks → same base user message (replay-stable).
+        base_user = (
             input_text + _render_turn_block(chunks)
             if grounded
             else input_text
         )
+        system = _system_prompt()
 
-        try:
-            raw = client(system=_system_prompt(), user=user)
-        except LLMClientError as exc:
-            # Fail-closed: no text-mode fallback, no regex fallback. Emit
-            # a payload the strict-schema eval rejects; record the cause
-            # for the debug report (extra key, ignored by every eval).
-            payload["_llm_error"] = str(exc)
-            return payload
+        # Bounded re-prompt loop. Attempt 1 uses the base prompt and is
+        # byte-identical to the pre-retry happy path. A parse miss or a
+        # schema violation triggers ONE corrective retry with the precise
+        # reason fed back. The gate is never weakened: an exhausted,
+        # still-malformed run returns the last candidate and the governed
+        # loop's fail-closed evals block it exactly as before.
+        candidate = _base_payload(title, grounded)
+        user = base_user
+        for attempt in range(_MAX_LLM_ATTEMPTS):
+            try:
+                raw = client(system=system, user=user)
+            except LLMClientError as exc:
+                # Transport failure is NOT a malformed response: no
+                # retry (unchanged). Emit a payload the strict-schema
+                # eval rejects; record the cause for the debug report
+                # (extra key, ignored by every eval).
+                p = _base_payload(title, grounded)
+                p["_llm_error"] = str(exc)
+                return p
 
-        parsed = _parse_llm_payload(raw)
-        if parsed is None:
-            # Malformed/non-object/missing-array → block via
-            # schema_violation. The arrays are deliberately absent so
-            # the strict-schema eval fails closed.
-            payload["_llm_raw"] = (raw or "")[:500]
-            return payload
+            parsed = _parse_llm_payload(raw)
+            if parsed is None:
+                # Non-object / missing-array: arrays deliberately absent
+                # so the strict-schema eval fails closed if not corrected.
+                candidate = _base_payload(title, grounded)
+                candidate["_llm_raw"] = (raw or "")[:500]
+                reason = _PARSE_FAIL_REASON
+            else:
+                if not grounded:
+                    # Ungrounded (1.0.0) path: drop grounding so the
+                    # payload is byte-identical to the pre-Phase-Y shape.
+                    parsed.pop("grounding", None)
+                candidate = _base_payload(title, grounded)
+                candidate.update(parsed)
+                reason = _schema_reject_reason(candidate)
+                if reason is None:
+                    # Schema-valid on this attempt — done. No extra keys
+                    # added, so a first-attempt success is byte-identical
+                    # to the pre-retry behaviour (same content_hash).
+                    return candidate
 
-        if not grounded:
-            # Ungrounded (1.0.0) path: drop grounding so the payload is
-            # byte-identical to the pre-Phase-Y legacy shape.
-            parsed.pop("grounding", None)
-        payload.update(parsed)
-        return payload
+            # Malformed. Re-ask once with the precise reason fed back,
+            # only while attempts remain (bounded by _MAX_LLM_ATTEMPTS).
+            if attempt + 1 < _MAX_LLM_ATTEMPTS:
+                user = base_user + _CORRECTION_HEADER.format(reason=reason)
+
+        # Retry budget exhausted and still malformed: return the last
+        # candidate UNCHANGED. Promotion is decided solely by the
+        # governed loop's evals + control gate, which block it.
+        return candidate
 
     return _extract
 
