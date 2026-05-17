@@ -140,6 +140,29 @@ copy the exact span; do NOT condense it. The only edits permitted are
 trimming a leading speaker label / bullet / number and joining a
 sentence that wrapped across lines.
 
+## action_items and commitments: character-for-character copy required
+
+For `action_items` items and `commitments[].commitment_text`, the text
+field MUST be copied character-for-character from the transcript exactly
+as spoken. Do not rephrase, summarize, or clean up grammar. Copy the
+exact words including false starts, repetitions, and informal speech.
+The text must appear as a substring of the raw transcript.
+
+Example of WRONG (paraphrase — will fail the gate):
+
+  "Kerry and I will collaborate to ensure we have the data needed"
+
+Example of RIGHT (verbatim — copied character-for-character):
+
+  "Kerry and I will be collaborating to make sure that that we have the
+   data that we needed"
+
+The WRONG form is a clean rewrite; the RIGHT form preserves every word
+the speaker actually said, including the repeated "that that". If the
+speaker said it imperfectly, copy the imperfection. The mechanical
+substring check will reject the clean version and accept the verbatim
+one.
+
 Apply this strict word-for-word rule to EVERY one of these fields:
 
 - `decisions` items — the plain-string form AND the object form's
