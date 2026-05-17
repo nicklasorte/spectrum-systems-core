@@ -2786,6 +2786,8 @@ def meeting_minutes_llm(
     data_lake: str | None = None,
     max_chunks: int | None = None,
     debug_chunks: bool = False,
+    single_chunk: bool = False,
+    print_context: bool = False,
     client=None,
     env=None,
     out_stream=None,
@@ -2839,6 +2841,18 @@ def meeting_minutes_llm(
     can see WHICH chunk produced each blocking item. It is observe-only
     — it changes neither the artifact, the evals, nor the exit code; a
     run with it off is byte-identical to before the knob existed.
+
+    ``single_chunk`` (default ``False``) is a DEBUG-ONLY knob forwarded
+    to the workflow. When ``True`` only the single largest (by text
+    char count) transcript chunk is extracted, so the debug cycle is
+    one API call; the workflow prints a ``SINGLE CHUNK MODE:`` header,
+    the verbatim raw model response, and the chunk's eval_results. It
+    reduces the model input (a deliberately different, smaller run) but
+    leaves the exit-code semantics unchanged (0 promoted / 1 blocked /
+    2 pre-run halt). ``print_context`` (default ``False``) only takes
+    effect with ``single_chunk``: it additionally prints the first 1000
+    characters of the context bundle the model was given so an operator
+    can confirm the transcript content actually reached the API call.
 
     Exit codes:
       0 -- promoted artifact written.
@@ -2958,6 +2972,8 @@ def meeting_minutes_llm(
             env=resolved_env,
             max_chunks=max_chunks,
             debug_chunks=debug_chunks,
+            single_chunk=single_chunk,
+            print_context=print_context,
         )
     except LLMConfigError as exc:
         # Fail-closed pre-run halt: no artifact produced, no fallback to
@@ -4633,6 +4649,32 @@ def _build_parser() -> argparse.ArgumentParser:
             "not change the artifact, the evals, or the exit code."
         ),
     )
+    mml.add_argument(
+        "--single-chunk",
+        action="store_true",
+        default=False,
+        help=(
+            "DEBUG ONLY. Run extraction on ONLY the single largest "
+            "speaker-turn chunk (by text character count) of the "
+            "staged transcript — one API call. Prints "
+            "'SINGLE CHUNK MODE: chunk n/total turn_id=... chars=...', "
+            "the full raw model response, and the full eval results "
+            "for that chunk. Takes precedence over --max-chunks. The "
+            "exit code is unchanged (0 promoted / 1 blocked / 2 "
+            "pre-run halt)."
+        ),
+    )
+    mml.add_argument(
+        "--print-context",
+        action="store_true",
+        default=False,
+        help=(
+            "DEBUG ONLY. With --single-chunk, also print the first "
+            "1000 characters of the context bundle sent to the model "
+            "so you can confirm the transcript content is actually "
+            "present in the API call. No effect without --single-chunk."
+        ),
+    )
 
     lg = sub.add_parser(
         "link-ground-truth",
@@ -5032,6 +5074,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             data_lake=args.data_lake,
             max_chunks=args.max_chunks,
             debug_chunks=args.debug_chunks,
+            single_chunk=args.single_chunk,
+            print_context=args.print_context,
         )
     if args.command == "link-ground-truth":
         return link_ground_truth(

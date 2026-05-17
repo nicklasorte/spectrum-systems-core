@@ -815,6 +815,58 @@ def _make_extract(
     return _extract
 
 
+def _emit_single_chunk_debug(
+    *,
+    run,
+    raw_response: str | None,
+    print_context: bool,
+) -> None:
+    """Print the ``--single-chunk`` debug block.
+
+    Emits, in order: the verbatim raw model response, every
+    ``eval_result`` produced for the single retained chunk, and — only
+    when ``print_context`` — the first 1000 characters of the context
+    bundle the model was given (its ``payload.source_text``, which is
+    exactly what is prepended to the model's user message). The last
+    block answers the operative debugging question: did the transcript
+    content actually reach the API call?
+
+    Observe-only: it reads ``run`` and prints. It never mutates the
+    artifact, the eval_results, the control decision, or the exit code,
+    so a run with ``single_chunk=False`` is byte-identical to one
+    before this knob existed (additivity / rollback).
+    """
+    out = sys.stdout
+    print("=== SINGLE CHUNK RAW MODEL RESPONSE ===", file=out)
+    print(
+        raw_response
+        if raw_response is not None
+        else "(no model response captured)",
+        file=out,
+    )
+    print("=== END RAW MODEL RESPONSE ===", file=out)
+    print("=== SINGLE CHUNK EVAL RESULTS ===", file=out)
+    for er in run.eval_results:
+        payload = er.payload if isinstance(er.payload, dict) else {}
+        print(
+            json.dumps(payload, indent=2, sort_keys=True, default=str),
+            file=out,
+        )
+    print("=== END EVAL RESULTS ===", file=out)
+    if print_context:
+        cb = run.context_bundle
+        src = ""
+        if cb is not None and isinstance(cb.payload, dict):
+            src = str(cb.payload.get("source_text", ""))
+        print(
+            "=== SINGLE CHUNK CONTEXT BUNDLE (first 1000 chars) ===",
+            file=out,
+        )
+        print(src[:1000], file=out)
+        print("=== END CONTEXT BUNDLE ===", file=out)
+    out.flush()
+
+
 def run_meeting_minutes_llm_workflow(
     input_text: str,
     *,
@@ -825,6 +877,8 @@ def run_meeting_minutes_llm_workflow(
     env=None,
     max_chunks: int | None = None,
     debug_chunks: bool = False,
+    single_chunk: bool = False,
+    print_context: bool = False,
 ) -> WorkflowResult:
     """Produce a promoted ``meeting_minutes`` artifact via a live model.
 
@@ -864,6 +918,26 @@ def run_meeting_minutes_llm_workflow(
     not touch the payload, the content_hash, the eval_results or the
     decision, so a run with ``debug_chunks=False`` is byte-identical to
     one before this knob existed (additivity / rollback).
+
+    ``single_chunk`` (default ``False``) is a DEBUG-ONLY knob. When
+    ``True`` the transcript is chunked normally, then ONLY the single
+    chunk with the most characters in its ``text`` is kept and the
+    model input is reduced to exactly that chunk's text — so the debug
+    cycle is one API call and it is easy to see exactly what the model
+    receives and returns. It prints a ``SINGLE CHUNK MODE:`` header
+    (chunk position / original total / turn_id / char count), the
+    verbatim raw model response, and every eval_result for that chunk.
+    It legitimately changes the artifact (a different, smaller input),
+    so unlike ``debug_chunks`` it is NOT byte-identical to a full run;
+    it takes precedence over ``max_chunks`` when both are set. The
+    exit-code semantics are unchanged (promotion still decided solely
+    by the governed loop's evals + control gate).
+
+    ``print_context`` (default ``False``) only has an effect together
+    with ``single_chunk``: it additionally prints the first 1000
+    characters of the context bundle the model was given so an operator
+    can confirm the transcript content is actually present in the API
+    call. It is observe-only and changes nothing.
     """
     # Resolve the extraction model FIRST — before any artifact is
     # produced and regardless of whether the transport is injected (a
@@ -877,6 +951,29 @@ def run_meeting_minutes_llm_workflow(
     active_client: LLMClient = client or AnthropicJSONClient(
         model=model_id, max_tokens=max_tokens
     )
+
+    # --single-chunk capture seam. DEBUG ONLY. When set we wrap the
+    # resolved transport so the EXACT bytes the model returned (raw
+    # response) can be printed verbatim after the run. The wrapper is
+    # installed ONLY under single_chunk — when off, active_client is the
+    # unmodified transport and the run is byte-identical to before this
+    # knob existed (additivity / rollback).
+    _capture: dict[str, str] = {}
+    if single_chunk:
+        _inner_client = active_client
+
+        def _capturing_client(*, system: str, user: str) -> str:
+            raw = _inner_client(system=system, user=user)
+            # Single-chunk mode is one API call per attempt; last-write
+            # -wins captures the final response — the one that produced
+            # the returned artifact — if a corrective retry fired.
+            _capture["system"] = system
+            _capture["user"] = user
+            _capture["raw"] = raw
+            return raw
+
+        active_client = _capturing_client
+
     extract = _make_extract(
         client=active_client, meeting_id=meeting_id, model_id=model_id
     )
@@ -887,7 +984,33 @@ def run_meeting_minutes_llm_workflow(
     # whitespace-only transcript yields no chunks → the ungrounded
     # (1.0.0) path runs, exactly as before (rollback by construction).
     chunks = chunk_transcript(input_text)
-    if (
+    if single_chunk and chunks:
+        # --single-chunk DEBUG path. Take the ONE chunk with the most
+        # characters in its text and run extraction on only it, so the
+        # whole debug cycle is a single API call. ``max`` over the index
+        # range returns the LOWEST index on a size tie, so the same
+        # transcript always selects the same chunk (determinism).
+        original_total = len(chunks)
+        best_idx = max(
+            range(len(chunks)),
+            key=lambda i: len(chunks[i].get("text", "")),
+        )
+        best_chunk = chunks[best_idx]
+        chunks = [best_chunk]
+        # The model is shown ``input_text`` first, so reducing it to the
+        # selected chunk's text is the actual single-API-call shrink AND
+        # keeps every transcript-bound eval (within-source, nonempty,
+        # source-turn-validity, grounding-coverage) self-consistent with
+        # the one retained chunk.
+        input_text = best_chunk.get("text", "")
+        print(
+            f"SINGLE CHUNK MODE: chunk {best_idx + 1}/{original_total} "
+            f"turn_id={best_chunk.get('turn_id')} "
+            f"chars={len(best_chunk.get('text', ''))}",
+            file=sys.stdout,
+            flush=True,
+        )
+    elif (
         max_chunks is not None
         and max_chunks >= 0
         and len(chunks) > max_chunks
@@ -961,6 +1084,14 @@ def run_meeting_minutes_llm_workflow(
         extra_evals=extra_evals,
         debug_hook=debug_hook,
     )
+
+    if single_chunk:
+        _emit_single_chunk_debug(
+            run=run,
+            raw_response=_capture.get("raw"),
+            print_context=print_context,
+        )
+
     return WorkflowResult(
         context_bundle=run.context_bundle,
         meeting_minutes=run.target,
