@@ -65,6 +65,15 @@ on:
         required: false
         default: false
         type: boolean
+      max_chunks:
+        description: >-
+          DEBUG ONLY. Cap the meeting_minutes_llm step to the first N
+          transcript chunks for ~30s schema-gate iteration. Leave empty
+          (the default) to process all chunks — production runs MUST
+          leave this empty.
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -240,10 +249,21 @@ jobs:
       # ------------------------------------------------------------------
       - name: Run LLM extraction (meeting_minutes_llm)
         if: ${{ inputs.llm_extraction_enabled == true }}
+        env:
+          # Empty string in every production run -> the flag is never
+          # appended and behaviour is byte-identical. Non-empty only
+          # when an operator dispatched with max_chunks for fast
+          # schema-gate iteration (DEBUG ONLY).
+          MAX_CHUNKS: ${{ inputs.max_chunks }}
         run: |
+          MAX_CHUNKS_ARG=()
+          if [ -n "${MAX_CHUNKS}" ]; then
+            MAX_CHUNKS_ARG=(--max-chunks "${MAX_CHUNKS}")
+          fi
           python -m spectrum_systems_core.cli meeting-minutes-llm \
             --source-id "${TARGET_SOURCE_ID}" \
-            --data-lake "${DATA_LAKE_PATH}"
+            --data-lake "${DATA_LAKE_PATH}" \
+            "${MAX_CHUNKS_ARG[@]}"
 
       # ------------------------------------------------------------------
       # 2. Verify the 5 wiring signals (X2.7 success criterion).

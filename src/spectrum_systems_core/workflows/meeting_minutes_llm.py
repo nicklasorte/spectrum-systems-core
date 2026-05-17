@@ -283,6 +283,7 @@ def run_meeting_minutes_llm_workflow(
     source_id: str | None = None,
     lake_root: str | Path | None = None,
     env=None,
+    max_chunks: int | None = None,
 ) -> WorkflowResult:
     """Produce a promoted ``meeting_minutes`` artifact via a live model.
 
@@ -291,6 +292,16 @@ def run_meeting_minutes_llm_workflow(
     + ``lake_root`` are used only by the observe-only GT-coverage eval
     (Step 6); when absent it still emits a numeric ``coverage_percent``
     of ``0.0`` and passes (observe-only never blocks).
+
+    ``max_chunks`` is a DEBUG-ONLY knob (default ``None`` = process the
+    whole transcript). When set, only the first N chunks are kept AND
+    the transcript fed to the model is truncated to the line span those
+    chunks cover, so the model input — the real latency cost — shrinks
+    and every transcript-bound eval (within-source, nonempty,
+    source-turn-validity, grounding-coverage) stays consistent with the
+    reduced chunk set. It exists only to iterate on the schema gate in
+    ~30s instead of 10+ minutes; production runs leave it ``None`` so
+    behaviour is byte-identical.
 
     The four LLM-scoped evals are appended via ``extra_evals`` so they
     flow through the SAME control / promotion gate as the required
@@ -315,6 +326,22 @@ def run_meeting_minutes_llm_workflow(
     # whitespace-only transcript yields no chunks → the ungrounded
     # (1.0.0) path runs, exactly as before (rollback by construction).
     chunks = chunk_transcript(input_text)
+    if (
+        max_chunks is not None
+        and max_chunks >= 0
+        and len(chunks) > max_chunks
+    ):
+        # Debug-only fast path. Keep the first N chunks and truncate the
+        # transcript to the line span they cover (chunks are contiguous
+        # and line-ordered, so the first N span lines 1..last.line_end).
+        # Truncating the TEXT — not just the chunk list — is what makes
+        # the run fast: the model is shown input_text first, so a
+        # smaller input_text is the actual latency win. Re-deriving the
+        # text from the original lines keeps it a faithful prefix so the
+        # verbatim within-source / nonempty evals still hold.
+        chunks = chunks[:max_chunks]
+        last_line = chunks[-1]["line_end"] if chunks else 0
+        input_text = "\n".join(input_text.splitlines()[:last_line])
     grounded = bool(chunks)
 
     extra_evals = [

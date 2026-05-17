@@ -2784,6 +2784,7 @@ def meeting_minutes_llm(
     *,
     source_id: str | None = None,
     data_lake: str | None = None,
+    max_chunks: int | None = None,
     client=None,
     env=None,
     out_stream=None,
@@ -2823,6 +2824,13 @@ def meeting_minutes_llm(
     is exercised in CI with no API key and no network. Production passes
     neither: the real Anthropic client is constructed only after the
     workflow's fail-closed pre-run gate passes.
+
+    ``max_chunks`` (default ``None`` = all chunks) is a DEBUG-ONLY knob
+    forwarded to the workflow. When set it caps processing to the first
+    N transcript chunks AND truncates the model input to match, so a
+    schema-gate iteration takes ~30s instead of 10+ minutes. It is
+    never set in production runs (the CLI default and the
+    validate-and-baseline wiring both leave it empty).
 
     Exit codes:
       0 -- promoted artifact written.
@@ -2895,6 +2903,7 @@ def meeting_minutes_llm(
             source_id=source_id,
             lake_root=store_root,
             env=env if env is not None else os.environ,
+            max_chunks=max_chunks,
         )
     except LLMConfigError as exc:
         # Fail-closed pre-run halt: no artifact produced, no fallback to
@@ -4547,6 +4556,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "environment variable when provided."
         ),
     )
+    mml.add_argument(
+        "--max-chunks",
+        default=None,
+        type=int,
+        help=(
+            "DEBUG ONLY. Stop after the first N transcript chunks and "
+            "truncate the model input to match (default: all chunks). "
+            "Fast schema-gate iteration only — NEVER used in production "
+            "runs."
+        ),
+    )
 
     lg = sub.add_parser(
         "link-ground-truth",
@@ -4944,6 +4964,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return meeting_minutes_llm(
             source_id=args.source_id,
             data_lake=args.data_lake,
+            max_chunks=args.max_chunks,
         )
     if args.command == "link-ground-truth":
         return link_ground_truth(
