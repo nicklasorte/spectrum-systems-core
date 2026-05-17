@@ -448,3 +448,6 @@ re-run `next-phase-handoff`.
 
 Runtime configuration, feature flags, and phase wiring details are in
 `docs/development/operator_reference.md`.
+
+## Debugging Protocol
+When you encounter a bug you cannot immediately fix, follow the process in [DEBUGGING.md](./DEBUGGING.md) before attempting further fixes.

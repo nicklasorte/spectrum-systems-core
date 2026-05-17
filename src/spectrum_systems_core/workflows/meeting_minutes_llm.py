@@ -162,6 +162,71 @@ def _render_turn_block(chunks: list[dict]) -> str:
     return _TURN_BLOCK_HEADER + "\n".join(lines)
 
 
+# Architectural fix (grounding_entries=0 root cause): the entire ~6500
+# token instruction set lived in the SYSTEM prompt while the USER turn
+# carried ONLY data (raw transcript + turn block) with NO request. With
+# no task framing in the user turn and a system prompt whose dominant,
+# repeated message is "empty arrays are correct/safe; any mistake blocks
+# the whole artifact; when in doubt emit nothing", BOTH Haiku and Sonnet
+# consistently took the safe degenerate path and returned the all-empty
+# object — so every content array AND ``grounding`` came back empty,
+# model-independently. This is not a model-capability problem; it is the
+# missing request. These constants put the actual extraction directive
+# where it belongs (the user turn) and frame the transcript + turn
+# block. They are PROSE ONLY — they restate the system prompt's binding
+# rules (verbatim, grounding-required, empty-only-when-genuinely-absent)
+# and relax none of them, so no eval / schema / taxonomy / control / test
+# changes. Deterministic constants → replay-stable for the stub suite.
+# Must NOT contain any ``[tNNNN]`` token (would pollute a stub's
+# turn-id scan) and must keep the raw transcript BEFORE the turn block
+# (the system prompt's source-attribution section binds to that order).
+_USER_TASK_HEADER = (
+    "TASK: Extract the structured meeting minutes from the transcript "
+    "below, following the system instructions exactly. Return the single "
+    "STRICT JSON object with every schema key present. Extract every "
+    "decision, action item, open question, and structured item the "
+    "transcript actually records. Do NOT return empty arrays for "
+    "categories the transcript clearly contains; an empty array is "
+    "correct ONLY for a category genuinely absent from THIS transcript, "
+    "never as a blanket safe default. The raw transcript follows, then a "
+    '"=== TRANSCRIPT TURNS ===" lookup table of turn_ids.\n\n'
+)
+
+_USER_TASK_FOOTER_GROUNDED = (
+    "\n\n=== END OF INPUT ===\n"
+    "Now output the single STRICT JSON object only (no prose, no code "
+    "fences). For EVERY item you emit in any array you MUST add the "
+    'matching entry to the top-level "grounding" array with its real '
+    "source_turns read from the TURN block above; never emit an empty "
+    '"grounding" when any content array is non-empty.'
+)
+
+_USER_TASK_FOOTER_UNGROUNDED = (
+    "\n\n=== END OF INPUT ===\n"
+    "Now output the single STRICT JSON object only (no prose, no code "
+    "fences), with every schema key present."
+)
+
+
+def _build_user_message(
+    input_text: str, chunks: list[dict] | None, grounded: bool
+) -> str:
+    """Assemble the user-turn message: an explicit extraction directive,
+    the raw transcript, the turn block (grounded only), and a closing
+    imperative. The raw transcript stays before the turn block so the
+    system prompt's verbatim / source-attribution rules are unaffected;
+    only the missing request is added. Deterministic given the same
+    chunks, so stub-backed tests stay replay-stable."""
+    if grounded and chunks:
+        return (
+            _USER_TASK_HEADER
+            + input_text
+            + _render_turn_block(chunks)
+            + _USER_TASK_FOOTER_GROUNDED
+        )
+    return _USER_TASK_HEADER + input_text + _USER_TASK_FOOTER_UNGROUNDED
+
+
 def _system_prompt() -> str:
     return _PROMPT_PATH.read_text(encoding="utf-8")
 
@@ -441,6 +506,19 @@ def _dbg_norm(text: object) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
+def _has_any_content(payload: dict) -> bool:
+    """True if any legacy or structured content array on the payload is a
+    non-empty list. Used only by the debug report to distinguish "model
+    returned the all-empty object" from "no content arrays present at
+    all" (a base payload from a transport / parse failure). Observe-only;
+    never consulted by any gate."""
+    for key in (*_LEGACY_ARRAYS, *_STRUCTURED_ARRAYS):
+        value = payload.get(key)
+        if isinstance(value, list) and len(value) > 0:
+            return True
+    return False
+
+
 def _item_primary_text(item: object) -> str:
     if isinstance(item, str):
         return item
@@ -678,6 +756,36 @@ def _build_chunk_debug_report(
         header,
         f"chunks_total={total} grounding_entries={len(grounding)}",
     ]
+    # Auto-debug rule (CLAUDE.md): a base payload produced by a transport
+    # / truncation failure (``_llm_error``) or a parse miss (``_llm_raw``)
+    # has NO content and NO grounding, so the line above reads
+    # ``grounding_entries=0`` with zero explanation — the exact "block a
+    # new engineer could not explain from the artifact alone" the rule
+    # forbids. Surface the captured cause here so the session, not an
+    # Actions-log dig, is the debugger. Observe-only: the report never
+    # reaches the control gate, so this relaxes nothing.
+    llm_error = payload.get("_llm_error")
+    if isinstance(llm_error, str) and llm_error:
+        lines.append(f"LLM_TRANSPORT_FAILURE: {llm_error}")
+    llm_raw = payload.get("_llm_raw")
+    if isinstance(llm_raw, str) and llm_raw:
+        lines.append(
+            "LLM_RESPONSE_UNPARSED (first 500 chars of model output): "
+            + llm_raw
+        )
+    if (
+        len(grounding) == 0
+        and not isinstance(llm_error, str)
+        and not isinstance(llm_raw, str)
+        and not _has_any_content(payload)
+    ):
+        # Parsed cleanly, transport fine — the model itself returned the
+        # all-empty object. Name that explicitly so it is never confused
+        # with a transport / parse failure.
+        lines.append(
+            "LLM_RETURNED_EMPTY: model response parsed but every content "
+            "array and grounding came back empty"
+        )
     for p in range(1, total + 1):
         lines.append(
             f"CHUNK {p}/{total} [turn_id={pos_turn[p - 1]}]: "
@@ -742,14 +850,12 @@ def _make_extract(
         title = _derive_title(input_text)
         grounded = bool(chunks)
 
-        # The model is shown the raw transcript FIRST (verbatim evals
-        # bind to it) then the turn-segmented block so it can cite
-        # turn_ids. Same chunks → same base user message (replay-stable).
-        base_user = (
-            input_text + _render_turn_block(chunks)
-            if grounded
-            else input_text
-        )
+        # The user turn now carries the explicit extraction directive
+        # (the request belongs here, not only in the system prompt),
+        # then the raw transcript FIRST (verbatim evals bind to it),
+        # then the turn-segmented block so the model can cite turn_ids.
+        # Same chunks → same base user message (replay-stable).
+        base_user = _build_user_message(input_text, chunks, grounded)
         system = _system_prompt()
 
         # Bounded re-prompt loop. Attempt 1 uses the base prompt and is
@@ -815,6 +921,58 @@ def _make_extract(
     return _extract
 
 
+def _emit_single_chunk_debug(
+    *,
+    run,
+    raw_response: str | None,
+    print_context: bool,
+) -> None:
+    """Print the ``--single-chunk`` debug block.
+
+    Emits, in order: the verbatim raw model response, every
+    ``eval_result`` produced for the single retained chunk, and — only
+    when ``print_context`` — the first 1000 characters of the context
+    bundle the model was given (its ``payload.source_text``, which is
+    exactly what is prepended to the model's user message). The last
+    block answers the operative debugging question: did the transcript
+    content actually reach the API call?
+
+    Observe-only: it reads ``run`` and prints. It never mutates the
+    artifact, the eval_results, the control decision, or the exit code,
+    so a run with ``single_chunk=False`` is byte-identical to one
+    before this knob existed (additivity / rollback).
+    """
+    out = sys.stdout
+    print("=== SINGLE CHUNK RAW MODEL RESPONSE ===", file=out)
+    print(
+        raw_response
+        if raw_response is not None
+        else "(no model response captured)",
+        file=out,
+    )
+    print("=== END RAW MODEL RESPONSE ===", file=out)
+    print("=== SINGLE CHUNK EVAL RESULTS ===", file=out)
+    for er in run.eval_results:
+        payload = er.payload if isinstance(er.payload, dict) else {}
+        print(
+            json.dumps(payload, indent=2, sort_keys=True, default=str),
+            file=out,
+        )
+    print("=== END EVAL RESULTS ===", file=out)
+    if print_context:
+        cb = run.context_bundle
+        src = ""
+        if cb is not None and isinstance(cb.payload, dict):
+            src = str(cb.payload.get("source_text", ""))
+        print(
+            "=== SINGLE CHUNK CONTEXT BUNDLE (first 1000 chars) ===",
+            file=out,
+        )
+        print(src[:1000], file=out)
+        print("=== END CONTEXT BUNDLE ===", file=out)
+    out.flush()
+
+
 def run_meeting_minutes_llm_workflow(
     input_text: str,
     *,
@@ -826,6 +984,8 @@ def run_meeting_minutes_llm_workflow(
     max_chunks: int | None = None,
     debug_chunks: bool = False,
     print_raw_response: bool = False,
+    single_chunk: bool = False,
+    print_context: bool = False,
 ) -> WorkflowResult:
     """Produce a promoted ``meeting_minutes`` artifact via a live model.
 
@@ -872,6 +1032,26 @@ def run_meeting_minutes_llm_workflow(
     ``_parse_llm_payload`` runs on it. The wrapper returns the response
     UNCHANGED, so extraction / evals / promotion are byte-identical to a
     run with it off — it only observes, exactly like ``debug_chunks``.
+
+    ``single_chunk`` (default ``False``) is a DEBUG-ONLY knob. When
+    ``True`` the transcript is chunked normally, then ONLY the single
+    chunk with the most characters in its ``text`` is kept and the
+    model input is reduced to exactly that chunk's text — so the debug
+    cycle is one API call and it is easy to see exactly what the model
+    receives and returns. It prints a ``SINGLE CHUNK MODE:`` header
+    (chunk position / original total / turn_id / char count), the
+    verbatim raw model response, and every eval_result for that chunk.
+    It legitimately changes the artifact (a different, smaller input),
+    so unlike ``debug_chunks`` it is NOT byte-identical to a full run;
+    it takes precedence over ``max_chunks`` when both are set. The
+    exit-code semantics are unchanged (promotion still decided solely
+    by the governed loop's evals + control gate).
+
+    ``print_context`` (default ``False``) only has an effect together
+    with ``single_chunk``: it additionally prints the first 1000
+    characters of the context bundle the model was given so an operator
+    can confirm the transcript content is actually present in the API
+    call. It is observe-only and changes nothing.
     """
     # Resolve the extraction model FIRST — before any artifact is
     # produced and regardless of whether the transport is injected (a
@@ -885,12 +1065,39 @@ def run_meeting_minutes_llm_workflow(
     active_client: LLMClient = client or AnthropicJSONClient(
         model=model_id, max_tokens=max_tokens
     )
+    # --single-chunk capture seam. DEBUG ONLY. When set we wrap the
+    # resolved transport so the EXACT bytes the model returned (raw
+    # response) can be printed verbatim after the run. The wrapper is
+    # installed ONLY under single_chunk — when off, active_client is the
+    # unmodified transport and the run is byte-identical to before this
+    # knob existed (additivity / rollback).
+    _capture: dict[str, str] = {}
+    if single_chunk:
+        _inner_client = active_client
+
+        def _capturing_client(*, system: str, user: str) -> str:
+            raw = _inner_client(system=system, user=user)
+            # Single-chunk mode is one API call per attempt; last-write
+            # -wins captures the final response — the one that produced
+            # the returned artifact — if a corrective retry fired.
+            _capture["system"] = system
+            _capture["user"] = user
+            _capture["raw"] = raw
+            return raw
+
+        active_client = _capturing_client
+
+    # Mode 1 raw-response printer. Wraps whatever the active transport
+    # now is (the single-chunk capturing client when both are set), so
+    # the verbatim response is printed BEFORE _parse_llm_payload runs.
+    # Pass-through: returns the response UNCHANGED.
     _raw_printer = None
     if print_raw_response:
         from .debug_modes import RawResponsePrintingClient
 
         _raw_printer = RawResponsePrintingClient(active_client)
         active_client = _raw_printer
+
     extract = _make_extract(
         client=active_client, meeting_id=meeting_id, model_id=model_id
     )
@@ -901,7 +1108,33 @@ def run_meeting_minutes_llm_workflow(
     # whitespace-only transcript yields no chunks → the ungrounded
     # (1.0.0) path runs, exactly as before (rollback by construction).
     chunks = chunk_transcript(input_text)
-    if (
+    if single_chunk and chunks:
+        # --single-chunk DEBUG path. Take the ONE chunk with the most
+        # characters in its text and run extraction on only it, so the
+        # whole debug cycle is a single API call. ``max`` over the index
+        # range returns the LOWEST index on a size tie, so the same
+        # transcript always selects the same chunk (determinism).
+        original_total = len(chunks)
+        best_idx = max(
+            range(len(chunks)),
+            key=lambda i: len(chunks[i].get("text", "")),
+        )
+        best_chunk = chunks[best_idx]
+        chunks = [best_chunk]
+        # The model is shown ``input_text`` first, so reducing it to the
+        # selected chunk's text is the actual single-API-call shrink AND
+        # keeps every transcript-bound eval (within-source, nonempty,
+        # source-turn-validity, grounding-coverage) self-consistent with
+        # the one retained chunk.
+        input_text = best_chunk.get("text", "")
+        print(
+            f"SINGLE CHUNK MODE: chunk {best_idx + 1}/{original_total} "
+            f"turn_id={best_chunk.get('turn_id')} "
+            f"chars={len(best_chunk.get('text', ''))}",
+            file=sys.stdout,
+            flush=True,
+        )
+    elif (
         max_chunks is not None
         and max_chunks >= 0
         and len(chunks) > max_chunks
@@ -980,6 +1213,14 @@ def run_meeting_minutes_llm_workflow(
         extra_evals=extra_evals,
         debug_hook=debug_hook,
     )
+
+    if single_chunk:
+        _emit_single_chunk_debug(
+            run=run,
+            raw_response=_capture.get("raw"),
+            print_context=print_context,
+        )
+
     return WorkflowResult(
         context_bundle=run.context_bundle,
         meeting_minutes=run.target,
