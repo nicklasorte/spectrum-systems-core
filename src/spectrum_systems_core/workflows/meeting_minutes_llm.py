@@ -162,6 +162,71 @@ def _render_turn_block(chunks: list[dict]) -> str:
     return _TURN_BLOCK_HEADER + "\n".join(lines)
 
 
+# Architectural fix (grounding_entries=0 root cause): the entire ~6500
+# token instruction set lived in the SYSTEM prompt while the USER turn
+# carried ONLY data (raw transcript + turn block) with NO request. With
+# no task framing in the user turn and a system prompt whose dominant,
+# repeated message is "empty arrays are correct/safe; any mistake blocks
+# the whole artifact; when in doubt emit nothing", BOTH Haiku and Sonnet
+# consistently took the safe degenerate path and returned the all-empty
+# object — so every content array AND ``grounding`` came back empty,
+# model-independently. This is not a model-capability problem; it is the
+# missing request. These constants put the actual extraction directive
+# where it belongs (the user turn) and frame the transcript + turn
+# block. They are PROSE ONLY — they restate the system prompt's binding
+# rules (verbatim, grounding-required, empty-only-when-genuinely-absent)
+# and relax none of them, so no eval / schema / taxonomy / control / test
+# changes. Deterministic constants → replay-stable for the stub suite.
+# Must NOT contain any ``[tNNNN]`` token (would pollute a stub's
+# turn-id scan) and must keep the raw transcript BEFORE the turn block
+# (the system prompt's source-attribution section binds to that order).
+_USER_TASK_HEADER = (
+    "TASK: Extract the structured meeting minutes from the transcript "
+    "below, following the system instructions exactly. Return the single "
+    "STRICT JSON object with every schema key present. Extract every "
+    "decision, action item, open question, and structured item the "
+    "transcript actually records. Do NOT return empty arrays for "
+    "categories the transcript clearly contains; an empty array is "
+    "correct ONLY for a category genuinely absent from THIS transcript, "
+    "never as a blanket safe default. The raw transcript follows, then a "
+    '"=== TRANSCRIPT TURNS ===" lookup table of turn_ids.\n\n'
+)
+
+_USER_TASK_FOOTER_GROUNDED = (
+    "\n\n=== END OF INPUT ===\n"
+    "Now output the single STRICT JSON object only (no prose, no code "
+    "fences). For EVERY item you emit in any array you MUST add the "
+    'matching entry to the top-level "grounding" array with its real '
+    "source_turns read from the TURN block above; never emit an empty "
+    '"grounding" when any content array is non-empty.'
+)
+
+_USER_TASK_FOOTER_UNGROUNDED = (
+    "\n\n=== END OF INPUT ===\n"
+    "Now output the single STRICT JSON object only (no prose, no code "
+    "fences), with every schema key present."
+)
+
+
+def _build_user_message(
+    input_text: str, chunks: list[dict] | None, grounded: bool
+) -> str:
+    """Assemble the user-turn message: an explicit extraction directive,
+    the raw transcript, the turn block (grounded only), and a closing
+    imperative. The raw transcript stays before the turn block so the
+    system prompt's verbatim / source-attribution rules are unaffected;
+    only the missing request is added. Deterministic given the same
+    chunks, so stub-backed tests stay replay-stable."""
+    if grounded and chunks:
+        return (
+            _USER_TASK_HEADER
+            + input_text
+            + _render_turn_block(chunks)
+            + _USER_TASK_FOOTER_GROUNDED
+        )
+    return _USER_TASK_HEADER + input_text + _USER_TASK_FOOTER_UNGROUNDED
+
+
 def _system_prompt() -> str:
     return _PROMPT_PATH.read_text(encoding="utf-8")
 
@@ -441,6 +506,19 @@ def _dbg_norm(text: object) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
+def _has_any_content(payload: dict) -> bool:
+    """True if any legacy or structured content array on the payload is a
+    non-empty list. Used only by the debug report to distinguish "model
+    returned the all-empty object" from "no content arrays present at
+    all" (a base payload from a transport / parse failure). Observe-only;
+    never consulted by any gate."""
+    for key in (*_LEGACY_ARRAYS, *_STRUCTURED_ARRAYS):
+        value = payload.get(key)
+        if isinstance(value, list) and len(value) > 0:
+            return True
+    return False
+
+
 def _item_primary_text(item: object) -> str:
     if isinstance(item, str):
         return item
@@ -678,6 +756,36 @@ def _build_chunk_debug_report(
         header,
         f"chunks_total={total} grounding_entries={len(grounding)}",
     ]
+    # Auto-debug rule (CLAUDE.md): a base payload produced by a transport
+    # / truncation failure (``_llm_error``) or a parse miss (``_llm_raw``)
+    # has NO content and NO grounding, so the line above reads
+    # ``grounding_entries=0`` with zero explanation — the exact "block a
+    # new engineer could not explain from the artifact alone" the rule
+    # forbids. Surface the captured cause here so the session, not an
+    # Actions-log dig, is the debugger. Observe-only: the report never
+    # reaches the control gate, so this relaxes nothing.
+    llm_error = payload.get("_llm_error")
+    if isinstance(llm_error, str) and llm_error:
+        lines.append(f"LLM_TRANSPORT_FAILURE: {llm_error}")
+    llm_raw = payload.get("_llm_raw")
+    if isinstance(llm_raw, str) and llm_raw:
+        lines.append(
+            "LLM_RESPONSE_UNPARSED (first 500 chars of model output): "
+            + llm_raw
+        )
+    if (
+        len(grounding) == 0
+        and not isinstance(llm_error, str)
+        and not isinstance(llm_raw, str)
+        and not _has_any_content(payload)
+    ):
+        # Parsed cleanly, transport fine — the model itself returned the
+        # all-empty object. Name that explicitly so it is never confused
+        # with a transport / parse failure.
+        lines.append(
+            "LLM_RETURNED_EMPTY: model response parsed but every content "
+            "array and grounding came back empty"
+        )
     for p in range(1, total + 1):
         lines.append(
             f"CHUNK {p}/{total} [turn_id={pos_turn[p - 1]}]: "
@@ -742,14 +850,12 @@ def _make_extract(
         title = _derive_title(input_text)
         grounded = bool(chunks)
 
-        # The model is shown the raw transcript FIRST (verbatim evals
-        # bind to it) then the turn-segmented block so it can cite
-        # turn_ids. Same chunks → same base user message (replay-stable).
-        base_user = (
-            input_text + _render_turn_block(chunks)
-            if grounded
-            else input_text
-        )
+        # The user turn now carries the explicit extraction directive
+        # (the request belongs here, not only in the system prompt),
+        # then the raw transcript FIRST (verbatim evals bind to it),
+        # then the turn-segmented block so the model can cite turn_ids.
+        # Same chunks → same base user message (replay-stable).
+        base_user = _build_user_message(input_text, chunks, grounded)
         system = _system_prompt()
 
         # Bounded re-prompt loop. Attempt 1 uses the base prompt and is
