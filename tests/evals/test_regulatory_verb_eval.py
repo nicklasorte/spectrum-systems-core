@@ -5,11 +5,14 @@ import pytest
 
 from spectrum_systems_core.artifacts import new_artifact
 from spectrum_systems_core.control import decide_control
+from spectrum_systems_core.config.taxonomy import UNCLASSIFIED_DECISION_VERB
 from spectrum_systems_core.evals import (
     DECISIONS_FIELD_MISSING,
     REGULATORY_VERB_EVAL_TYPE,
     VERB_AMBIGUOUS_PREFIX,
     VERB_NOT_CLASSIFIED_PREFIX,
+    VERB_UNCLASSIFIED_PREFIX,
+    resolve_decision_verb,
     run_regulatory_verb_eval,
     run_required_evals,
 )
@@ -97,6 +100,69 @@ def test_empty_decisions_list_passes():
     artifact = _meeting_minutes([])
     result = run_regulatory_verb_eval(artifact)
     assert result.payload["status"] == "pass"
+
+
+# ---- Option C: explicit indeterminate-verb sentinel ----------------------
+
+
+def test_unclassified_sentinel_does_not_block_and_is_surfaced():
+    """The explicit producer sentinel is non-blocking (the identical
+    decision in plain-string form already promotes) but the gap stays
+    auditable via a distinct reason code."""
+    artifact = _meeting_minutes(
+        [{"text": "DoD has a concern about the methodology.",
+          "verb": UNCLASSIFIED_DECISION_VERB}]
+    )
+    result = run_regulatory_verb_eval(artifact)
+    assert result.payload["status"] == "pass"
+    assert any(
+        r.startswith(VERB_UNCLASSIFIED_PREFIX)
+        for r in result.payload["reason_codes"]
+    )
+
+
+def test_unclassified_sentinel_mixed_with_garbage_verb_still_blocks():
+    """No-weakening: the sentinel never rescues a CLAIMED, unrecognised
+    verb on another decision — that still hard-blocks the whole eval."""
+    artifact = _meeting_minutes(
+        [
+            {"text": "Indeterminate item.",
+             "verb": UNCLASSIFIED_DECISION_VERB},
+            {"text": "Chair grumbled.", "verb": "grumbled"},
+        ]
+    )
+    result = run_regulatory_verb_eval(artifact)
+    assert result.payload["status"] == "fail"
+    assert any(
+        r.startswith(f"{VERB_NOT_CLASSIFIED_PREFIX}grumbled")
+        for r in result.payload["reason_codes"]
+    )
+    # The sentinel note is still surfaced alongside the block.
+    assert any(
+        r.startswith(VERB_UNCLASSIFIED_PREFIX)
+        for r in result.payload["reason_codes"]
+    )
+
+
+def test_unclassified_sentinel_routes_to_allow_through_decide_control():
+    artifact = _meeting_minutes(
+        [{"text": "x", "verb": UNCLASSIFIED_DECISION_VERB}]
+    )
+    verb_eval = run_regulatory_verb_eval(artifact)
+    decision = decide_control(artifact, [verb_eval])
+    assert decision.payload["decision"] == "allow"
+
+
+def test_resolve_decision_verb_is_the_shared_resolution_function():
+    """The producer imports this exact function so it cannot drift from
+    the gate. ``None`` is precisely the __missing__ block condition."""
+    assert resolve_decision_verb({"text": "no verb here at all"}) is None
+    assert resolve_decision_verb(
+        {"text": "x", "verb": "approved"}
+    ) == "approved"
+    assert resolve_decision_verb(
+        {"text": "The FCC approved the plan."}
+    ) == "approved"
 
 
 # ---- rejection paths -----------------------------------------------------

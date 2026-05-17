@@ -121,6 +121,23 @@ AMBIGUOUS_VERBS: frozenset = frozenset({
 })
 
 
+# Explicit sentinel the meeting_minutes_llm producer writes onto an
+# object-form decision when the model emitted the OBJECT form (to
+# attach stakeholders / confidence — which the extraction prompt
+# encourages) but supplied no governing verb AND the decision text
+# carries no taxonomy verb either. It records, ON the artifact, that
+# the governing verb is indeterminate — an auditable field, not a
+# silent extraction gap. The regulatory_verb eval recognises ONLY this
+# exact string as the "extractor made no verb claim" marker and treats
+# it the same non-blocking way it ALREADY treats a verb-free STRING
+# decision (which has always promoted). A decision that CLAIMS a verb
+# the taxonomy does not recognise still blocks — the producer never
+# overrides a claimed verb, so the hallucination / mis-extraction
+# defence is unchanged. Canonical here (CLAUDE.md taxonomy rule) so the
+# producer and the eval import one object and cannot drift.
+UNCLASSIFIED_DECISION_VERB: str = "unclassified"
+
+
 # Phase AB.4: threshold for considering an extracted item to match a
 # gold item in the extraction-gap metric. Pinned at 0.7 to match
 # ``evals.extraction_precision.LCS_THRESHOLD`` (Phase Z) so the gap
@@ -162,4 +179,5 @@ __all__ = [
     "OVERGENERALIZATION_MARKERS",
     "PARTIAL_LCS_THRESHOLD",
     "REGULATORY_VERBS",
+    "UNCLASSIFIED_DECISION_VERB",
 ]

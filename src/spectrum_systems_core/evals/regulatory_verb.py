@@ -7,6 +7,14 @@ governing verb against the canonical taxonomy in
   - verb in ``DECISION_VERBS``  → contributes ``pass``
   - verb in ``AMBIGUOUS_VERBS`` → contributes ``warn``
     (reason code ``verb_ambiguous:<verb>``; eval still passes)
+  - verb == ``UNCLASSIFIED_DECISION_VERB`` (the explicit sentinel the
+    meeting_minutes_llm producer writes when the model emitted an
+    object-form decision with no classifiable verb) → contributes a
+    non-blocking surfaced note (reason code ``verb_unclassified:...``;
+    eval still passes). This does NOT relax the gate's real trust
+    property: the IDENTICAL decision in plain-string form already
+    promotes today, and a decision that CLAIMS an unrecognised verb
+    still blocks (the producer never overrides a claimed verb).
   - verb absent or unrecognized → contributes ``block``
     (reason code ``verb_not_classified:<verb_or___missing__>``)
 
@@ -37,7 +45,11 @@ from __future__ import annotations
 import re
 
 from ..artifacts import Artifact, new_artifact
-from ..config.taxonomy import AMBIGUOUS_VERBS, DECISION_VERBS
+from ..config.taxonomy import (
+    AMBIGUOUS_VERBS,
+    DECISION_VERBS,
+    UNCLASSIFIED_DECISION_VERB,
+)
 
 EVAL_TYPE = "regulatory_verb"
 
@@ -51,6 +63,12 @@ DECISION_BEARING_ARTIFACT_TYPES: frozenset = frozenset({
 # Reason code prefixes (stable, machine-grepable).
 VERB_AMBIGUOUS_PREFIX = "verb_ambiguous:"
 VERB_NOT_CLASSIFIED_PREFIX = "verb_not_classified:"
+# Surfaced (never blocks) when a decision carries the explicit
+# UNCLASSIFIED_DECISION_VERB sentinel — the producer recorded that the
+# governing verb is indeterminate. Distinct prefix so the operator can
+# tell "extractor explicitly could not classify" apart from an informal
+# but recognised ambiguous verb (VERB_AMBIGUOUS_PREFIX) in eval_history.
+VERB_UNCLASSIFIED_PREFIX = "verb_unclassified:"
 DECISIONS_FIELD_MISSING = "decisions_field_missing"
 
 
@@ -105,6 +123,14 @@ def _decision_verb(item) -> str | None:
             return declared_verb
         return declared_verb  # raw, so reason code surfaces it
     return text_verb
+
+
+# Public alias: the meeting_minutes_llm producer imports this so the
+# "is this decision already classifiable?" question it asks is the
+# EXACT same function the gate answers it with. ``None`` here is
+# precisely the ``verb_not_classified:__missing__`` block condition;
+# the producer fills the explicit sentinel only in that one case.
+resolve_decision_verb = _decision_verb
 
 
 def _eval_result(
@@ -178,17 +204,35 @@ def run_regulatory_verb_eval(artifact: Artifact) -> Artifact:
         return _eval_result(artifact, passed=True, reason_codes=[])
 
     warns: list[str] = []
+    unclassified: list[str] = []
     blocks: list[str] = []
     for idx, item in enumerate(decisions):
         verb = _decision_verb(item)
         item_text = _decision_text(item)[:80]
         if verb is None:
+            # No declared verb AND no taxonomy verb in text. This stays
+            # fail-closed: the regex path and any caller that did NOT
+            # route through the meeting_minutes_llm producer never carry
+            # the explicit sentinel, so a bare missing verb still blocks.
             blocks.append(
                 f"{VERB_NOT_CLASSIFIED_PREFIX}__missing__"
                 f"|decision[{idx}]:{item_text}"
             )
             continue
         if verb in DECISION_VERBS:
+            continue
+        if verb == UNCLASSIFIED_DECISION_VERB:
+            # Explicit producer (or model) marker that the governing
+            # verb is indeterminate. Non-blocking — the SAME decision
+            # in plain-string form already promotes today (the eval
+            # never required a verb for string decisions), so honouring
+            # this explicit marker only makes the object form
+            # consistent; it does not relax the real trust property
+            # (a CLAIMED-but-unrecognised verb still falls through to
+            # the block below). Surfaced so the gap stays auditable.
+            unclassified.append(
+                f"{VERB_UNCLASSIFIED_PREFIX}decision[{idx}]:{item_text}"
+            )
             continue
         if verb in AMBIGUOUS_VERBS:
             warns.append(
@@ -202,15 +246,18 @@ def run_regulatory_verb_eval(artifact: Artifact) -> Artifact:
         )
 
     if blocks:
-        # Surface every block AND every warn so a single eval_result
-        # explains the full picture. A new engineer reading reason_codes
-        # sees every problematic verb in order.
+        # Surface every block AND every warn / unclassified note so a
+        # single eval_result explains the full picture. A new engineer
+        # reading reason_codes sees every problematic verb in order.
         return _eval_result(
-            artifact, passed=False, reason_codes=blocks + warns
+            artifact, passed=False, reason_codes=blocks + warns + unclassified
         )
-    # No blocks — pass. Warns ride along as reason codes so the
-    # operator still sees them in the manifest / debug report.
-    return _eval_result(artifact, passed=True, reason_codes=warns)
+    # No blocks — pass. Warns and the explicit unclassified markers ride
+    # along as reason codes so the operator still sees them in the
+    # manifest / debug report / eval_history.
+    return _eval_result(
+        artifact, passed=True, reason_codes=warns + unclassified
+    )
 
 
 __all__ = [
@@ -219,7 +266,10 @@ __all__ = [
     "DECISION_BEARING_ARTIFACT_TYPES",
     "DECISION_VERBS",
     "EVAL_TYPE",
+    "UNCLASSIFIED_DECISION_VERB",
     "VERB_AMBIGUOUS_PREFIX",
     "VERB_NOT_CLASSIFIED_PREFIX",
+    "VERB_UNCLASSIFIED_PREFIX",
+    "resolve_decision_verb",
     "run_regulatory_verb_eval",
 ]

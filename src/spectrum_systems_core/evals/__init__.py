@@ -20,10 +20,12 @@ from .source_turn_validity import (
 )
 from .regulatory_verb import (
     run_regulatory_verb_eval,
+    resolve_decision_verb,
     EVAL_TYPE as REGULATORY_VERB_EVAL_TYPE,
     DECISIONS_FIELD_MISSING,
     VERB_AMBIGUOUS_PREFIX,
     VERB_NOT_CLASSIFIED_PREFIX,
+    VERB_UNCLASSIFIED_PREFIX,
 )
 from .extraction_precision import (
     run_extraction_precision_eval,
@@ -67,10 +69,12 @@ __all__ = [
     "SOURCE_TURN_UNRESOLVED_PREFIX",
     "GROUNDING_MISSING_FOR_CONTENT",
     "run_regulatory_verb_eval",
+    "resolve_decision_verb",
     "REGULATORY_VERB_EVAL_TYPE",
     "DECISIONS_FIELD_MISSING",
     "VERB_AMBIGUOUS_PREFIX",
     "VERB_NOT_CLASSIFIED_PREFIX",
+    "VERB_UNCLASSIFIED_PREFIX",
     "run_extraction_precision_eval",
     "EXTRACTION_PRECISION_EVAL_TYPE",
     "LCS_THRESHOLD",
