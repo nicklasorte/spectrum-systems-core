@@ -2780,6 +2780,167 @@ def extract_typed(
     return 0
 
 
+def meeting_minutes_llm(
+    *,
+    source_id: str | None = None,
+    data_lake: str | None = None,
+    client=None,
+    env=None,
+    out_stream=None,
+) -> int:
+    """Run the live-Haiku ``meeting_minutes_llm`` workflow for one source.
+
+    This is the SDL-store-layout entry point for the live-LLM
+    meeting-minutes extractor. It is ADDITIVE: it does not run, replace,
+    or perturb the deterministic ``run-pipeline`` / ``extract-typed``
+    stages. validate-and-baseline runs those FIRST (only when
+    ``llm_extraction_enabled=true`` is dispatched) and then calls this
+    so a second promoted ``meeting_minutes`` artifact — carrying
+    ``payload.provenance.produced_by == "meeting_minutes_llm"`` — lands
+    next to the regex one for ``scripts/compare_opus_haiku.py`` to diff
+    against the Opus reference baseline.
+
+    Layout: the deterministic pipeline stages the canonical transcript
+    text to ``<data_lake>/store/raw/meetings/<source_id>/source.txt``
+    (``pipeline_orchestrator._stage_transcript_into_meetings``). We feed
+    the SAME bytes the regex extractor saw to the LLM workflow so the
+    Haiku-vs-Opus comparison is apples-to-apples, then write the
+    promoted artifact through the contract writer rooted at
+    ``<data_lake>/store`` — i.e.
+    ``<data_lake>/store/processed/meetings/<source_id>/meeting_minutes__<slug>.json``,
+    exactly where ``compare_opus_haiku._meeting_dir`` looks.
+
+    Fail-closed (no silent fallback to the regex extractor):
+      * staged transcript missing/empty -> exit 2 (run-pipeline must
+        have staged it; a missing input HALTS, never infers).
+      * ``ANTHROPIC_API_KEY`` unset -> ``LLMConfigError`` from the
+        workflow's pre-run gate -> print ``reason_code`` -> exit 2.
+      * control gate blocked the artifact -> not promoted -> exit 1.
+        Nothing is written.
+
+    ``client`` / ``env`` are test-injection seams (the same pattern
+    ``data_lake/cli.py::process_meeting_llm`` uses) so the success path
+    is exercised in CI with no API key and no network. Production passes
+    neither: the real Anthropic client is constructed only after the
+    workflow's fail-closed pre-run gate passes.
+
+    Exit codes:
+      0 -- promoted artifact written.
+      1 -- workflow ran but the control gate blocked promotion.
+      2 -- pre-run halt (bad args, missing/empty transcript, missing
+           store root, or LLMConfigError).
+    """
+    import sys
+    from pathlib import Path as _Path
+
+    out = out_stream if out_stream is not None else sys.stdout
+
+    if not source_id:
+        print("meeting-minutes-llm: --source-id required", file=out)
+        return 2
+
+    resolved = data_lake or os.environ.get("DATA_LAKE_PATH", "")
+    if not resolved:
+        print(
+            "meeting-minutes-llm: DATA_LAKE_PATH not set and --data-lake "
+            "not provided",
+            file=out,
+        )
+        return 2
+    store_root = _Path(resolved) / "store"
+    if not store_root.is_dir():
+        print(
+            f"meeting-minutes-llm: store root missing: {store_root} "
+            "(run-pipeline must run first)",
+            file=out,
+        )
+        return 2
+
+    # The deterministic run-pipeline stage writes the canonical text
+    # here. Reading it (not re-deriving from the raw .docx/.txt) keeps
+    # the LLM input byte-identical to what the regex extractor consumed.
+    staged_txt = store_root / "raw" / "meetings" / source_id / "source.txt"
+    if not staged_txt.is_file():
+        print(
+            f"meeting-minutes-llm: staged transcript missing: {staged_txt} "
+            "(the deterministic run-pipeline stage must run first; "
+            "halting rather than inferring)",
+            file=out,
+        )
+        return 2
+    try:
+        transcript_text = staged_txt.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        print(
+            f"meeting-minutes-llm: staged transcript read error: {exc}",
+            file=out,
+        )
+        return 2
+    if not transcript_text.strip():
+        print(
+            f"meeting-minutes-llm: staged transcript empty: {staged_txt}",
+            file=out,
+        )
+        return 2
+
+    from .config import LLMConfigError
+    from .data_lake.writer import write_promoted_artifact
+    from .workflows import run_meeting_minutes_llm_workflow
+
+    try:
+        result = run_meeting_minutes_llm_workflow(
+            transcript_text,
+            client=client,
+            meeting_id=source_id,
+            source_id=source_id,
+            lake_root=store_root,
+            env=env if env is not None else os.environ,
+        )
+    except LLMConfigError as exc:
+        # Fail-closed pre-run halt: no artifact produced, no fallback to
+        # the regex extractor. The reason_code is a field on the
+        # exception so a gate reads a value, not prose.
+        print(
+            f"meeting-minutes-llm [{source_id}] halted pre-run: "
+            f"reason_code={exc.reason_code} -- {exc}",
+            file=out,
+        )
+        return 2
+
+    mm = result.meeting_minutes
+    mm_payload = mm.payload if isinstance(mm.payload, dict) else {}
+    produced_by = (mm_payload.get("provenance") or {}).get("produced_by")
+
+    if not result.promoted:
+        decision_payload = (
+            result.control_decision.payload
+            if result.control_decision is not None
+            else {}
+        )
+        reason_codes = decision_payload.get("reason_codes") or []
+        print(
+            f"meeting-minutes-llm [{source_id}] BLOCKED "
+            f"produced_by={produced_by} "
+            f"decision={decision_payload.get('decision')} "
+            f"reason_codes={','.join(str(c) for c in reason_codes)}",
+            file=out,
+        )
+        # Non-zero so the workflow step (and validate-and-baseline)
+        # fails. The comparison is meaningless without a promoted Haiku
+        # artifact; do NOT let a blocked run pass as success.
+        return 1
+
+    written = write_promoted_artifact(
+        store_root, mm, meeting_id=source_id
+    )
+    print(
+        f"meeting-minutes-llm [{source_id}] OK "
+        f"produced_by={produced_by} written={written}",
+        file=out,
+    )
+    return 0
+
+
 def link_ground_truth(
     *,
     data_lake: str | None = None,
@@ -4353,6 +4514,40 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    mml = sub.add_parser(
+        "meeting-minutes-llm",
+        help="Run the live-Haiku meeting_minutes_llm workflow for one source.",
+        description=(
+            "ADDITIVE live-LLM meeting-minutes extraction in the SDL "
+            "store layout. Reads the canonical transcript the "
+            "deterministic run-pipeline stage staged at "
+            "<data-lake>/store/raw/meetings/<source_id>/source.txt and "
+            "runs the governed meeting_minutes_llm loop over it, writing "
+            "a promoted meeting_minutes artifact (with "
+            "payload.provenance.produced_by == 'meeting_minutes_llm') to "
+            "<data-lake>/store/processed/meetings/<source_id>/ — exactly "
+            "where compare_opus_haiku.py looks. Does NOT run, replace, "
+            "or perturb the deterministic extractor stages; run those "
+            "first. Fail-closed: a missing/empty staged transcript or an "
+            "unset ANTHROPIC_API_KEY HALTS (exit 2) and never falls back "
+            "to the regex extractor; a control-blocked run exits 1 and "
+            "writes nothing."
+        ),
+    )
+    mml.add_argument(
+        "--source-id",
+        required=True,
+        help="source_id (slug) to run the LLM meeting-minutes workflow for.",
+    )
+    mml.add_argument(
+        "--data-lake",
+        default=None,
+        help=(
+            "Path to the data lake root. Overrides the DATA_LAKE_PATH "
+            "environment variable when provided."
+        ),
+    )
+
     lg = sub.add_parser(
         "link-ground-truth",
         help="Phase L.2: pair transcripts with meeting-minutes by date.",
@@ -4744,6 +4939,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             data_lake=args.data_lake,
             force=args.force,
             max_chunks=args.max_chunks,
+        )
+    if args.command == "meeting-minutes-llm":
+        return meeting_minutes_llm(
+            source_id=args.source_id,
+            data_lake=args.data_lake,
         )
     if args.command == "link-ground-truth":
         return link_ground_truth(
