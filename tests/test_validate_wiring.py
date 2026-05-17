@@ -31,6 +31,7 @@ import pathlib
 import pytest
 
 from spectrum_systems_core.cli import meeting_minutes_llm
+from spectrum_systems_core.workflows import run_meeting_minutes_llm_workflow
 from spectrum_systems_core.extraction.typed_extraction_runner import (
     _parse_json_response,
 )
@@ -379,3 +380,141 @@ def test_trigger_still_checks_llm_provenance() -> None:
     trigger_idx = body.find("Trigger Haiku-vs-Opus comparison")
     trigger_body = body[trigger_idx:]
     assert 'produced_by") == "meeting_minutes_llm"' in trigger_body
+
+
+# ---------------------------------------------------------------------------
+# --max-chunks: DEBUG-ONLY fast path.
+#
+# Properties under test:
+#  * max_chunks=N truncates the model input to the first N chunks AND
+#    drops every later turn's verbatim content (the real latency win is
+#    a smaller model input, not just a shorter chunk list).
+#  * max_chunks=None (the production default) is byte-identical to the
+#    pre-change behaviour: every chunk is shown to the model.
+#  * The meeting-minutes-llm CLI forwards --max-chunks into the
+#    workflow.
+#  * validate-and-baseline exposes max_chunks as an empty-default
+#    string input and only appends --max-chunks when the operator set
+#    it (production path stays byte-identical and fail-closed).
+# ---------------------------------------------------------------------------
+
+# Four single-line speaker turns -> four chunks (t0000..t0003), each
+# carrying a unique verbatim marker so truncation is observable.
+_MULTI_TURN = (
+    "SPEAKER A: alpha-marker the group approved plan one.\n"
+    "SPEAKER B: bravo-marker the group approved plan two.\n"
+    "SPEAKER C: charlie-marker the group approved plan three.\n"
+    "SPEAKER D: delta-marker the group approved plan four.\n"
+)
+
+
+class _RecordingClient:
+    """Wraps a stub client and records the last user prompt it saw."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+        self.user: str | None = None
+
+    def __call__(self, *, system: str, user: str) -> str:
+        self.user = user
+        return self._inner(system=system, user=user)
+
+
+def test_max_chunks_truncates_model_input() -> None:
+    """max_chunks=2 shows the model only the first two turns: their
+    turn_ids and verbatim text are present, every later turn (turn_id
+    AND content) is truncated away."""
+    spy = _RecordingClient(json_stub())
+    run_meeting_minutes_llm_workflow(
+        _MULTI_TURN,
+        client=spy,
+        meeting_id="m",
+        max_chunks=2,
+    )
+    assert spy.user is not None
+    assert "[t0000]" in spy.user and "[t0001]" in spy.user
+    assert "alpha-marker" in spy.user and "bravo-marker" in spy.user
+    assert "[t0002]" not in spy.user and "[t0003]" not in spy.user
+    assert "charlie-marker" not in spy.user
+    assert "delta-marker" not in spy.user
+
+
+def test_max_chunks_none_processes_all_chunks() -> None:
+    """The production default (None) is byte-identical to before: every
+    chunk and its verbatim content reach the model."""
+    spy = _RecordingClient(json_stub())
+    run_meeting_minutes_llm_workflow(
+        _MULTI_TURN,
+        client=spy,
+        meeting_id="m",
+        max_chunks=None,
+    )
+    assert spy.user is not None
+    for tid in ("[t0000]", "[t0001]", "[t0002]", "[t0003]"):
+        assert tid in spy.user
+    for marker in (
+        "alpha-marker",
+        "bravo-marker",
+        "charlie-marker",
+        "delta-marker",
+    ):
+        assert marker in spy.user
+
+
+def test_cli_forwards_max_chunks(tmp_path) -> None:
+    """The meeting-minutes-llm CLI forwards --max-chunks into the
+    workflow: with N=1 only the first turn reaches the model. The
+    property under test is the truncated model input, not promotion."""
+    lake = tmp_path / "dl"
+    staged = lake / "store" / "raw" / "meetings" / SOURCE_ID
+    staged.mkdir(parents=True)
+    staged.joinpath("source.txt").write_text(_MULTI_TURN, encoding="utf-8")
+
+    spy = _RecordingClient(json_stub())
+    meeting_minutes_llm(
+        source_id=SOURCE_ID,
+        data_lake=str(lake),
+        max_chunks=1,
+        client=spy,
+        env={"ANTHROPIC_API_KEY": "sk-test"},
+    )
+    assert spy.user is not None
+    assert "[t0000]" in spy.user
+    assert "alpha-marker" in spy.user
+    assert "[t0001]" not in spy.user
+    assert "bravo-marker" not in spy.user
+
+
+@pytest.mark.skipif(not YAML_AVAILABLE, reason="PyYAML required")
+def test_max_chunks_workflow_input_default_empty_string() -> None:
+    """max_chunks is an OPTIONAL string input defaulting to '' so the
+    production path (empty) never appends the debug flag."""
+    _skip_if_missing()
+    doc = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    inputs = doc[True]["workflow_dispatch"]["inputs"]
+    assert "max_chunks" in inputs
+    spec = inputs["max_chunks"]
+    assert spec["type"] == "string"
+    assert spec["default"] == ""
+    assert spec["required"] is False
+
+
+@pytest.mark.skipif(not YAML_AVAILABLE, reason="PyYAML required")
+def test_llm_step_appends_max_chunks_only_when_set() -> None:
+    """The LLM step maps the input to MAX_CHUNKS and only appends
+    --max-chunks when it is non-empty; the production (empty) path is
+    byte-identical and the step is still fail-closed."""
+    _skip_if_missing()
+    doc = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    steps = doc["jobs"]["validate-and-baseline"]["steps"]
+    llm = next(
+        s
+        for s in steps
+        if s.get("name") == "Run LLM extraction (meeting_minutes_llm)"
+    )
+    assert llm["env"]["MAX_CHUNKS"] == "${{ inputs.max_chunks }}"
+    run = llm["run"]
+    assert "--max-chunks" in run
+    assert 'if [ -n "${MAX_CHUNKS}" ]' in run
+    assert "continue-on-error" not in llm
+    assert llm.get("continue-on-error") is not True
