@@ -1,6 +1,17 @@
 {
   "dangerouslySkipPermissions": true,
   "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -m pytest tests/ -x -q 2>&1 | tail -20 && echo '---' && python -m ruff check src/ tests/ 2>&1 | tail -20"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "type": "command",

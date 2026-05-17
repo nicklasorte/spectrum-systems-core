@@ -454,3 +454,10 @@ When you encounter a bug you cannot immediately fix, follow the process in [DEBU
 
 ## Debugging
 When a bug resists an obvious fix, invoke `/debug` to apply the scientific method protocol. Do not attempt repeated speculative fixes without it.
+
+## Hooks
+A PostToolUse hook runs automatically after every file edit:
+- `pytest tests/ -x -q` — stops at first failure, shows last 20 lines
+- `ruff check src/ tests/` — lint check across all source and test files
+
+Do not declare a fix complete if either command is failing. If tests fail after an edit, treat it as a signal to invoke `/debug`.
