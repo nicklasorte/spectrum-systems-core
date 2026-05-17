@@ -271,16 +271,26 @@ def test_valid_transcript_writes_correct_fields(tmp_path: Path) -> None:
         "The group approved the 7 GHz downlink threshold.",
         "The group deferred the aggregate methodology.",
     ]
-    # Structured: ground_truth_text is the schema-required text field.
+    # Structured items: ground_truth_text is the first matching field
+    # from the priority list in ``extract_ground_truth_text`` —
+    # ``risk_text`` for a risk, ``name`` for an attendee, and
+    # ``parameter_name`` (which precedes ``value`` semantics, and is the
+    # only ``technical_parameters`` field in the priority list) for a
+    # technical parameter.
     assert by_type["risks"][0]["ground_truth_text"] == (
         "Concern about the methodology."
     )
     assert by_type["attendees"][0]["ground_truth_text"] == "Chair Smith"
     assert by_type["technical_parameters"][0]["ground_truth_text"] == (
-        "minus 47 dBm per megahertz"
+        "7 GHz downlink threshold"
     )
     # item_data is the full structured object, verbatim.
     assert by_type["risks"][0]["item_data"]["risk_id"] == "risk-1"
+    # A string item's item_data is wrapped as {"text": <string>} so the
+    # original value is always recoverable from a JSON object.
+    assert by_type["decisions"][0]["item_data"] == {
+        "text": by_type["decisions"][0]["ground_truth_text"]
+    }
 
 
 # --------------------------------------------------------------------------
@@ -439,13 +449,19 @@ def test_empty_prompt_halts(
 # --------------------------------------------------------------------------
 # 6. Malformed LLM response -> halt, no write
 # --------------------------------------------------------------------------
+# Only RESPONSE-level malformations halt now. A structured item with
+# no schema-named text field is NOT a halt — it is tolerantly read by
+# ``extract_ground_truth_text`` (the canonical prompt explicitly allows
+# a structured object for every type), so the old
+# ``{"risks": [{"risk_id": "r1"}]}`` "missing required text" halt case
+# was intentionally removed; that shape is now covered by
+# ``test_extract_ground_truth_text_*`` as a recoverable item.
 @pytest.mark.parametrize(
     "bad",
     [
         "this is not json at all",
         "[1, 2, 3]",                       # JSON but not an object
-        '{"decisions": "oops not a list"}',  # content array not a list
-        '{"risks": [{"risk_id": "r1"}]}',  # missing required risk_text
+        '{"decisions": "oops not a list"}',  # content key not a list
         "",                                 # empty text
     ],
 )
@@ -464,6 +480,184 @@ def test_malformed_llm_response_halts_no_write(
         )
     assert ei.value.reason == "malformed_llm_response"
     assert not _out_path(dl).exists(), "no partial JSONL on malformed"
+
+
+# --------------------------------------------------------------------------
+# Structured-object item handling: extract_ground_truth_text NEVER halts
+# (the canonical prompt allows a structured object for every type).
+# --------------------------------------------------------------------------
+def test_extract_ground_truth_text_decisions_string() -> None:
+    """decisions item as a plain string -> the string verbatim."""
+    assert (
+        cob.extract_ground_truth_text("NTIA approved X.", "decisions")
+        == "NTIA approved X."
+    )
+
+
+def test_extract_ground_truth_text_decisions_object() -> None:
+    """The exact Opus shape that USED to halt now resolves on ``text``."""
+    item = {
+        "text": "The TIG approved the 7 GHz downlink threshold.",
+        "verb": "decided",
+        "stakeholders": ["DoD"],
+        "confidence": 0.85,
+        "rationale": None,
+    }
+    assert cob.extract_ground_truth_text(item, "decisions") == (
+        "The TIG approved the 7 GHz downlink threshold."
+    )
+
+
+def test_extract_ground_truth_text_action_item_object() -> None:
+    """action_items dict with ``text`` + ``owner`` -> the text field."""
+    item = {"text": "NTIA to circulate the methodology.", "owner": "NTIA"}
+    assert cob.extract_ground_truth_text(item, "action_items") == (
+        "NTIA to circulate the methodology."
+    )
+
+
+def test_extract_ground_truth_text_open_question_object() -> None:
+    """open_questions dict with ``question_text`` -> that field."""
+    item = {"question_text": "What is the coordination distance?"}
+    assert cob.extract_ground_truth_text(item, "open_questions") == (
+        "What is the coordination distance?"
+    )
+
+
+def test_extract_ground_truth_text_risk_object() -> None:
+    """risks dict with ``risk_text`` -> that field (not a halt)."""
+    item = {"risk_id": "risk-1", "risk_text": "Interference unquantified."}
+    assert cob.extract_ground_truth_text(item, "risks") == (
+        "Interference unquantified."
+    )
+
+
+def test_extract_ground_truth_text_technical_parameter_object() -> None:
+    """technical_parameters dict resolves on ``parameter_name``."""
+    item = {
+        "param_id": "param-1",
+        "parameter_name": "7 GHz downlink threshold",
+        "value": "minus 47 dBm per megahertz",
+        "unit": "dBm/MHz",
+    }
+    assert cob.extract_ground_truth_text(
+        item, "technical_parameters"
+    ) == "7 GHz downlink threshold"
+
+
+def test_extract_ground_truth_text_unknown_dict_first_string() -> None:
+    """A dict with NO known field -> the first string value, no halt."""
+    item = {"odd_field": "the only text here", "n": 3, "flag": True}
+    assert cob.extract_ground_truth_text(item, "decisions") == (
+        "the only text here"
+    )
+
+
+def test_extract_ground_truth_text_no_string_falls_back_to_str() -> None:
+    """A dict with zero string content -> str(item); never empty, never
+    a halt (the line is still written, nothing silently dropped)."""
+    item = {"n": 3, "flag": True, "rationale": None}
+    out = cob.extract_ground_truth_text(item, "decisions")
+    assert out == str(item)
+    assert out  # never empty
+
+
+def test_item_data_always_present_and_lossless(tmp_path: Path) -> None:
+    """item_data is always a JSON object holding the FULL original item:
+    the dict verbatim for an object, ``{"text": item}`` for a string."""
+    dl = _seed(tmp_path)
+    decision_obj = {
+        "text": "The TIG approved the 7 GHz downlink threshold.",
+        "verb": "decided",
+        "stakeholders": ["DoD"],
+        "confidence": 0.85,
+        "rationale": None,
+    }
+    response = json.dumps(
+        {
+            "decisions": [
+                "A plain string decision.",
+                decision_obj,
+            ],
+            "action_items": [],
+            "open_questions": [],
+            "commitments": [],
+            "risks": [],
+            "cross_references": [],
+            "attendees": [],
+            "topics": [],
+            "regulatory_references": [],
+            "technical_parameters": [],
+            "named_artifacts": [],
+            "scheduled_events": [],
+        }
+    )
+    cob.create_baselines(
+        data_lake=dl,
+        source_id=None,
+        dry_run=False,
+        skip_existing=True,
+        model=MODEL,
+        client=SpyClient(response),
+    )
+    rows = _written_records(dl)
+    assert len(rows) == 2
+    by_text = {r["ground_truth_text"]: r for r in rows}
+    # String item: wrapped, original recoverable.
+    assert by_text["A plain string decision."]["item_data"] == {
+        "text": "A plain string decision."
+    }
+    # Structured item: stored verbatim, every field preserved.
+    obj_row = by_text[
+        "The TIG approved the 7 GHz downlink threshold."
+    ]
+    assert obj_row["item_data"] == decision_obj
+    for r in rows:
+        assert "item_data" in r and isinstance(r["item_data"], dict)
+
+
+def test_structured_decisions_object_does_not_halt(
+    tmp_path: Path,
+) -> None:
+    """Regression for the reported bug: an all-structured-object
+    response (the shape the canonical prompt asks Opus for) writes the
+    baseline instead of halting malformed_llm_response."""
+    dl = _seed(tmp_path)
+    response = json.dumps(
+        {
+            "decisions": [
+                {
+                    "text": "Approved the 7 GHz downlink threshold.",
+                    "verb": "approved",
+                    "stakeholders": ["DoD", "NTIA"],
+                    "confidence": 0.9,
+                    "rationale": "PCC directed it.",
+                }
+            ],
+            "action_items": [
+                {"text": "NTIA to circulate methodology.", "owner": "NTIA"}
+            ],
+            "open_questions": [
+                {"question_text": "Coordination distance?"}
+            ],
+        }
+    )
+    result = cob.create_baselines(
+        data_lake=dl,
+        source_id=None,
+        dry_run=False,
+        skip_existing=True,
+        model=MODEL,
+        client=SpyClient(response),
+    )
+    assert result["status"] == "success"
+    rows = _written_records(dl)
+    texts = sorted(r["ground_truth_text"] for r in rows)
+    assert texts == [
+        "Approved the 7 GHz downlink threshold.",
+        "Coordination distance?",
+        "NTIA to circulate methodology.",
+    ]
 
 
 # --------------------------------------------------------------------------
