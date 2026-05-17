@@ -451,3 +451,6 @@ Runtime configuration, feature flags, and phase wiring details are in
 
 ## Debugging Protocol
 When you encounter a bug you cannot immediately fix, follow the process in [DEBUGGING.md](./DEBUGGING.md) before attempting further fixes.
+
+## Debugging
+When a bug resists an obvious fix, invoke `/debug` to apply the scientific method protocol. Do not attempt repeated speculative fixes without it.
