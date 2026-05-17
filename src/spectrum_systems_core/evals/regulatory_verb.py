@@ -4,9 +4,21 @@ For every decision item in a decision-bearing artifact, classifies the
 governing verb against the canonical taxonomy in
 ``config.taxonomy``:
 
-  - verb in ``DECISION_VERBS``  → contributes ``pass``
+  - verb in ``CLASSIFIED_DECISION_VERBS`` → contributes ``pass``.
+    This is the canonical ``REGULATORY_VERBS`` taxonomy (the SAME list
+    the extraction prompt instructs the model to use) unioned with the
+    legacy Phase Z ``DECISION_VERBS`` (which adds ``directed`` /
+    ``considered``). Recognising the full canonical taxonomy — not an
+    ad-hoc 6-verb subset — is what removes the prompt↔eval drift that
+    hard-blocked correctly-extracted object decisions whose governing
+    verb was a real regulatory verb such as ``adopted`` / ``authorized``
+    / ``ratified``. It does NOT weaken the gate: a verb the canonical
+    taxonomy does not contain still blocks (see ``frobnicated`` below).
   - verb in ``AMBIGUOUS_VERBS`` → contributes ``warn``
-    (reason code ``verb_ambiguous:<verb>``; eval still passes)
+    (reason code ``verb_ambiguous:<verb>``; eval still passes).
+    Checked BEFORE the classified-pass set so a verb that is both a
+    regulatory verb and informal (e.g. ``recommended``) keeps its
+    operator-visible warn instead of passing silently.
   - verb == ``UNCLASSIFIED_DECISION_VERB`` (the explicit sentinel the
     meeting_minutes_llm producer writes when the model emitted an
     object-form decision with no classifiable verb) → contributes a
@@ -48,10 +60,31 @@ from ..artifacts import Artifact, new_artifact
 from ..config.taxonomy import (
     AMBIGUOUS_VERBS,
     DECISION_VERBS,
+    REGULATORY_VERBS,
     UNCLASSIFIED_DECISION_VERB,
 )
 
 EVAL_TYPE = "regulatory_verb"
+
+# The authoritative "this verb licenses a regulatory decision" set.
+#
+# It is the canonical ``REGULATORY_VERBS`` taxonomy (the exact list the
+# extraction prompt tells the model to use) unioned with the legacy
+# Phase Z ``DECISION_VERBS`` (which contributes ``directed`` /
+# ``considered`` — decision verbs the Phase Z gold fixtures rely on that
+# are not in ``REGULATORY_VERBS``).
+#
+# Before this, the eval used ONLY the 6-element ``DECISION_VERBS`` set,
+# so a correctly-extracted object decision whose governing verb was a
+# real regulatory verb the prompt instructs the model to emit (e.g.
+# ``adopted``, ``authorized``, ``ratified``, ``amended``, ``accepted``)
+# hard-blocked the whole run with ``verb_not_classified:<verb>``. That
+# is exactly the prompt↔eval taxonomy drift CLAUDE.md forbids. Widening
+# the pass set to the canonical taxonomy removes the drift WITHOUT
+# weakening the gate: a verb absent from the canonical taxonomy (a
+# hallucination such as ``frobnicated``) still falls through to the
+# fail-closed block.
+CLASSIFIED_DECISION_VERBS: frozenset = frozenset(REGULATORY_VERBS) | DECISION_VERBS
 
 # Artifact types that carry regulatory decisions. Other types skip the
 # eval cleanly — they have nothing for it to inspect.
@@ -80,7 +113,7 @@ def _extract_verb_from_text(text: str) -> str | None:
     if not isinstance(text, str) or not text.strip():
         return None
     tokens = re.findall(r"[A-Za-z']+", text.lower())
-    classified = DECISION_VERBS | AMBIGUOUS_VERBS
+    classified = CLASSIFIED_DECISION_VERBS | AMBIGUOUS_VERBS
     for tok in tokens:
         if tok in classified:
             return tok
@@ -219,8 +252,6 @@ def run_regulatory_verb_eval(artifact: Artifact) -> Artifact:
                 f"|decision[{idx}]:{item_text}"
             )
             continue
-        if verb in DECISION_VERBS:
-            continue
         if verb == UNCLASSIFIED_DECISION_VERB:
             # Explicit producer (or model) marker that the governing
             # verb is indeterminate. Non-blocking — the SAME decision
@@ -235,10 +266,20 @@ def run_regulatory_verb_eval(artifact: Artifact) -> Artifact:
             )
             continue
         if verb in AMBIGUOUS_VERBS:
+            # Checked BEFORE the classified-pass set: a verb that is
+            # both a real regulatory verb AND informal (``recommended``
+            # is in REGULATORY_VERBS ∩ AMBIGUOUS_VERBS) keeps its
+            # operator-visible warn rather than passing silently.
             warns.append(
                 f"{VERB_AMBIGUOUS_PREFIX}{verb}"
                 f"|decision[{idx}]:{item_text}"
             )
+            continue
+        if verb in CLASSIFIED_DECISION_VERBS:
+            # The canonical regulatory-verb taxonomy (the SAME list the
+            # extraction prompt instructs the model to emit). A real
+            # decision verb such as ``adopted`` / ``authorized`` /
+            # ``ratified`` passes here instead of being mis-blocked.
             continue
         blocks.append(
             f"{VERB_NOT_CLASSIFIED_PREFIX}{verb}"
@@ -262,6 +303,7 @@ def run_regulatory_verb_eval(artifact: Artifact) -> Artifact:
 
 __all__ = [
     "AMBIGUOUS_VERBS",
+    "CLASSIFIED_DECISION_VERBS",
     "DECISIONS_FIELD_MISSING",
     "DECISION_BEARING_ARTIFACT_TYPES",
     "DECISION_VERBS",
