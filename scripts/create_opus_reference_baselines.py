@@ -119,10 +119,10 @@ _OUTPUT_FILENAME = "opus_reference_minutes.jsonl"
 # default (4000) silently truncates such a response into invalid JSON
 # (the observed malformed_llm_response root cause). Opus reference
 # baselines are not on the byte-determinism path, so a generous bound is
-# safe here and is set explicitly rather than inherited (Fix 2). 8192
-# matches the established Opus extraction bound in
-# src/spectrum_systems_core/extraction/llm_opus.py.
-_OPUS_MAX_TOKENS = 8192
+# safe here and is set explicitly rather than inherited. 16384 gives
+# headroom for the ~35% tokenizer increase in the current Opus revision
+# (41,454 char transcript × 35% overhead × 13+ extraction types).
+_OPUS_MAX_TOKENS = 16384
 
 # The canonical extraction prompt — resolved through the pipeline module
 # so the path is the SINGLE source of truth. We do not re-derive or

@@ -882,3 +882,74 @@ def test_workflow_opus_model_resolves_from_registry() -> None:
         assert not model_re.search(line), (
             f"hardcoded model literal on non-comment line {i}: {line!r}"
         )
+
+
+# --------------------------------------------------------------------------
+# Fix 2 — max_tokens raised to 16384
+# --------------------------------------------------------------------------
+def test_opus_max_tokens_constant() -> None:
+    """_OPUS_MAX_TOKENS must be 16384 (35% tokenizer headroom for opus-4-7)."""
+    assert cob._OPUS_MAX_TOKENS == 16384
+
+
+# --------------------------------------------------------------------------
+# Fix 3 — AnthropicJSONClient strips temperature/top_p/top_k for opus-4-7
+# --------------------------------------------------------------------------
+def test_opus_47_no_sampling_params_in_api_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """For claude-opus-4-7, temperature/top_p/top_k must not reach the SDK."""
+    import sys
+    import types
+    from spectrum_systems_core.workflows import llm_client
+
+    captured: dict = {}
+
+    class _FakeContent:
+        text = '{"decisions": []}'
+
+    class _FakeMessage:
+        content = [_FakeContent()]
+
+    class _FakeMessages:
+        def create(self, **kwargs: object) -> _FakeMessage:
+            captured.update(kwargs)
+            return _FakeMessage()
+
+    class _FakeAnthropic:
+        messages = _FakeMessages()
+
+        def __init__(self) -> None:
+            pass
+
+    fake_anthropic = types.ModuleType("anthropic")
+    fake_anthropic.Anthropic = _FakeAnthropic  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "anthropic", fake_anthropic)
+
+    client_obj = llm_client.AnthropicJSONClient(
+        model="claude-opus-4-7", max_tokens=16384
+    )
+    client_obj(system="sys", user="user_text")
+
+    assert "temperature" not in captured, "temperature must not reach the API for opus-4-7"
+    assert "top_p" not in captured, "top_p must not reach the API for opus-4-7"
+    assert "top_k" not in captured, "top_k must not reach the API for opus-4-7"
+
+
+# --------------------------------------------------------------------------
+# Fix 4 — registry entry has deprecated_params metadata
+# --------------------------------------------------------------------------
+def test_registry_opus_has_deprecated_params() -> None:
+    """Registry must document the deprecated sampling params for opus-4-7."""
+    registry = json.loads(
+        (REPO_ROOT / "ai" / "registry" / "model_registry.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    metadata = registry.get("model_metadata", {}).get("opus_reference_baseline", {})
+    assert "deprecated_params" in metadata, (
+        "model_metadata.opus_reference_baseline must have deprecated_params"
+    )
+    assert "temperature" in metadata["deprecated_params"]
+    assert "top_p" in metadata["deprecated_params"]
+    assert "top_k" in metadata["deprecated_params"]

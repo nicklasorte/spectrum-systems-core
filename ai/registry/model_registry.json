@@ -7,5 +7,12 @@
     "complex_reasoning": "claude-opus-4-7",
     "opus_reference_baseline": "claude-opus-4-7"
   },
+  "model_metadata": {
+    "opus_reference_baseline": {
+      "deprecated_params": ["temperature", "top_p", "top_k"],
+      "max_tokens": 16384,
+      "notes": "claude-opus-4-7: sampling params deprecated, omit entirely"
+    }
+  },
   "note": "No hardcoded model strings anywhere in code. All model resolution must use ModelRegistry.get(task_type). Update this file to migrate model versions."
 }
