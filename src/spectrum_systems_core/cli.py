@@ -2785,6 +2785,7 @@ def meeting_minutes_llm(
     source_id: str | None = None,
     data_lake: str | None = None,
     max_chunks: int | None = None,
+    debug_chunks: bool = False,
     client=None,
     env=None,
     out_stream=None,
@@ -2831,6 +2832,13 @@ def meeting_minutes_llm(
     schema-gate iteration takes ~30s instead of 10+ minutes. It is
     never set in production runs (the CLI default and the
     validate-and-baseline wiring both leave it empty).
+
+    ``debug_chunks`` (default ``False``) is a DEBUG-ONLY observability
+    knob forwarded to the workflow. When ``True`` a per-chunk
+    decomposition of the run's evals is printed to stdout so an operator
+    can see WHICH chunk produced each blocking item. It is observe-only
+    — it changes neither the artifact, the evals, nor the exit code; a
+    run with it off is byte-identical to before the knob existed.
 
     Exit codes:
       0 -- promoted artifact written.
@@ -2949,6 +2957,7 @@ def meeting_minutes_llm(
             lake_root=store_root,
             env=resolved_env,
             max_chunks=max_chunks,
+            debug_chunks=debug_chunks,
         )
     except LLMConfigError as exc:
         # Fail-closed pre-run halt: no artifact produced, no fallback to
@@ -4612,6 +4621,18 @@ def _build_parser() -> argparse.ArgumentParser:
             "runs."
         ),
     )
+    mml.add_argument(
+        "--debug-chunks",
+        action="store_true",
+        default=False,
+        help=(
+            "DEBUG ONLY. Print a per-chunk decomposition of the run's "
+            "evals to stdout (decisions / action_items counts plus the "
+            "regulatory_verb / within_source / schema issues each chunk "
+            "produced) BEFORE the control decision. Observe-only: does "
+            "not change the artifact, the evals, or the exit code."
+        ),
+    )
 
     lg = sub.add_parser(
         "link-ground-truth",
@@ -5010,6 +5031,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             source_id=args.source_id,
             data_lake=args.data_lake,
             max_chunks=args.max_chunks,
+            debug_chunks=args.debug_chunks,
         )
     if args.command == "link-ground-truth":
         return link_ground_truth(

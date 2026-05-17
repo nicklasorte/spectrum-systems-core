@@ -8,7 +8,11 @@ from .meeting_action_log import (
     run_meeting_action_log_workflow,
     MeetingActionLogResult,
 )
-from .meeting_minutes_llm import run_meeting_minutes_llm_workflow, PRODUCED_BY
+from .meeting_minutes_llm import (
+    run_meeting_minutes_llm_workflow,
+    build_chunk_debug_report,
+    PRODUCED_BY,
+)
 from .dispatch import (
     run_meeting_minutes_dispatch,
     WorkflowDispatchError,
@@ -25,6 +29,7 @@ __all__ = [
     "run_meeting_action_log_workflow",
     "MeetingActionLogResult",
     "run_meeting_minutes_llm_workflow",
+    "build_chunk_debug_report",
     "PRODUCED_BY",
     "run_meeting_minutes_dispatch",
     "WorkflowDispatchError",

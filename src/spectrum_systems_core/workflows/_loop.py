@@ -47,6 +47,7 @@ def run_governed_loop(
     extract: Callable,
     chunks: list[dict] | None = None,
     extra_evals: list[Callable[[Artifact], Artifact]] | None = None,
+    debug_hook: Callable[[Artifact, list[Artifact]], None] | None = None,
 ) -> GovernedRun:
     """One Produce -> Evaluate -> Decide -> Promote pass for any artifact_type.
 
@@ -65,6 +66,14 @@ def run_governed_loop(
     path passes ``None`` and is byte-for-byte unchanged. The extra eval
     results flow through the SAME ``decide_control`` / ``promote`` gate,
     so a failed extra eval blocks promotion exactly like a required one.
+
+    ``debug_hook`` is an optional ``(target, eval_results) -> None``
+    observability callback invoked AFTER every eval has run but BEFORE
+    ``decide_control`` aggregates them into a decision. It is read-only
+    by contract (the caller must not mutate ``target`` / ``eval_results``)
+    and its return value is ignored, so it cannot influence control or
+    promotion. Default ``None`` means the call is skipped entirely —
+    the regex path passes ``None`` and stays byte-for-byte unchanged.
     """
     store = ArtifactStore()
     trace_id = derive_trace_id(input_text)
@@ -90,6 +99,13 @@ def run_governed_loop(
         eval_results = eval_results + [e(target) for e in extra_evals]
     for r in eval_results:
         store.put(r)
+
+    if debug_hook is not None:
+        # Observe-only, BEFORE aggregation. Decomposes the about-to-be
+        # aggregated eval_results back to their per-chunk sources so an
+        # operator can see WHICH chunk produced a blocking item. Never
+        # alters target / eval_results / the decision.
+        debug_hook(target, eval_results)
 
     decision = decide_control(target, eval_results)
     store.put(decision)
