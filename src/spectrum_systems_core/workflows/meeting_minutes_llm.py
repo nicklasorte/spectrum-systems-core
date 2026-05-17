@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import functools
 import json
+import re
+import sys
 from pathlib import Path
 
 from ..artifacts import Artifact
@@ -37,6 +39,11 @@ from ..validation import (
     validate_artifact,
 )
 from ..evals import (
+    EXTRACTION_NOT_IN_SOURCE,
+    REGULATORY_VERB_EVAL_TYPE,
+    STRICT_SCHEMA_EVAL_TYPE,
+    VERB_NOT_CLASSIFIED_PREFIX,
+    WITHIN_SOURCE_EVAL_TYPE,
     resolve_decision_verb,
     run_grounding_coverage_eval,
     run_llm_gt_coverage_eval,
@@ -325,6 +332,295 @@ def _fill_unclassified_decision_verbs(decisions: list) -> list:
     return out
 
 
+# --- Per-chunk debug report (observe-only; --debug-chunks) --------------
+#
+# The meeting_minutes_llm workflow makes ONE model call over the whole
+# transcript; the chunker's turn-chunks are how every extracted item is
+# attributed back to a span of the transcript (the model emits a
+# top-level ``grounding`` array of
+# ``{"kind","text","source_turns":[turn_id,...]}``). The 34-chunk run
+# blocks while a 3-chunk run promotes, so the operator needs to see
+# WHICH chunk produced each blocking item. This builder decomposes the
+# already-computed eval_results back onto the chunks the items cite.
+#
+# It is strictly observe-only: a pure function of
+# (payload, chunks, eval_results) that never raises, never mutates its
+# inputs, and whose output never reaches the control gate. The
+# authoritative pass/fail is still the eval_results it reads — this only
+# explains them per chunk; it can neither relax nor tighten any gate.
+
+_DECISION_KINDS = frozenset({"decision", "decisions"})
+_ACTION_KINDS = frozenset({"action_item", "action_items", "action"})
+_ITEM_TEXT_KEYS = ("text", "action", "question_text")
+_SCHEMA_PATH_RE = re.compile(r"path=\[(?P<body>.*)\]\s*$")
+_PATH_ELEM_RE = re.compile(r"'(?P<s>[^']*)'|(?P<i>\d+)")
+
+
+def _dbg_norm(text: object) -> str:
+    """Lowercase, collapse whitespace runs, strip. Same shape as the
+    within-source eval's match algorithm so grounding text and the
+    truncated text the evals report line up."""
+    if not isinstance(text, str):
+        return ""
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def _item_primary_text(item: object) -> str:
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        for key in _ITEM_TEXT_KEYS:
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    return ""
+
+
+def _parse_schema_path(reason_code: str) -> list[object]:
+    """Best-effort extraction of the JSON path the strict-schema eval
+    surfaces as ``... at path=['decisions', 3, 'verb']``. Returns the
+    parsed elements (str / int) in order, or ``[]`` when the code has no
+    path tail (a structural pre-check such as ``not_a_list:<k>``)."""
+    m = _SCHEMA_PATH_RE.search(reason_code)
+    if m is None:
+        return []
+    out: list[object] = []
+    for em in _PATH_ELEM_RE.finditer(m.group("body")):
+        if em.group("s") is not None:
+            out.append(em.group("s"))
+        else:
+            out.append(int(em.group("i")))
+    return out
+
+
+def build_chunk_debug_report(
+    *,
+    payload: object,
+    chunks: list[dict] | None,
+    eval_results: list,
+) -> str:
+    """Deterministic per-chunk decomposition of the LLM run's evals.
+
+    Renders, for every chunk in order::
+
+        CHUNK {n}/{total} [turn_id=...]: decisions={d} action_items={a}
+          regulatory_verb_issues: [...]
+          within_source_issues: [...]
+          schema_issues: [...]
+
+    plus a final ``UNATTRIBUTED`` block for any blocking item that does
+    not map to a chunk (a fabricated turn_id, or a payload-global schema
+    violation) — so a failure is never silently dropped from the view.
+
+    Never raises: any unexpected shape degrades to an empty / best-effort
+    line rather than crashing the run (this is debug output, and the
+    control gate is unaffected regardless)."""
+    try:
+        return _build_chunk_debug_report(payload, chunks, eval_results)
+    except Exception as exc:  # noqa: BLE001 — debug output never crashes the run
+        return (
+            "=== CHUNK DEBUG (meeting_minutes_llm) ===\n"
+            f"debug_report_error: {type(exc).__name__}: {exc}"
+        )
+
+
+def _build_chunk_debug_report(
+    payload: object,
+    chunks: list[dict] | None,
+    eval_results: list,
+) -> str:
+    header = "=== CHUNK DEBUG (meeting_minutes_llm) ==="
+    if not chunks:
+        return f"{header}\nno chunks (ungrounded path)"
+
+    payload = payload if isinstance(payload, dict) else {}
+    total = len(chunks)
+
+    # turn_id -> 1-based chunk position. Chunks are already ordered; the
+    # chunker guarantees a string turn_id on every chunk.
+    turn_to_pos: dict[str, int] = {}
+    pos_turn: list[str] = []
+    for i, chunk in enumerate(chunks):
+        tid = chunk.get("turn_id") if isinstance(chunk, dict) else None
+        tid = tid if isinstance(tid, str) else f"<chunk{i}>"
+        pos_turn.append(tid)
+        turn_to_pos.setdefault(tid, i + 1)
+
+    grounding = payload.get("grounding")
+    grounding = grounding if isinstance(grounding, list) else []
+
+    # Per-chunk accumulators (index 1..total). Index 0 == UNATTRIBUTED.
+    n_buckets = total + 1
+    dec_count = [0] * n_buckets
+    act_count = [0] * n_buckets
+    regverb: list[list[str]] = [[] for _ in range(n_buckets)]
+    within: list[list[str]] = [[] for _ in range(n_buckets)]
+    schema: list[list[str]] = [[] for _ in range(n_buckets)]
+
+    # Grounding index: norm(text) -> sorted unique chunk positions, plus
+    # per-(kind) counts attributed to each position.
+    text_to_pos: dict[str, list[int]] = {}
+    for g in grounding:
+        if not isinstance(g, dict):
+            continue
+        kind = g.get("kind")
+        st = g.get("source_turns")
+        st = st if isinstance(st, list) else []
+        positions = sorted(
+            {turn_to_pos[t] for t in st if isinstance(t, str) and t in turn_to_pos}
+        )
+        gnorm = _dbg_norm(g.get("text"))
+        if gnorm and positions:
+            text_to_pos.setdefault(gnorm, [])
+            for p in positions:
+                if p not in text_to_pos[gnorm]:
+                    text_to_pos[gnorm].append(p)
+        targets = positions if positions else [0]
+        for p in targets:
+            if kind in _DECISION_KINDS:
+                dec_count[p] += 1
+            elif kind in _ACTION_KINDS:
+                act_count[p] += 1
+
+    def _positions_for_text(reported: str) -> list[int]:
+        """Map an eval-reported (truncated) item text back to chunk
+        positions via the grounding array. The eval truncates to a
+        prefix; grounding carries the item text 'exactly as emitted',
+        so an exact-or-prefix normalized match is the link."""
+        rnorm = _dbg_norm(reported)
+        if not rnorm:
+            return []
+        if rnorm in text_to_pos:
+            return list(text_to_pos[rnorm])
+        hits: list[int] = []
+        for gnorm, positions in text_to_pos.items():
+            if gnorm.startswith(rnorm) or rnorm.startswith(gnorm):
+                for p in positions:
+                    if p not in hits:
+                        hits.append(p)
+        return sorted(hits)
+
+    def _eval_payload(eval_type: str) -> dict:
+        for e in eval_results:
+            ep = getattr(e, "payload", None)
+            if isinstance(ep, dict) and ep.get("eval_type") == eval_type:
+                return ep
+        return {}
+
+    # --- regulatory_verb: verb_not_classified:<verb>|decision[<i>]:<t> -
+    rv = _eval_payload(REGULATORY_VERB_EVAL_TYPE)
+    decisions = payload.get("decisions")
+    decisions = decisions if isinstance(decisions, list) else []
+    for rc in rv.get("reason_codes", []) or []:
+        if not isinstance(rc, str) or not rc.startswith(
+            VERB_NOT_CLASSIFIED_PREFIX
+        ):
+            continue  # warns / unclassified notes never block — skip
+        rest = rc[len(VERB_NOT_CLASSIFIED_PREFIX):]
+        verb, sep, loc = rest.partition("|decision[")
+        if not sep:
+            # Global form (e.g. __decisions_not_a_list__) — unattributed.
+            regverb[0].append(verb)
+            continue
+        idx_str, _, reported = loc.partition("]:")
+        full_text = reported
+        if idx_str.isdigit():
+            di = int(idx_str)
+            if 0 <= di < len(decisions):
+                full_text = _item_primary_text(decisions[di]) or reported
+        positions = _positions_for_text(full_text)
+        for p in positions or [0]:
+            regverb[p].append(verb)
+
+    # --- within_source: extraction_not_in_source:<key>:<text60> --------
+    ws = _eval_payload(WITHIN_SOURCE_EVAL_TYPE)
+    for rc in ws.get("reason_codes", []) or []:
+        if not isinstance(rc, str) or not rc.startswith(
+            EXTRACTION_NOT_IN_SOURCE
+        ):
+            continue
+        parts = rc.split(":", 2)
+        key = parts[1] if len(parts) > 1 else "?"
+        text = parts[2] if len(parts) > 2 else ""
+        positions = _positions_for_text(text)
+        label = f"{key}:{text}"
+        for p in positions or [0]:
+            within[p].append(label)
+
+    # --- strict_schema: schema_violation:... [at path=[...]] ----------
+    ss = _eval_payload(STRICT_SCHEMA_EVAL_TYPE)
+    for rc in ss.get("reason_codes", []) or []:
+        if not isinstance(rc, str):
+            continue
+        path = _parse_schema_path(rc)
+        # Trim the leading "schema_violation:" so the message is the
+        # operator-facing part (jsonschema text carries the offending
+        # enum value verbatim, e.g. "'foo' is not one of [...]").
+        msg = rc.split(":", 1)[1] if ":" in rc else rc
+        positions: list[int] = []
+        if path and isinstance(path[0], str):
+            akey = path[0]
+            arr = payload.get(akey)
+            if (
+                len(path) >= 2
+                and isinstance(path[1], int)
+                and isinstance(arr, list)
+                and 0 <= path[1] < len(arr)
+            ):
+                item = arr[path[1]]
+                if akey == "grounding" and isinstance(item, dict):
+                    st = item.get("source_turns")
+                    st = st if isinstance(st, list) else []
+                    positions = sorted(
+                        {
+                            turn_to_pos[t]
+                            for t in st
+                            if isinstance(t, str) and t in turn_to_pos
+                        }
+                    )
+                elif isinstance(item, dict) and isinstance(
+                    item.get("source_turns"), list
+                ):
+                    positions = sorted(
+                        {
+                            turn_to_pos[t]
+                            for t in item["source_turns"]
+                            if isinstance(t, str) and t in turn_to_pos
+                        }
+                    )
+                else:
+                    positions = _positions_for_text(
+                        _item_primary_text(item)
+                    )
+        for p in positions or [0]:
+            schema[p].append(msg)
+
+    def _fmt(values: list[str]) -> str:
+        return json.dumps(values, ensure_ascii=False)
+
+    lines = [
+        header,
+        f"chunks_total={total} grounding_entries={len(grounding)}",
+    ]
+    for p in range(1, total + 1):
+        lines.append(
+            f"CHUNK {p}/{total} [turn_id={pos_turn[p - 1]}]: "
+            f"decisions={dec_count[p]} action_items={act_count[p]}"
+        )
+        lines.append(f"  regulatory_verb_issues: {_fmt(regverb[p])}")
+        lines.append(f"  within_source_issues: {_fmt(within[p])}")
+        lines.append(f"  schema_issues: {_fmt(schema[p])}")
+    if dec_count[0] or act_count[0] or regverb[0] or within[0] or schema[0]:
+        lines.append(
+            "UNATTRIBUTED (no resolvable grounding -> chunk): "
+            f"decisions={dec_count[0]} action_items={act_count[0]}"
+        )
+        lines.append(f"  regulatory_verb_issues: {_fmt(regverb[0])}")
+        lines.append(f"  within_source_issues: {_fmt(within[0])}")
+        lines.append(f"  schema_issues: {_fmt(schema[0])}")
+    return "\n".join(lines)
+
+
 def _make_extract(
     *,
     client: LLMClient,
@@ -440,6 +736,7 @@ def run_meeting_minutes_llm_workflow(
     lake_root: str | Path | None = None,
     env=None,
     max_chunks: int | None = None,
+    debug_chunks: bool = False,
 ) -> WorkflowResult:
     """Produce a promoted ``meeting_minutes`` artifact via a live model.
 
@@ -470,6 +767,15 @@ def run_meeting_minutes_llm_workflow(
     rather than producing a blocked artifact. An injected client IS the
     configured transport, so the env check is skipped for it (keeps the
     test suite hermetic and key-free).
+
+    ``debug_chunks`` (default ``False``) is a DEBUG-ONLY observability
+    knob. When ``True`` a per-chunk decomposition of the run's evals is
+    printed to stdout BEFORE the control decision aggregates them, so an
+    operator can see WHICH chunk produced each blocking decision /
+    action / verb / schema item. It is strictly observe-only: it does
+    not touch the payload, the content_hash, the eval_results or the
+    decision, so a run with ``debug_chunks=False`` is byte-identical to
+    one before this knob existed (additivity / rollback).
     """
     if client is None:
         preflight_llm_config(enabled=True, env=env)
@@ -522,12 +828,30 @@ def run_meeting_minutes_llm_workflow(
         )
         extra_evals.append(run_grounding_coverage_eval)
 
+    debug_hook = None
+    if debug_chunks:
+        # Closure captures the post-truncation chunk list actually fed
+        # to the model so the report's chunk set matches the run's.
+        report_chunks = chunks if grounded else None
+
+        def debug_hook(target: Artifact, eval_results: list) -> None:
+            print(
+                build_chunk_debug_report(
+                    payload=target.payload,
+                    chunks=report_chunks,
+                    eval_results=eval_results,
+                ),
+                file=sys.stdout,
+                flush=True,
+            )
+
     run = run_governed_loop(
         input_text=input_text,
         artifact_type="meeting_minutes",
         extract=extract,
         chunks=chunks if grounded else None,
         extra_evals=extra_evals,
+        debug_hook=debug_hook,
     )
     return WorkflowResult(
         context_bundle=run.context_bundle,
@@ -539,4 +863,8 @@ def run_meeting_minutes_llm_workflow(
     )
 
 
-__all__ = ["run_meeting_minutes_llm_workflow", "PRODUCED_BY"]
+__all__ = [
+    "run_meeting_minutes_llm_workflow",
+    "build_chunk_debug_report",
+    "PRODUCED_BY",
+]
