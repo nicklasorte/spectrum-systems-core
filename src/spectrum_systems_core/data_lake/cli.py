@@ -21,9 +21,10 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from ..config import LLMConfigError, llm_extraction_enabled
 from .eval_history import build_eval_records, write_eval_history
@@ -439,6 +440,8 @@ def process_meeting_llm(
     from ..workflows import WorkflowDispatchError, run_meeting_minutes_dispatch
     from ..workflows.llm_eval_history import (
         build_eval_records as build_llm_eval_records,
+    )
+    from ..workflows.llm_eval_history import (
         write_eval_history as write_llm_eval_history,
     )
 

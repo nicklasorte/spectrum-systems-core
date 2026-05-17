@@ -4,8 +4,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from spectrum_systems_core.health.eval_integrity import (
     audit_pair_coverage,
     check_upstream_health,
@@ -15,7 +13,6 @@ from spectrum_systems_core.health.eval_integrity import (
     pair_audit_finding,
     upstream_health_annotation,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

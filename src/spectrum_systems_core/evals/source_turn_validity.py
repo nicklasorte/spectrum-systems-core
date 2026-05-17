@@ -32,11 +32,10 @@ Key rules:
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from ..artifacts import Artifact, new_artifact
-
 
 # Reason codes
 SOURCE_RECORD_INVALID = "source_record_invalid"

@@ -6,7 +6,6 @@ CHECK-RT5-004: harness markdown is never read as pipeline input.
 """
 from __future__ import annotations
 
-import io
 import json
 import re
 import tempfile
@@ -18,12 +17,10 @@ from spectrum_systems_core import cli
 from spectrum_systems_core.harness import (
     EntropyAuditor,
     FailurePatternIndex,
-    OverrideStore,
     RunHistoryStore,
 )
 
 from ._fixtures import make_failure, write_synthesis_run
-
 
 HARNESS_SRC = Path(cli.__file__).parent / "harness"
 INGESTION_SRC = Path(cli.__file__).parent / "ingestion"

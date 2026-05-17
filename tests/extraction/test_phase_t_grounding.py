@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import unittest
-from typing import Any, Dict, List
+from typing import Any
 
 from spectrum_systems_core.extraction._prompt_blocks import (
     OMIT_INSTRUCTION_BLOCK,
@@ -33,7 +33,7 @@ class OmitBlockPresenceTests(unittest.TestCase):
 class PerItemGroundingFieldsTests(unittest.TestCase):
     """Every item must surface ``grounding_verified`` and ``grounding_overlap_score``."""
 
-    def _chunks(self) -> Dict[str, Dict[str, Any]]:
+    def _chunks(self) -> dict[str, dict[str, Any]]:
         return {
             "c-1": {"chunk_id": "c-1", "text": "FCC approved band plan A-2 for 12.7 GHz."},
             "c-2": {"chunk_id": "c-2", "text": "The committee considered the band plan."},

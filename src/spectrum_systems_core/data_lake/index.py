@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from .paths import artifact_index_path, is_run_metadata_filename
 from .serialize import canonical_json

@@ -15,13 +15,10 @@ one place, drift is structurally impossible.
 """
 from __future__ import annotations
 
-from typing import Tuple
-
-
 # Whole-word verbs that license classifying a chunk as a *decision*.
 # Order is preserved so the few-shot prompt section is stable across
 # runs (the prompt builder iterates this list and renders it verbatim).
-REGULATORY_VERBS: Tuple[str, ...] = (
+REGULATORY_VERBS: tuple[str, ...] = (
     "approved",
     "rejected",
     "deferred",
@@ -48,7 +45,7 @@ REGULATORY_VERBS: Tuple[str, ...] = (
 # the model to attach exactly one of these values to every decision via
 # the optional ``decision_outcome`` field. The binding validator can
 # downstream consult this enum to detect outcome/verb mismatch.
-DECISION_OUTCOME_TYPES: Tuple[str, ...] = (
+DECISION_OUTCOME_TYPES: tuple[str, ...] = (
     "approval",
     "rejection",
     "deferral",
@@ -61,7 +58,7 @@ DECISION_OUTCOME_TYPES: Tuple[str, ...] = (
 # Claim types — identical to the existing claim_extractor enum but
 # hosted here so the prompt builder and the schema can both import from
 # a single source.
-CLAIM_TYPES: Tuple[str, ...] = (
+CLAIM_TYPES: tuple[str, ...] = (
     "technical",
     "procedural",
     "regulatory",
@@ -86,7 +83,7 @@ OUTCOME_TO_VERBS: dict = {
 # (e.g. "7 GHz", "6525 MHz") AND extracted_text contains one of these
 # markers. Updating this list is a policy change and requires a PR --
 # same governance as REGULATORY_VERBS.
-OVERGENERALIZATION_MARKERS: Tuple[str, ...] = (
+OVERGENERALIZATION_MARKERS: tuple[str, ...] = (
     "all spectrum",
     "all bands",
     "all frequencies",

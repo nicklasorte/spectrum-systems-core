@@ -5,8 +5,8 @@ import json
 import uuid
 
 from spectrum_systems_core.ai.grounding_eval import (
-    AIGroundingEval,
     MAX_QUERY_COST_USD,
+    AIGroundingEval,
 )
 
 from ._fixtures import setup_phase_h_repo

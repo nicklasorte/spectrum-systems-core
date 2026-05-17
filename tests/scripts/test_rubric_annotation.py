@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -19,7 +19,6 @@ import annotate_rubric  # noqa: E402
 # only knows about src/spectrum_systems_core/schemas/.
 import jsonschema
 
-
 GT_SCHEMA_PATH = (
     Path(__file__).resolve().parents[2]
     / "contracts" / "schemas" / "ingestion"
@@ -27,11 +26,11 @@ GT_SCHEMA_PATH = (
 )
 
 
-def _gt_schema() -> Dict[str, Any]:
+def _gt_schema() -> dict[str, Any]:
     return json.loads(GT_SCHEMA_PATH.read_text(encoding="utf-8"))
 
 
-def _base_pair(pair_id: str) -> Dict[str, Any]:
+def _base_pair(pair_id: str) -> dict[str, Any]:
     return {
         "pair_id": pair_id,
         "source_artifact_id": "src-001",
@@ -396,9 +395,10 @@ def test_matches_source_unit_both_arms() -> None:
 
 
 def test_judge_calibration_reads_verb_discrimination(tmp_path: Path) -> None:
-    from spectrum_systems_core.evals.judge import run_judge, RUBRIC_CHECKS
-    from spectrum_systems_core.evals.judge_calibration import calibrate
     import os
+
+    from spectrum_systems_core.evals.judge import RUBRIC_CHECKS, run_judge
+    from spectrum_systems_core.evals.judge_calibration import calibrate
     os.environ["JUDGE_ENABLED"] = "true"
     try:
         result = run_judge(

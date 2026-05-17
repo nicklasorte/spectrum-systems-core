@@ -10,7 +10,6 @@ Phase M3.0. Verifies:
 from __future__ import annotations
 
 import json
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -18,7 +17,6 @@ import jsonschema
 
 from spectrum_systems_core.extraction.chunk_classifier import ChunkClassifier
 from spectrum_systems_core.extraction.extraction_merger import ExtractionMerger
-
 
 SCHEMA_PATH = (
     Path(__file__).resolve().parents[2]

@@ -12,12 +12,11 @@ so build-time tooling that always invokes the gate gets a stable
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
 import pathlib
+from dataclasses import dataclass, field
+from typing import Any
 
 from ..config.feature_flag import PHASE_V_FLAG_NAME, FeatureFlag
-
 
 _NON_VERIFIED_STATUSES = (
     "unsupported",
@@ -34,9 +33,9 @@ class GateDecision:
     passed: bool
     reason: str
     stage: str = ""
-    details: Dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "passed": bool(self.passed),
             "reason": self.reason,
@@ -52,9 +51,9 @@ class VerificationGate:
 
     def check_phase_v_verification(
         self,
-        meeting_extraction: Dict[str, Any],
-        verification_result: Optional[Dict[str, Any]],
-        data_lake_path: Union[str, pathlib.Path],
+        meeting_extraction: dict[str, Any],
+        verification_result: dict[str, Any] | None,
+        data_lake_path: str | pathlib.Path,
     ) -> GateDecision:
         if not FeatureFlag(data_lake_path).is_enabled(self.FLAG_NAME):
             return GateDecision(
@@ -104,7 +103,7 @@ class VerificationGate:
             )
 
         # Stage 2: every verification entry must be ``verified``.
-        non_verified: List[Dict[str, Any]] = [
+        non_verified: list[dict[str, Any]] = [
             v for v in (verification_result.get("item_verifications") or [])
             if isinstance(v, dict)
             and v.get("verification_status") != "verified"
@@ -139,7 +138,7 @@ class VerificationGate:
         return GateDecision(passed=True, reason="all_items_verified")
 
 
-def _collect_item_ids(meeting_extraction: Dict[str, Any]) -> set:
+def _collect_item_ids(meeting_extraction: dict[str, Any]) -> set:
     from .post_hoc_verifier import _coerce_item_id
     ids: set = set()
     for key in ("decisions", "claims", "action_items"):

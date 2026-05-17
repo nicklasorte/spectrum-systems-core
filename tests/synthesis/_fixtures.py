@@ -6,7 +6,7 @@ import hashlib
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 def _now_iso() -> str:
@@ -25,12 +25,12 @@ def write_promoted_story(
     *,
     family: str = "books",
     source_id: str = "src-A",
-    story_id: Optional[str] = None,
+    story_id: str | None = None,
     summary: str = "A grounded story about adjacent channel interference.",
     theme: str = "adjacent channel interference modelling",
     tier_guess: str = "tier_1",
     status: str = "promoted",
-    created_at: Optional[str] = None,
+    created_at: str | None = None,
 ) -> str:
     sid = story_id or str(uuid.uuid4())
     target = repo_root / "processed" / family / source_id / "stories" / "promoted"
@@ -82,7 +82,7 @@ def write_evidenced_claim(
     *,
     family: str = "working_papers",
     source_id: str = "paper-A",
-    claim_id: Optional[str] = None,
+    claim_id: str | None = None,
     claim_text: str = "Adjacent channel interference impacts allocations.",
     materiality: str = "high",
     status: str = "evidenced",
@@ -121,10 +121,10 @@ def write_promoted_theme(
     *,
     family: str = "books",
     source_id: str = "src-A",
-    theme_id: Optional[str] = None,
+    theme_id: str | None = None,
     theme_name: str = "adjacent channel interference",
     description: str = "Recurring theme across sources of adjacent channel.",
-    source_story_ids: Optional[List[str]] = None,
+    source_story_ids: list[str] | None = None,
 ) -> str:
     tid = theme_id or str(uuid.uuid4())
     target = repo_root / "processed" / family / source_id / "knowledge" / "promoted"
@@ -154,13 +154,13 @@ def write_promoted_theme(
 
 def make_bundle(
     *,
-    run_id: Optional[str] = None,
+    run_id: str | None = None,
     audience: str = "technical",
     purpose: str = "report",
-    items: Optional[List[Dict[str, Any]]] = None,
-    bundle_hash: Optional[str] = None,
-    bundle_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    items: list[dict[str, Any]] | None = None,
+    bundle_hash: str | None = None,
+    bundle_id: str | None = None,
+) -> dict[str, Any]:
     rid = run_id or str(uuid.uuid4())
     bid = bundle_id or str(uuid.uuid4())
     items = items or []
@@ -190,13 +190,13 @@ def make_bundle(
 
 def make_bundle_item(
     *,
-    artifact_id: Optional[str] = None,
+    artifact_id: str | None = None,
     artifact_type: str = "story_candidate",
     source_id: str = "src-A",
     excerpt: str = "Sample excerpt text long enough to satisfy minLength.",
     token_estimate: int = 50,
     promoted_status: str = "promoted",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "item_id": str(uuid.uuid4()),
         "artifact_id": artifact_id or str(uuid.uuid4()),
@@ -209,8 +209,8 @@ def make_bundle_item(
     }
 
 
-def read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     with path.open("r", encoding="utf-8") as fh:

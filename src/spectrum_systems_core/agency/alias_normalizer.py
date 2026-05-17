@@ -11,9 +11,8 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Dict, List
 
-KNOWN_AGENCY_ALIASES: Dict[str, List[str]] = {
+KNOWN_AGENCY_ALIASES: dict[str, list[str]] = {
     "fcc": ["federal communications commission", "f.c.c."],
     "ntia": ["national telecommunications and information administration"],
     "dod": [
@@ -44,12 +43,12 @@ def _slugify(name: str) -> str:
     return cleaned[:64]
 
 
-def _scan_profiles(repo_root: Path) -> List[Dict[str, object]]:
+def _scan_profiles(repo_root: Path) -> list[dict[str, object]]:
     """Read every agency/<slug>/profile.json on disk."""
     base = repo_root / "agency"
     if not base.is_dir():
         return []
-    out: List[Dict[str, object]] = []
+    out: list[dict[str, object]] = []
     for child in sorted(base.iterdir()):
         if not child.is_dir():
             continue

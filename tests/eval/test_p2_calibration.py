@@ -31,7 +31,6 @@ from spectrum_systems_core.extraction._prompt_blocks import (
 from spectrum_systems_core.extraction.extraction_merger import ExtractionMerger
 from spectrum_systems_core.validation import validate_artifact
 
-
 # -- B: prompt_version -------------------------------------------------
 
 

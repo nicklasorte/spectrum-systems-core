@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import jsonschema
 
@@ -17,20 +17,19 @@ from ._paths import synthesis_run_dir, synthesis_schema_path
 from .cost_recorder import MAX_SYNTHESIS_COST_USD, total_cost_usd
 from .data_lake_check import DataLakeChecker
 
-
 MIN_CONTENT_FOR_CITATION = 50
 
 
 class GroundingEval:
     """Verify inline citations against the data lake / local promoted set."""
 
-    def __init__(self, checker: Optional[DataLakeChecker] = None):
+    def __init__(self, checker: DataLakeChecker | None = None):
         self._checker_override = checker
 
-    def run(self, draft: Dict[str, Any], repo_root: str) -> Dict[str, Any]:
-        eval_results: List[Dict[str, Any]] = []
-        reason_codes: List[str] = []
-        warn_codes: List[str] = []
+    def run(self, draft: dict[str, Any], repo_root: str) -> dict[str, Any]:
+        eval_results: list[dict[str, Any]] = []
+        reason_codes: list[str] = []
+        warn_codes: list[str] = []
 
         # EVAL-GEN-001: schema_conformance
         try:
@@ -72,11 +71,11 @@ class GroundingEval:
 
         # EVAL-GEN-002: citation_exists  (FINDING-F-004)
         checker = self._checker_override or DataLakeChecker(repo_root)
-        fabricated_overall: List[str] = []
-        missing_citation_sections: List[str] = []
+        fabricated_overall: list[str] = []
+        missing_citation_sections: list[str] = []
         for section in draft.get("sections", []):
             citations = list(section.get("inline_citations") or [])
-            unverified: List[str] = []
+            unverified: list[str] = []
             for cid in citations:
                 if not checker.exists(cid):
                     unverified.append(cid)

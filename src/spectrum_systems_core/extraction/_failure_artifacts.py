@@ -23,7 +23,7 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from ._chunk_counters import (
     BLOCK_REASON_EMPTY_RESPONSE,
@@ -33,15 +33,14 @@ from ._chunk_counters import (
     ChunkCounters,
 )
 
-
 # Phase O.2: in-memory chunk lookup table set per extraction run. The
 # typed_extraction_runner installs the map once it has loaded
 # chunks.jsonl, so every emit_* call site can attach chunk text /
 # speaker / index for free without re-reading from disk.
-_ACTIVE_CHUNK_LOOKUP: Dict[str, Dict[str, Any]] = {}
+_ACTIVE_CHUNK_LOOKUP: dict[str, dict[str, Any]] = {}
 
 
-def install_chunk_lookup(chunks: Optional[Any]) -> None:
+def install_chunk_lookup(chunks: Any | None) -> None:
     """Register the in-memory chunk list used by ``_maybe_emit_blocked_chunk``.
 
     Pass ``None`` or an empty list to clear the table. The lookup is
@@ -53,7 +52,7 @@ def install_chunk_lookup(chunks: Optional[Any]) -> None:
     if not chunks:
         _ACTIVE_CHUNK_LOOKUP = {}
         return
-    table: Dict[str, Dict[str, Any]] = {}
+    table: dict[str, dict[str, Any]] = {}
     for c in chunks:
         if not isinstance(c, dict):
             continue
@@ -67,7 +66,7 @@ def clear_chunk_lookup() -> None:
     install_chunk_lookup(None)
 
 
-_BLOCK_REASON_BY_TYPE: Dict[str, str] = {
+_BLOCK_REASON_BY_TYPE: dict[str, str] = {
     "api_rate_limit_exhausted": "rate_limit_exhausted",
     "extraction_empty_response": "empty_response",
     "story_extraction_empty_response": "empty_response",
@@ -128,8 +127,8 @@ def _build(
     source_id: str,
     component: str,
     detail: str,
-    extraction_run_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    extraction_run_id: str | None = None,
+) -> dict[str, Any]:
     return {
         "artifact_type": artifact_type,
         "schema_version": FAILURE_ARTIFACT_SCHEMA_VERSION,
@@ -150,10 +149,10 @@ def emit_rate_limit_exhausted(
     source_id: str,
     component: str,
     detail: str = "",
-    extraction_run_id: Optional[str] = None,
-    sdl_root: Optional[Path] = None,
+    extraction_run_id: str | None = None,
+    sdl_root: Path | None = None,
     n: int = 1,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Emit ``api_rate_limit_exhausted`` and bump ``rate_limit_exhausted``."""
     counters.record_block(BLOCK_REASON_RATE_LIMIT, n=n)
     return _emit(
@@ -174,10 +173,10 @@ def emit_empty_response(
     source_id: str,
     component: str,
     detail: str = "",
-    extraction_run_id: Optional[str] = None,
-    sdl_root: Optional[Path] = None,
+    extraction_run_id: str | None = None,
+    sdl_root: Path | None = None,
     n: int = 1,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Emit ``extraction_empty_response`` and bump ``empty_response``."""
     counters.record_block(BLOCK_REASON_EMPTY_RESPONSE, n=n)
     return _emit(
@@ -198,10 +197,10 @@ def emit_json_parse_failed(
     source_id: str,
     component: str,
     detail: str = "",
-    extraction_run_id: Optional[str] = None,
-    sdl_root: Optional[Path] = None,
+    extraction_run_id: str | None = None,
+    sdl_root: Path | None = None,
     n: int = 1,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Emit ``typed_extraction_llm_json_parse_failed`` and bump ``parse_error``."""
     counters.record_block(BLOCK_REASON_PARSE_ERROR, n=n)
     return _emit(
@@ -222,10 +221,10 @@ def emit_empty_result(
     source_id: str,
     component: str,
     detail: str = "",
-    extraction_run_id: Optional[str] = None,
-    sdl_root: Optional[Path] = None,
+    extraction_run_id: str | None = None,
+    sdl_root: Path | None = None,
     n: int = 1,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Emit ``typed_extraction_empty_result`` and bump ``other``."""
     counters.record_block(BLOCK_REASON_OTHER, n=n)
     return _emit(
@@ -246,10 +245,10 @@ def emit_story_empty_response(
     source_id: str,
     component: str = "story_extractor",
     detail: str = "",
-    extraction_run_id: Optional[str] = None,
-    sdl_root: Optional[Path] = None,
+    extraction_run_id: str | None = None,
+    sdl_root: Path | None = None,
     n: int = 1,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Emit ``story_extraction_empty_response`` and bump ``empty_response``.
 
     Mirrors ``emit_empty_response`` but with the story-path artifact_type so
@@ -276,10 +275,10 @@ def emit_story_parse_failed(
     source_id: str,
     component: str = "story_extractor",
     detail: str = "",
-    extraction_run_id: Optional[str] = None,
-    sdl_root: Optional[Path] = None,
+    extraction_run_id: str | None = None,
+    sdl_root: Path | None = None,
     n: int = 1,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Emit ``story_extraction_parse_failed`` and bump ``parse_error``."""
     counters.record_block(BLOCK_REASON_PARSE_ERROR, n=n)
     return _emit(
@@ -302,17 +301,17 @@ def _truncate_chunk_text(text: str) -> str:
 
 
 def _build_blocked_chunk(
-    failure_artifact: Dict[str, Any],
+    failure_artifact: dict[str, Any],
     block_reason: str,
-    chunk: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
+    chunk: dict[str, Any] | None,
+) -> dict[str, Any]:
     """Build the unified blocked_chunk envelope.
 
     When ``chunk`` is ``None`` the envelope still emits with
     ``chunk_text = "[chunk not found]"`` and ``chunk_char_count = null``
     so the artifact is self-describing.
     """
-    artifact: Dict[str, Any] = {
+    artifact: dict[str, Any] = {
         "artifact_type": ARTIFACT_BLOCKED_CHUNK,
         "schema_version": BLOCKED_CHUNK_SCHEMA_VERSION,
         "failure_id": failure_artifact.get("failure_id", "") or str(uuid.uuid4()),
@@ -352,9 +351,9 @@ def _build_blocked_chunk(
 
 
 def _maybe_emit_blocked_chunk(
-    failure_artifact: Dict[str, Any],
-    sdl_root: Optional[Path],
-) -> Optional[Dict[str, Any]]:
+    failure_artifact: dict[str, Any],
+    sdl_root: Path | None,
+) -> dict[str, Any] | None:
     """Write a blocked_chunk envelope mirroring the failure artifact.
 
     Looks up the chunk via the in-memory table installed by
@@ -401,9 +400,9 @@ def _emit(
     source_id: str,
     component: str,
     detail: str,
-    extraction_run_id: Optional[str],
-    sdl_root: Optional[Path],
-) -> Dict[str, Any]:
+    extraction_run_id: str | None,
+    sdl_root: Path | None,
+) -> dict[str, Any]:
     """Build, validate, and (optionally) persist a failure artifact.
 
     Returns the artifact dict regardless of whether persistence
@@ -431,7 +430,7 @@ def _emit(
     # an import cycle (validation -> schemas -> back to extraction
     # constants is fine, but we still defer).
     try:
-        from ..validation import validate_artifact, ArtifactValidationError
+        from ..validation import ArtifactValidationError, validate_artifact
 
         try:
             validate_artifact(artifact, artifact_type)

@@ -7,7 +7,7 @@ in-process api_caller mock so no network calls happen.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -27,7 +27,6 @@ from spectrum_systems_core.evals.judge_calibration import (
     calibration_to_artifact,
 )
 from spectrum_systems_core.validation import validate_artifact
-
 
 # ----- env-gating -------------------------------------------------
 
@@ -192,7 +191,7 @@ def test_different_family_no_warning(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_stability_check_emits_unstable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(JUDGE_ENABLED_ENV, "true")
     monkeypatch.setenv(JUDGE_STABILITY_CHECK_ENABLED_ENV, "true")
-    responses: List[str] = [
+    responses: list[str] = [
         _all_true_response(),
         _one_false_response("speaker_attribution_correct"),
     ]
@@ -275,7 +274,7 @@ def test_calibration_low_below_warn_threshold(monkeypatch: pytest.MonkeyPatch) -
         source_texts_by_chunk={},
         api_caller=lambda p: _all_true_response(),
     )
-    pairs: List[Dict[str, Any]] = []
+    pairs: list[dict[str, Any]] = []
     for i in range(10):
         pairs.append({
             "pair_id": f"p{i}",

@@ -315,11 +315,11 @@ class SpuriousAddCountHelperTests(unittest.TestCase):
         real summary via the verifier's own _compute_summary, not a
         hand-rolled dict, so a rename of the summary keys breaks this
         test instead of silently zeroing the metric."""
-        from spectrum_systems_core.verification.post_hoc_verifier import (
-            PostHocVerifier,
-        )
         from spectrum_systems_core.extraction.typed_extraction_runner import (
             _spurious_add_count_from_verification,
+        )
+        from spectrum_systems_core.verification.post_hoc_verifier import (
+            PostHocVerifier,
         )
         verifier = PostHocVerifier.__new__(PostHocVerifier)
         item_verifications = [

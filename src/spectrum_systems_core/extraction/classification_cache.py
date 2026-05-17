@@ -39,7 +39,7 @@ import hashlib
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 _LOG = logging.getLogger(__name__)
 
@@ -59,13 +59,13 @@ class ClassificationCache:
             self._cache_dir.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             _LOG.warning("classification_cache_mkdir_failed: %s", exc)
-        self._memory: Dict[str, Dict[str, Any]] = {}
+        self._memory: dict[str, dict[str, Any]] = {}
 
     # ------------------------------------------------------------------
     # Hashing
     # ------------------------------------------------------------------
     @classmethod
-    def _chunk_hash(cls, chunk: Any) -> Optional[str]:
+    def _chunk_hash(cls, chunk: Any) -> str | None:
         """Return a stable hex hash for a chunk, or None if unhashable."""
         if not isinstance(chunk, dict):
             return None
@@ -79,7 +79,7 @@ class ClassificationCache:
     # ------------------------------------------------------------------
     # In-memory operations
     # ------------------------------------------------------------------
-    def get(self, chunk: Any) -> Optional[str]:
+    def get(self, chunk: Any) -> str | None:
         """Return the cached classification for ``chunk`` or None on miss.
 
         Never raises.
@@ -144,7 +144,7 @@ class ClassificationCache:
             return
 
         cutoff = _now() - datetime.timedelta(days=self.CACHE_TTL_DAYS)
-        kept: Dict[str, Dict[str, Any]] = {}
+        kept: dict[str, dict[str, Any]] = {}
         for key, entry in data.items():
             if not isinstance(key, str) or not isinstance(entry, dict):
                 continue

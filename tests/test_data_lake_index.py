@@ -7,10 +7,7 @@ from spectrum_systems_core.data_lake import (
     read_artifact_index,
     run_transcript_pipeline,
     write_artifact_index,
-    write_promoted_artifact,
 )
-from spectrum_systems_core.artifacts import new_artifact
-
 
 M1_TRANSCRIPT = (
     "Q3 planning sync\n"

@@ -38,12 +38,9 @@ from ..evals import (
     run_extraction_precision_eval,
     run_required_evals,
     run_source_turn_validity_eval,
-    SOURCE_TURN_VALIDITY_EVAL_TYPE,
 )
 from ..promotion import promote_if_allowed
 from .chunker import (
-    NO_SPEAKER_DETECTED_FINDING,
-    NO_SPEAKER_STRUCTURE_FINDING,
     chunk_transcript,
     chunker_health,
 )

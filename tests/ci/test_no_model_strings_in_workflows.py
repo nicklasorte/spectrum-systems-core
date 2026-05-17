@@ -10,7 +10,6 @@ that looks like a model identifier.
 """
 import pathlib
 import re
-import pytest
 
 SCAN_ROOT = pathlib.Path(__file__).resolve().parents[2]
 WORKFLOWS_ROOT = SCAN_ROOT / ".github" / "workflows"

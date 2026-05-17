@@ -11,14 +11,13 @@ import json
 import os
 import re
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 import yaml
 
 from . import _frontmatter
 from ._paths import schema_digest, schema_path
-
 
 _SCHEMA_NAME = "review_artifact"
 _COMPONENT_VERSION = "1.0.0"
@@ -35,7 +34,7 @@ def _now_iso() -> str:
     return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _failure(reason: str) -> Dict[str, Any]:
+def _failure(reason: str) -> dict[str, Any]:
     return {"status": "failure", "artifact": None, "reason": reason}
 
 
@@ -55,10 +54,10 @@ def _extract_field(block: str, label: str) -> str:
     return _strip_html_comments(match.group(1))
 
 
-def _split_finding_blocks(body: str) -> List[str]:
+def _split_finding_blocks(body: str) -> list[str]:
     """Return text blocks for each `### Finding` section."""
     headers = list(_FINDING_HEADER_RE.finditer(body))
-    blocks: List[str] = []
+    blocks: list[str] = []
     for idx, header in enumerate(headers):
         start = header.start()
         end = headers[idx + 1].start() if idx + 1 < len(headers) else len(body)
@@ -74,7 +73,7 @@ def _extract_reviewer_notes(body: str) -> str:
     next_section = _NEXT_SECTION_RE.search(body, pos=start)
     end = next_section.start() if next_section else len(body)
     section = body[start:end]
-    cleaned_lines: List[str] = []
+    cleaned_lines: list[str] = []
     for line in section.splitlines():
         stripped = line.strip()
         if not stripped:
@@ -89,7 +88,7 @@ def _extract_reviewer_notes(body: str) -> str:
     return "\n".join(cleaned_lines).strip()
 
 
-def _parse_finding(block: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+def _parse_finding(block: str) -> tuple[dict[str, Any] | None, str | None]:
     severity = _extract_field(block, "severity")
     section = _extract_field(block, "section")
     description = _extract_field(block, "description")
@@ -116,13 +115,13 @@ def _parse_finding(block: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]
     )
 
 
-def _load_schema() -> Dict[str, Any]:
+def _load_schema() -> dict[str, Any]:
     return json.loads(schema_path(_SCHEMA_NAME).read_text(encoding="utf-8"))
 
 
 class ObsidianReviewParser:
 
-    def parse(self, review_note_path: str, vault_root: str) -> Dict[str, Any]:
+    def parse(self, review_note_path: str, vault_root: str) -> dict[str, Any]:
         # Step 1: read + decode
         try:
             with open(review_note_path, "rb") as fh:
@@ -177,7 +176,7 @@ class ObsidianReviewParser:
             return _failure("invalid_pipeline_run_id")
 
         # Step 4: parse findings
-        findings: List[Dict[str, Any]] = []
+        findings: list[dict[str, Any]] = []
         for block in _split_finding_blocks(body):
             finding, err = _parse_finding(block)
             if err:
@@ -213,7 +212,7 @@ class ObsidianReviewParser:
 
         reviewer_notes = _extract_reviewer_notes(body)
 
-        artifact: Dict[str, Any] = {
+        artifact: dict[str, Any] = {
             "artifact_kind": "review_artifact",
             "artifact_type": "review_artifact",
             "artifact_id": str(uuid.uuid4()),

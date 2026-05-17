@@ -14,7 +14,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 _LOG = logging.getLogger(__name__)
 
@@ -234,9 +234,9 @@ def _now_iso() -> str:
 class HealthFinding:
     finding_code: str
     severity: Severity
-    context: Dict[str, Any] = field(default_factory=dict)
+    context: dict[str, Any] = field(default_factory=dict)
     remediation: str = ""
-    pipeline_run_id: Optional[str] = None
+    pipeline_run_id: str | None = None
     finding_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     detected_at: str = field(default_factory=_now_iso)
 
@@ -261,7 +261,7 @@ class HealthFinding:
         return self.severity == "halt"
 
 
-def finding_to_artifact(finding: HealthFinding) -> Dict[str, Any]:
+def finding_to_artifact(finding: HealthFinding) -> dict[str, Any]:
     """Serialise a :class:`HealthFinding` into the envelope dict.
 
     The shape matches ``schemas/health_finding.schema.json`` exactly so

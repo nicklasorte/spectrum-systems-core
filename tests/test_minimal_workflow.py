@@ -1,6 +1,5 @@
 from spectrum_systems_core.workflows import run_meeting_minutes_workflow
 
-
 SAMPLE_TRANSCRIPT = """Quarterly planning sync
 Team reviewed Q3 priorities and budget.
 DECISION: Approve Q3 spectrum-core roadmap.

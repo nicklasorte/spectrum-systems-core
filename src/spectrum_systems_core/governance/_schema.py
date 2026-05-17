@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import json
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 
 import jsonschema
-
 
 _REPO_ROOT_MARKER = "pyproject.toml"
 
@@ -19,7 +18,7 @@ def _find_contracts_dir(start: Path) -> Path:
     raise FileNotFoundError("contracts/ directory not found from " + str(start))
 
 
-@lru_cache(maxsize=None)
+@cache
 def _load_schema_cached(schema_path_str: str) -> dict:
     return json.loads(Path(schema_path_str).read_text(encoding="utf-8"))
 

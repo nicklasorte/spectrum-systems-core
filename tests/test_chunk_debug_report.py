@@ -15,8 +15,8 @@ pure logic, plus a fail-closed / additivity property):
 """
 from __future__ import annotations
 
-import io
 import contextlib
+import io
 import json
 from types import SimpleNamespace
 

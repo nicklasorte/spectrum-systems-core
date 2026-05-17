@@ -31,7 +31,7 @@ import os
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 
@@ -42,9 +42,10 @@ from .heuristic_agenda_detector import (
     agenda_items_to_artifact_list,
     assign_agenda_item_ids,
     detect_agenda_items,
+)
+from .heuristic_agenda_detector import (
     detection_enabled as _agenda_detection_enabled,
 )
-
 
 _LOG = logging.getLogger(__name__)
 
@@ -138,7 +139,7 @@ def _resolve_max_chunk_chars() -> int:
     return value
 
 
-def _agenda_boundary(prev_chunk: Dict[str, Any], next_chunk: Dict[str, Any]) -> bool:
+def _agenda_boundary(prev_chunk: dict[str, Any], next_chunk: dict[str, Any]) -> bool:
     """Return True when ``prev`` and ``next`` cross an agenda boundary.
 
     Phase R.0 rule 4: never merge across a strong agenda-boundary signal.
@@ -157,9 +158,9 @@ def _agenda_boundary(prev_chunk: Dict[str, Any], next_chunk: Dict[str, Any]) -> 
 
 
 def merge_short_chunks(
-    chunks: List[Dict[str, Any]],
-    min_chars: Optional[int] = None,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
+    chunks: list[dict[str, Any]],
+    min_chars: int | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """Merge any chunk below ``min_chars`` into its nearest neighbour.
 
     Phase R.0. Rules:
@@ -190,8 +191,8 @@ def merge_short_chunks(
         return out, []
 
     # Work on shallow copies so the caller's chunk dicts are not mutated.
-    working: List[Dict[str, Any]] = [dict(c) for c in chunks]
-    pairs: List[Dict[str, str]] = []
+    working: list[dict[str, Any]] = [dict(c) for c in chunks]
+    pairs: list[dict[str, str]] = []
 
     # Iterate to a fixed point. Each pass merges every short chunk into
     # whichever neighbour the rules dictate; the resulting chunk may
@@ -204,7 +205,7 @@ def merge_short_chunks(
         # Choose merge partner.
         prev_idx = idx - 1
         next_idx = idx + 1
-        partner: Optional[int] = None
+        partner: int | None = None
         absorbed = working[idx]
         if prev_idx >= 0 and not _agenda_boundary(working[prev_idx], absorbed):
             partner = prev_idx
@@ -251,9 +252,9 @@ def merge_short_chunks(
 
 
 def split_oversized_chunks(
-    chunks: List[Dict[str, Any]],
-    max_chars: Optional[int] = None,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    chunks: list[dict[str, Any]],
+    max_chars: int | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Phase T.4. Split any chunk exceeding ``max_chars`` at the nearest
     speaker-turn boundary below the limit. Returns
     ``(output_chunks, split_log)``.
@@ -284,8 +285,8 @@ def split_oversized_chunks(
             c["chunk_index"] = i
         return out, []
 
-    working: List[Dict[str, Any]] = []
-    split_log: List[Dict[str, Any]] = []
+    working: list[dict[str, Any]] = []
+    split_log: list[dict[str, Any]] = []
 
     for chunk in chunks:
         text = chunk.get("text") or ""
@@ -297,7 +298,7 @@ def split_oversized_chunks(
             continue
 
         pieces = _split_text_at_boundary(text, max_chars)
-        produced_ids: List[str] = []
+        produced_ids: list[str] = []
         mid_turn_seen = False
         for piece_text, was_mid_turn in pieces:
             produced = dict(chunk)
@@ -335,7 +336,7 @@ def split_oversized_chunks(
 def _split_text_at_boundary(
     text: str,
     max_chars: int,
-) -> List[Tuple[str, bool]]:
+) -> list[tuple[str, bool]]:
     """Split ``text`` into pieces each at or below ``max_chars`` chars.
 
     Boundary preference: the rightmost ``"\\n"`` strictly inside
@@ -346,7 +347,7 @@ def _split_text_at_boundary(
     """
     if not text:
         return [("", False)]
-    pieces: List[Tuple[str, bool]] = []
+    pieces: list[tuple[str, bool]] = []
     remaining = text
     while len(remaining) > max_chars:
         # Search for the rightmost newline in [1, max_chars].
@@ -365,9 +366,9 @@ def _split_text_at_boundary(
 
 
 def _first_short(
-    chunks: List[Dict[str, Any]],
+    chunks: list[dict[str, Any]],
     min_chars: int,
-) -> Optional[int]:
+) -> int | None:
     """Return the index of the first below-threshold chunk, or None."""
     for i, c in enumerate(chunks):
         # char_count is the schema field; fall back to len(text) when
@@ -382,8 +383,8 @@ def _first_short(
 
 
 def _merge_pair(
-    prev: Dict[str, Any], nxt: Dict[str, Any],
-) -> Dict[str, Any]:
+    prev: dict[str, Any], nxt: dict[str, Any],
+) -> dict[str, Any]:
     """Combine two adjacent chunks into a single chunk.
 
     The survivor inherits ``prev``'s identity (chunk_id, speaker,
@@ -398,7 +399,7 @@ def _merge_pair(
     # Union of unit_ids preserving order from prev then nxt; dedupe to
     # honour the "set" semantics in rule 6.
     seen: set = set()
-    union_units: List[str] = []
+    union_units: list[str] = []
     for uid in list(prev.get("unit_ids") or []) + list(nxt.get("unit_ids") or []):
         if uid in seen:
             continue
@@ -407,7 +408,7 @@ def _merge_pair(
 
     # Page numbers: union, sorted ascending (matches existing chunker).
     pages_seen: set = set()
-    page_union: List[int] = []
+    page_union: list[int] = []
     for p in list(prev.get("page_numbers") or []) + list(nxt.get("page_numbers") or []):
         if isinstance(p, int) and p not in pages_seen:
             pages_seen.add(p)
@@ -453,7 +454,7 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _failure(reason: str) -> Dict[str, Any]:
+def _failure(reason: str) -> dict[str, Any]:
     return {"status": "failure", "chunks": [], "reason": reason}
 
 
@@ -463,7 +464,7 @@ def _is_transcript(source_family: str, source_id: str) -> bool:
     return "transcript" in source_id.lower()
 
 
-def _reconstruct_source_text(units: List[Dict[str, Any]]) -> str:
+def _reconstruct_source_text(units: list[dict[str, Any]]) -> str:
     """Rebuild the raw transcript text from ordered ``text_units``.
 
     Phase X2.1 wiring: the heuristic agenda detector inspects raw
@@ -473,7 +474,7 @@ def _reconstruct_source_text(units: List[Dict[str, Any]]) -> str:
     newline-joined concatenation is a faithful reconstruction for
     detector purposes. Returns ``""`` when no units carry text.
     """
-    parts: List[str] = []
+    parts: list[str] = []
     for u in units:
         text = u.get("text", "")
         if not isinstance(text, str):
@@ -486,7 +487,7 @@ def _update_source_record_chunking_strategy(
     source_record_path: Path,
     chunking_strategy: str,
     *,
-    agenda_items: Optional[List[Dict[str, Any]]] = None,
+    agenda_items: list[dict[str, Any]] | None = None,
 ) -> None:
     """Write ``payload.chunking_strategy`` (and optionally
     ``payload.agenda_items``) into the on-disk source_record.
@@ -537,7 +538,7 @@ def _update_source_record_chunking_strategy(
 class Chunker:
     """Split text_units.jsonl into chunks for story extraction."""
 
-    def chunk(self, source_id: str, repo_root: str) -> Dict[str, Any]:
+    def chunk(self, source_id: str, repo_root: str) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, source_family = find_processed_dir(
             repo_root_path, source_id
@@ -548,7 +549,7 @@ class Chunker:
         if not units_path.is_file():
             return _failure("text_units_not_found")
 
-        units: List[Dict[str, Any]] = []
+        units: list[dict[str, Any]] = []
         try:
             with units_path.open("r", encoding="utf-8") as fh:
                 for line in fh:
@@ -584,7 +585,7 @@ class Chunker:
             return _failure(f"chunk_schema_violation: schema unreadable: {exc}")
         validator = jsonschema.Draft202012Validator(chunk_schema)
 
-        chunks: Optional[List[Dict[str, Any]]] = None
+        chunks: list[dict[str, Any]] | None = None
         chunking_strategy: str = "character_count_fallback"
         if _is_transcript(source_family, source_id):
             chunks, fallback_reason = self._chunk_by_speaker_turns(
@@ -608,7 +609,7 @@ class Chunker:
         # so it is the only place the merge can have an effect (RT1
         # finding: doing the merge after write is a no-op).
         original_chunk_count = len(chunks)
-        merge_pairs: List[Dict[str, str]] = []
+        merge_pairs: list[dict[str, str]] = []
         min_chunk_chars_used = _resolve_min_chunk_chars()
         if _merge_enabled():
             chunks, merge_pairs = merge_short_chunks(
@@ -655,7 +656,7 @@ class Chunker:
         # agenda_item_id absent on the chunk (the field is optional in
         # the chunk schema). When enabled, agenda_item_id is ALWAYS a
         # non-empty string (per CLAUDE.md amendment).
-        agenda_artifact_list: Optional[List[Dict[str, Any]]] = None
+        agenda_artifact_list: list[dict[str, Any]] | None = None
         if _agenda_detection_enabled():
             source_text = _reconstruct_source_text(units)
             agenda_items = detect_agenda_items(source_text)
@@ -746,9 +747,9 @@ class Chunker:
         source_id: str,
         original_chunk_count: int,
         merged_chunk_count: int,
-        merge_pairs: List[Dict[str, str]],
+        merge_pairs: list[dict[str, str]],
         min_chunk_chars: int,
-    ) -> Optional[Path]:
+    ) -> Path | None:
         """Persist the chunk_merge_summary artifact alongside chunks.jsonl.
 
         Writing it next to ``chunks.jsonl`` keeps the merge bookkeeping
@@ -809,9 +810,9 @@ class Chunker:
         source_id: str,
         original_chunk_count: int,
         split_chunk_count: int,
-        split_log: List[Dict[str, Any]],
+        split_log: list[dict[str, Any]],
         max_chunk_chars: int,
-    ) -> Optional[Path]:
+    ) -> Path | None:
         """Persist the chunk_split_summary artifact.
 
         Co-located with chunks.jsonl and chunk_merge_summary.json so an
@@ -863,11 +864,11 @@ class Chunker:
 
     def _chunk_by_character_count(
         self,
-        units: List[Dict[str, Any]],
+        units: list[dict[str, Any]],
         source_id: str,
         source_family: str,
-    ) -> List[Dict[str, Any]]:
-        chunks: List[Dict[str, Any]] = []
+    ) -> list[dict[str, Any]]:
+        chunks: list[dict[str, Any]] = []
         chunk_index = 0
         i = 0
         n = len(units)
@@ -878,7 +879,7 @@ class Chunker:
             # unit of chunk N is the last unit of chunk N-1.
             overlap_unit_id = chunk_units[0]["unit_id"] if i > 0 else None
             chunk_text = "\n".join(u["text"] for u in chunk_units)
-            page_numbers: List[int] = []
+            page_numbers: list[int] = []
             seen_pages: set[int] = set()
             for u in chunk_units:
                 locator = u.get("locator", {}) or {}
@@ -911,10 +912,10 @@ class Chunker:
 
     def _chunk_by_speaker_turns(
         self,
-        units: List[Dict[str, Any]],
+        units: list[dict[str, Any]],
         source_id: str,
         source_family: str,
-    ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
+    ) -> tuple[list[dict[str, Any]] | None, str | None]:
         """Return ``(chunks, None)`` on success, or ``(None, reason)`` for
         the two fallback cases:
 
@@ -928,7 +929,7 @@ class Chunker:
         """
         # Flatten units into a sequence of (unit_id, line_text, page_number)
         # preserving order. A unit's text may contain multiple lines.
-        records: List[Tuple[str, str, Optional[int]]] = []
+        records: list[tuple[str, str, int | None]] = []
         for u in units:
             text = u.get("text", "")
             locator = u.get("locator", {}) or {}
@@ -941,14 +942,14 @@ class Chunker:
         if not any(_SPEAKER_LABEL_RE.match(line) for _, line, _ in records):
             return None, "no_speaker_turns_detected"
 
-        chunks: List[Dict[str, Any]] = []
+        chunks: list[dict[str, Any]] = []
         chunk_index = 0
 
-        cur_speaker: Optional[str] = None
-        cur_timestamp: Optional[str] = None
-        cur_unit_ids: List[str] = []
-        cur_lines: List[str] = []
-        cur_pages: List[int] = []
+        cur_speaker: str | None = None
+        cur_timestamp: str | None = None
+        cur_unit_ids: list[str] = []
+        cur_lines: list[str] = []
+        cur_pages: list[int] = []
         seen_pages: set[int] = set()
 
         def emit_turn() -> int:

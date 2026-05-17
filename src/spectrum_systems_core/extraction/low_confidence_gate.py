@@ -24,7 +24,7 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from ..health.finding import HealthFinding
 
@@ -85,7 +85,7 @@ def _iso(dt: datetime.datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S+00:00")
 
 
-def _is_low_conf(item: Dict[str, Any], threshold: float) -> bool:
+def _is_low_conf(item: dict[str, Any], threshold: float) -> bool:
     conf = item.get("confidence")
     if not isinstance(conf, (int, float)):
         return False
@@ -95,14 +95,14 @@ def _is_low_conf(item: Dict[str, Any], threshold: float) -> bool:
 def build_correction_candidate(
     *,
     source_id: str,
-    low_conf_decisions: List[Dict[str, Any]],
-    low_conf_claims: List[Dict[str, Any]],
+    low_conf_decisions: list[dict[str, Any]],
+    low_conf_claims: list[dict[str, Any]],
     rate: float,
     threshold: float,
     rate_limit: float,
-    extraction_run_id: Optional[str] = None,
-    ttl_days: Optional[int] = None,
-) -> Dict[str, Any]:
+    extraction_run_id: str | None = None,
+    ttl_days: int | None = None,
+) -> dict[str, Any]:
     """Construct a correction_candidate artifact dict."""
     ttl = ttl_days if isinstance(ttl_days, int) and ttl_days > 0 else _resolve_ttl_days()
     created = _now()
@@ -125,10 +125,10 @@ def build_correction_candidate(
 
 
 def write_correction_candidate(
-    artifact: Dict[str, Any],
+    artifact: dict[str, Any],
     *,
     sdl_root: Path,
-) -> Optional[Path]:
+) -> Path | None:
     """Persist the correction_candidate under
     ``<sdl_root>/correction_candidates/<source_id>/<uuid>.json``.
 
@@ -173,15 +173,15 @@ def write_correction_candidate(
 
 
 def check_low_confidence(
-    extraction_artifact: Dict[str, Any],
+    extraction_artifact: dict[str, Any],
     *,
     source_id: str,
-    sdl_root: Optional[Path] = None,
-    extraction_run_id: Optional[str] = None,
-    pipeline_run_id: Optional[str] = None,
-    threshold: Optional[float] = None,
-    rate_limit: Optional[float] = None,
-) -> Tuple[List[HealthFinding], Optional[Path]]:
+    sdl_root: Path | None = None,
+    extraction_run_id: str | None = None,
+    pipeline_run_id: str | None = None,
+    threshold: float | None = None,
+    rate_limit: float | None = None,
+) -> tuple[list[HealthFinding], Path | None]:
     """Apply the gate to a meeting_extraction artifact.
 
     Returns ``(findings, correction_candidate_path_or_none)``. Findings
@@ -251,7 +251,7 @@ def check_low_confidence(
         )
     ]
 
-    candidate_path: Optional[Path] = None
+    candidate_path: Path | None = None
     if sdl_root is not None:
         artifact = build_correction_candidate(
             source_id=source_id,
@@ -270,7 +270,7 @@ def check_low_confidence(
 def count_pending_candidates(
     sdl_root: Path,
     *,
-    source_id: Optional[str] = None,
+    source_id: str | None = None,
 ) -> int:
     """Count correction_candidate artifacts with status=pending that have not expired."""
     root = Path(sdl_root) / "correction_candidates"
@@ -306,10 +306,10 @@ def count_pending_candidates(
 def scan_expired_candidates(
     sdl_root: Path,
     *,
-    pipeline_run_id: Optional[str] = None,
-) -> List[HealthFinding]:
+    pipeline_run_id: str | None = None,
+) -> list[HealthFinding]:
     """Walk correction_candidates/ and return one info finding per expired pending artifact."""
-    findings: List[HealthFinding] = []
+    findings: list[HealthFinding] = []
     root = Path(sdl_root) / "correction_candidates"
     if not root.is_dir():
         return findings

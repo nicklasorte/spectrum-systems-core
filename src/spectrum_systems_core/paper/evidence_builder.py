@@ -12,7 +12,7 @@ import hashlib
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 
@@ -54,8 +54,8 @@ def _execution_fingerprint(claim_id: str, unit_id: str) -> str:
     return "sha256:" + _sha256_hex(seed.encode("utf-8"))
 
 
-def _significant_words(text: str) -> List[str]:
-    out: List[str] = []
+def _significant_words(text: str) -> list[str]:
+    out: list[str] = []
     for raw in text.split():
         w = "".join(ch for ch in raw.lower() if ch.isalnum())
         if len(w) > 4 and w not in _STOPWORDS:
@@ -63,8 +63,8 @@ def _significant_words(text: str) -> List[str]:
     return out
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     with path.open("r", encoding="utf-8") as fh:
@@ -87,10 +87,10 @@ class EvidenceBuilder:
 
     def build_for_claim(
         self,
-        claim: Dict[str, Any],
+        claim: dict[str, Any],
         source_id: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, _ = find_processed_dir(repo_root_path, source_id)
         if processed_dir is None:
@@ -130,7 +130,7 @@ class EvidenceBuilder:
                 "reason": "",
             }
 
-        scored: List[tuple] = []
+        scored: list[tuple] = []
         for unit in text_units:
             text = unit.get("text", "") or ""
             if not isinstance(text, str):
@@ -157,7 +157,7 @@ class EvidenceBuilder:
             }
         validator = jsonschema.Draft202012Validator(schema)
 
-        evidence_records: List[Dict[str, Any]] = []
+        evidence_records: list[dict[str, Any]] = []
         for unit in top_units:
             excerpt = (unit.get("text") or "")[:EXCERPT_PREFIX_LEN]
             if len(excerpt) < 10:
@@ -218,7 +218,7 @@ class EvidenceBuilder:
 
     def build_for_source(
         self, source_id: str, repo_root: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, _ = find_processed_dir(repo_root_path, source_id)
         if processed_dir is None:
@@ -238,7 +238,7 @@ class EvidenceBuilder:
             }
 
         claims = _read_jsonl(claims_path)
-        all_evidence: List[Dict[str, Any]] = []
+        all_evidence: list[dict[str, Any]] = []
 
         for claim in claims:
             if claim.get("status") != "candidate":

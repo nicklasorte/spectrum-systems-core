@@ -14,7 +14,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Optional, Set
+from typing import Any
 
 
 def _load_external_data_lake_class():
@@ -42,7 +42,7 @@ class DataLakeChecker:
 
     def __init__(self, repo_root: str):
         self.repo_root = Path(repo_root).resolve()
-        self._known: Optional[Set[str]] = None
+        self._known: set[str] | None = None
         self._external: Any = None
         self._tried_external = False
 
@@ -60,10 +60,10 @@ class DataLakeChecker:
         if hasattr(instance, "exists"):
             self._external = instance
 
-    def _scan_local(self) -> Set[str]:
+    def _scan_local(self) -> set[str]:
         from ..ingestion.source_loader import SOURCE_FAMILIES
 
-        known: Set[str] = set()
+        known: set[str] = set()
 
         # SDL_ROOT direct .json files (Phase A local fallback).
         sdl_root_env = os.environ.get("SDL_ROOT")

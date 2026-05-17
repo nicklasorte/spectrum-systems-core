@@ -12,10 +12,8 @@ from spectrum_systems_core.governance import (
 )
 
 from ._fixtures import (
-    iso_days_ago,
     make_run_entry,
     stage_full_repo_copy,
-    stage_minimal_repo,
     write_run_history,
 )
 

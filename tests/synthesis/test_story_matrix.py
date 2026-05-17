@@ -1,7 +1,6 @@
 """Tests for StoryMatrix (audience-weighted deterministic story selection)."""
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 import uuid

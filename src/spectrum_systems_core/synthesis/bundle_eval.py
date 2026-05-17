@@ -8,7 +8,7 @@ audience enum check (EVAL-CTX-005) implements FINDING-F-003.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 
@@ -19,16 +19,15 @@ from .bundle_assembler import (
     VALID_AUDIENCES,
 )
 
-
 MIN_BUNDLE_ITEMS = 3
 
 
 class BundleEval:
     """Run schema + integrity + budget checks on a context_bundle dict."""
 
-    def run(self, bundle: Dict[str, Any]) -> Dict[str, Any]:
-        eval_results: List[Dict[str, Any]] = []
-        reason_codes: List[str] = []
+    def run(self, bundle: dict[str, Any]) -> dict[str, Any]:
+        eval_results: list[dict[str, Any]] = []
+        reason_codes: list[str] = []
 
         # EVAL-CTX-001: schema_conformance
         try:

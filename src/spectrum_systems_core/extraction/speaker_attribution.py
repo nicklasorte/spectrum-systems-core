@@ -20,14 +20,15 @@ not a fatal error.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from collections.abc import Iterable
+from typing import Any
 
 from ..health.finding import HealthFinding
 
 _LOG = logging.getLogger(__name__)
 
 
-def _chunk_speakers(chunk: Dict[str, Any]) -> List[str]:
+def _chunk_speakers(chunk: dict[str, Any]) -> list[str]:
     """Resolve all speaker labels associated with a chunk.
 
     A speaker-turn chunk has a single ``speaker`` field. A merged chunk
@@ -50,9 +51,9 @@ def _chunk_speakers(chunk: Dict[str, Any]) -> List[str]:
 
 
 def resolve_speaker(
-    item: Dict[str, Any],
-    chunks_by_id: Dict[str, Dict[str, Any]],
-) -> Tuple[Optional[str], bool, bool]:
+    item: dict[str, Any],
+    chunks_by_id: dict[str, dict[str, Any]],
+) -> tuple[str | None, bool, bool]:
     """Return ``(speaker_or_none, speaker_ambiguous, chunk_missing)``.
 
     Rules:
@@ -79,11 +80,11 @@ def resolve_speaker(
 
 
 def attribute_speakers(
-    items: Iterable[Dict[str, Any]],
-    chunks_by_id: Dict[str, Dict[str, Any]],
+    items: Iterable[dict[str, Any]],
+    chunks_by_id: dict[str, dict[str, Any]],
     *,
-    pipeline_run_id: Optional[str] = None,
-) -> Tuple[List[Dict[str, Any]], List[HealthFinding]]:
+    pipeline_run_id: str | None = None,
+) -> tuple[list[dict[str, Any]], list[HealthFinding]]:
     """Annotate every item with speaker / speaker_ambiguous in place.
 
     Returns ``(annotated_items, findings)``. Items are shallow-copied
@@ -91,8 +92,8 @@ def attribute_speakers(
     once per missing-chunk item so the run summary can report the
     aggregate rate.
     """
-    annotated: List[Dict[str, Any]] = []
-    findings: List[HealthFinding] = []
+    annotated: list[dict[str, Any]] = []
+    findings: list[HealthFinding] = []
     for item in items or []:
         if not isinstance(item, dict):
             continue

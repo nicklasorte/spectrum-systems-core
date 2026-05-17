@@ -14,13 +14,11 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import jsonschema
 
 from ._paths import ai_costs_dir, load_schema
-
 
 MAX_QUERY_TOKENS = 4000
 MAX_QUERY_COST_USD = 0.10
@@ -29,7 +27,7 @@ UUID_PATTERN = re.compile(
 )
 
 
-def _read_query_cost(repo_root: str, query_id: str) -> Optional[float]:
+def _read_query_cost(repo_root: str, query_id: str) -> float | None:
     cost_path = ai_costs_dir(repo_root) / f"{query_id}.json"
     if not cost_path.is_file():
         return None
@@ -48,14 +46,14 @@ class AIGroundingEval:
 
     def run(
         self,
-        ai_output: Dict[str, Any],
+        ai_output: dict[str, Any],
         query_id: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
-        eval_results: List[Dict[str, Any]] = []
-        reason_codes: List[str] = []
-        warn_codes: List[str] = []
-        failure_types: List[str] = []
+    ) -> dict[str, Any]:
+        eval_results: list[dict[str, Any]] = []
+        reason_codes: list[str] = []
+        warn_codes: list[str] = []
+        failure_types: list[str] = []
 
         # EVAL-AI-001: schema_conformance
         try:

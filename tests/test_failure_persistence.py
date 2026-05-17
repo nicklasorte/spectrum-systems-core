@@ -22,12 +22,12 @@ from spectrum_systems_core.data_lake import (
     ALLOWED_REVIEW_STATUSES,
     EVAL_CANDIDATES_SUBDIR,
     EVAL_CASE_CANDIDATE_TYPE,
-    FAILURES_SUBDIR,
     FAILURE_RECORD_TYPE,
+    FAILURES_SUBDIR,
     LEARNING_ARTIFACT_TYPES,
-    REVIEWED_EVALS_SUBDIR,
     REVIEWED_EVAL_CASE_FIELDS,
     REVIEWED_EVAL_CASE_TYPE,
+    REVIEWED_EVALS_SUBDIR,
     WriterError,
     candidate_eval_case_from_failure,
     eval_candidates_dir,
@@ -40,7 +40,6 @@ from spectrum_systems_core.data_lake import (
     run_transcript_pipeline,
     write_learning_artifact,
 )
-
 
 FIXTURES = Path(__file__).parent / "fixtures" / "golden_meetings"
 

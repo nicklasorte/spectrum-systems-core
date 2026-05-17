@@ -3,8 +3,6 @@ import json
 import shutil
 from pathlib import Path
 
-import pytest
-
 from spectrum_systems_core.data_lake import (
     build_grounded_payload,
     load_meeting,
@@ -15,7 +13,6 @@ from spectrum_systems_core.data_lake.paths import (
     is_run_metadata_filename,
     manifest_filename,
 )
-
 
 FIXTURES = Path(__file__).parent / "fixtures" / "golden_meetings"
 

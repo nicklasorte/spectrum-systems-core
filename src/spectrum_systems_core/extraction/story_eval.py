@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import jsonschema
 
@@ -16,11 +16,10 @@ from ..ingestion._paths import schema_path
 from ..ingestion.grounding import GroundingHelper
 from ._paths import find_processed_dir
 
-
 _VALID_TIERS = {"tier_1", "tier_2", "tier_3"}
 
 
-def _set_block(candidate: Dict[str, Any], reason: str) -> None:
+def _set_block(candidate: dict[str, Any], reason: str) -> None:
     candidate["status"] = "blocked"
     existing = candidate.get("block_reason")
     if isinstance(existing, str) and existing:
@@ -32,7 +31,7 @@ def _set_block(candidate: Dict[str, Any], reason: str) -> None:
 class StoryEval:
     """Run schema, grounding, tier, length, unit-id evals on candidates."""
 
-    EVAL_IDS: Tuple[str, ...] = (
+    EVAL_IDS: tuple[str, ...] = (
         "EVAL-STORY-001",
         "EVAL-STORY-002",
         "EVAL-STORY-003",
@@ -45,10 +44,10 @@ class StoryEval:
 
     def run(
         self,
-        candidates: List[Dict[str, Any]],
+        candidates: list[dict[str, Any]],
         source_id: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, _ = find_processed_dir(repo_root_path, source_id)
 

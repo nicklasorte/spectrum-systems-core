@@ -10,7 +10,6 @@ from spectrum_systems_core.data_lake import (
     write_artifact_index,
 )
 
-
 M1_TRANSCRIPT = (
     "Q3 planning sync\n"
     "DECISION: Approve Q3 plan.\n"

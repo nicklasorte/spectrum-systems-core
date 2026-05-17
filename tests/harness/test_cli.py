@@ -6,7 +6,6 @@ import json
 import os
 import tempfile
 import unittest
-import uuid
 from pathlib import Path
 from unittest import mock
 

@@ -19,7 +19,6 @@ from spectrum_systems_core.data_lake import (
     run_history_path,
 )
 
-
 FIXTURES = Path(__file__).parent / "fixtures" / "golden_meetings"
 
 

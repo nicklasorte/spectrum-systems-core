@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import pathlib
 import uuid
-from typing import Any, Dict, List
 
 import pytest
 
@@ -70,7 +69,7 @@ def _chunks(turn_ids=("t-1",)):
 def test_pipeline_skips_verification_when_flag_disabled(tmp_path):
     _enable_flag(tmp_path, enabled=False)
     extraction = _meeting_extraction([_claim()])
-    caller_calls: List[str] = []
+    caller_calls: list[str] = []
     sdl_root = tmp_path / "sdl"
     result = apply_phase_v_if_enabled(
         extraction, _chunks(),

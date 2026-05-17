@@ -40,8 +40,9 @@ import io
 import json
 import os
 import sys
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any
 
 from ..data_lake.paths import processed_corpus_dir, processed_meeting_dir
 from ..data_lake.serialize import artifact_to_dict, canonical_json

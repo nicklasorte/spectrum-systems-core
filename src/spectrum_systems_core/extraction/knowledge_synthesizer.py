@@ -13,15 +13,15 @@ import json
 import logging
 import uuid
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any
 
 import jsonschema
 
 from ..ingestion._paths import schema_path
 from ..ingestion.source_loader import SOURCE_FAMILIES
 from ._paths import find_processed_dir
-
 
 _LOG = logging.getLogger(__name__)
 
@@ -33,11 +33,11 @@ def _now_iso() -> str:
     )
 
 
-def _read_promoted_stories(processed_dir: Path) -> List[Dict[str, Any]]:
+def _read_promoted_stories(processed_dir: Path) -> list[dict[str, Any]]:
     promoted_dir = processed_dir / "stories" / "promoted"
     if not promoted_dir.is_dir():
         return []
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for path in sorted(promoted_dir.glob("*.json")):
         try:
             out.append(json.loads(path.read_text(encoding="utf-8")))
@@ -46,7 +46,7 @@ def _read_promoted_stories(processed_dir: Path) -> List[Dict[str, Any]]:
     return out
 
 
-def _supporting_excerpt(story: Dict[str, Any]) -> Dict[str, Any] | None:
+def _supporting_excerpt(story: dict[str, Any]) -> dict[str, Any] | None:
     excerpt = story.get("source_excerpt") or ""
     grounded = story.get("grounded_unit_ids") or story.get("unit_ids") or []
     unit_id = grounded[0] if grounded else None
@@ -59,7 +59,7 @@ def _supporting_excerpt(story: Dict[str, Any]) -> Dict[str, Any] | None:
     }
 
 
-def _write_jsonl(path: Path, records: Iterable[Dict[str, Any]]) -> None:
+def _write_jsonl(path: Path, records: Iterable[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
         for record in records:
@@ -68,10 +68,10 @@ def _write_jsonl(path: Path, records: Iterable[Dict[str, Any]]) -> None:
             )
 
 
-def _load_jsonl(path: Path) -> List[Dict[str, Any]]:
+def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     try:
         with path.open("r", encoding="utf-8") as fh:
             for line in fh:
@@ -89,14 +89,14 @@ class KnowledgeSynthesizer:
 
     def synthesize_concepts(
         self, source_id: str, repo_root: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, _ = find_processed_dir(repo_root_path, source_id)
         if processed_dir is None:
             return {"status": "failure", "concept_count": 0, "reason": "source_not_found"}
         stories = _read_promoted_stories(processed_dir)
 
-        groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for story in stories:
             theme = (story.get("possible_theme") or "").strip()
             if not theme or len(theme) < 3:
@@ -111,11 +111,11 @@ class KnowledgeSynthesizer:
             schema = None
         validator = jsonschema.Draft202012Validator(schema) if schema else None
 
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for theme, group in groups.items():
             if len(group) < 2:
                 continue
-            supporting: List[Dict[str, Any]] = []
+            supporting: list[dict[str, Any]] = []
             for story in group:
                 excerpt = _supporting_excerpt(story)
                 if excerpt is not None:
@@ -158,7 +158,7 @@ class KnowledgeSynthesizer:
 
     def synthesize_themes(
         self, source_id: str, repo_root: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, _ = find_processed_dir(repo_root_path, source_id)
         if processed_dir is None:
@@ -166,7 +166,7 @@ class KnowledgeSynthesizer:
         stories = _read_promoted_stories(processed_dir)
 
         # Tier-1 stories grouped by distinct possible_theme.
-        groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for story in stories:
             if story.get("tier_guess") != "tier_1":
                 continue
@@ -183,9 +183,9 @@ class KnowledgeSynthesizer:
             schema = None
         validator = jsonschema.Draft202012Validator(schema) if schema else None
 
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for theme, group in groups.items():
-            supporting: List[Dict[str, Any]] = []
+            supporting: list[dict[str, Any]] = []
             for story in group:
                 excerpt = _supporting_excerpt(story)
                 if excerpt is not None:
@@ -226,7 +226,7 @@ class KnowledgeSynthesizer:
 
     def synthesize_analogies(
         self, source_id: str, repo_root: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, _ = find_processed_dir(repo_root_path, source_id)
         if processed_dir is None:
@@ -256,7 +256,7 @@ class KnowledgeSynthesizer:
             schema = None
         validator = jsonschema.Draft202012Validator(schema) if schema else None
 
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for other_source_id, other_dir in sources_with_stories:
             if other_source_id == source_id:
                 continue
@@ -317,8 +317,8 @@ class KnowledgeSynthesizer:
 
 def _all_sources_with_promoted_stories(
     repo_root: Path,
-) -> List[Tuple[str, Path]]:
-    out: List[Tuple[str, Path]] = []
+) -> list[tuple[str, Path]]:
+    out: list[tuple[str, Path]] = []
     for family in SOURCE_FAMILIES:
         family_dir = repo_root / "processed" / family
         if not family_dir.is_dir():

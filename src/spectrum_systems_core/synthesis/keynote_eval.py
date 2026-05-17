@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 
-from ._paths import synthesis_run_dir, synthesis_schema_path
-
+from ._paths import synthesis_schema_path
 
 REQUIRED_BEAT_TYPES = {"opener", "call_to_action"}
 MIN_ARC_BEATS = 3
@@ -26,13 +25,13 @@ class KeynoteEval:
 
     def run(
         self,
-        scaffold: Dict[str, Any],
-        bundle: Dict[str, Any],
+        scaffold: dict[str, Any],
+        bundle: dict[str, Any],
         repo_root: str | None = None,
-    ) -> Dict[str, Any]:
-        eval_results: List[Dict[str, Any]] = []
-        reason_codes: List[str] = []
-        warn_codes: List[str] = []
+    ) -> dict[str, Any]:
+        eval_results: list[dict[str, Any]] = []
+        reason_codes: list[str] = []
+        warn_codes: list[str] = []
 
         # EVAL-KEY-001: schema_conformance
         try:
@@ -125,7 +124,7 @@ class KeynoteEval:
             )
 
         # EVAL-KEY-005: claim_ids_in_bundle
-        offenders: List[str] = []
+        offenders: list[str] = []
         for beat in arc:
             for cid in beat.get("claim_ids") or []:
                 if cid not in bundle_artifact_ids:
@@ -162,7 +161,7 @@ class KeynoteEval:
 
         # EVAL-KEY-007: bundle_hash_matches_report  (FINDING-F-005)
         run_id = scaffold.get("run_id") or ""
-        report_paths: List[Path] = []
+        report_paths: list[Path] = []
         if repo_root:
             report_paths.append(
                 Path(repo_root) / "synthesis" / run_id / "report_draft.json"

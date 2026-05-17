@@ -21,7 +21,7 @@ import datetime
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 def _now_iso() -> str:
@@ -31,7 +31,7 @@ def _now_iso() -> str:
     )
 
 
-def _audit_log_path() -> Optional[Path]:
+def _audit_log_path() -> Path | None:
     env = os.environ.get("SDL_AUDIT_LOG", "").strip()
     if env:
         return Path(env)
@@ -54,9 +54,9 @@ def _append_audit(line: str) -> None:
 
 
 def validate_artifact_fields(
-    artifact: Dict[str, Any],
+    artifact: dict[str, Any],
     schema_path: str = "",
-) -> List[str]:
+) -> list[str]:
     """Return deprecation warnings for an artifact.
 
     Rules:
@@ -68,7 +68,7 @@ def validate_artifact_fields(
     Mismatch between the two values (when both present) is also flagged
     so a producer cannot silently introduce a typed/kind drift.
     """
-    warnings: List[str] = []
+    warnings: list[str] = []
     if not isinstance(artifact, dict):
         return warnings
 
@@ -99,7 +99,7 @@ def validate_artifact_fields(
     return warnings
 
 
-def log_warnings(warnings: List[str]) -> None:
+def log_warnings(warnings: list[str]) -> None:
     """Append warnings to the audit log. Never raises."""
     if not warnings:
         return
@@ -110,9 +110,9 @@ def log_warnings(warnings: List[str]) -> None:
 
 
 def validate_and_log(
-    artifact: Dict[str, Any],
+    artifact: dict[str, Any],
     schema_path: str = "",
-) -> List[str]:
+) -> list[str]:
     """Convenience: run the validator, log any warnings, return the list."""
     warnings = validate_artifact_fields(artifact, schema_path)
     if warnings:

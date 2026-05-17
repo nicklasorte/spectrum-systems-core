@@ -31,11 +31,11 @@ import pathlib
 import pytest
 
 from spectrum_systems_core.cli import meeting_minutes_llm
-from spectrum_systems_core.workflows import run_meeting_minutes_llm_workflow
+from spectrum_systems_core.extraction._resilience import strip_markdown_fence
 from spectrum_systems_core.extraction.typed_extraction_runner import (
     _parse_json_response,
 )
-from spectrum_systems_core.extraction._resilience import strip_markdown_fence
+from spectrum_systems_core.workflows import run_meeting_minutes_llm_workflow
 from tests.llm_stub import (
     DEC18_ACTION_ITEMS,
     DEC18_DECISIONS,

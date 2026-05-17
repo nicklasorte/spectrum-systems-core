@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any
 
 
 def utcnow_iso() -> str:
@@ -27,7 +27,7 @@ def parse_iso(value: str | None) -> datetime.datetime | None:
     return dt
 
 
-def read_json(path: Path) -> Dict[str, Any] | None:
+def read_json(path: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     try:
@@ -36,7 +36,7 @@ def read_json(path: Path) -> Dict[str, Any] | None:
         return None
 
 
-def write_json(path: Path, data: Dict[str, Any]) -> None:
+def write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(data, indent=2, sort_keys=True) + "\n",
@@ -44,7 +44,7 @@ def write_json(path: Path, data: Dict[str, Any]) -> None:
     )
 
 
-def append_jsonl(path: Path, record: Dict[str, Any]) -> None:
+def append_jsonl(path: Path, record: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(
@@ -52,10 +52,10 @@ def append_jsonl(path: Path, record: Dict[str, Any]) -> None:
         )
 
 
-def read_jsonl(path: Path) -> List[Dict[str, Any]]:
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     try:
         with path.open("r", encoding="utf-8") as fh:
             for line in fh:
@@ -71,7 +71,7 @@ def read_jsonl(path: Path) -> List[Dict[str, Any]]:
     return out
 
 
-def load_audit_index(repo_root: str | Path) -> Dict[str, Any]:
+def load_audit_index(repo_root: str | Path) -> dict[str, Any]:
     from ._paths import audits_index_path
 
     data = read_json(audits_index_path(repo_root))
@@ -84,12 +84,12 @@ def load_audit_index(repo_root: str | Path) -> Dict[str, Any]:
 
 def find_prior_audit(
     repo_root: str | Path, audit_type: str
-) -> Dict[str, Any] | None:
+) -> dict[str, Any] | None:
     """Return the most recent audit with the given audit_type, or None."""
     from ._paths import audits_dir
 
     index = load_audit_index(repo_root)
-    matching: List[Dict[str, Any]] = [
+    matching: list[dict[str, Any]] = [
         e for e in index.get("audits", []) if e.get("audit_type") == audit_type
     ]
     if not matching:
@@ -103,7 +103,7 @@ def find_prior_audit(
 
 
 def write_audit_record(
-    record: Dict[str, Any], repo_root: str | Path
+    record: dict[str, Any], repo_root: str | Path
 ) -> None:
     """Write the record to audits/<audit_id>.json and append to index.json."""
     from ._paths import audits_dir, audits_index_path, ensure_governance_tree

@@ -2,9 +2,6 @@
 from __future__ import annotations
 
 import json
-import re
-
-import pytest
 
 from spectrum_systems_core.ai.adapter import AIAdapter
 from spectrum_systems_core.ai.prompt_registry import PromptRegistry
@@ -16,7 +13,6 @@ from ._fixtures import (
     seed_promoted_artifacts,
     setup_phase_h_repo,
 )
-
 
 # Each fixture's first expected_citation also seeds a story_id in the bundle
 # so the BundleAssembler/BundleEval pipeline has something concrete to work

@@ -1,21 +1,18 @@
 """Phase P3-A T-1: chunk metadata contract gate tests."""
 from __future__ import annotations
 
-import os
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
 from spectrum_systems_core.extraction.chunk_metadata_gate import (
-    REQUIRED_CHUNK_FIELDS,
     STRICT_ENV_VAR,
-    ChunkMetadataReport,
     format_report_for_log,
     validate_chunk_metadata,
 )
 
 
-def _well_formed_chunk(idx: int = 0) -> Dict[str, Any]:
+def _well_formed_chunk(idx: int = 0) -> dict[str, Any]:
     return {
         "chunk_id": f"chunk-{idx}",
         "speaker": "FCC.Smith",

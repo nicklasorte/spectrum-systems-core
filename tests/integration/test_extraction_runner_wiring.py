@@ -32,7 +32,6 @@ import uuid
 from pathlib import Path
 from unittest import mock
 
-
 SOURCE_ID = "wired-smoke-transcript-2026-05-12"
 SOURCE_ARTIFACT_ID = "44444444-4444-4444-4444-444444444444"
 CHUNK_IDS = [

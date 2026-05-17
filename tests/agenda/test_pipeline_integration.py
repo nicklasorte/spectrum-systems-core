@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import pathlib
 import uuid
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -18,15 +18,11 @@ from spectrum_systems_core.agenda import (
     AgendaReferenceError,
     apply_phase_w_if_enabled,
 )
-from spectrum_systems_core.agenda.pipeline_integration import (
-    write_agenda_artifact,
-)
 from spectrum_systems_core.config import PHASE_W_FLAG_NAME
-from spectrum_systems_core.verification.model_registry import ModelRegistry
 
 
 class _StubRegistry:
-    def get(self, _task_type: str) -> Dict[str, str]:
+    def get(self, _task_type: str) -> dict[str, str]:
         return {"model": "claude-sonnet-4-6", "version": "test"}
 
 
@@ -38,7 +34,7 @@ def _seed_flag(data_lake: pathlib.Path, enabled: bool) -> None:
     )
 
 
-def _chunks(n: int) -> List[Dict[str, Any]]:
+def _chunks(n: int) -> list[dict[str, Any]]:
     return [
         {"chunk_id": f"c-{i:03d}", "chunk_index": i,
          "source_id": "src", "text": f"text {i}"}
@@ -46,8 +42,8 @@ def _chunks(n: int) -> List[Dict[str, Any]]:
     ]
 
 
-def _api(payload: Dict[str, Any]):
-    def caller(_p: str) -> Dict[str, Any]:
+def _api(payload: dict[str, Any]):
+    def caller(_p: str) -> dict[str, Any]:
         return {"text": json.dumps(payload)}
     return caller
 

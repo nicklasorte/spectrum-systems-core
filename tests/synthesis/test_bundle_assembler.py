@@ -7,11 +7,11 @@ import unittest
 import uuid
 from pathlib import Path
 
-from spectrum_systems_core.synthesis.bundle_assembler import (
-    BundleAssembler,
-    MAX_BUNDLE_TOKENS,
-)
 from spectrum_systems_core.synthesis._paths import synthesis_schema_path
+from spectrum_systems_core.synthesis.bundle_assembler import (
+    MAX_BUNDLE_TOKENS,
+    BundleAssembler,
+)
 
 from ._fixtures import (
     write_evidenced_claim,

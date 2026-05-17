@@ -5,8 +5,6 @@ import json
 import os
 from contextlib import contextmanager
 
-import pytest
-
 from spectrum_systems_core import cli as cli_module
 from spectrum_systems_core.ai.adapter import AIAdapter
 from spectrum_systems_core.ai.prompt_registry import PromptRegistry

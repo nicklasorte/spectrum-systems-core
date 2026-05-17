@@ -8,7 +8,6 @@ import uuid
 import jsonschema
 import pytest
 
-
 _SCHEMA_PATH = (
     pathlib.Path(__file__).resolve().parents[2]
     / "contracts"

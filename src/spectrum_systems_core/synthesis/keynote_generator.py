@@ -13,14 +13,14 @@ import hashlib
 import json
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 
 from ._paths import synthesis_run_dir, synthesis_schema_path
 from .cost_recorder import append_cost_record
-
 
 _COMPONENT_NAME = "keynote_generator"
 _COMPONENT_VERSION = "1.0.0"
@@ -84,11 +84,11 @@ def _execution_fingerprint(*parts: str) -> str:
 
 
 def _bundle_summaries(
-    bundle: Dict[str, Any],
-) -> Tuple[str, str, str, set, set]:
-    stories: List[str] = []
-    themes: List[str] = []
-    claims: List[str] = []
+    bundle: dict[str, Any],
+) -> tuple[str, str, str, set, set]:
+    stories: list[str] = []
+    themes: list[str] = []
+    claims: list[str] = []
     story_ids: set = set()
     claim_ids: set = set()
     for item in bundle.get("items", []):
@@ -117,20 +117,18 @@ class KeynoteGenerator:
 
     def __init__(
         self,
-        api_caller: Optional[
-            Callable[[str], Tuple[str, int, int]]
-        ] = None,
+        api_caller: Callable[[str], tuple[str, int, int]] | None = None,
     ):
         self._api_caller = api_caller
 
     def generate(
         self,
         run_id: str,
-        bundle: Dict[str, Any],
+        bundle: dict[str, Any],
         audience: str,
-        story_matrix: Dict[str, Any],
+        story_matrix: dict[str, Any],
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
 
         if self._api_caller is None:
@@ -319,19 +317,19 @@ class KeynoteGenerator:
             "reason": "",
         }
 
-    def _build_default_api_caller(self) -> Callable[[str], Tuple[str, int, int]]:
+    def _build_default_api_caller(self) -> Callable[[str], tuple[str, int, int]]:
         import anthropic
 
         client = anthropic.Anthropic()
 
-        def _call(prompt: str) -> Tuple[str, int, int]:
+        def _call(prompt: str) -> tuple[str, int, int]:
             message = client.messages.create(
                 model=GENERATION_MODEL,
                 max_tokens=MAX_TOKENS,
                 temperature=GENERATION_TEMPERATURE,
                 messages=[{"role": "user", "content": prompt}],
             )
-            parts: List[str] = []
+            parts: list[str] = []
             for block in message.content:
                 text = getattr(block, "text", None)
                 if isinstance(text, str):

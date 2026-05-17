@@ -2,7 +2,6 @@ from spectrum_systems_core.artifacts import new_artifact
 from spectrum_systems_core.evals import run_required_evals
 from spectrum_systems_core.workflows import run_agency_question_summary_workflow
 
-
 SAMPLE_INPUT = """FCC inquiry on band plan
 The agency requested clarification on band sharing.
 AGENCY: FCC

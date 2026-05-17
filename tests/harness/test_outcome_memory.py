@@ -1,19 +1,18 @@
 """Tests for OutcomeMemoryStore (Phase G — FINDING-G-004)."""
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 import uuid
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from spectrum_systems_core.harness import OutcomeMemoryStore
 
 from ._fixtures import read_jsonl
 
 
-def _make_revision_diff(status: str = "success") -> Dict[str, Any]:
+def _make_revision_diff(status: str = "success") -> dict[str, Any]:
     return {
         "diff_id": str(uuid.uuid4()),
         "instruction_id": "i-1",
@@ -22,7 +21,7 @@ def _make_revision_diff(status: str = "success") -> Dict[str, Any]:
     }
 
 
-def _make_instruction() -> Dict[str, Any]:
+def _make_instruction() -> dict[str, Any]:
     return {
         "instruction_id": "i-1",
         "issue_type": "scope_clarity",
@@ -39,7 +38,7 @@ def _make_outcome_record(
     final_outcome: str,
     human_marked: str,
     secondary_check: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "outcome_id": str(uuid.uuid4()),
         "mitigation_id": str(uuid.uuid4()),
@@ -63,7 +62,7 @@ class OutcomeMemoryStoreTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def _records(self) -> list[Dict[str, Any]]:
+    def _records(self) -> list[dict[str, Any]]:
         return read_jsonl(
             self.repo_root / "harness" / "outcomes" / "memory.jsonl"
         )

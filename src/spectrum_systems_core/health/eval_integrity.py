@@ -15,9 +15,10 @@ import hashlib
 import json
 import logging
 import os
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Sequence
+from typing import Any
 
 from .finding import HealthFinding, write_finding
 
@@ -50,7 +51,7 @@ class UpstreamHealth:
     chunks_blocked: int
     block_rate: float
     record_present: bool = True
-    raw_record: Optional[dict[str, Any]] = None
+    raw_record: dict[str, Any] | None = None
 
 
 def _orchestration_dir_candidates(data_lake_path: str | Path) -> list[Path]:
@@ -62,7 +63,7 @@ def _orchestration_dir_candidates(data_lake_path: str | Path) -> list[Path]:
 
 def _load_orchestration(
     pipeline_run_id: str, data_lake_path: str | Path
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     for d in _orchestration_dir_candidates(data_lake_path):
         if not d.is_dir():
             continue
@@ -119,8 +120,8 @@ def evaluate_upstream(
     pipeline_run_id: str,
     data_lake_path: str | Path,
     *,
-    scores_are_zero: Optional[bool] = None,
-) -> tuple[List[HealthFinding], bool]:
+    scores_are_zero: bool | None = None,
+) -> tuple[list[HealthFinding], bool]:
     """Compute upstream findings and whether eval should proceed.
 
     Returns ``(findings, should_run_eval)``.
@@ -287,8 +288,8 @@ def audit_pair_coverage(
 
 
 def pair_audit_finding(
-    audit: PairAudit, *, pipeline_run_id: Optional[str] = None
-) -> Optional[HealthFinding]:
+    audit: PairAudit, *, pipeline_run_id: str | None = None
+) -> HealthFinding | None:
     if audit.pending_review == 0 and audit.missing_from_eval == 0:
         return None
     return HealthFinding(
@@ -328,7 +329,7 @@ def _registry_path(data_lake_path: str | Path) -> Path:
     )
 
 
-def get_registry_hash(data_lake_path: str | Path) -> Optional[str]:
+def get_registry_hash(data_lake_path: str | Path) -> str | None:
     """Return a 16-char prefix of the sha256 of the model registry.
 
     Returns ``None`` if the registry file is not present so callers
@@ -364,11 +365,11 @@ def _diff_model_keys(current: dict[str, Any], baseline: dict[str, Any]) -> list[
 
 def detect_registry_drift(
     data_lake_path: str | Path,
-    baseline_hash: Optional[str],
+    baseline_hash: str | None,
     *,
-    baseline_models: Optional[dict[str, Any]] = None,
-    pipeline_run_id: Optional[str] = None,
-) -> tuple[Optional[str], Optional[HealthFinding]]:
+    baseline_models: dict[str, Any] | None = None,
+    pipeline_run_id: str | None = None,
+) -> tuple[str | None, HealthFinding | None]:
     """Compute current registry hash and a drift finding if it differs.
 
     Returns ``(current_hash, finding_or_None)``. When no baseline is
@@ -428,7 +429,7 @@ def persist_findings(
 def append_github_summary(
     findings: Iterable[HealthFinding],
     *,
-    blocked_message: Optional[str] = None,
+    blocked_message: str | None = None,
 ) -> None:
     """Append the health-check Markdown table to GITHUB_STEP_SUMMARY.
 

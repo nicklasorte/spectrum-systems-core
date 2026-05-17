@@ -17,7 +17,6 @@ import jsonschema
 
 from spectrum_systems_core.extraction.extraction_merger import ExtractionMerger
 
-
 SCHEMA_PATH = (
     Path(__file__).resolve().parents[2]
     / "contracts"

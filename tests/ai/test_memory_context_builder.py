@@ -1,8 +1,6 @@
 """Tests for spectrum_systems_core.ai.memory_context_builder."""
 from __future__ import annotations
 
-import json
-
 from spectrum_systems_core.ai.memory_context_builder import MemoryContextBuilder
 from spectrum_systems_core.ai.prompt_registry import PromptRegistry
 

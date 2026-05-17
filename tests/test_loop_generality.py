@@ -1,12 +1,11 @@
 """All four artifact types share one envelope, one control function, one promotion path."""
 
 from spectrum_systems_core.workflows import (
-    run_meeting_minutes_workflow,
-    run_decision_brief_workflow,
     run_agency_question_summary_workflow,
+    run_decision_brief_workflow,
     run_meeting_action_log_workflow,
+    run_meeting_minutes_workflow,
 )
-
 
 CASES = [
     (

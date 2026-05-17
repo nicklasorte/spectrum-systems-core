@@ -3,7 +3,7 @@
 Currently exposes only ``FeatureFlag`` -- a small, fail-closed reader for
 JSON-backed feature flags stored under ``<data_lake>/store/artifacts/config/``.
 """
-from .feature_flag import FeatureFlag, PHASE_V_FLAG_NAME, PHASE_W_FLAG_NAME
+from .feature_flag import PHASE_V_FLAG_NAME, PHASE_W_FLAG_NAME, FeatureFlag
 from .feature_flags import (
     ANTHROPIC_API_KEY_ENV,
     CONFIG_ERROR_REASON_CODE,

@@ -6,18 +6,16 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
-from typing import Set
 
 from spectrum_systems_core.synthesis.cost_recorder import (
     MAX_SYNTHESIS_COST_USD,
     append_cost_record,
 )
-from spectrum_systems_core.synthesis.data_lake_check import DataLakeChecker
 from spectrum_systems_core.synthesis.grounding_eval import GroundingEval
 
 
 class _StubChecker:
-    def __init__(self, known: Set[str]) -> None:
+    def __init__(self, known: set[str]) -> None:
         self._known = known
 
     def exists(self, artifact_id: str) -> bool:

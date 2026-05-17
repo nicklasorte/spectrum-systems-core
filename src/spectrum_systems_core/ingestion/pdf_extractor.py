@@ -17,13 +17,12 @@ import importlib.metadata
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 
 from ._paths import schema_path
 from .pdf_guard import PDFAdmissionGuard
-
 
 _LIBRARY_NAME = "pdfminer.six"
 
@@ -50,7 +49,7 @@ def _failure_report(
     pdf_magic_valid: bool = False,
     private_use_only_verified: bool = False,
     scanned_pdf_suspected: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "source_id": source_id,
         "source_family": "books",
@@ -69,7 +68,7 @@ def _failure_report(
     }
 
 
-def _write_report(path: Path, report: Dict[str, Any]) -> None:
+def _write_report(path: Path, report: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
@@ -82,7 +81,7 @@ class PDFExtractor:
 
     MIN_CHAR_THRESHOLD = 500  # FINDING-B-002: blocks scanned PDFs
 
-    def extract(self, source_id: str, repo_root: str) -> Dict[str, Any]:
+    def extract(self, source_id: str, repo_root: str) -> dict[str, Any]:
         env = os.environ.get("DATA_LAKE_PATH", "")
         if not env or not Path(env).exists():
             return {
@@ -122,9 +121,9 @@ class PDFExtractor:
             from pdfminer.high_level import extract_pages
             from pdfminer.layout import LTTextContainer
 
-            pages_text: List[str] = []
+            pages_text: list[str] = []
             for layout_page in extract_pages(str(pdf_path)):
-                parts: List[str] = []
+                parts: list[str] = []
                 for element in layout_page:
                     if isinstance(element, LTTextContainer):
                         parts.append(element.get_text())
@@ -156,7 +155,7 @@ class PDFExtractor:
         scanned_pdf_suspected = total_char_count < self.MIN_CHAR_THRESHOLD
 
         # 4. Assemble the extraction_report.
-        report: Dict[str, Any] = {
+        report: dict[str, Any] = {
             "source_id": source_id,
             "source_family": "books",
             "extraction_library": _LIBRARY_NAME,
@@ -244,7 +243,7 @@ class PDFExtractor:
             }
 
         page_validator = jsonschema.Draft202012Validator(page_schema)
-        page_entries: List[Dict[str, Any]] = []
+        page_entries: list[dict[str, Any]] = []
         cumulative = 0
         separator_len = len("\n\n")
         for idx, page_text in enumerate(pages_text):

@@ -11,14 +11,13 @@ import datetime
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 
 from ..ingestion.source_loader import SOURCE_FAMILIES
 from ..utils.text_similarity import jaccard
 from ._paths import synthesis_run_dir, synthesis_schema_path
-
 
 _COMPONENT_NAME = "theme_synthesizer"
 _COMPONENT_VERSION = "1.0.0"
@@ -33,8 +32,8 @@ def _now_iso() -> str:
     )
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     try:
@@ -52,8 +51,8 @@ def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
     return out
 
 
-def _read_promoted_dir(dir_path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_promoted_dir(dir_path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not dir_path.is_dir():
         return out
     for child in sorted(dir_path.glob("*.json")):
@@ -80,11 +79,11 @@ def _iter_processed_dirs(repo_root: Path):
 class ThemeSynthesizer:
     """Group promoted themes across sources into theme_synthesis_records."""
 
-    def synthesize(self, run_id: str, repo_root: str) -> Dict[str, Any]:
+    def synthesize(self, run_id: str, repo_root: str) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
 
         # Collect promoted themes (Phase C knowledge artifacts).
-        themes: List[Dict[str, Any]] = []
+        themes: list[dict[str, Any]] = []
         for source_id, source_dir in _iter_processed_dirs(repo_root_path):
             promoted_dir = source_dir / "knowledge" / "promoted"
             for artifact in _read_promoted_dir(promoted_dir):
@@ -105,8 +104,8 @@ class ThemeSynthesizer:
                 )
 
         # Collect evidenced claims (Phase D).
-        claims_by_theme_word: Dict[str, List[Dict[str, Any]]] = {}
-        all_claims: List[Dict[str, Any]] = []
+        claims_by_theme_word: dict[str, list[dict[str, Any]]] = {}
+        all_claims: list[dict[str, Any]] = []
         for source_id, source_dir in _iter_processed_dirs(repo_root_path):
             claims_path = source_dir / "paper" / "claims.jsonl"
             for claim in _read_jsonl(claims_path):
@@ -121,7 +120,7 @@ class ThemeSynthesizer:
                 )
 
         # Group themes by Jaccard similarity on theme_name.
-        groups: List[List[Dict[str, Any]]] = []
+        groups: list[list[dict[str, Any]]] = []
         for theme in themes:
             placed = False
             for group in groups:
@@ -144,10 +143,10 @@ class ThemeSynthesizer:
         )
         validator = jsonschema.Draft202012Validator(schema)
 
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for group in groups:
             sources = sorted({t["source_id"] for t in group})
-            stories: List[str] = []
+            stories: list[str] = []
             for t in group:
                 for sid in t["source_story_ids"]:
                     if sid not in stories:
@@ -155,7 +154,7 @@ class ThemeSynthesizer:
             stories.sort()
             seed = group[0]
             # Attach evidenced claims that match by Jaccard on claim_text.
-            claim_ids: List[str] = []
+            claim_ids: list[str] = []
             for claim in all_claims:
                 if (
                     jaccard(claim["claim_text"], seed["theme_name"])

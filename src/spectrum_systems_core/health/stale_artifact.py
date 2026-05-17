@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 
 from .finding import HealthFinding
 
@@ -57,7 +58,7 @@ def load_max_artifact_age_hours(data_lake_path: str | Path) -> float:
     return DEFAULT_MAX_ARTIFACT_AGE_HOURS
 
 
-def _parse_iso(s: str) -> Optional[datetime]:
+def _parse_iso(s: str) -> datetime | None:
     if not isinstance(s, str):
         return None
     try:
@@ -89,8 +90,8 @@ def check_artifact_freshness(
     pipeline_started_at: datetime,
     *,
     max_age_hours: float,
-    pipeline_run_id: Optional[str] = None,
-) -> Optional[HealthFinding]:
+    pipeline_run_id: str | None = None,
+) -> HealthFinding | None:
     created = _parse_iso(artifact.get("created_at", ""))
     if created is None:
         return None
@@ -119,7 +120,7 @@ def audit_bundle_freshness(
     pipeline_started_at: datetime,
     *,
     data_lake_path: str | Path,
-    pipeline_run_id: Optional[str] = None,
+    pipeline_run_id: str | None = None,
 ) -> FreshnessResult:
     """Run :func:`check_artifact_freshness` over a bundle.
 

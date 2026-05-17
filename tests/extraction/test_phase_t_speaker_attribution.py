@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import unittest
-from typing import Any, Dict, List
 
 from spectrum_systems_core.extraction.speaker_attribution import (
     attribute_speakers,

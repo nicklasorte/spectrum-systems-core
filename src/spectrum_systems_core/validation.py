@@ -22,12 +22,11 @@ import json
 import logging
 import os
 from functools import lru_cache
-from typing import Any, Dict
+from typing import Any
 
 import jsonschema
 
 from .schemas import schema_path
-
 
 _LOG = logging.getLogger(__name__)
 
@@ -50,7 +49,7 @@ class SchemaNotFoundError(LookupError):
 
 
 @lru_cache(maxsize=128)
-def _load_schema(artifact_type: str) -> Dict[str, Any]:
+def _load_schema(artifact_type: str) -> dict[str, Any]:
     """Load and cache the JSON Schema for ``artifact_type``.
 
     ``functools.lru_cache`` is fine here because the schema files are
@@ -74,7 +73,7 @@ def _validation_enabled() -> bool:
     return True
 
 
-def validate_artifact(artifact: Dict[str, Any], artifact_type: str) -> None:
+def validate_artifact(artifact: dict[str, Any], artifact_type: str) -> None:
     """Validate ``artifact`` against ``schemas/<artifact_type>.schema.json``.
 
     Raises:

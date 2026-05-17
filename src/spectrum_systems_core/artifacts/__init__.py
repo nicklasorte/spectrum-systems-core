@@ -1,9 +1,9 @@
 from .model import (
+    ALLOWED_STATUSES,
     Artifact,
     ArtifactStatus,
-    ALLOWED_STATUSES,
-    new_artifact,
     compute_content_hash,
+    new_artifact,
 )
 from .store import ArtifactStore
 from .validation import ensure_valid_status

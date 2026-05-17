@@ -6,8 +6,7 @@ required eval.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 
@@ -23,13 +22,13 @@ class ClaimEval:
 
     def run(
         self,
-        claims: List[Dict[str, Any]],
-        assumptions: List[Dict[str, Any]],
+        claims: list[dict[str, Any]],
+        assumptions: list[dict[str, Any]],
         source_id: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
-        eval_results: List[Dict[str, Any]] = []
-        reason_codes: List[str] = []
+    ) -> dict[str, Any]:
+        eval_results: list[dict[str, Any]] = []
+        reason_codes: list[str] = []
 
         # Load schemas.
         try:
@@ -55,7 +54,7 @@ class ClaimEval:
         assumption_validator = jsonschema.Draft202012Validator(assumption_schema)
 
         # EVAL-CLAIM-001: schema_conformance
-        claim_schema_failures: List[str] = []
+        claim_schema_failures: list[str] = []
         for claim in claims:
             try:
                 claim_validator.validate(claim)
@@ -78,7 +77,7 @@ class ClaimEval:
             )
 
         # EVAL-CLAIM-002: source_grounding
-        grounding_failures: List[str] = []
+        grounding_failures: list[str] = []
         for claim in claims:
             excerpt = claim.get("source_excerpt") or ""
             if not excerpt:
@@ -114,7 +113,7 @@ class ClaimEval:
             )
 
         # EVAL-CLAIM-003: unit_id_present
-        unit_id_failures: List[str] = []
+        unit_id_failures: list[str] = []
         for claim in claims:
             if not claim.get("source_unit_id"):
                 unit_id_failures.append(
@@ -135,7 +134,7 @@ class ClaimEval:
             )
 
         # EVAL-CLAIM-004: temperature_zero
-        temp_failures: List[str] = []
+        temp_failures: list[str] = []
         for claim in claims:
             if claim.get("extraction_temperature") != 0:
                 temp_failures.append(
@@ -157,7 +156,7 @@ class ClaimEval:
             )
 
         # EVAL-ASSUMP-001: schema_conformance
-        assumption_schema_failures: List[str] = []
+        assumption_schema_failures: list[str] = []
         for record in assumptions:
             try:
                 assumption_validator.validate(record)
@@ -180,7 +179,7 @@ class ClaimEval:
             )
 
         # EVAL-ASSUMP-002: implicit assumption must have null source_excerpt.
-        implicit_failures: List[str] = []
+        implicit_failures: list[str] = []
         for record in assumptions:
             explicit = record.get("explicit")
             excerpt = record.get("source_excerpt")

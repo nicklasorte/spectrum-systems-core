@@ -29,7 +29,6 @@ from spectrum_systems_core.extraction._failure_artifacts import (
 
 from ._fixtures import write_text_units
 
-
 _FENCED_OK = (
     "```json\n"
     "{\n"

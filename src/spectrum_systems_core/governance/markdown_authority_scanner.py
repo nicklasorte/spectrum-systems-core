@@ -11,16 +11,15 @@ import logging
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from ._io import find_prior_audit, utcnow_iso, write_audit_record
 from ._schema import validate_governance_artifact
 
-
 _LOG = logging.getLogger(__name__)
 
 
-ALLOWED_MD_READ_PATHS: List[str] = [
+ALLOWED_MD_READ_PATHS: list[str] = [
     "src/spectrum_systems_core/ingestion/obsidian_projection.py",
     "src/spectrum_systems_core/extraction/story_review_gateway.py",
     "src/spectrum_systems_core/paper/",
@@ -40,7 +39,7 @@ MD_OPEN_PATTERN = re.compile(
 
 def _is_write_mode(text: str, match_start: int, match_end: int) -> bool:
     """Look at 5 lines surrounding the match for write/append mode flags."""
-    line_starts: List[int] = [0]
+    line_starts: list[int] = [0]
     for idx, ch in enumerate(text):
         if ch == "\n":
             line_starts.append(idx + 1)
@@ -63,8 +62,8 @@ def _is_write_mode(text: str, match_start: int, match_end: int) -> bool:
     return False
 
 
-def _python_files(repo_root: Path) -> List[Path]:
-    out: List[Path] = []
+def _python_files(repo_root: Path) -> list[Path]:
+    out: list[Path] = []
     for path in sorted(repo_root.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
@@ -73,7 +72,7 @@ def _python_files(repo_root: Path) -> List[Path]:
     return out
 
 
-def _path_starts_with_any(rel_path: str, prefixes: List[str]) -> bool:
+def _path_starts_with_any(rel_path: str, prefixes: list[str]) -> bool:
     normalized = rel_path.replace("\\", "/")
     for prefix in prefixes:
         prefix_norm = prefix.replace("\\", "/")
@@ -93,9 +92,9 @@ def _line_for_offset(text: str, offset: int) -> int:
 class MarkdownAuthorityScanner:
     """Find disallowed .md read sites — view-only rule (FINDING-I-004)."""
 
-    def scan(self, repo_root: str | Path) -> Dict[str, Any]:
+    def scan(self, repo_root: str | Path) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
-        flagged: List[Dict[str, Any]] = []
+        flagged: list[dict[str, Any]] = []
         files_scanned = 0
 
         for path in _python_files(repo_root_path):
@@ -136,7 +135,7 @@ class MarkdownAuthorityScanner:
 
         prior_audit = find_prior_audit(repo_root_path, "markdown_authority")
         prior_value = prior_audit.get("current_value") if prior_audit else None
-        current_value: Dict[str, Any] = {
+        current_value: dict[str, Any] = {
             "files_scanned": files_scanned,
             "total_flags": len(flagged),
         }

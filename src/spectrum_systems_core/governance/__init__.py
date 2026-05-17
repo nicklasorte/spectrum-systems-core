@@ -15,19 +15,19 @@ DASHBOARD_SUMMARY_MAX_LINES = 30
 DIVERGENCE_KEY_FIELDS = ("task_type", "recipe_id", "audience")
 EXCEPTION_ACCUMULATION_THRESHOLD = 5
 
-from .schema_drift_scanner import SchemaDriftScanner
-from .eval_coverage_scanner import EvalCoverageScanner
-from .decision_divergence_detector import DecisionDivergenceDetector
-from .exception_accumulation_tracker import ExceptionAccumulationTracker
-from .hidden_logic_scanner import HiddenLogicScanner
-from .markdown_authority_scanner import MarkdownAuthorityScanner
-from .cost_trend_reporter import CostTrendReporter
 from .compression_scanner import CompressionScanner
+from .cost_trend_reporter import CostTrendReporter
 from .dashboard import GovernanceDashboard
+from .decision_divergence_detector import DecisionDivergenceDetector
+from .eval_coverage_scanner import EvalCoverageScanner
+from .exception_accumulation_tracker import ExceptionAccumulationTracker
 from .gov10_certification import (
     CERTIFICATION_COST_CEILING_USD,
     GOV10CertificationStep,
 )
+from .hidden_logic_scanner import HiddenLogicScanner
+from .markdown_authority_scanner import MarkdownAuthorityScanner
+from .schema_drift_scanner import SchemaDriftScanner
 
 __all__ = [
     "COST_TREND_WINDOW_DAYS",

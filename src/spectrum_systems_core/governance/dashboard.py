@@ -8,16 +8,14 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from . import DASHBOARD_SUMMARY_MAX_LINES
 from ._io import (
-    read_json,
     utcnow_iso,
     write_json,
 )
 from ._paths import (
-    audits_dir,
     dashboard_latest_path,
     ensure_governance_tree,
     markdown_dir,
@@ -32,7 +30,6 @@ from .hidden_logic_scanner import HiddenLogicScanner
 from .markdown_authority_scanner import MarkdownAuthorityScanner
 from .schema_drift_scanner import SchemaDriftScanner
 
-
 _LOG = logging.getLogger(__name__)
 
 
@@ -41,10 +38,10 @@ _STRENGTH_ORDER = {"strong": 0, "moderate": 1, "weak": 2}
 
 
 def _pick_top_drift_signals(
-    pools: List[List[Dict[str, Any]]],
+    pools: list[list[dict[str, Any]]],
     limit: int = 5,
-) -> List[Dict[str, Any]]:
-    combined: List[Dict[str, Any]] = []
+) -> list[dict[str, Any]]:
+    combined: list[dict[str, Any]] = []
     for pool in pools:
         combined.extend(pool or [])
     combined.sort(
@@ -58,8 +55,8 @@ def _pick_top_drift_signals(
 
 
 def _pick_top_candidates(
-    pool: List[Dict[str, Any]], limit: int = 5
-) -> List[Dict[str, Any]]:
+    pool: list[dict[str, Any]], limit: int = 5
+) -> list[dict[str, Any]]:
     pool = list(pool or [])
     pool.sort(
         key=lambda c: (
@@ -71,7 +68,7 @@ def _pick_top_candidates(
 
 
 def _format_dashboard_md(
-    dashboard: Dict[str, Any],
+    dashboard: dict[str, Any],
     audit_id: str,
 ) -> str:
     schema_health = dashboard["schema_health"]
@@ -87,7 +84,7 @@ def _format_dashboard_md(
     )
     divergence_pct = (decision.get("divergence_rate") or 0.0) * 100.0
 
-    lines: List[str] = [
+    lines: list[str] = [
         "# Governance Dashboard",
         f"Generated: {dashboard['generated_at']}  Audit: {audit_id}",
         "> VIEW ONLY. Regenerated on every audit. Do not edit.",
@@ -143,9 +140,9 @@ def _format_dashboard_md(
 def _format_audit_detail_md(
     audit_id: str,
     generated_at: str,
-    sections: List[Dict[str, Any]],
+    sections: list[dict[str, Any]],
 ) -> str:
-    lines: List[str] = [
+    lines: list[str] = [
         f"# Governance Audit Detail — {audit_id}",
         f"Generated: {generated_at}",
         "",
@@ -186,7 +183,7 @@ class GovernanceDashboard:
         self,
         repo_root: str | Path,
         vault_root: str | Path | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         ensure_governance_tree(repo_root_path)
 
@@ -288,7 +285,7 @@ class GovernanceDashboard:
         )
         top_candidates = _pick_top_candidates(compression_candidates, limit=5)
 
-        dashboard: Dict[str, Any] = {
+        dashboard: dict[str, Any] = {
             "generated_at": generated_at,
             "audit_id": audit_id,
             "schema_health": schema_health,
@@ -379,9 +376,9 @@ class GovernanceDashboard:
 
 
 def _format_candidates_md(
-    candidates: List[Dict[str, Any]], generated_at: str
+    candidates: list[dict[str, Any]], generated_at: str
 ) -> str:
-    lines: List[str] = [
+    lines: list[str] = [
         "# Governance — Compression Candidates",
         f"Generated: {generated_at}",
         "> VIEW ONLY. Recommendations only. apply-compression CLI to act.",

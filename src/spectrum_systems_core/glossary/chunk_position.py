@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import math
 import os
-from typing import Any, Dict, List, Sequence
-
+from collections.abc import Sequence
+from typing import Any
 
 POSITION_OPENING: str = "opening"
 POSITION_MIDDLE: str = "middle"
@@ -75,8 +75,8 @@ def compute_chunk_position(index: int, total_chunks: int) -> str:
 
 
 def assign_chunk_positions(
-    chunks: Sequence[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+    chunks: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """Return a new list of chunks with ``chunk_position`` set.
 
     Does not mutate the input. The position is computed from the
@@ -84,7 +84,7 @@ def assign_chunk_positions(
     stored value -- to guarantee that re-runs with a different total
     chunk count produce fresh positions (Attack 5 / Attack 11 fix).
     """
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     total = len(chunks)
     for idx, chunk in enumerate(chunks):
         new_chunk = dict(chunk) if isinstance(chunk, dict) else {}

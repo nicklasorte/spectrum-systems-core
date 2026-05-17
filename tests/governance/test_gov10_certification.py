@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import builtins
 import datetime
-import hashlib
 import inspect
 import json
 import shutil
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 import pytest
@@ -26,7 +25,6 @@ from spectrum_systems_core.governance.gov10_certification import (
     GOV10CertificationStep,
 )
 from spectrum_systems_core.paper.publication_formatter import PublicationFormatter
-
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FAMILY = "working_papers"
@@ -40,7 +38,7 @@ def _now_iso() -> str:
     )
 
 
-def _write_json(path: Path, payload: Dict[str, Any]) -> None:
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -55,7 +53,7 @@ def _stage_contracts(repo_root: Path) -> None:
         shutil.copy(pyproject, repo_root / "pyproject.toml")
 
 
-def _make_source_record(repo_root: Path, source_id: str) -> Dict[str, Any]:
+def _make_source_record(repo_root: Path, source_id: str) -> dict[str, Any]:
     record = {
         "artifact_kind": "source_record",
         "artifact_id": str(uuid.uuid4()),
@@ -92,7 +90,7 @@ def _make_source_record(repo_root: Path, source_id: str) -> Dict[str, Any]:
     return record
 
 
-def _make_revised_draft(repo_root: Path, source_id: str) -> Dict[str, Any]:
+def _make_revised_draft(repo_root: Path, source_id: str) -> dict[str, Any]:
     record = {
         "schema_version": "1.0.0",
         "source_id": source_id,
@@ -131,11 +129,11 @@ def _make_paper_metadata(repo_root: Path, source_id: str) -> None:
     )
 
 
-def _required_chain_eval_cases(repo_root: Path) -> List[Dict[str, Any]]:
+def _required_chain_eval_cases(repo_root: Path) -> list[dict[str, Any]]:
     """Return required eval cases targeting chain types (FPA / revised_draft /
     source_record) — the cases CHECK-5 must find result files for."""
     targets = {"formatted_paper_artifact", "revised_draft", "source_record"}
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for path in sorted((repo_root / "contracts" / "evals").glob("*.json")):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -152,7 +150,7 @@ def _required_chain_eval_cases(repo_root: Path) -> List[Dict[str, Any]]:
 
 
 def _write_eval_result_stubs(
-    repo_root: Path, run_id: str, cases: List[Dict[str, Any]]
+    repo_root: Path, run_id: str, cases: list[dict[str, Any]]
 ) -> Path:
     out_dir = repo_root / "synthesis" / run_id / "evals"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -188,7 +186,7 @@ def _write_cost_record(repo_root: Path, run_id: str, cost_usd: float) -> None:
         fh.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
 
 
-def _make_passing_chain(tmp_path: Path) -> Dict[str, Any]:
+def _make_passing_chain(tmp_path: Path) -> dict[str, Any]:
     """Set up a complete fixture chain that passes all 7 checks."""
     _stage_contracts(tmp_path)
     source_id = str(uuid.uuid4())
@@ -313,7 +311,7 @@ def test_uncovered_artifact_type_fails_check6(
 ) -> None:
     ctx = _make_passing_chain(tmp_path)
 
-    def fake_scan(self: Any, repo_root: Any) -> Dict[str, Any]:  # noqa: ARG001
+    def fake_scan(self: Any, repo_root: Any) -> dict[str, Any]:  # noqa: ARG001
         return {
             "flagged_items": [
                 {

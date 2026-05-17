@@ -26,11 +26,11 @@ from __future__ import annotations
 import datetime
 import json
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any
 
 from ._prompt_blocks import CONFIDENCE_THRESHOLD, PROMPT_VERSION
-
 
 _ROUTING_QUALITY_THRESHOLD = 0.20  # >20% off_topic -> warning fires
 
@@ -42,9 +42,9 @@ def _now_iso() -> str:
     )
 
 
-def _dedup_exact(items: List[Dict[str, Any]], text_key: str) -> List[Dict[str, Any]]:
-    seen: Set[str] = set()
-    out: List[Dict[str, Any]] = []
+def _dedup_exact(items: list[dict[str, Any]], text_key: str) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
     for it in items:
         key = it.get(text_key)
         if not isinstance(key, str):
@@ -57,7 +57,7 @@ def _dedup_exact(items: List[Dict[str, Any]], text_key: str) -> List[Dict[str, A
     return out
 
 
-def _turn_set(item: Dict[str, Any]) -> Set[str]:
+def _turn_set(item: dict[str, Any]) -> set[str]:
     raw = item.get("source_turn_ids") or []
     if not isinstance(raw, list):
         return set()
@@ -65,8 +65,8 @@ def _turn_set(item: Dict[str, Any]) -> Set[str]:
 
 
 def _merge_run_metadata(
-    run_metadata: Optional[Sequence[Dict[str, Any]]],
-) -> Dict[str, Any]:
+    run_metadata: Sequence[dict[str, Any]] | None,
+) -> dict[str, Any]:
     """Aggregate per-extractor metadata into per-run fields.
 
     ``few_shot_injected`` is True iff at least one extractor successfully
@@ -80,7 +80,7 @@ def _merge_run_metadata(
     block. We do NOT default this to True -- a decorative claim that
     drifts from reality would defeat the point of recording it.
     """
-    out: Dict[str, Any] = {
+    out: dict[str, Any] = {
         "few_shot_injected": False,
         "few_shot_version": None,
         "few_shot_example_count": 0,
@@ -117,14 +117,14 @@ class ExtractionMerger:
         self,
         source_artifact_id: str,
         extraction_run_id: str,
-        classifications: Sequence[Dict[str, Any]],
-        decisions: Sequence[Dict[str, Any]],
-        claims: Sequence[Dict[str, Any]],
-        action_items: Sequence[Dict[str, Any]],
-        run_metadata: Optional[Sequence[Dict[str, Any]]] = None,
+        classifications: Sequence[dict[str, Any]],
+        decisions: Sequence[dict[str, Any]],
+        claims: Sequence[dict[str, Any]],
+        action_items: Sequence[dict[str, Any]],
+        run_metadata: Sequence[dict[str, Any]] | None = None,
         *,
-        p3a_fields: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        p3a_fields: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Return a meeting_extraction artifact dict. Never raises.
 
         ``run_metadata`` is the list of ``last_run_metadata`` dicts from
@@ -142,7 +142,7 @@ class ExtractionMerger:
         actions_d = _dedup_exact(actions_in, "action")
 
         # 2. Cross-extractor overlap flag.
-        all_buckets: List[Tuple[List[Dict[str, Any]], str]] = [
+        all_buckets: list[tuple[list[dict[str, Any]], str]] = [
             (decisions_d, "decision"),
             (claims_d, "claim"),
             (actions_d, "action_item"),
@@ -181,7 +181,7 @@ class ExtractionMerger:
 
         run_fields = _merge_run_metadata(run_metadata)
 
-        artifact: Dict[str, Any] = {
+        artifact: dict[str, Any] = {
             "meeting_extraction_id": str(uuid.uuid4()),
             "source_artifact_id": source_artifact_id,
             "artifact_type": "meeting_extraction",
@@ -228,7 +228,7 @@ class ExtractionMerger:
         return artifact
 
     @staticmethod
-    def write_to(artifact: Dict[str, Any], path: Path) -> None:
+    def write_to(artifact: dict[str, Any], path: Path) -> None:
         """Atomic write: serialize to ``.tmp`` then ``replace`` into place.
 
         Runs the artifact_validator on the artifact before write so the

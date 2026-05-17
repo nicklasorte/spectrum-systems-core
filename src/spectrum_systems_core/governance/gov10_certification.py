@@ -23,14 +23,13 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 
 from ..ingestion.source_loader import SOURCE_FAMILIES
 from ..paper.publication_formatter import PublicationFormatter
 from .eval_coverage_scanner import EvalCoverageScanner
-
 
 _LOG = logging.getLogger(__name__)
 
@@ -59,7 +58,7 @@ def _now_iso() -> str:
     )
 
 
-def _safe_read_json(path: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+def _safe_read_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     if not path.is_file():
         return None, "missing"
     try:
@@ -88,7 +87,7 @@ def _release_schema_path(repo_root: Path) -> Path:
     return _schema_path(repo_root, "certification/release_artifact")
 
 
-def _load_json_schema(path: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+def _load_json_schema(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     payload, err = _safe_read_json(path)
     if err is not None or payload is None:
         return None, err or "missing"
@@ -107,8 +106,8 @@ class GOV10CertificationStep:
         paper_id: str,
         run_id: str,
         repo_root: str,
-        vault_root: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        vault_root: str | None = None,
+    ) -> dict[str, Any]:
         try:
             return self._certify_impl(
                 paper_id=paper_id,
@@ -132,10 +131,10 @@ class GOV10CertificationStep:
         paper_id: str,
         run_id: str,
         repo_root: str,
-        vault_root: Optional[str],
-    ) -> Dict[str, Any]:
+        vault_root: str | None,
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
-        chain_artifact_ids: List[str] = []
+        chain_artifact_ids: list[str] = []
 
         formatted_path, formatted_artifact = self._locate_formatted(
             repo_root_path, paper_id
@@ -161,7 +160,7 @@ class GOV10CertificationStep:
         chain = self._build_chain(repo_root_path, formatted_path, formatted_artifact)
         chain_artifact_ids = [c["artifact_id"] for c in chain if c.get("artifact_id")]
 
-        check_results: List[Dict[str, str]] = []
+        check_results: list[dict[str, str]] = []
         check_results.append(self._check_1_schemas(chain))
         check_results.append(self._check_2_lineage(repo_root_path, chain))
         check_results.append(
@@ -189,7 +188,7 @@ class GOV10CertificationStep:
 
     def _locate_formatted(
         self, repo_root: Path, paper_id: str
-    ) -> Tuple[Optional[Path], Optional[Dict[str, Any]]]:
+    ) -> tuple[Path | None, dict[str, Any] | None]:
         for family in SOURCE_FAMILIES:
             family_dir = repo_root / "processed" / family
             if not family_dir.is_dir():
@@ -206,9 +205,9 @@ class GOV10CertificationStep:
         self,
         repo_root: Path,
         formatted_path: Path,
-        formatted_artifact: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
-        chain: List[Dict[str, Any]] = [
+        formatted_artifact: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        chain: list[dict[str, Any]] = [
             {
                 "artifact_type": "formatted_paper_artifact",
                 "schema_name": "paper/formatted_paper_artifact",
@@ -234,9 +233,9 @@ class GOV10CertificationStep:
             }
         )
 
-        source_id: Optional[str] = (revised_payload or {}).get("source_id")
-        source_path: Optional[Path] = None
-        source_payload: Optional[Dict[str, Any]] = None
+        source_id: str | None = (revised_payload or {}).get("source_id")
+        source_path: Path | None = None
+        source_payload: dict[str, Any] | None = None
         if source_id:
             for family in SOURCE_FAMILIES:
                 candidate = (
@@ -262,7 +261,7 @@ class GOV10CertificationStep:
 
     # ------- the 7 checks ---------------------------------------------
 
-    def _check_1_schemas(self, chain: List[Dict[str, Any]]) -> Dict[str, str]:
+    def _check_1_schemas(self, chain: list[dict[str, Any]]) -> dict[str, str]:
         for entry in chain:
             payload = entry.get("payload")
             if payload is None:
@@ -289,8 +288,8 @@ class GOV10CertificationStep:
         return self._pass("local_schema_correctness", "all_chain_artifacts_valid")
 
     def _check_2_lineage(
-        self, repo_root: Path, chain: List[Dict[str, Any]]
-    ) -> Dict[str, str]:
+        self, repo_root: Path, chain: list[dict[str, Any]]
+    ) -> dict[str, str]:
         formatted = chain[0]
         revised = chain[1]
         source = chain[2]
@@ -336,8 +335,8 @@ class GOV10CertificationStep:
         )
 
     def _check_3_replay(
-        self, repo_root: Path, formatted_artifact: Dict[str, Any]
-    ) -> Dict[str, str]:
+        self, repo_root: Path, formatted_artifact: dict[str, Any]
+    ) -> dict[str, str]:
         revised_id = formatted_artifact.get("source_revised_draft_id")
         stored_hash = formatted_artifact.get("content_hash")
         if not revised_id or not stored_hash:
@@ -368,7 +367,7 @@ class GOV10CertificationStep:
             "replay_integrity", f"content_hash_matches:{stored_hash[:23]}"
         )
 
-    def _check_4_contracts(self, chain: List[Dict[str, Any]]) -> Dict[str, str]:
+    def _check_4_contracts(self, chain: list[dict[str, Any]]) -> dict[str, str]:
         for entry in chain:
             payload = entry.get("payload") or {}
             schema_path = entry["schema_path"]
@@ -397,7 +396,7 @@ class GOV10CertificationStep:
         return self._pass("contract_integrity", "all_schemas_resolve")
 
     @staticmethod
-    def _expected_schema_version(schema: Dict[str, Any]) -> Optional[str]:
+    def _expected_schema_version(schema: dict[str, Any]) -> str | None:
         """Pull the schema_version pin from the schema document.
 
         Two sources, in order: a top-level `version` field (rare in this
@@ -417,8 +416,8 @@ class GOV10CertificationStep:
         self,
         repo_root: Path,
         run_id: str,
-        chain: List[Dict[str, Any]],
-    ) -> Dict[str, str]:
+        chain: list[dict[str, Any]],
+    ) -> dict[str, str]:
         chain_types = {
             entry["artifact_type"] for entry in chain if entry.get("artifact_type")
         }
@@ -429,7 +428,7 @@ class GOV10CertificationStep:
                 "missing_eval_result:contracts_evals_dir_missing",
             )
 
-        required_cases: List[Dict[str, Any]] = []
+        required_cases: list[dict[str, Any]] = []
         for path in sorted(eval_dir.glob("*.json")):
             payload, _err = _safe_read_json(path)
             if not isinstance(payload, list):
@@ -466,7 +465,7 @@ class GOV10CertificationStep:
         self,
         repo_root: Path,
         run_id: str,
-        case: Dict[str, Any],
+        case: dict[str, Any],
     ) -> bool:
         """A required eval has a result iff its marker file exists at
         synthesis/<run_id>/evals/<case_id>.json AND the marker contains
@@ -486,8 +485,8 @@ class GOV10CertificationStep:
         return payload.get("status") == "pass"
 
     def _check_6_eval_coverage(
-        self, repo_root: Path, chain: List[Dict[str, Any]]
-    ) -> Dict[str, str]:
+        self, repo_root: Path, chain: list[dict[str, Any]]
+    ) -> dict[str, str]:
         chain_types = {
             entry["artifact_type"] for entry in chain if entry.get("artifact_type")
         }
@@ -515,8 +514,8 @@ class GOV10CertificationStep:
 
     def _check_7_cost(
         self, repo_root: Path, run_id: str
-    ) -> Tuple[Dict[str, str], float]:
-        records: List[Dict[str, Any]] = []
+    ) -> tuple[dict[str, str], float]:
+        records: list[dict[str, Any]] = []
 
         run_cost_path = repo_root / "synthesis" / run_id / "cost.jsonl"
         if run_cost_path.is_file():
@@ -586,12 +585,12 @@ class GOV10CertificationStep:
         *,
         paper_id: str,
         repo_root: Path,
-        check_results: List[Dict[str, str]],
+        check_results: list[dict[str, str]],
         cost_total: float,
-        input_artifact_ids: List[str],
-        vault_root: Optional[str],
-        formatted_artifact: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        input_artifact_ids: list[str],
+        vault_root: str | None,
+        formatted_artifact: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         passed = sum(1 for c in check_results if c["status"] == "PASSED")
         failed = sum(1 for c in check_results if c["status"] == "FAILED")
         skipped = sum(1 for c in check_results if c["status"] == "SKIPPED")
@@ -607,7 +606,7 @@ class GOV10CertificationStep:
         failure_reasons = [c["detail"] for c in check_results if c["status"] == "FAILED"]
         certification_id = str(uuid.uuid4())
 
-        record: Dict[str, Any] = {
+        record: dict[str, Any] = {
             "certification_id": certification_id,
             "paper_id": paper_id,
             "certified_at": _now_iso(),
@@ -642,8 +641,8 @@ class GOV10CertificationStep:
 
         # Build the release artifact in memory FIRST so a release-write failure
         # never leaves a PASSED record on disk without its release pointer.
-        release_artifact: Optional[Dict[str, Any]] = None
-        release_target: Optional[Path] = None
+        release_artifact: dict[str, Any] | None = None
+        release_target: Path | None = None
         if status == "PASSED" and formatted_artifact is not None:
             built, build_err = self._build_release_artifact(
                 repo_root=repo_root,
@@ -691,8 +690,8 @@ class GOV10CertificationStep:
         }
 
     def _validate_against_record_schema(
-        self, record: Dict[str, Any], repo_root: Path
-    ) -> Optional[str]:
+        self, record: dict[str, Any], repo_root: Path
+    ) -> str | None:
         schema, err = _load_json_schema(_record_schema_path(repo_root))
         if schema is None:
             return f"schema_load_failed:{err}"
@@ -703,7 +702,7 @@ class GOV10CertificationStep:
             return f"{location}: {errors[0].message[:120]}"
         return None
 
-    def _write_record(self, record: Dict[str, Any], repo_root: Path) -> Optional[str]:
+    def _write_record(self, record: dict[str, Any], repo_root: Path) -> str | None:
         try:
             target_dir = _certification_dir(repo_root)
             target_dir.mkdir(parents=True, exist_ok=True)
@@ -722,8 +721,8 @@ class GOV10CertificationStep:
         repo_root: Path,
         paper_id: str,
         certification_id: str,
-        formatted_artifact: Dict[str, Any],
-    ) -> Tuple[Optional[Tuple[Dict[str, Any], Path]], Optional[str]]:
+        formatted_artifact: dict[str, Any],
+    ) -> tuple[tuple[dict[str, Any], Path] | None, str | None]:
         target = _release_dir(repo_root) / f"{paper_id}.json"
         release_artifact = {
             "release_id": str(uuid.uuid4()),
@@ -749,8 +748,8 @@ class GOV10CertificationStep:
         return (release_artifact, target), None
 
     def _persist_release(
-        self, release_artifact: Dict[str, Any], target: Path
-    ) -> Optional[str]:
+        self, release_artifact: dict[str, Any], target: Path
+    ) -> str | None:
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(
@@ -770,7 +769,7 @@ class GOV10CertificationStep:
             pass
 
     def _write_projection_safe(
-        self, record: Dict[str, Any], vault_root: str
+        self, record: dict[str, Any], vault_root: str
     ) -> None:
         try:
             from ..ingestion.obsidian_projection import ObsidianProjection
@@ -781,10 +780,10 @@ class GOV10CertificationStep:
 
     def _build_failure_envelope(
         self, *, paper_id: str, repo_root: str, reason: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         cert_id = str(uuid.uuid4())
         check_results = [self._fail(name, reason) for name in _CHECK_NAMES]
-        record: Dict[str, Any] = {
+        record: dict[str, Any] = {
             "certification_id": cert_id,
             "paper_id": paper_id,
             "certified_at": _now_iso(),
@@ -832,11 +831,11 @@ class GOV10CertificationStep:
         return True
 
     @staticmethod
-    def _pass(name: str, detail: str) -> Dict[str, str]:
+    def _pass(name: str, detail: str) -> dict[str, str]:
         return {"check_name": name, "status": "PASSED", "detail": detail}
 
     @staticmethod
-    def _fail(name: str, detail: str) -> Dict[str, str]:
+    def _fail(name: str, detail: str) -> dict[str, str]:
         return {"check_name": name, "status": "FAILED", "detail": detail}
 
 

@@ -20,7 +20,6 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 from .finding import HealthFinding
 
@@ -46,14 +45,14 @@ def index_verify_enabled() -> bool:
 
 def _tail_artifact_ids(
     index_path: Path, *, tail_lines: int
-) -> tuple[Optional[set[str]], Optional[str]]:
+) -> tuple[set[str] | None, str | None]:
     """Return ``(ids, error)`` from the last ``tail_lines`` of the file.
 
     ``error`` is None on success or an explanation string when the
     file cannot be read. ``ids`` is None when read failed.
     """
     try:
-        with open(index_path, "r", encoding="utf-8") as fh:
+        with open(index_path, encoding="utf-8") as fh:
             tail = collections.deque(fh, maxlen=tail_lines)
     except OSError as exc:
         return None, f"index_read_failed: {exc.__class__.__name__}: {exc}"
@@ -81,8 +80,8 @@ def verify_artifact_indexed(
     index_path: Path | str,
     *,
     tail_lines: int = DEFAULT_TAIL_LINES,
-    pipeline_run_id: Optional[str] = None,
-) -> Optional[HealthFinding]:
+    pipeline_run_id: str | None = None,
+) -> HealthFinding | None:
     """Return a halt finding if ``artifact_id`` is absent from the index.
 
     Returns ``None`` when the artifact is present in the most recent

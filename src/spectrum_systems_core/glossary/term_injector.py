@@ -16,8 +16,8 @@ Per the red team:
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Iterable, List, Optional, Sequence
-
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 # Hard ceiling on injected terms per chunk. Override via env.
 _MAX_TERMS_DEFAULT: int = 10
@@ -42,12 +42,12 @@ def _max_terms() -> int:
     return value
 
 
-def _term_form(term: Dict[str, Any]) -> str:
+def _term_form(term: dict[str, Any]) -> str:
     """Return the canonical term string used for matching/display."""
     return str(term.get("term") or "")
 
 
-def _abbreviation_form(term: Dict[str, Any]) -> Optional[str]:
+def _abbreviation_form(term: dict[str, Any]) -> str | None:
     abbrev = term.get("abbreviation")
     if isinstance(abbrev, str) and abbrev.strip():
         return abbrev
@@ -56,10 +56,10 @@ def _abbreviation_form(term: Dict[str, Any]) -> Optional[str]:
 
 def find_matching_terms(
     chunk_text: str,
-    glossary_terms: Sequence[Dict[str, Any]],
+    glossary_terms: Sequence[dict[str, Any]],
     *,
-    max_terms: Optional[int] = None,
-) -> List[Dict[str, Any]]:
+    max_terms: int | None = None,
+) -> list[dict[str, Any]]:
     """Return glossary terms whose ``term`` or ``abbreviation`` appears
     in ``chunk_text`` (case-insensitive). Capped at ``max_terms``.
 
@@ -73,7 +73,7 @@ def find_matching_terms(
     if cap == 0:
         return []
     chunk_lower = chunk_text.lower()
-    matched: List[Dict[str, Any]] = []
+    matched: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     for term in glossary_terms or []:
         if not isinstance(term, dict):
@@ -97,7 +97,7 @@ def find_matching_terms(
     return matched
 
 
-def _definition_for_block(term: Dict[str, Any]) -> tuple[str, bool]:
+def _definition_for_block(term: dict[str, Any]) -> tuple[str, bool]:
     """Return ``(definition_to_render, truncated)``.
 
     Prefer ``short_definition``. Fall back to first
@@ -115,7 +115,7 @@ def _definition_for_block(term: Dict[str, Any]) -> tuple[str, bool]:
     return raw[:MAX_DEFINITION_CHARS], True
 
 
-def build_terminology_block(matched_terms: Iterable[Dict[str, Any]]) -> str:
+def build_terminology_block(matched_terms: Iterable[dict[str, Any]]) -> str:
     """Render the ``TERMINOLOGY FOR THIS SECTION`` prompt block.
 
     Empty input -> empty string (caller can append unconditionally).
@@ -123,7 +123,7 @@ def build_terminology_block(matched_terms: Iterable[Dict[str, Any]]) -> str:
     terms = list(matched_terms or [])
     if not terms:
         return ""
-    lines: List[str] = [
+    lines: list[str] = [
         "TERMINOLOGY FOR THIS SECTION (read-only -- do not include in output):",
         "=" * 30,
     ]
@@ -140,8 +140,8 @@ def build_terminology_block(matched_terms: Iterable[Dict[str, Any]]) -> str:
 
 
 def summarize_injections(
-    chunks_to_terms: Dict[str, List[Dict[str, Any]]],
-) -> Dict[str, Any]:
+    chunks_to_terms: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
     """Build the ``glossary_injection_summary`` for orchestration_result.
 
     ``chunks_to_terms`` is a mapping from chunk_id to the list of
@@ -152,7 +152,7 @@ def summarize_injections(
     chunks_without = 0
     total_injections = 0
     total_chars = 0
-    name_counts: Dict[str, int] = {}
+    name_counts: dict[str, int] = {}
     for terms in chunks_to_terms.values():
         if terms:
             chunks_with += 1

@@ -8,6 +8,19 @@ Submodules:
 """
 from __future__ import annotations
 
+from .chunk_position import (
+    ATTENTION_DIRECTION_BLOCK,
+    POSITION_LABELS,
+    assign_chunk_positions,
+    attention_block_for_position,
+    compute_chunk_position,
+)
+from .few_shot_loader import (
+    FEW_SHOT_ARTIFACT_FILENAME,
+    FewShotLoadResult,
+    build_few_shot_block,
+    load_few_shot_examples,
+)
 from .glossary_builder import (
     GLOSSARY_SCHEMA_VERSION,
     REQUIRED_TERM_FIELDS,
@@ -19,19 +32,6 @@ from .term_injector import (
     build_terminology_block,
     find_matching_terms,
     summarize_injections,
-)
-from .few_shot_loader import (
-    FEW_SHOT_ARTIFACT_FILENAME,
-    FewShotLoadResult,
-    build_few_shot_block,
-    load_few_shot_examples,
-)
-from .chunk_position import (
-    ATTENTION_DIRECTION_BLOCK,
-    POSITION_LABELS,
-    assign_chunk_positions,
-    attention_block_for_position,
-    compute_chunk_position,
 )
 
 __all__ = [

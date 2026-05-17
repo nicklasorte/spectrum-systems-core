@@ -17,7 +17,6 @@ from pathlib import Path
 
 from spectrum_systems_core.data_lake import process_meeting
 
-
 FIXTURES = Path(__file__).parent / "fixtures" / "golden_meetings"
 
 

@@ -13,15 +13,13 @@ from __future__ import annotations
 
 import datetime
 import json
-import os
-import re
 import shutil
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 from ..obsidian_bridge import _frontmatter
 from ._paths import find_processed_dir
-
 
 REVIEW_FORM_TEMPLATE = """---
 story_id: "{story_id}"
@@ -71,7 +69,7 @@ is non-blank AND `decision` is one of approve / revise / reject.
 _TIMESTAMP_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 
-def _now_utc(now: Optional[Callable[[], datetime.datetime]] = None) -> datetime.datetime:
+def _now_utc(now: Callable[[], datetime.datetime] | None = None) -> datetime.datetime:
     if now is not None:
         return now()
     return datetime.datetime.utcnow()
@@ -83,10 +81,10 @@ class StoryReviewGateway:
     def emit_review_form(
         self,
         story_id: str,
-        candidate: Dict[str, Any],
+        candidate: dict[str, Any],
         vault_root: str,
         *,
-        now: Optional[Callable[[], datetime.datetime]] = None,
+        now: Callable[[], datetime.datetime] | None = None,
     ) -> str:
         pending_dir = Path(vault_root) / "Reviews" / "Stories" / "Pending"
         pending_dir.mkdir(parents=True, exist_ok=True)
@@ -117,8 +115,8 @@ class StoryReviewGateway:
         repo_root: str,
         *,
         timeout_hours: int = 72,
-        now: Optional[Callable[[], datetime.datetime]] = None,
-    ) -> Dict[str, Any]:
+        now: Callable[[], datetime.datetime] | None = None,
+    ) -> dict[str, Any]:
         review_path = (
             Path(vault_root) / "Reviews" / "Stories" / "Pending"
             / f"{story_id}_review.md"
@@ -169,14 +167,14 @@ class StoryReviewGateway:
     def _maybe_timeout(
         self,
         review_path: Path,
-        frontmatter: Dict[str, Any],
+        frontmatter: dict[str, Any],
         *,
-        now: Optional[Callable[[], datetime.datetime]],
+        now: Callable[[], datetime.datetime] | None,
         timeout_hours: int,
         story_id: str,
         source_id: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         ingestion_at = str(frontmatter.get("ingestion_at") or "").strip()
         if not ingestion_at:
             return {"status": "awaiting", "decision": "", "reason": "no_ingestion_at"}
@@ -210,7 +208,7 @@ class StoryReviewGateway:
         repo_root: str,
         decision: str,
         reviewer_id: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, _ = find_processed_dir(repo_root_path, source_id)
         if processed_dir is None:

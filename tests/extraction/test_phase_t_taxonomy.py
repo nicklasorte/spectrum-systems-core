@@ -4,8 +4,7 @@ from __future__ import annotations
 import os
 import unittest
 from pathlib import Path
-from typing import Any, Dict, List
-from unittest import mock
+from typing import Any
 
 from spectrum_systems_core.config import taxonomy
 from spectrum_systems_core.extraction import binding_validator
@@ -95,7 +94,7 @@ class TaxonomyHaltFindingTests(unittest.TestCase):
     def tearDown(self) -> None:
         os.environ.pop(BINDING_VALIDATOR_HALT_ENABLED_ENV, None)
 
-    def _weak_decision(self) -> Dict[str, Any]:
+    def _weak_decision(self) -> dict[str, Any]:
         return {
             "decision_text": "The group discussed the band plan briefly.",
             "decision_type": "noted",
@@ -157,7 +156,7 @@ class DecisionExtractorOutcomeFieldTests(unittest.TestCase):
     """Phase T.1: ``decision_outcome`` flows through when the model emits it."""
 
     def _api_caller_factory(self, decision_outcome: str | None) -> Any:
-        def fake(prompt: str) -> Dict[str, Any]:
+        def fake(prompt: str) -> dict[str, Any]:
             item = {
                 "decision_text": "FCC deferred the band plan pending study.",
                 "decision_type": "deferred",

@@ -14,8 +14,6 @@ from __future__ import annotations
 import json
 import unittest
 
-import pytest
-
 import anthropic
 
 from spectrum_systems_core.extraction import _failure_artifacts as fa
@@ -37,7 +35,6 @@ from spectrum_systems_core.extraction._resilience import (
     guard_empty_response,
     strip_markdown_fence,
 )
-
 
 # ---------------------------------------------------------------------------
 # X-0 part A: call_with_backoff

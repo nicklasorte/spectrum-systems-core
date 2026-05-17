@@ -19,7 +19,7 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 
@@ -50,11 +50,11 @@ def _contracts_root() -> Path:
 def _load_latest(
     target_dir: Path,
     artifact_type: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Return the most recent JSON artifact of the given type under target_dir."""
     if not target_dir.is_dir():
         return None
-    best: Optional[Tuple[str, Dict[str, Any]]] = None
+    best: tuple[str, dict[str, Any]] | None = None
     for path in target_dir.glob("*.json"):
         if path.name.endswith(".invalid.json"):
             continue
@@ -74,17 +74,17 @@ def _load_latest(
 
 def _load_latest_pipeline_state_record(
     sdl_root: Path,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     return _load_latest(sdl_root / "verifications", "pipeline_state_record")
 
 
-def _load_latest_eval_summary(sdl_root: Path) -> Optional[Dict[str, Any]]:
+def _load_latest_eval_summary(sdl_root: Path) -> dict[str, Any] | None:
     return _load_latest(sdl_root / "evals", "eval_summary")
 
 
 def _load_latest_verification_findings(
     sdl_root: Path,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     return _load_latest(sdl_root / "verifications", "verification_findings")
 
 
@@ -96,8 +96,8 @@ def _safe_int(v: Any) -> int:
 
 
 def _build_inventory_snapshot(
-    pipeline_state: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
+    pipeline_state: dict[str, Any] | None,
+) -> dict[str, Any]:
     expected = (pipeline_state or {}).get("expected_artifacts") or {}
     return {
         "source_records": _safe_int(expected.get("source_record_count")),
@@ -115,9 +115,9 @@ def _build_inventory_snapshot(
 
 
 def _build_metrics_snapshot(
-    eval_summary: Optional[Dict[str, Any]],
-    meeting_extractions: List[Dict[str, Any]],
-) -> Optional[Dict[str, Any]]:
+    eval_summary: dict[str, Any] | None,
+    meeting_extractions: list[dict[str, Any]],
+) -> dict[str, Any] | None:
     """Null when no eval_summary is present (red-team scenario 3)."""
     if not isinstance(eval_summary, dict):
         return None
@@ -152,7 +152,7 @@ def _build_metrics_snapshot(
     }
 
 
-def _safe_float(v: Any) -> Optional[float]:
+def _safe_float(v: Any) -> float | None:
     if v is None:
         return None
     try:
@@ -161,7 +161,7 @@ def _safe_float(v: Any) -> Optional[float]:
         return None
 
 
-def _safe_int_or_none(v: Any) -> Optional[int]:
+def _safe_int_or_none(v: Any) -> int | None:
     if v is None:
         return None
     try:
@@ -171,11 +171,11 @@ def _safe_int_or_none(v: Any) -> Optional[int]:
 
 
 def _build_outstanding_findings(
-    findings_record: Optional[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+    findings_record: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
     if not isinstance(findings_record, dict):
         return []
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for f in findings_record.get("findings") or []:
         if not isinstance(f, dict):
             continue
@@ -193,9 +193,9 @@ def _build_outstanding_findings(
 
 
 def _build_next_required_actions(
-    pipeline_state: Optional[Dict[str, Any]],
-    findings_record: Optional[Dict[str, Any]],
-) -> List[str]:
+    pipeline_state: dict[str, Any] | None,
+    findings_record: dict[str, Any] | None,
+) -> list[str]:
     """Prefer pipeline_state.next_required_actions; fall back to findings."""
     if isinstance(pipeline_state, dict):
         actions = pipeline_state.get("next_required_actions") or []
@@ -208,7 +208,7 @@ def _build_next_required_actions(
     return []
 
 
-def _format_prompt_opening(record: Dict[str, Any]) -> str:
+def _format_prompt_opening(record: dict[str, Any]) -> str:
     """Render the copy-paste-ready prompt opening for the next conversation."""
     cycle_id = record.get("cycle_id", "")
     created_at = record.get("created_at", "")
@@ -222,7 +222,7 @@ def _format_prompt_opening(record: Dict[str, Any]) -> str:
     )
     eval_summary_id = record.get("eval_summary_id") or "<missing>"
 
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(
         f"## CURRENT STATE — Briefing from {cycle_id}"
     )
@@ -313,13 +313,13 @@ def build_next_phase_briefing(
     *,
     cycle_id: str,
     freshness_window_hours: int = DEFAULT_FRESHNESS_HOURS,
-    pipeline_state_record: Optional[Dict[str, Any]] = None,
-    eval_summary: Optional[Dict[str, Any]] = None,
-    verification_findings: Optional[Dict[str, Any]] = None,
-    meeting_extractions: Optional[List[Dict[str, Any]]] = None,
-    sdl_root: Optional[Path] = None,
-    now: Optional[datetime.datetime] = None,
-) -> Dict[str, Any]:
+    pipeline_state_record: dict[str, Any] | None = None,
+    eval_summary: dict[str, Any] | None = None,
+    verification_findings: dict[str, Any] | None = None,
+    meeting_extractions: list[dict[str, Any]] | None = None,
+    sdl_root: Path | None = None,
+    now: datetime.datetime | None = None,
+) -> dict[str, Any]:
     """Build a next_phase_briefing dict (unwritten).
 
     Explicit args win over disk discovery. ``sdl_root`` is used only to
@@ -348,7 +348,7 @@ def build_next_phase_briefing(
         hours=freshness_window_hours
     )
 
-    record: Dict[str, Any] = {
+    record: dict[str, Any] = {
         "next_phase_briefing_id": str(uuid.uuid4()),
         "artifact_type": "next_phase_briefing",
         "schema_version": SCHEMA_VERSION,
@@ -399,8 +399,8 @@ def build_next_phase_briefing(
 
 
 def write_next_phase_briefing(
-    record: Dict[str, Any], *, sdl_root: Path
-) -> Optional[Path]:
+    record: dict[str, Any], *, sdl_root: Path
+) -> Path | None:
     """Validate against schema, write under ``$SDL_ROOT/verifications/briefings/``."""
     schema_path = (
         _contracts_root()

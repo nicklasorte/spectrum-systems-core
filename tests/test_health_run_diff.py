@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -22,7 +22,7 @@ def _make_transcript(
     chunks_attempted: int,
     chunks_blocked: int,
     stage_status: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "source_id": source_id,
         "chunks_attempted": chunks_attempted,
@@ -39,10 +39,10 @@ def _write_summary(
     tmp_path: Path,
     *,
     run_id: str,
-    transcripts: List[Dict[str, Any]],
-    block_reasons: Dict[str, int] | None = None,
-    findings: List[str] | None = None,
-    eval_metrics: Dict[str, float] | None = None,
+    transcripts: list[dict[str, Any]],
+    block_reasons: dict[str, int] | None = None,
+    findings: list[str] | None = None,
+    eval_metrics: dict[str, float] | None = None,
 ) -> None:
     runs_dir = tmp_path / "store" / "artifacts" / "pipeline_runs"
     runs_dir.mkdir(parents=True, exist_ok=True)

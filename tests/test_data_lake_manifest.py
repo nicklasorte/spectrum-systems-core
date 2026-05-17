@@ -5,13 +5,11 @@ import pytest
 from spectrum_systems_core.data_lake import (
     REQUIRED_MANIFEST_FIELDS,
     ManifestError,
-    build_manifest,
     derive_run_id,
     manifest_to_json,
     run_transcript_pipeline,
     validate_manifest,
 )
-
 
 VALID_METADATA = {
     "meeting_id": "m-q3-2026",

@@ -12,7 +12,8 @@ Never raises. Returns ``[]`` on any LLM error path.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from ..evals.m4.few_shot import (
     format_examples_for_prompt,
@@ -27,16 +28,15 @@ from ._prompt_blocks import (
     normalize_confidence,
 )
 
-
 _MODEL_ID = "claude-haiku-4-5-20251001"
-_CLAIM_TYPES: Set[str] = {"technical", "procedural", "regulatory", "opinion"}
+_CLAIM_TYPES: set[str] = {"technical", "procedural", "regulatory", "opinion"}
 
 
-def _default_api_caller(prompt: str) -> Dict[str, Any]:  # noqa: ARG001
+def _default_api_caller(prompt: str) -> dict[str, Any]:  # noqa: ARG001
     return {"items": []}
 
 
-def _empty_metadata() -> Dict[str, Any]:
+def _empty_metadata() -> dict[str, Any]:
     return {
         "few_shot_injected": False,
         "few_shot_version": None,
@@ -54,16 +54,16 @@ class ClaimExtractor:
 
     def __init__(
         self,
-        api_caller: Optional[Callable[[str], Dict[str, Any]]] = None,
-        model: Optional[str] = None,
-        few_shot_path: Optional[str] = None,
-        data_lake_path: Optional[str] = None,
+        api_caller: Callable[[str], dict[str, Any]] | None = None,
+        model: str | None = None,
+        few_shot_path: str | None = None,
+        data_lake_path: str | None = None,
     ) -> None:
         self._api_caller = api_caller or _default_api_caller
         self._model = model or self.MODEL_ID
         self._few_shot_path = few_shot_path
         self._data_lake_path = data_lake_path
-        self.last_run_metadata: Dict[str, Any] = _empty_metadata()
+        self.last_run_metadata: dict[str, Any] = _empty_metadata()
 
     @staticmethod
     def _normalize_type(value: Any) -> str:
@@ -74,7 +74,7 @@ class ClaimExtractor:
     @staticmethod
     def _validate_turns(
         source_turn_ids: Any,
-        available_turn_ids: Optional[Set[str]],
+        available_turn_ids: set[str] | None,
     ) -> tuple:
         if not isinstance(source_turn_ids, list) or not source_turn_ids:
             return [], "missing"
@@ -87,8 +87,8 @@ class ClaimExtractor:
                 return ids, "invalid"
         return ids, "verified"
 
-    def _load_few_shot_block(self) -> tuple[str, Dict[str, Any]]:
-        meta: Dict[str, Any] = {
+    def _load_few_shot_block(self) -> tuple[str, dict[str, Any]]:
+        meta: dict[str, Any] = {
             "few_shot_injected": False,
             "few_shot_version": None,
             "few_shot_example_count": 0,
@@ -120,11 +120,11 @@ class ClaimExtractor:
 
     def _build_prompt(
         self,
-        chunks: Sequence[Dict[str, Any]],
+        chunks: Sequence[dict[str, Any]],
         glossary_block: str,
         few_shot_block: str,
     ) -> str:
-        parts: List[str] = []
+        parts: list[str] = []
         parts.append(
             "Extract atomic CLAIM items from the following meeting chunks. "
             "A claim is a single factual or technical assertion."
@@ -134,7 +134,7 @@ class ClaimExtractor:
             parts.append(glossary_block)
         if few_shot_block:
             parts.append(few_shot_block)
-        body_lines: List[str] = ["MEETING CHUNKS:"]
+        body_lines: list[str] = ["MEETING CHUNKS:"]
         for c in chunks:
             cid = c.get("chunk_id") or c.get("id") or ""
             speaker = c.get("speaker") or ""
@@ -154,10 +154,10 @@ class ClaimExtractor:
 
     def extract(
         self,
-        chunks: Sequence[Dict[str, Any]],
+        chunks: Sequence[dict[str, Any]],
         glossary_block: str = "",
-        available_turn_ids: Optional[Set[str]] = None,
-    ) -> List[Dict[str, Any]]:
+        available_turn_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
         self.last_run_metadata = _empty_metadata()
         if not chunks:
             return []
@@ -180,7 +180,7 @@ class ClaimExtractor:
         if not isinstance(items, list):
             return []
 
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for raw in items:
             if not isinstance(raw, dict):
                 continue

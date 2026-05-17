@@ -11,16 +11,13 @@ from spectrum_systems_core.data_lake import (
     ARTIFACTS_SUBDIR,
     DEFAULT_WORKFLOWS,
     INDEX_FILENAME,
-    RUNS_SUBDIR,
     TOPICS_SUBDIR,
     artifact_markdown_filename,
     artifact_markdown_path,
-    artifacts_markdown_dir,
     cli_main,
     markdown_dir,
     process_meeting,
 )
-
 
 FIXTURES = Path(__file__).parent / "fixtures" / "golden_meetings"
 

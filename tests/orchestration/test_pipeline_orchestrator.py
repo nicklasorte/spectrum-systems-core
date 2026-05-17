@@ -7,13 +7,11 @@ exercises the full default runner via SourceLoader-friendly fixtures.
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
-import pytest
 from docx import Document
 
 from spectrum_systems_core.cli import main as cli_main
@@ -21,7 +19,6 @@ from spectrum_systems_core.orchestration import PipelineOrchestrator
 from spectrum_systems_core.orchestration.pipeline_orchestrator import (
     _slugify,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -41,7 +38,7 @@ def _drop_txt(root: Path, filename: str, content: str = "Hello world\n") -> Path
     return p
 
 
-def _drop_docx(root: Path, filename: str, paragraphs: List[str]) -> Path:
+def _drop_docx(root: Path, filename: str, paragraphs: list[str]) -> Path:
     p = root / "store" / "raw" / "transcripts" / filename
     doc = Document()
     for para in paragraphs:
@@ -82,7 +79,7 @@ def _seed_sdl_artifact(root: Path, source_id: str) -> str:
     return artifact_id
 
 
-def _success_runner_factory(calls: List[Dict[str, Any]]):
+def _success_runner_factory(calls: list[dict[str, Any]]):
     def runner(txt_path: Path, source_id: str, store_root: Path):
         artifact_id = str(uuid.uuid4())
         calls.append(
@@ -183,7 +180,7 @@ def test_run_dry_run_does_not_call_source_loader(tmp_path):
     _drop_txt(root, "a.txt")
     _drop_txt(root, "b.txt")
 
-    calls: List[Dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
     orchestrator = PipelineOrchestrator(
         transcript_runner=_success_runner_factory(calls)
     )
@@ -207,7 +204,7 @@ def test_run_processes_only_unprocessed(tmp_path):
     _drop_txt(root, "todo.txt")
     _seed_processed_record(root, _slugify("done"))
 
-    calls: List[Dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
     orchestrator = PipelineOrchestrator(
         transcript_runner=_success_runner_factory(calls)
     )
@@ -228,7 +225,7 @@ def test_run_extracts_docx_before_processing(tmp_path):
         root, "policy-meeting.docx", ["First paragraph", "Second paragraph"]
     )
 
-    calls: List[Dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
     orchestrator = PipelineOrchestrator(
         transcript_runner=_success_runner_factory(calls)
     )
@@ -298,7 +295,7 @@ def test_run_all_succeed_returns_success_status(tmp_path):
     _drop_txt(root, "a.txt")
     _drop_txt(root, "b.txt")
 
-    calls: List[Dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
     orchestrator = PipelineOrchestrator(
         transcript_runner=_success_runner_factory(calls)
     )
@@ -314,7 +311,7 @@ def test_orchestration_record_written_to_sdl_root(tmp_path):
     root = _make_data_lake(tmp_path)
     _drop_txt(root, "a.txt")
 
-    calls: List[Dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
     orchestrator = PipelineOrchestrator(
         transcript_runner=_success_runner_factory(calls)
     )
@@ -331,7 +328,7 @@ def test_orchestration_record_schema_validates(tmp_path):
     root = _make_data_lake(tmp_path)
     _drop_txt(root, "a.txt")
 
-    calls: List[Dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
     orchestrator = PipelineOrchestrator(
         transcript_runner=_success_runner_factory(calls)
     )
@@ -505,7 +502,7 @@ def test_run_collision_files_become_failures_no_run(tmp_path):
     _drop_txt(root, "Q3 Review.txt", content="version A\n")
     _drop_txt(root, "q3-review.txt", content="version B\n")
 
-    calls: List[Dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
     orchestrator = PipelineOrchestrator(
         transcript_runner=_success_runner_factory(calls)
     )
@@ -567,7 +564,7 @@ def test_filtered_files_not_counted_as_failures(tmp_path):
         root, "Working Group MINUTES 5Mar2026.docx", ["Body"]
     )
 
-    calls: List[Dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
     orchestrator = PipelineOrchestrator(
         transcript_runner=_success_runner_factory(calls)
     )
@@ -617,7 +614,7 @@ def test_orchestration_record_with_filtered_validates_against_schema(tmp_path):
     _drop_txt(root, "ok.txt")
     _drop_docx(root, "Project MINUTES 20260101.docx", ["Body"])
 
-    calls: List[Dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
     orchestrator = PipelineOrchestrator(
         transcript_runner=_success_runner_factory(calls)
     )
@@ -650,9 +647,9 @@ def test_orchestration_record_with_filtered_validates_against_schema(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _stage_runner_factory(calls: List[Dict[str, Any]], stage: str):
+def _stage_runner_factory(calls: list[dict[str, Any]], stage: str):
     """Build a stage runner that records its invocations and succeeds."""
-    def runner(source_id: str, store_root: Path) -> Dict[str, Any]:
+    def runner(source_id: str, store_root: Path) -> dict[str, Any]:
         calls.append({"stage": stage, "source_id": source_id})
         # Write the marker file so subsequent idempotency checks pass.
         processed_dir = store_root / "processed" / "meetings" / source_id
@@ -681,13 +678,13 @@ def _stage_runner_factory(calls: List[Dict[str, Any]], stage: str):
 
 
 def _stage_failure_runner(reason: str = "stage_boom"):
-    def runner(source_id: str, store_root: Path) -> Dict[str, Any]:
+    def runner(source_id: str, store_root: Path) -> dict[str, Any]:
         return {"status": "failure", "reason": reason}
     return runner
 
 
-def _synthesize_runner_factory(calls: List[str]):
-    def runner(store_root: Path) -> Dict[str, Any]:
+def _synthesize_runner_factory(calls: list[str]):
+    def runner(store_root: Path) -> dict[str, Any]:
         calls.append(str(store_root))
         return {"status": "success", "reason": ""}
     return runner
@@ -696,8 +693,8 @@ def _synthesize_runner_factory(calls: List[str]):
 def _full_pipeline_orchestrator(
     *,
     transcript_runner=None,
-    stage_calls: List[Dict[str, Any]] | None = None,
-    synth_calls: List[str] | None = None,
+    stage_calls: list[dict[str, Any]] | None = None,
+    synth_calls: list[str] | None = None,
     extract_stories_runner=None,
     promote_knowledge_runner=None,
     extract_claims_runner=None,
@@ -730,7 +727,7 @@ def _make_processed_for_runner(store_root: Path, source_id: str) -> None:
     )
 
 
-def _success_runner_with_processed(calls: List[Dict[str, Any]]):
+def _success_runner_with_processed(calls: list[dict[str, Any]]):
     """Stage 1 runner that ALSO creates the processed dir."""
     def runner(txt_path: Path, source_id: str, store_root: Path):
         artifact_id = str(uuid.uuid4())
@@ -752,9 +749,9 @@ def test_force_flag_reruns_already_processed_transcripts(tmp_path):
     _drop_txt(root, "done.txt")
     _seed_processed_record(root, _slugify("done"))
 
-    s1_calls: List[Dict[str, Any]] = []
-    stage_calls: List[Dict[str, Any]] = []
-    synth_calls: List[str] = []
+    s1_calls: list[dict[str, Any]] = []
+    stage_calls: list[dict[str, Any]] = []
+    synth_calls: list[str] = []
     orch = _full_pipeline_orchestrator(
         transcript_runner=_success_runner_with_processed(s1_calls),
         stage_calls=stage_calls,
@@ -795,8 +792,8 @@ def test_force_flag_reruns_story_extraction(tmp_path):
         root / "store" / "processed" / "meetings" / sid / "stories" / "candidates.jsonl"
     ).write_text("", encoding="utf-8")
 
-    s1_calls: List[Dict[str, Any]] = []
-    stage_calls: List[Dict[str, Any]] = []
+    s1_calls: list[dict[str, Any]] = []
+    stage_calls: list[dict[str, Any]] = []
     orch = _full_pipeline_orchestrator(
         transcript_runner=_success_runner_with_processed(s1_calls),
         stage_calls=stage_calls,
@@ -824,9 +821,9 @@ def test_stage2_failure_skips_stages_3_and_4(tmp_path):
     root = _make_data_lake(tmp_path)
     _drop_txt(root, "alpha.txt")
 
-    s1_calls: List[Dict[str, Any]] = []
-    stage_calls: List[Dict[str, Any]] = []
-    synth_calls: List[str] = []
+    s1_calls: list[dict[str, Any]] = []
+    stage_calls: list[dict[str, Any]] = []
+    synth_calls: list[str] = []
     orch = _full_pipeline_orchestrator(
         transcript_runner=_success_runner_with_processed(s1_calls),
         stage_calls=stage_calls,
@@ -856,9 +853,9 @@ def test_stage5_synthesize_runs_after_all_transcripts(tmp_path):
     _drop_txt(root, "b.txt")
     _drop_txt(root, "c.txt")
 
-    s1_calls: List[Dict[str, Any]] = []
-    stage_calls: List[Dict[str, Any]] = []
-    synth_calls: List[str] = []
+    s1_calls: list[dict[str, Any]] = []
+    stage_calls: list[dict[str, Any]] = []
+    synth_calls: list[str] = []
     orch = _full_pipeline_orchestrator(
         transcript_runner=_success_runner_with_processed(s1_calls),
         stage_calls=stage_calls,
@@ -890,9 +887,9 @@ def test_synthesize_skipped_if_no_new_artifacts(tmp_path):
     (pd / "paper").mkdir(parents=True, exist_ok=True)
     (pd / "paper" / "claims.jsonl").write_text("", encoding="utf-8")
 
-    s1_calls: List[Dict[str, Any]] = []
-    stage_calls: List[Dict[str, Any]] = []
-    synth_calls: List[str] = []
+    s1_calls: list[dict[str, Any]] = []
+    stage_calls: list[dict[str, Any]] = []
+    synth_calls: list[str] = []
     orch = _full_pipeline_orchestrator(
         transcript_runner=_success_runner_with_processed(s1_calls),
         stage_calls=stage_calls,
@@ -921,9 +918,9 @@ def test_orchestration_record_includes_pipeline_stages(tmp_path):
     root = _make_data_lake(tmp_path)
     _drop_txt(root, "alpha.txt")
 
-    s1_calls: List[Dict[str, Any]] = []
-    stage_calls: List[Dict[str, Any]] = []
-    synth_calls: List[str] = []
+    s1_calls: list[dict[str, Any]] = []
+    stage_calls: list[dict[str, Any]] = []
+    synth_calls: list[str] = []
     orch = _full_pipeline_orchestrator(
         transcript_runner=_success_runner_with_processed(s1_calls),
         stage_calls=stage_calls,
@@ -965,9 +962,9 @@ def test_force_false_skips_existing_artifacts(tmp_path):
     (pd / "paper").mkdir(parents=True, exist_ok=True)
     (pd / "paper" / "claims.jsonl").write_text("", encoding="utf-8")
 
-    s1_calls: List[Dict[str, Any]] = []
-    stage_calls: List[Dict[str, Any]] = []
-    synth_calls: List[str] = []
+    s1_calls: list[dict[str, Any]] = []
+    stage_calls: list[dict[str, Any]] = []
+    synth_calls: list[str] = []
     orch = _full_pipeline_orchestrator(
         transcript_runner=_success_runner_with_processed(s1_calls),
         stage_calls=stage_calls,
@@ -998,9 +995,9 @@ def test_force_never_deletes_existing_artifacts(tmp_path):
         '{"old":"candidate"}\n', encoding="utf-8"
     )
 
-    s1_calls: List[Dict[str, Any]] = []
-    stage_calls: List[Dict[str, Any]] = []
-    synth_calls: List[str] = []
+    s1_calls: list[dict[str, Any]] = []
+    stage_calls: list[dict[str, Any]] = []
+    synth_calls: list[str] = []
     # Stage 1 runner that does NOT touch existing source_record.json
     # (real Promoter is content-addressed; new artifact_ids only on
     # changed content). Stage 2 runner overwrites candidates.jsonl
@@ -1028,9 +1025,9 @@ def test_stage_4_failure_does_not_skip_other_transcripts(tmp_path):
     _drop_txt(root, "good.txt")
     _drop_txt(root, "bad.txt")
 
-    s1_calls: List[Dict[str, Any]] = []
-    stage_calls: List[Dict[str, Any]] = []
-    synth_calls: List[str] = []
+    s1_calls: list[dict[str, Any]] = []
+    stage_calls: list[dict[str, Any]] = []
+    synth_calls: list[str] = []
 
     def claims_runner(source_id, store_root):
         if source_id == _slugify("bad"):
@@ -1070,9 +1067,9 @@ def test_synthesize_skipped_when_all_transcripts_fail_at_stage_2(tmp_path):
     _drop_txt(root, "a.txt")
     _drop_txt(root, "b.txt")
 
-    s1_calls: List[Dict[str, Any]] = []
-    stage_calls: List[Dict[str, Any]] = []
-    synth_calls: List[str] = []
+    s1_calls: list[dict[str, Any]] = []
+    stage_calls: list[dict[str, Any]] = []
+    synth_calls: list[str] = []
     orch = _full_pipeline_orchestrator(
         transcript_runner=_success_runner_with_processed(s1_calls),
         stage_calls=stage_calls,
@@ -1091,9 +1088,9 @@ def test_force_synthesize_not_run_when_zero_stage4_success(tmp_path):
     root = _make_data_lake(tmp_path)
     _drop_txt(root, "a.txt")
 
-    s1_calls: List[Dict[str, Any]] = []
-    stage_calls: List[Dict[str, Any]] = []
-    synth_calls: List[str] = []
+    s1_calls: list[dict[str, Any]] = []
+    stage_calls: list[dict[str, Any]] = []
+    synth_calls: list[str] = []
     orch = _full_pipeline_orchestrator(
         transcript_runner=_success_runner_with_processed(s1_calls),
         stage_calls=stage_calls,
@@ -1143,9 +1140,9 @@ def test_story_extraction_success_detected_by_artifact_existence(tmp_path, capsy
         )
         return {"status": "failure", "reason": "extractor_failed:api_error"}
 
-    s1_calls: List[Dict[str, Any]] = []
-    stage_calls: List[Dict[str, Any]] = []
-    synth_calls: List[str] = []
+    s1_calls: list[dict[str, Any]] = []
+    stage_calls: list[dict[str, Any]] = []
+    synth_calls: list[str] = []
     orch = _full_pipeline_orchestrator(
         transcript_runner=_success_runner_with_processed(s1_calls),
         stage_calls=stage_calls,
@@ -1177,9 +1174,9 @@ def test_story_extraction_failure_when_no_artifact(tmp_path, capsys):
         # Runner claims success but writes nothing.
         return {"status": "success", "reason": ""}
 
-    s1_calls: List[Dict[str, Any]] = []
-    stage_calls: List[Dict[str, Any]] = []
-    synth_calls: List[str] = []
+    s1_calls: list[dict[str, Any]] = []
+    stage_calls: list[dict[str, Any]] = []
+    synth_calls: list[str] = []
     orch = _full_pipeline_orchestrator(
         transcript_runner=_success_runner_with_processed(s1_calls),
         stage_calls=stage_calls,
@@ -1220,9 +1217,9 @@ def test_synthesize_runs_when_stories_exist(tmp_path):
         )
         return {"status": "success", "reason": ""}
 
-    s1_calls: List[Dict[str, Any]] = []
-    stage_calls: List[Dict[str, Any]] = []
-    synth_calls: List[str] = []
+    s1_calls: list[dict[str, Any]] = []
+    stage_calls: list[dict[str, Any]] = []
+    synth_calls: list[str] = []
     orch = _full_pipeline_orchestrator(
         transcript_runner=_success_runner_with_processed(s1_calls),
         stage_calls=stage_calls,
@@ -1259,9 +1256,9 @@ def test_summary_shows_correct_success_count(tmp_path):
         )
         return {"status": "failure", "reason": "extractor_failed:api_error"}
 
-    s1_calls: List[Dict[str, Any]] = []
-    stage_calls: List[Dict[str, Any]] = []
-    synth_calls: List[str] = []
+    s1_calls: list[dict[str, Any]] = []
+    stage_calls: list[dict[str, Any]] = []
+    synth_calls: list[str] = []
     orch = _full_pipeline_orchestrator(
         transcript_runner=_success_runner_with_processed(s1_calls),
         stage_calls=stage_calls,
@@ -1304,9 +1301,9 @@ def test_stale_artifact_does_not_mask_runner_failure(tmp_path, capsys):
         # Runner fails without touching chunks.jsonl.
         return {"status": "failure", "reason": "extractor_failed:api_error"}
 
-    s1_calls: List[Dict[str, Any]] = []
-    stage_calls: List[Dict[str, Any]] = []
-    synth_calls: List[str] = []
+    s1_calls: list[dict[str, Any]] = []
+    stage_calls: list[dict[str, Any]] = []
+    synth_calls: list[str] = []
     orch = _full_pipeline_orchestrator(
         transcript_runner=_success_runner_with_processed(s1_calls),
         stage_calls=stage_calls,

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Tuple
 
 from ..ingestion._paths import contracts_root
 from ..ingestion.source_loader import SOURCE_FAMILIES
@@ -20,7 +19,7 @@ def paper_schema_digest(schema_name: str) -> str:
 
 def find_paper_dir(
     repo_root: Path, source_id: str, *, create: bool = False
-) -> Tuple[Path | None, str | None]:
+) -> tuple[Path | None, str | None]:
     """Locate processed/<family>/<source_id>/paper/. Returns (path, family)."""
     for family in SOURCE_FAMILIES:
         candidate = repo_root / "processed" / family / source_id

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from ..extraction._paths import find_processed_dir
 
@@ -30,8 +30,8 @@ _STOPWORDS = {
 MIN_OVERLAP = 3
 
 
-def _significant_words(text: str) -> List[str]:
-    out: List[str] = []
+def _significant_words(text: str) -> list[str]:
+    out: list[str] = []
     for raw in text.split():
         w = "".join(ch for ch in raw.lower() if ch.isalnum() or ch == "'")
         if len(w) > 4 and w not in _STOPWORDS:
@@ -47,8 +47,8 @@ def _has_negation(text: str) -> bool:
     return bool(tokens & NEGATION_WORDS)
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     with path.open("r", encoding="utf-8") as fh:
@@ -72,8 +72,8 @@ class ContradictionDetector:
     determinism contract for evals (constitution).
     """
 
-    def detect(self, claims: List[Dict[str, Any]]) -> Dict[str, Any]:
-        pairs: List[Dict[str, Any]] = []
+    def detect(self, claims: list[dict[str, Any]]) -> dict[str, Any]:
+        pairs: list[dict[str, Any]] = []
         total = 0
         n = len(claims)
         for i in range(n):
@@ -107,7 +107,7 @@ class ContradictionDetector:
 
     def run_on_source(
         self, source_id: str, repo_root: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, _ = find_processed_dir(repo_root_path, source_id)
         if processed_dir is None:

@@ -19,7 +19,6 @@ from spectrum_systems_core.glossary.glossary_builder import (
 )
 from spectrum_systems_core.validation import validate_artifact
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GLOSSARY_DIR = REPO_ROOT / "data-lake" / "store" / "artifacts" / "glossary"
 GLOSSARY_PATH = GLOSSARY_DIR / GLOSSARY_FILENAME

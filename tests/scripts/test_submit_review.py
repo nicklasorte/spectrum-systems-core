@@ -10,7 +10,7 @@ import datetime
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -21,7 +21,6 @@ if str(_SCRIPTS_DIR) not in sys.path:
 import submit_review  # noqa: E402
 
 from spectrum_systems_core.validation import validate_artifact
-
 
 CC_REL = "store/artifacts/correction_candidates"
 
@@ -58,7 +57,7 @@ def _seed_candidate(
     return path
 
 
-def _read_first_review(data_lake: Path, source_id: str = "src1") -> Dict[str, Any]:
+def _read_first_review(data_lake: Path, source_id: str = "src1") -> dict[str, Any]:
     review_dir = data_lake / "store" / "artifacts" / "human_reviews" / source_id
     files = list(review_dir.glob("*.json"))
     assert files, f"no review artifacts found under {review_dir}"

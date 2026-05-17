@@ -31,17 +31,18 @@ import os
 import re
 import sys
 import traceback
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any
 
 from ..artifacts import Artifact, new_artifact
 from ..data_lake.loader import LoaderError, load_meeting
+from ..data_lake.paths import processed_meeting_dir, validate_meeting_id
 from ..data_lake.pipeline import (
     _DETERMINISTIC_CREATED_AT,
     _stable_artifact_id,
     source_record_path,
 )
-from ..data_lake.paths import processed_meeting_dir, validate_meeting_id
 from ..data_lake.serialize import artifact_to_dict, canonical_json
 from ..workflows.meeting_minutes import _build_base_payload
 from . import llm_haiku, llm_opus

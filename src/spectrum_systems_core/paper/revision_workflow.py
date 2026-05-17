@@ -16,8 +16,9 @@ import hashlib
 import json
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 import jsonschema
 
@@ -58,8 +59,8 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     with path.open("r", encoding="utf-8") as fh:
@@ -77,17 +78,17 @@ def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
 class RevisionWorkflow:
     """Apply approved revision instructions section-by-section."""
 
-    def __init__(self, api_caller: Optional[Callable[[str], str]] = None):
+    def __init__(self, api_caller: Callable[[str], str] | None = None):
         self._api_caller = api_caller
 
     def apply_instruction(
         self,
-        instruction: Dict[str, Any],
+        instruction: dict[str, Any],
         section_text: str,
-        claims_before: List[Dict[str, Any]],
+        claims_before: list[dict[str, Any]],
         source_id: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         instruction_id = instruction.get("instruction_id", str(uuid.uuid4()))
         original_hash = "sha256:" + _sha256_hex(section_text.encode("utf-8"))
 
@@ -223,9 +224,9 @@ class RevisionWorkflow:
     def apply_all_approved(
         self,
         working_paper_source_id: str,
-        approved_instruction_ids: List[str],
+        approved_instruction_ids: list[str],
         repo_root: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, _ = find_processed_dir(
             repo_root_path, working_paper_source_id
@@ -261,14 +262,14 @@ class RevisionWorkflow:
         text_units = _read_jsonl(processed_dir / "text_units.jsonl")
         # Build a dict of section_id -> text. We treat each text_unit as a
         # candidate section; target_section identifies which one.
-        sections_by_id: Dict[str, str] = {}
+        sections_by_id: dict[str, str] = {}
         for u in text_units:
             uid = u.get("unit_id")
             if isinstance(uid, str):
                 sections_by_id[uid] = u.get("text") or ""
 
-        diffs: List[Dict[str, Any]] = []
-        revised_sections: Dict[str, str] = {}
+        diffs: list[dict[str, Any]] = []
+        revised_sections: dict[str, str] = {}
         applied = 0
         blocked = 0
 
@@ -362,7 +363,7 @@ class RevisionWorkflow:
         original_chars: int,
         claims_before: int,
         reason: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         # Failure diffs use a 64-zero placeholder revised hash so the schema
         # still validates. They are append-safe and debuggable.
         zero_hash = "sha256:" + ("0" * 64)
@@ -384,7 +385,7 @@ class RevisionWorkflow:
             "created_at": _now_iso(),
         }
 
-    def _validate_diff(self, diff: Dict[str, Any]) -> None:
+    def _validate_diff(self, diff: dict[str, Any]) -> None:
         try:
             schema = json.loads(
                 paper_schema_path("revision_diff").read_text(encoding="utf-8")
@@ -408,7 +409,7 @@ class RevisionWorkflow:
                 temperature=REVISION_TEMPERATURE,
                 messages=[{"role": "user", "content": prompt}],
             )
-            parts: List[str] = []
+            parts: list[str] = []
             for block in message.content:
                 text = getattr(block, "text", None)
                 if isinstance(text, str):

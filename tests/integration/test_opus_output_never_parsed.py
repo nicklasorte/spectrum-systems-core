@@ -21,7 +21,6 @@ guards:
 """
 from __future__ import annotations
 
-import inspect
 import json
 import pathlib
 

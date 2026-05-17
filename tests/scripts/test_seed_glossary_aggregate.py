@@ -23,21 +23,17 @@ These tests pin:
 from __future__ import annotations
 
 import json
-import runpy
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict
-
-import pytest
-
+from typing import Any
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 
-def _signal_predicate(doc: Dict[str, Any]) -> bool:
+def _signal_predicate(doc: dict[str, Any]) -> bool:
     """Exact predicate from validate-and-baseline.yml."""
     summary = doc.get("glossary_injection_summary")
     if not isinstance(summary, dict):
@@ -83,7 +79,7 @@ def test_signal_predicate_fails_when_both_zero() -> None:
 
 
 def test_signal_predicate_fails_when_summary_missing() -> None:
-    doc: Dict[str, Any] = {}
+    doc: dict[str, Any] = {}
     assert _signal_predicate(doc) is False
 
 

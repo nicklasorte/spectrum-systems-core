@@ -13,11 +13,10 @@ from __future__ import annotations
 import datetime
 import json
 import logging
-import shutil
 import sys
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from . import MAX_ACTIVE_RUN_HISTORY, RUN_HISTORY_RETENTION_DAYS
 from ._io import (
@@ -33,15 +32,14 @@ from ._paths import (
 )
 from ._schema import validate_harness_artifact
 
-
 _LOG = logging.getLogger(__name__)
 
 
-def _empty_index() -> Dict[str, Any]:
+def _empty_index() -> dict[str, Any]:
     return {"last_archived_at": None, "runs": []}
 
 
-def _load_index(repo_root: str | Path) -> Dict[str, Any]:
+def _load_index(repo_root: str | Path) -> dict[str, Any]:
     idx_path = runs_index_path(repo_root)
     data = read_json(idx_path)
     if not isinstance(data, dict) or "runs" not in data:
@@ -52,15 +50,15 @@ def _load_index(repo_root: str | Path) -> Dict[str, Any]:
 
 
 def _summarize_synthesis_outcome(
-    manifest: Dict[str, Any],
-    report_draft: Dict[str, Any] | None,
-    keynote_scaffold: Dict[str, Any] | None,
-) -> tuple[str, List[str]]:
+    manifest: dict[str, Any],
+    report_draft: dict[str, Any] | None,
+    keynote_scaffold: dict[str, Any] | None,
+) -> tuple[str, list[str]]:
     """Return (outcome, block_reason_codes)."""
     if not manifest.get("completed_at"):
         return "failure", ["incomplete_run"]
 
-    block_codes: List[str] = []
+    block_codes: list[str] = []
     sections = (report_draft or {}).get("sections", []) or []
     if any(s.get("unverified_citations") for s in sections):
         block_codes.append("unverified_citations_present")
@@ -75,8 +73,8 @@ def _summarize_synthesis_outcome(
 
 
 def _count_eval_results(
-    report_draft: Dict[str, Any] | None,
-    keynote_scaffold: Dict[str, Any] | None,
+    report_draft: dict[str, Any] | None,
+    keynote_scaffold: dict[str, Any] | None,
 ) -> tuple[int, int, int]:
     """Heuristic from grounded section flags. Returns (pass, fail, warn)."""
     sections = (report_draft or {}).get("sections", []) or []
@@ -93,9 +91,9 @@ def _count_eval_results(
 class RunHistoryStore:
     def record_run(
         self,
-        run_manifest: Dict[str, Any],
+        run_manifest: dict[str, Any],
         repo_root: str | Path,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Record a completed run into harness/runs/index.json. Never raises."""
         try:
             ensure_harness_tree(repo_root)
@@ -118,13 +116,13 @@ class RunHistoryStore:
                 report_draft, keynote_scaffold
             )
 
-            artifact_ids: List[str] = []
+            artifact_ids: list[str] = []
             if report_draft and report_draft.get("draft_id"):
                 artifact_ids.append(str(report_draft["draft_id"]))
             if keynote_scaffold and keynote_scaffold.get("scaffold_id"):
                 artifact_ids.append(str(keynote_scaffold["scaffold_id"]))
 
-            entry: Dict[str, Any] = {
+            entry: dict[str, Any] = {
                 "entry_id": str(uuid.uuid4()),
                 "run_id": run_id,
                 "run_type": "synthesis",
@@ -175,11 +173,11 @@ class RunHistoryStore:
         """Trim and archive. Never raises."""
         try:
             index = _load_index(repo_root)
-            runs: List[Dict[str, Any]] = list(index.get("runs", []))
+            runs: list[dict[str, Any]] = list(index.get("runs", []))
             now = datetime.datetime.now(datetime.timezone.utc)
             cutoff = now - datetime.timedelta(days=RUN_HISTORY_RETENTION_DAYS)
 
-            keep: List[Dict[str, Any]] = []
+            keep: list[dict[str, Any]] = []
             archived_any = False
             for entry in runs:
                 completed = parse_iso(entry.get("completed_at"))
@@ -211,7 +209,7 @@ class RunHistoryStore:
                 file=sys.stderr,
             )
 
-    def _archive_entry(self, entry: Dict[str, Any], repo_root: str | Path) -> None:
+    def _archive_entry(self, entry: dict[str, Any], repo_root: str | Path) -> None:
         archive_dir = runs_archive_dir(repo_root)
         archive_dir.mkdir(parents=True, exist_ok=True)
         run_id = entry.get("run_id") or entry.get("entry_id") or str(uuid.uuid4())
@@ -234,7 +232,7 @@ class RunHistoryStore:
 
     def get_recent_runs(
         self, repo_root: str | Path, n: int = 10
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         index = _load_index(repo_root)
         runs = list(index.get("runs", []))
         runs.sort(
@@ -245,7 +243,7 @@ class RunHistoryStore:
 
     def get_runs_by_outcome(
         self, outcome: str, repo_root: str | Path
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         index = _load_index(repo_root)
         return [e for e in index.get("runs", []) if e.get("outcome") == outcome]
 

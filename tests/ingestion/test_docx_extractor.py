@@ -7,15 +7,14 @@ monkeypatches Document to verify the never-raises contract).
 from __future__ import annotations
 
 import io
-import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from docx import Document
 
-from spectrum_systems_core.ingestion.docx_extractor import DocxExtractor
 from spectrum_systems_core.cli import extract_docx
+from spectrum_systems_core.ingestion.docx_extractor import DocxExtractor
 
 
 def _write_docx(path: Path, paragraphs: list[str]) -> None:

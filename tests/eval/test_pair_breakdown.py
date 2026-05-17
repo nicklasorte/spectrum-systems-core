@@ -4,10 +4,9 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
-import pytest
 
 from spectrum_systems_core.evals.m4.runner import EvalRunner
 
@@ -18,7 +17,7 @@ def _write_pair(
     pair_id: str,
     source_id: str | None,
     minutes_text: str = "DECISION: Approve the launch.",
-    extracted_items: List[Dict[str, Any]] | None = None,
+    extracted_items: list[dict[str, Any]] | None = None,
     status: str = "confirmed",
 ) -> None:
     pairs_dir = sdl_root / "ground_truth"

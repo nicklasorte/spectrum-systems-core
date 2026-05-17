@@ -6,17 +6,17 @@ No Markdown read-back. No auto-promotion. Structured retrieval only.
 """
 from .chunker import (
     CHUNK_MERGE_ENABLED_ENV,
-    Chunker,
     MIN_CHUNK_CHARS,
     MIN_CHUNK_CHARS_ENV,
+    Chunker,
     merge_short_chunks,
 )
-from .story_extractor import StoryExtractor
-from .story_eval import StoryEval
-from .storyworthy_filter import StoryworthyFilter
-from .story_review_gateway import StoryReviewGateway
-from .knowledge_synthesizer import KnowledgeSynthesizer
 from .connection_engine import ConnectionEngine
+from .knowledge_synthesizer import KnowledgeSynthesizer
+from .story_eval import StoryEval
+from .story_extractor import StoryExtractor
+from .story_review_gateway import StoryReviewGateway
+from .storyworthy_filter import StoryworthyFilter
 
 __all__ = [
     "CHUNK_MERGE_ENABLED_ENV",

@@ -30,8 +30,9 @@ import logging
 import os
 import re
 import uuid
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any
 
 from ..health.finding import HealthFinding
 
@@ -70,11 +71,11 @@ class JudgeItemScore:
 
     item_id: str
     decision_text: str
-    rubric_results: Dict[str, Optional[bool]]
+    rubric_results: dict[str, bool | None]
     passed: bool
-    failure_reasons: List[str] = field(default_factory=list)
-    stability_match: Optional[bool] = None
-    judge_decision: Optional[str] = None  # 'pass' / 'fail' / 'unparseable'
+    failure_reasons: list[str] = field(default_factory=list)
+    stability_match: bool | None = None
+    judge_decision: str | None = None  # 'pass' / 'fail' / 'unparseable'
 
 
 @dataclass
@@ -84,9 +85,9 @@ class JudgeRunResult:
     enabled: bool
     judge_model: str
     items_evaluated: int
-    aggregate_pass_rate: Optional[float]
-    item_scores: List[JudgeItemScore]
-    findings: List[HealthFinding]
+    aggregate_pass_rate: float | None
+    item_scores: list[JudgeItemScore]
+    findings: list[HealthFinding]
     calibration_status: str  # 'unrun' | 'ok' | 'warn' | 'failed'
 
 
@@ -164,11 +165,11 @@ _PROMPT_HEADER: str = (
 
 
 def build_judge_prompt(
-    item: Dict[str, Any],
+    item: dict[str, Any],
     source_text: str,
 ) -> str:
     """Compose the per-item judge prompt."""
-    lines: List[str] = [
+    lines: list[str] = [
         _PROMPT_HEADER,
         "",
         "EXTRACTED DECISION:",
@@ -190,7 +191,7 @@ def build_judge_prompt(
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
-def parse_judge_response(text: str) -> Dict[str, Optional[bool]]:
+def parse_judge_response(text: str) -> dict[str, bool | None]:
     """Parse the model's judge response into a dict of boolean checks.
 
     Missing or non-boolean entries become ``None`` (treated as
@@ -198,7 +199,7 @@ def parse_judge_response(text: str) -> Dict[str, Optional[bool]]:
     item is marked ``judge_decision = "unparseable"`` and the rubric
     keys with None fall through to a warn finding aggregator.
     """
-    out: Dict[str, Optional[bool]] = {k: None for k in RUBRIC_CHECKS}
+    out: dict[str, bool | None] = {k: None for k in RUBRIC_CHECKS}
     if not isinstance(text, str) or not text.strip():
         return out
     match = _JSON_RE.search(text)
@@ -228,13 +229,13 @@ def _default_offline_caller(prompt: str) -> str:  # noqa: ARG001
 
 
 def run_judge(
-    decisions: Sequence[Dict[str, Any]],
-    source_texts_by_chunk: Dict[str, str],
+    decisions: Sequence[dict[str, Any]],
+    source_texts_by_chunk: dict[str, str],
     *,
     source_id: str = "",
-    pipeline_run_id: Optional[str] = None,
-    api_caller: Optional[Callable[[str], str]] = None,
-    extraction_model: Optional[str] = None,
+    pipeline_run_id: str | None = None,
+    api_caller: Callable[[str], str] | None = None,
+    extraction_model: str | None = None,
 ) -> JudgeRunResult:
     """Run the judge over ``decisions``. Never raises.
 
@@ -262,7 +263,7 @@ def run_judge(
     caller = api_caller or _default_offline_caller
     stability_on = stability_check_enabled()
 
-    findings: List[HealthFinding] = []
+    findings: list[HealthFinding] = []
     # Same-family check is opportunistic. It does NOT gate the run; it
     # gives the operator a single warn finding so they know the judge
     # is not from an independent model family.
@@ -284,7 +285,7 @@ def run_judge(
                 ),
             ))
 
-    item_scores: List[JudgeItemScore] = []
+    item_scores: list[JudgeItemScore] = []
     for decision in decisions:
         if not isinstance(decision, dict):
             continue
@@ -314,7 +315,7 @@ def run_judge(
         unparseable = any(v is None for v in rubric.values())
         passed = (not unparseable) and all(rubric.values())
 
-        stability_match: Optional[bool] = None
+        stability_match: bool | None = None
         if stability_on:
             try:
                 second = caller(prompt)
@@ -354,7 +355,7 @@ def run_judge(
             judge_decision=("unparseable" if unparseable else ("pass" if passed else "fail")),
         ))
 
-    aggregate_pass_rate: Optional[float] = None
+    aggregate_pass_rate: float | None = None
     parseable = [s for s in item_scores if s.judge_decision != "unparseable"]
     if parseable:
         aggregate_pass_rate = sum(1 for s in parseable if s.passed) / float(
@@ -381,8 +382,8 @@ def judge_score_to_artifact(
     result: JudgeRunResult,
     source_id: str,
     *,
-    pipeline_run_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    pipeline_run_id: str | None = None,
+) -> dict[str, Any]:
     return {
         "artifact_type": "judge_score",
         "schema_version": JUDGE_SCHEMA_VERSION,

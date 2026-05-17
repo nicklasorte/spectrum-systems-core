@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import os
 import unittest
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any
 
 from spectrum_systems_core.extraction.two_stage_extractor import (
     STATUS_CONFIRMED,
     STATUS_REJECTED,
-    TWO_STAGE_EXTRACTION_ENABLED_ENV,
     build_candidate_prompt_block,
     build_normalize_prompt,
     normalize_candidates,
@@ -19,8 +19,8 @@ from spectrum_systems_core.extraction.two_stage_extractor import (
 
 
 @contextmanager
-def _env(**vars: Optional[str]) -> Iterator[None]:
-    prev: Dict[str, Optional[str]] = {}
+def _env(**vars: str | None) -> Iterator[None]:
+    prev: dict[str, str | None] = {}
     for k, v in vars.items():
         prev[k] = os.environ.get(k)
         if v is None:
@@ -40,11 +40,11 @@ def _env(**vars: Optional[str]) -> Iterator[None]:
 class MockNormalizeCaller:
     """Capture the prompts sent and return scripted responses."""
 
-    def __init__(self, response: Dict[str, Any]) -> None:
+    def __init__(self, response: dict[str, Any]) -> None:
         self.response = response
-        self.calls: List[str] = []
+        self.calls: list[str] = []
 
-    def __call__(self, prompt: str) -> Dict[str, Any]:
+    def __call__(self, prompt: str) -> dict[str, Any]:
         self.calls.append(prompt)
         return self.response
 
@@ -216,7 +216,7 @@ class NormalizeCandidatesTests(unittest.TestCase):
         self.assertEqual(rejected[0]["rejection_reason"], "no_normalize_api_caller")
 
     def test_fail_closed_on_api_exception(self) -> None:
-        def boom(prompt: str) -> Dict[str, Any]:
+        def boom(prompt: str) -> dict[str, Any]:
             raise RuntimeError("network down")
         cands = [{"text": "T", "candidate_evidence": "T"}]
         with _env(TWO_STAGE_EXTRACTION_ENABLED="true"):

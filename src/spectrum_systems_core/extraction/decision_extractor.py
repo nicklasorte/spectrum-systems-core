@@ -27,13 +27,14 @@ exposed on ``self.last_run_metadata`` for the runner/merger to record.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set
+from collections.abc import Callable, Sequence
+from typing import Any
 
+from ..config.taxonomy import DECISION_OUTCOME_TYPES
 from ..evals.m4.few_shot import (
     format_examples_for_prompt,
     load_few_shot_examples,
 )
-from ..config.taxonomy import DECISION_OUTCOME_TYPES
 from ._prompt_blocks import (
     CONFIDENCE_SCORING_BLOCK,
     CONFIDENCE_THRESHOLD,
@@ -44,22 +45,21 @@ from ._prompt_blocks import (
     normalize_confidence,
 )
 
-
 _MODEL_ID = "claude-haiku-4-5-20251001"
 
-_DECISION_TYPES: Set[str] = {
+_DECISION_TYPES: set[str] = {
     "approved", "rejected", "deferred", "noted", "considered",
     "action_required", "open_question", "to_be_determined",
 }
 
-_VALID_DECISION_OUTCOMES: Set[str] = set(DECISION_OUTCOME_TYPES)
+_VALID_DECISION_OUTCOMES: set[str] = set(DECISION_OUTCOME_TYPES)
 
 
-def _default_api_caller(prompt: str) -> Dict[str, Any]:  # noqa: ARG001
+def _default_api_caller(prompt: str) -> dict[str, Any]:  # noqa: ARG001
     return {"items": []}
 
 
-def _empty_metadata() -> Dict[str, Any]:
+def _empty_metadata() -> dict[str, Any]:
     return {
         "few_shot_injected": False,
         "few_shot_version": None,
@@ -80,16 +80,16 @@ class DecisionExtractor:
 
     def __init__(
         self,
-        api_caller: Optional[Callable[[str], Dict[str, Any]]] = None,
-        model: Optional[str] = None,
-        few_shot_path: Optional[str] = None,
-        data_lake_path: Optional[str] = None,
+        api_caller: Callable[[str], dict[str, Any]] | None = None,
+        model: str | None = None,
+        few_shot_path: str | None = None,
+        data_lake_path: str | None = None,
     ) -> None:
         self._api_caller = api_caller or _default_api_caller
         self._model = model or self.MODEL_ID
         self._few_shot_path = few_shot_path
         self._data_lake_path = data_lake_path
-        self.last_run_metadata: Dict[str, Any] = _empty_metadata()
+        self.last_run_metadata: dict[str, Any] = _empty_metadata()
 
     @staticmethod
     def _normalize_type(value: Any) -> str:
@@ -100,7 +100,7 @@ class DecisionExtractor:
     @staticmethod
     def _validate_turns(
         source_turn_ids: Any,
-        available_turn_ids: Optional[Set[str]],
+        available_turn_ids: set[str] | None,
     ) -> tuple:
         if not isinstance(source_turn_ids, list) or not source_turn_ids:
             return [], "missing"
@@ -113,9 +113,9 @@ class DecisionExtractor:
                 return ids, "invalid"
         return ids, "verified"
 
-    def _load_few_shot_block(self) -> tuple[str, Dict[str, Any]]:
+    def _load_few_shot_block(self) -> tuple[str, dict[str, Any]]:
         """Return ``(rendered_block, metadata)``. Empty block on any failure."""
-        meta: Dict[str, Any] = {
+        meta: dict[str, Any] = {
             "few_shot_injected": False,
             "few_shot_version": None,
             "few_shot_example_count": 0,
@@ -151,13 +151,13 @@ class DecisionExtractor:
 
     def _build_prompt(
         self,
-        chunks: Sequence[Dict[str, Any]],
+        chunks: Sequence[dict[str, Any]],
         glossary_block: str,
         few_shot_block: str,
     ) -> str:
         # Order: role -> OMIT -> regulatory taxonomy -> glossary ->
         # few-shot -> chunks -> schema -> confidence.
-        parts: List[str] = []
+        parts: list[str] = []
         parts.append(
             "Extract DECISION items from the following meeting chunks."
         )
@@ -171,7 +171,7 @@ class DecisionExtractor:
             parts.append(glossary_block)
         if few_shot_block:
             parts.append(few_shot_block)
-        body_lines: List[str] = ["MEETING CHUNKS:"]
+        body_lines: list[str] = ["MEETING CHUNKS:"]
         for c in chunks:
             cid = c.get("chunk_id") or c.get("id") or ""
             speaker = c.get("speaker") or ""
@@ -196,10 +196,10 @@ class DecisionExtractor:
 
     def extract(
         self,
-        chunks: Sequence[Dict[str, Any]],
+        chunks: Sequence[dict[str, Any]],
         glossary_block: str = "",
-        available_turn_ids: Optional[Set[str]] = None,
-    ) -> List[Dict[str, Any]]:
+        available_turn_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
         self.last_run_metadata = _empty_metadata()
         if not chunks:
             return []
@@ -225,7 +225,7 @@ class DecisionExtractor:
         if not isinstance(items, list):
             return []
 
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for raw in items:
             if not isinstance(raw, dict):
                 continue
@@ -249,7 +249,7 @@ class DecisionExtractor:
             # property is not present (vs. emitting a null sentinel that
             # downstream consumers would have to distinguish from
             # "missing").
-            decision_item: Dict[str, Any] = {
+            decision_item: dict[str, Any] = {
                 "decision_text": decision_text.strip(),
                 "decision_type": self._normalize_type(raw.get("decision_type")),
                 "stakeholders": stakeholders,

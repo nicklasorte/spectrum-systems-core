@@ -33,16 +33,15 @@ from spectrum_systems_core.cli import (
     _format_chunk_summary,
 )
 from spectrum_systems_core.extraction._chunk_counters import (
-    ChunkCounters,
     STAGE_FAILED,
     STAGE_OK,
     STAGE_PARTIAL,
+    ChunkCounters,
 )
 from spectrum_systems_core.extraction._failure_artifacts import (
     ARTIFACT_EMPTY_RESPONSE,
     emit_empty_response,
 )
-
 
 _SMOKE_FIXTURE_PATH = (
     pathlib.Path(__file__).resolve().parents[2]

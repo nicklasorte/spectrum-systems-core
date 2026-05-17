@@ -10,8 +10,6 @@ import json
 import pathlib
 import uuid
 
-import pytest
-
 from spectrum_systems_core.config.feature_flag import PHASE_V_FLAG_NAME
 from spectrum_systems_core.verification.post_hoc_verifier import _coerce_item_id
 from spectrum_systems_core.verification.verification_gate import (

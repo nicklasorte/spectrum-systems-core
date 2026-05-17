@@ -7,12 +7,12 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from spectrum_systems_core.extraction import StoryReviewGateway
 
 
-def _make_candidate(story_id: str, source_id: str) -> Dict[str, Any]:
+def _make_candidate(story_id: str, source_id: str) -> dict[str, Any]:
     return {
         "story_id": story_id,
         "source_id": source_id,
@@ -50,7 +50,7 @@ def _make_candidate(story_id: str, source_id: str) -> Dict[str, Any]:
     }
 
 
-def _write_candidate(repo_root: Path, source_id: str, candidate: Dict[str, Any]) -> Path:
+def _write_candidate(repo_root: Path, source_id: str, candidate: dict[str, Any]) -> Path:
     target = repo_root / "processed" / "notes" / source_id / "stories"
     target.mkdir(parents=True, exist_ok=True)
     path = target / "candidates.jsonl"

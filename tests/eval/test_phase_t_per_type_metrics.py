@@ -1,12 +1,8 @@
 """Phase T.5 tests: per-entity-type F1 in eval_summary."""
 from __future__ import annotations
 
-import os
-import tempfile
 import unittest
-from pathlib import Path
-from typing import Any, Dict, List
-from unittest import mock
+from typing import Any
 
 from spectrum_systems_core.evals.m4.runner import EvalRunner
 
@@ -21,7 +17,7 @@ class _StubEvalRunner(EvalRunner):
 
 class PerTypeMetricsTests(unittest.TestCase):
 
-    def _eval_result(self, coverage: float, precision: float) -> Dict[str, Any]:
+    def _eval_result(self, coverage: float, precision: float) -> dict[str, Any]:
         return {
             "coverage": coverage,
             "precision": precision,

@@ -5,10 +5,8 @@ import json
 from pathlib import Path
 
 import jsonschema
-import pytest
 
 from spectrum_systems_core.evals.m4 import (
-    FewShotLoader,
     load_few_shot_examples,
 )
 from spectrum_systems_core.evals.m4.few_shot import format_examples_for_prompt

@@ -33,7 +33,6 @@ from tests.integration.fixtures import (
     make_source_record,
 )
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "_few_shot_preflight.py"
 SOURCE_ID = "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218"

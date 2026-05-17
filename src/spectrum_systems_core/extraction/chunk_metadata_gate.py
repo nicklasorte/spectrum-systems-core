@@ -30,8 +30,9 @@ contract so a future rename does not silently regress.
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any
 
 # The canonical identifier the codebase uses is ``chunk_id``. We
 # accept ``turn_id`` as an alias because the research-doc task
@@ -82,24 +83,24 @@ class ChunkMetadataFinding:
 class ChunkMetadataReport:
     """The output of :func:`validate_chunk_metadata`."""
 
-    findings: List[ChunkMetadataFinding] = field(default_factory=list)
+    findings: list[ChunkMetadataFinding] = field(default_factory=list)
     chunks_scanned: int = 0
     strict_mode: bool = False
 
     def has_violations(self) -> bool:
         return bool(self.findings)
 
-    def as_strings(self) -> List[str]:
+    def as_strings(self) -> list[str]:
         return [f.as_string() for f in self.findings]
 
-    def per_field_violation_counts(self) -> Dict[str, int]:
-        counts: Dict[str, int] = {}
+    def per_field_violation_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
         for f in self.findings:
             counts[f.field_name] = counts.get(f.field_name, 0) + 1
         return counts
 
 
-def _chunk_id_present_value(chunk: Dict[str, Any]) -> tuple:
+def _chunk_id_present_value(chunk: dict[str, Any]) -> tuple:
     """Return ``(present, value)`` for the chunk_id-or-turn_id slot.
 
     ``present`` is True if either alias key is present (even with a
@@ -118,9 +119,9 @@ def _chunk_id_present_value(chunk: Dict[str, Any]) -> tuple:
 
 
 def validate_chunk_metadata(
-    chunks: Sequence[Dict[str, Any]],
+    chunks: Sequence[dict[str, Any]],
     *,
-    strict: Optional[bool] = None,
+    strict: bool | None = None,
 ) -> ChunkMetadataReport:
     """Validate every chunk against :data:`REQUIRED_CHUNK_FIELDS`.
 

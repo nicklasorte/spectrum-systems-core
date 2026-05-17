@@ -21,8 +21,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 FEW_SHOT_ARTIFACT_FILENAME: str = "decision_examples_v1.json"
 # Phase V artifact_type. Distinct from legacy ``few_shot_examples``
@@ -58,17 +57,17 @@ class FewShotLoadResult:
     when a finding is present).
     """
 
-    examples: List[Dict[str, Any]]
-    finding_code: Optional[str] = None
-    severity: Optional[str] = None
+    examples: list[dict[str, Any]]
+    finding_code: str | None = None
+    severity: str | None = None
     remediation: str = ""
     artifact_present: bool = False
 
 
 def _resolve_path(
-    sdl_root: Optional[Path | str],
+    sdl_root: Path | str | None,
     *,
-    explicit_path: Optional[Path | str] = None,
+    explicit_path: Path | str | None = None,
 ) -> Path:
     if explicit_path is not None:
         return Path(explicit_path)
@@ -80,9 +79,9 @@ def _resolve_path(
 
 
 def load_few_shot_examples(
-    sdl_root: Optional[Path | str],
+    sdl_root: Path | str | None,
     *,
-    explicit_path: Optional[Path | str] = None,
+    explicit_path: Path | str | None = None,
 ) -> FewShotLoadResult:
     """Load the few-shot artifact and filter to verified examples.
 
@@ -158,14 +157,14 @@ def load_few_shot_examples(
     )
 
 
-def build_few_shot_block(examples: List[Dict[str, Any]]) -> str:
+def build_few_shot_block(examples: list[dict[str, Any]]) -> str:
     """Render the FEW-SHOT EXAMPLES prompt block.
 
     Empty list -> empty string (no block).
     """
     if not examples:
         return ""
-    lines: List[str] = [
+    lines: list[str] = [
         "FEW-SHOT EXAMPLES",
         "=" * 17,
         "The following are correct decision extractions from prior "

@@ -14,13 +14,13 @@ OVERRIDE_EXPIRY_WARNING_DAYS = 30
 PATTERN_JACCARD_THRESHOLD = 0.7
 MIN_CLUSTER_SIZE = 2
 
-from .run_history import RunHistoryStore
+from .entropy_auditor import EntropyAuditor
 from .eval_history import EvalScoreHistory
 from .failure_patterns import FailurePatternIndex
 from .outcome_memory import OutcomeMemoryStore
-from .workflow_comparator import WorkflowComparator
 from .override_store import OverrideStore
-from .entropy_auditor import EntropyAuditor
+from .run_history import RunHistoryStore
+from .workflow_comparator import WorkflowComparator
 
 __all__ = [
     "RUN_HISTORY_RETENTION_DAYS",

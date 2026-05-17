@@ -19,13 +19,12 @@ import datetime
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import jsonschema
 
 from ..ingestion._paths import schema_path
 from ..ingestion.source_loader import SOURCE_FAMILIES
-
 
 MIN_MATCHING_FIELDS = 2
 MIN_FIELD_VALUE_LENGTH = 10
@@ -38,11 +37,11 @@ def _now_iso() -> str:
     )
 
 
-def _read_promoted_stories(processed_dir: Path) -> List[Dict[str, Any]]:
+def _read_promoted_stories(processed_dir: Path) -> list[dict[str, Any]]:
     promoted_dir = processed_dir / "stories" / "promoted"
     if not promoted_dir.is_dir():
         return []
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for path in sorted(promoted_dir.glob("*.json")):
         try:
             out.append(json.loads(path.read_text(encoding="utf-8")))
@@ -51,9 +50,9 @@ def _read_promoted_stories(processed_dir: Path) -> List[Dict[str, Any]]:
     return out
 
 
-def _all_sources(repo_root: Path) -> List[Tuple[str, str, Path]]:
+def _all_sources(repo_root: Path) -> list[tuple[str, str, Path]]:
     """Return (source_id, source_family, processed_dir) tuples."""
-    out: List[Tuple[str, str, Path]] = []
+    out: list[tuple[str, str, Path]] = []
     for family in SOURCE_FAMILIES:
         family_dir = repo_root / "processed" / family
         if not family_dir.is_dir():
@@ -74,11 +73,11 @@ _FIELDS_TO_COMPARE = (
 class ConnectionEngine:
     """Find moderate / strong cross-source connections among promoted stories."""
 
-    def find_connections(self, repo_root: str) -> Dict[str, Any]:
+    def find_connections(self, repo_root: str) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         sources = _all_sources(repo_root_path)
-        source_stories: Dict[str, List[Dict[str, Any]]] = {}
-        source_dirs: Dict[str, Path] = {}
+        source_stories: dict[str, list[dict[str, Any]]] = {}
+        source_dirs: dict[str, Path] = {}
         for sid, _family, processed_dir in sources:
             stories = _read_promoted_stories(processed_dir)
             if stories:
@@ -93,7 +92,7 @@ class ConnectionEngine:
             schema = None
         validator = jsonschema.Draft202012Validator(schema) if schema else None
 
-        connections_by_source: Dict[str, List[Dict[str, Any]]] = {}
+        connections_by_source: dict[str, list[dict[str, Any]]] = {}
         weak_count = 0
         strong_count = 0
         moderate_count = 0
@@ -158,9 +157,9 @@ class ConnectionEngine:
         }
 
     def _matching_fields(
-        self, story_a: Dict[str, Any], story_b: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
-        matching: List[Dict[str, Any]] = []
+        self, story_a: dict[str, Any], story_b: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        matching: list[dict[str, Any]] = []
         for field_name in _FIELDS_TO_COMPARE:
             value_a = (story_a.get(field_name) or "").strip()
             value_b = (story_b.get(field_name) or "").strip()

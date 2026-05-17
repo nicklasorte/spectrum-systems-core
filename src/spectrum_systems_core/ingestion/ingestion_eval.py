@@ -15,7 +15,7 @@ import json
 import os
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 
@@ -55,7 +55,7 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _check(name: str, *, passed: bool, required: bool, detail: str) -> Dict[str, Any]:
+def _check(name: str, *, passed: bool, required: bool, detail: str) -> dict[str, Any]:
     return {
         "name": name,
         "passed": passed,
@@ -64,7 +64,7 @@ def _check(name: str, *, passed: bool, required: bool, detail: str) -> Dict[str,
     }
 
 
-def _resolve_eval_dir(sdl_root_arg: Optional[str]) -> Optional[Path]:
+def _resolve_eval_dir(sdl_root_arg: str | None) -> Path | None:
     if sdl_root_arg:
         return Path(sdl_root_arg) / "evals"
     env = os.environ.get("SDL_ROOT", "").strip()
@@ -79,10 +79,10 @@ class IngestionEval:
     def evaluate(
         self,
         docx_path: str,
-        source_record: Dict[str, Any],
-        text_units: Optional[List[Dict[str, Any]]] = None,
-        repo_root: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        source_record: dict[str, Any],
+        text_units: list[dict[str, Any]] | None = None,
+        repo_root: str | None = None,
+    ) -> dict[str, Any]:
         """Compare a .docx file to its produced source_record artifact.
 
         Args:
@@ -107,10 +107,10 @@ class IngestionEval:
     def _evaluate(
         self,
         docx_path: str,
-        source_record: Dict[str, Any],
-        text_units_arg: Optional[List[Dict[str, Any]]],
-        repo_root: Optional[str],
-    ) -> Dict[str, Any]:
+        source_record: dict[str, Any],
+        text_units_arg: list[dict[str, Any]] | None,
+        repo_root: str | None,
+    ) -> dict[str, Any]:
         docx = Path(docx_path) if isinstance(docx_path, str) and docx_path else None
 
         try:
@@ -132,7 +132,7 @@ class IngestionEval:
         if not isinstance(recorded_unit_count, int) or recorded_unit_count < 0:
             recorded_unit_count = 0
 
-        text_units: List[Dict[str, Any]] = []
+        text_units: list[dict[str, Any]] = []
         text_units_unloadable = False
         if text_units_arg is not None:
             for u in text_units_arg:
@@ -164,9 +164,9 @@ class IngestionEval:
 
         ratio = (character_count / size_bytes) if size_bytes > 0 else 0.0
 
-        checks: List[Dict[str, Any]] = []
-        failure_reasons: List[str] = []
-        warning_reasons: List[str] = []
+        checks: list[dict[str, Any]] = []
+        failure_reasons: list[str] = []
+        warning_reasons: list[str] = []
 
         # CHECK-1: text_units_present (required)
         c1_passed = text_unit_count > 0
@@ -303,7 +303,7 @@ class IngestionEval:
             if isinstance(sid, str):
                 source_artifact_id = sid
 
-        result_partial: Dict[str, Any] = {
+        result_partial: dict[str, Any] = {
             "eval_id": str(uuid.uuid4()),
             "source_artifact_id": source_artifact_id,
             "docx_path": str(docx_path) if docx_path else "",
@@ -327,9 +327,9 @@ class IngestionEval:
 
     def _load_text_units(
         self,
-        payload: Dict[str, Any],
-        repo_root: Optional[str],
-    ) -> List[Dict[str, Any]]:
+        payload: dict[str, Any],
+        repo_root: str | None,
+    ) -> list[dict[str, Any]]:
         processed = payload.get("processed_path")
         if not isinstance(processed, str) or not processed:
             return []
@@ -338,7 +338,7 @@ class IngestionEval:
             root = Path(repo_root) if repo_root else Path.cwd()
             base = root / base
         path = base / "text_units.jsonl"
-        units: List[Dict[str, Any]] = []
+        units: list[dict[str, Any]] = []
         try:
             with path.open("r", encoding="utf-8") as fh:
                 for line in fh:
@@ -355,7 +355,7 @@ class IngestionEval:
             return []
         return units
 
-    def _re_extract(self, docx: Optional[Path]) -> Tuple[str, int]:
+    def _re_extract(self, docx: Path | None) -> tuple[str, int]:
         """Re-extract via DocxExtractor's body walker.
 
         Returns ``(text, table_count)``. ``text`` is empty on any failure.
@@ -375,7 +375,7 @@ class IngestionEval:
 
     def _count_short_units(
         self,
-        text_units: List[Dict[str, Any]],
+        text_units: list[dict[str, Any]],
         text_unit_count: int,
     ) -> int:
         """Return the number of text units shorter than the threshold.
@@ -400,7 +400,7 @@ class IngestionEval:
             short += text_unit_count - len(text_units)
         return short
 
-    def _content_hash(self, partial: Dict[str, Any]) -> str:
+    def _content_hash(self, partial: dict[str, Any]) -> str:
         canonical = json.dumps(
             {k: v for k, v in partial.items() if k != "content_hash"},
             sort_keys=True,
@@ -411,15 +411,15 @@ class IngestionEval:
     def _error_result(
         self,
         docx_path: str,
-        source_record: Dict[str, Any],
+        source_record: dict[str, Any],
         exc: Exception,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         source_artifact_id = ""
         if isinstance(source_record, dict):
             sid = source_record.get("artifact_id", "")
             if isinstance(sid, str):
                 source_artifact_id = sid
-        partial: Dict[str, Any] = {
+        partial: dict[str, Any] = {
             "eval_id": str(uuid.uuid4()),
             "source_artifact_id": source_artifact_id,
             "docx_path": str(docx_path) if docx_path else "",
@@ -450,8 +450,8 @@ class IngestionEval:
 
     def write_eval_result(
         self,
-        eval_result: Dict[str, Any],
-        sdl_root: Optional[str] = None,
+        eval_result: dict[str, Any],
+        sdl_root: str | None = None,
     ) -> str:
         """Write the eval result to ``$SDL_ROOT/evals/<sid>_ingestion_eval.json``.
 
@@ -495,7 +495,7 @@ class IngestionEval:
                 pass
             return ""
 
-    def schema_validate(self, eval_result: Dict[str, Any]) -> bool:
+    def schema_validate(self, eval_result: dict[str, Any]) -> bool:
         try:
             schema_file = (
                 contracts_root()

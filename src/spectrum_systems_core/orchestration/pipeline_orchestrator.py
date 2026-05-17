@@ -40,10 +40,10 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 
@@ -175,14 +175,14 @@ def _schema_path() -> Path:
 
 # Shape of a transcript_runner result:
 #   {"status": "success" | "failure", "artifact_id": str, "reason": str}
-TranscriptRunner = Callable[[Path, str, Path], Dict[str, Any]]
+TranscriptRunner = Callable[[Path, str, Path], dict[str, Any]]
 
 # Per-source stage runners (Stages 2-4). Each returns:
 #   {"status": "success" | "failure", "reason": str}
-StageRunner = Callable[[str, Path], Dict[str, Any]]
+StageRunner = Callable[[str, Path], dict[str, Any]]
 
 # Synthesize runner (Stage 5). Runs once per orchestrator invocation.
-SynthesizeRunner = Callable[[Path], Dict[str, Any]]
+SynthesizeRunner = Callable[[Path], dict[str, Any]]
 
 
 class PipelineOrchestrator:
@@ -196,13 +196,13 @@ class PipelineOrchestrator:
     def __init__(
         self,
         *,
-        transcript_runner: Optional[TranscriptRunner] = None,
-        docx_extractor: Optional[DocxExtractor] = None,
-        ingestion_eval: Optional[IngestionEval] = None,
-        extract_stories_runner: Optional[StageRunner] = None,
-        promote_knowledge_runner: Optional[StageRunner] = None,
-        extract_claims_runner: Optional[StageRunner] = None,
-        synthesize_runner: Optional[SynthesizeRunner] = None,
+        transcript_runner: TranscriptRunner | None = None,
+        docx_extractor: DocxExtractor | None = None,
+        ingestion_eval: IngestionEval | None = None,
+        extract_stories_runner: StageRunner | None = None,
+        promote_knowledge_runner: StageRunner | None = None,
+        extract_claims_runner: StageRunner | None = None,
+        synthesize_runner: SynthesizeRunner | None = None,
     ) -> None:
         self._transcript_runner = transcript_runner or self._default_runner
         self._docx_extractor = docx_extractor or DocxExtractor()
@@ -226,9 +226,9 @@ class PipelineOrchestrator:
         self,
         source_id: str,
         *,
-        data_lake_path: Optional[str] = None,
+        data_lake_path: str | None = None,
         force: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Phase M3.0+M3.1. Run the typed-extraction pipeline for one source.
 
         This method is additive: it is NOT called by ``run()`` so existing
@@ -247,7 +247,7 @@ class PipelineOrchestrator:
 
     def scan(
         self, data_lake_path: str, force: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         try:
             return self._scan(data_lake_path, force=force)
         except Exception as exc:  # defensive: never raise
@@ -269,8 +269,8 @@ class PipelineOrchestrator:
         force: bool = False,
         *,
         force_only_missing: bool = False,
-        specific_source_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        specific_source_id: str | None = None,
+    ) -> dict[str, Any]:
         """Run the orchestration loop.
 
         Phase O.3 additions:
@@ -318,7 +318,7 @@ class PipelineOrchestrator:
 
     def _scan(
         self, data_lake_path: str, force: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if not data_lake_path:
             return _scan_failure("data_lake_path_required")
         root = Path(data_lake_path)
@@ -330,8 +330,8 @@ class PipelineOrchestrator:
         store_root = root / "store"
         transcripts_dir = store_root.joinpath(*TRANSCRIPTS_SUBDIR)
 
-        unprocessed: List[Dict[str, Any]] = []
-        already_processed: List[Dict[str, Any]] = []
+        unprocessed: list[dict[str, Any]] = []
+        already_processed: list[dict[str, Any]] = []
 
         if not transcripts_dir.is_dir():
             # No drop directory yet => nothing to do, but not a failure.
@@ -362,8 +362,8 @@ class PipelineOrchestrator:
         # store/raw/minutes/ — processing them as transcripts would
         # produce wrong artifacts. The filter is advisory only: filtered
         # files are NOT moved or deleted, and never counted as failures.
-        files: List[Path] = []
-        filtered_from_transcripts: List[Dict[str, Any]] = []
+        files: list[Path] = []
+        filtered_from_transcripts: list[dict[str, Any]] = []
         for p in all_files:
             ext = p.suffix.lower()
             if ext in (".docx", ".txt") and "minutes" in p.name.lower():
@@ -380,7 +380,7 @@ class PipelineOrchestrator:
                 continue
             files.append(p)
         seen_stems: set[str] = set()
-        ordered: List[Path] = []
+        ordered: list[Path] = []
         # First pass: prefer .docx (they'll trigger extraction); skip .txt
         # whose stem already has a .docx peer in the directory.
         docx_stems = {p.stem for p in files if p.suffix.lower() == ".docx"}
@@ -404,7 +404,7 @@ class PipelineOrchestrator:
         # Principle 3 (unknown = unprocessed) and to prevent silent data
         # loss, every member of a collision is flagged as unprocessed
         # with an explicit reason; run() will turn each into a failure.
-        sid_to_paths: Dict[str, List[Path]] = {}
+        sid_to_paths: dict[str, list[Path]] = {}
         for path in ordered:
             sid_to_paths.setdefault(_slugify(path.stem), []).append(path)
         collision_paths: set[str] = set()
@@ -509,8 +509,8 @@ class PipelineOrchestrator:
         run_id: str,
         force: bool = False,
         force_only_missing: bool = False,
-        specific_source_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        specific_source_id: str | None = None,
+    ) -> dict[str, Any]:
         started_at = _now_iso()
         scan_result = self._scan(data_lake_path, force=force)
         if scan_result["status"] != "success":
@@ -564,9 +564,9 @@ class PipelineOrchestrator:
         # the normal idempotency path already skips them — the flag is a
         # no-op. The fail-closed direction here is "process": if we can't
         # determine extraction existence we re-run.
-        skipped_by_force_only_missing: List[Dict[str, Any]] = []
+        skipped_by_force_only_missing: list[dict[str, Any]] = []
         if force and force_only_missing:
-            keep_unprocessed: List[Dict[str, Any]] = []
+            keep_unprocessed: list[dict[str, Any]] = []
             for entry in unprocessed:
                 sid = _slugify(Path(entry["filename"]).stem)
                 if _meeting_extraction_exists(store_root, sid):
@@ -587,9 +587,9 @@ class PipelineOrchestrator:
             for e in already
         ]
 
-        processed_this_run: List[Dict[str, Any]] = []
-        failed_this_run: List[Dict[str, Any]] = []
-        results_for_record: List[Dict[str, Any]] = []
+        processed_this_run: list[dict[str, Any]] = []
+        failed_this_run: list[dict[str, Any]] = []
+        results_for_record: list[dict[str, Any]] = []
 
         # Track which transcripts reached Stage 2 success this run; Stage 5
         # fires iff at least one did (per task spec — "synthesize runs if
@@ -919,7 +919,7 @@ class PipelineOrchestrator:
         store_root: Path,
         force: bool,
         filename: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Run Stages 2-4 in sequence with idempotency + dependency rules.
 
         Rules (per Phase L.3 spec):
@@ -941,7 +941,7 @@ class PipelineOrchestrator:
             "stage4_success": bool,
           }
         """
-        result_stages: Dict[str, str] = {
+        result_stages: dict[str, str] = {
             STAGE_EXTRACT_STORIES: STAGE_STATUS_NOT_RUN,
             STAGE_PROMOTE_KNOWLEDGE: STAGE_STATUS_NOT_RUN,
             STAGE_EXTRACT_CLAIMS: STAGE_STATUS_NOT_RUN,
@@ -1038,7 +1038,7 @@ class PipelineOrchestrator:
         idempotency_check: Callable[[Path, str], bool],
         artifact_check: Callable[[Path, str], bool],
         filename: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Run one stage with idempotency + post-run artifact verification.
 
         Artifact-as-evidence contract:
@@ -1140,7 +1140,7 @@ class PipelineOrchestrator:
             "reason": runner_reason or "stage_failed",
         }
 
-    def _run_synthesize(self, store_root: Path) -> Dict[str, Any]:
+    def _run_synthesize(self, store_root: Path) -> dict[str, Any]:
         """Stage 5. Runs the synthesize runner once. Never raises."""
         print("  synthesize: (audience=technical, purpose=report) ...", flush=True)
         try:
@@ -1162,7 +1162,7 @@ class PipelineOrchestrator:
         path: Path,
         source_id: str,
         store_root: Path,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Run pipeline for one transcript file. Never raises."""
         try:
             txt_path = path
@@ -1201,7 +1201,7 @@ class PipelineOrchestrator:
         txt_path: Path,
         source_id: str,
         store_root: Path,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         try:
             stage_result = _stage_transcript_into_meetings(
                 txt_path=txt_path,
@@ -1278,9 +1278,9 @@ class PipelineOrchestrator:
     def _maybe_run_ingestion_eval(
         self,
         *,
-        docx_path: Optional[Path],
-        source_record: Optional[Dict[str, Any]],
-        text_units: Optional[List[Dict[str, Any]]],
+        docx_path: Path | None,
+        source_record: dict[str, Any] | None,
+        text_units: list[dict[str, Any]] | None,
         store_root: Path,
     ) -> str:
         """Run IngestionEval and write its result, returning the eval status.
@@ -1323,18 +1323,18 @@ class PipelineOrchestrator:
         attempted_this_run: int,
         succeeded_this_run: int,
         failed_this_run: int,
-        results: List[Dict[str, Any]],
-        filtered_from_transcripts: List[Dict[str, Any]],
+        results: list[dict[str, Any]],
+        filtered_from_transcripts: list[dict[str, Any]],
         status: str,
         force: bool = False,
         force_only_missing: bool = False,
-        specific_source_id: Optional[str] = None,
+        specific_source_id: str | None = None,
         synthesize_status: str = SYNTHESIZE_STATUS_NOT_RUN,
         total_stages_completed: int = 0,
         total_stages_failed: int = 0,
-        source_ids_processed: Optional[List[str]] = None,
-        source_ids_skipped: Optional[List[str]] = None,
-        source_ids_failed: Optional[List[str]] = None,
+        source_ids_processed: list[str] | None = None,
+        source_ids_skipped: list[str] | None = None,
+        source_ids_failed: list[str] | None = None,
     ) -> str:
         record = {
             "run_id": run_id,
@@ -1530,7 +1530,7 @@ def _meeting_extraction_exists(store_root: Path, source_id: str) -> bool:
     return False
 
 
-def _empty_pipeline_stages() -> Dict[str, str]:
+def _empty_pipeline_stages() -> dict[str, str]:
     """Initial per-transcript stage map; all stages start as not_run."""
     return {
         STAGE_PROCESS_SOURCE: STAGE_STATUS_NOT_RUN,
@@ -1540,7 +1540,7 @@ def _empty_pipeline_stages() -> Dict[str, str]:
     }
 
 
-def _processed_dir(store_root: Path, source_id: str) -> Optional[Path]:
+def _processed_dir(store_root: Path, source_id: str) -> Path | None:
     """Locate processed/<family>/<sid>/ for any known family; None if absent.
 
     Mirrors `extraction._paths.find_processed_dir` without importing
@@ -1620,7 +1620,7 @@ def _stage4_done(store_root: Path, source_id: str) -> bool:
 
 def _default_extract_stories_runner(
     source_id: str, store_root: Path
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Default Stage 2 runner: Chunker + StoryExtractor + StoryEval + Filter.
 
     Never raises. Returns ``{"status": "success"|"failure", "reason": str}``.
@@ -1660,7 +1660,7 @@ def _default_extract_stories_runner(
 
 def _default_promote_knowledge_runner(
     source_id: str, store_root: Path
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Default Stage 3 runner: KnowledgeSynthesizer (concepts+themes+analogies).
 
     Reads stories/promoted/ (human-gated input). When there are no
@@ -1690,7 +1690,7 @@ def _default_promote_knowledge_runner(
 
 def _default_extract_claims_runner(
     source_id: str, store_root: Path
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Default Stage 4 runner: claims + assumptions + evidence + contradictions."""
     try:
         from ..paper import (
@@ -1699,7 +1699,6 @@ def _default_extract_claims_runner(
             ClaimExtractor,
             ContradictionDetector,
             EvidenceBuilder,
-            EvidenceEval,
         )
         claim_result = ClaimExtractor().extract_from_source(
             source_id, str(store_root)
@@ -1765,7 +1764,7 @@ def _default_extract_claims_runner(
         return {"status": "failure", "reason": f"unexpected_error:{exc}"}
 
 
-def _default_synthesize_runner(store_root: Path) -> Dict[str, Any]:
+def _default_synthesize_runner(store_root: Path) -> dict[str, Any]:
     """Default Stage 5 runner: cli.synthesize with audience=technical, purpose=report.
 
     DATA_LAKE_PATH must point to the parent of ``store_root``; the runner
@@ -1789,7 +1788,7 @@ def _default_synthesize_runner(store_root: Path) -> Dict[str, Any]:
         return {"status": "failure", "reason": f"unexpected_error:{exc}"}
 
 
-def _scan_failure(reason: str) -> Dict[str, Any]:
+def _scan_failure(reason: str) -> dict[str, Any]:
     return {
         "status": "failure",
         "unprocessed": [],
@@ -1813,7 +1812,7 @@ class _Evidence:
         self.raw_hash = raw_hash
 
 
-def _build_processed_evidence(store_root: Path) -> Dict[str, _Evidence]:
+def _build_processed_evidence(store_root: Path) -> dict[str, _Evidence]:
     """Index on-disk processed evidence keyed by source_id.
 
     Two evidence kinds:
@@ -1828,7 +1827,7 @@ def _build_processed_evidence(store_root: Path) -> Dict[str, _Evidence]:
     this layer (treated as no-evidence, which routes the transcript into
     "unprocessed" — the safe direction per Principle 3).
     """
-    found: Dict[str, _Evidence] = {}
+    found: dict[str, _Evidence] = {}
 
     def _record(existing: _Evidence | None, candidate: _Evidence) -> _Evidence:
         # If we have no prior entry, take the candidate.
@@ -1923,7 +1922,7 @@ def _stage_transcript_into_meetings(
     txt_path: Path,
     source_id: str,
     store_root: Path,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Copy a transcript .txt into raw/meetings/<source_id>/ with metadata.
 
     Idempotent: if the staged source.txt already exists with identical

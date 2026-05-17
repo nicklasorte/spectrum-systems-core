@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Tuple
 
 from ..ingestion.source_loader import SOURCE_FAMILIES
 
 
-def find_processed_dir(repo_root: Path, source_id: str) -> Tuple[Path | None, str | None]:
+def find_processed_dir(repo_root: Path, source_id: str) -> tuple[Path | None, str | None]:
     """Return (processed_dir, source_family) or (None, None) if not found."""
     for family in SOURCE_FAMILIES:
         candidate = repo_root / "processed" / family / source_id

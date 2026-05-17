@@ -31,8 +31,8 @@ import json
 import re
 from typing import Any
 
-from . import meeting_minutes_llm as _mm
 from ..data_lake.chunker import chunk_transcript
+from . import meeting_minutes_llm as _mm
 from .llm_client import AnthropicJSONClient, LLMClient, LLMClientError
 
 # turn-id token as the grounded user message renders it, e.g. ``[t0007]``.

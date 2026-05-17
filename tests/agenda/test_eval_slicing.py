@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import json
 import pathlib
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 import pytest
 
 from spectrum_systems_core.evals.m4.aligner import (
-    HIDDEN_STRATIFICATION_STD_THRESHOLD,
     MIN_CHUNKS_PER_AGENDA,
     compute_agenda_stratification,
     compute_per_agenda_item_metrics,
@@ -23,10 +22,10 @@ from spectrum_systems_core.evals.m4.aligner import (
 
 
 def _chunks_for_agendas(
-    sizes_by_agenda: Dict[str, int],
-) -> List[Dict[str, Any]]:
+    sizes_by_agenda: dict[str, int],
+) -> list[dict[str, Any]]:
     """sizes_by_agenda = {agenda_id: chunk_count}."""
-    chunks: List[Dict[str, Any]] = []
+    chunks: list[dict[str, Any]] = []
     counter = 0
     for aid, n in sizes_by_agenda.items():
         for _ in range(n):
@@ -39,15 +38,15 @@ def _chunks_for_agendas(
 
 
 def _alignment_result(
-    review: List[Dict[str, Any]], coverage: List[Dict[str, Any]],
-) -> Dict[str, Any]:
+    review: list[dict[str, Any]], coverage: list[dict[str, Any]],
+) -> dict[str, Any]:
     return {
         "review_alignments": review,
         "coverage_alignments": coverage,
     }
 
 
-def _agenda_items(*ids: str) -> List[Dict[str, Any]]:
+def _agenda_items(*ids: str) -> list[dict[str, Any]]:
     return [{"agenda_item_id": aid} for aid in ids]
 
 

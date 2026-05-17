@@ -8,7 +8,7 @@ from __future__ import annotations
 import datetime
 import os
 import shutil
-from typing import Any, Dict
+from typing import Any
 
 from . import _frontmatter
 from .review_parser import ObsidianReviewParser
@@ -94,7 +94,7 @@ Set `decision` in the frontmatter to one of:
         artifact_id: str,
         vault_root: str,
         timeout_hours: int = 72,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         review_note_path = os.path.join(
             vault_root, "Reviews", "Pending", f"{artifact_id}_review.md"
         )

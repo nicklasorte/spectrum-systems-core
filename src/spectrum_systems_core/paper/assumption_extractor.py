@@ -13,8 +13,9 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 import jsonschema
 
@@ -97,12 +98,12 @@ def _execution_fingerprint(unit_id: str, assumption_text: str) -> str:
     return "sha256:" + _sha256_hex(seed.encode("utf-8"))
 
 
-def _failure(reason: str) -> Dict[str, Any]:
+def _failure(reason: str) -> dict[str, Any]:
     return {"status": "failure", "assumptions": [], "reason": reason}
 
 
-def _read_text_units(path: Path) -> List[Dict[str, Any]]:
-    units: List[Dict[str, Any]] = []
+def _read_text_units(path: Path) -> list[dict[str, Any]]:
+    units: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -118,12 +119,12 @@ def _read_text_units(path: Path) -> List[Dict[str, Any]]:
 class AssumptionExtractor:
     """Extract assumption_record artifacts from text units via the API."""
 
-    def __init__(self, api_caller: Optional[Callable[[str], str]] = None):
+    def __init__(self, api_caller: Callable[[str], str] | None = None):
         self._api_caller = api_caller
 
     def extract_from_source(
         self, source_id: str, repo_root: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, _ = find_processed_dir(repo_root_path, source_id)
         if processed_dir is None:
@@ -153,7 +154,7 @@ class AssumptionExtractor:
             return _failure(f"schema_unreadable: {exc}")
         validator = jsonschema.Draft202012Validator(schema)
 
-        all_assumptions: List[Dict[str, Any]] = []
+        all_assumptions: list[dict[str, Any]] = []
         valid_unit_ids = {
             u["unit_id"] for u in text_units if isinstance(u.get("unit_id"), str)
         }
@@ -256,13 +257,13 @@ class AssumptionExtractor:
 
     def _assemble_assumption(
         self,
-        raw: Dict[str, Any],
+        raw: dict[str, Any],
         *,
         source_id: str,
         unit_id: str,
-        source_turn_ids: List[str],
+        source_turn_ids: list[str],
         source_turn_validation: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         explicit = bool(raw.get("explicit", False))
         excerpt_raw = raw.get("source_excerpt")
         # null is allowed only for implicit assumptions; the schema and the
@@ -310,7 +311,7 @@ class AssumptionExtractor:
                 temperature=EXTRACTION_TEMPERATURE,
                 messages=[{"role": "user", "content": prompt}],
             )
-            parts: List[str] = []
+            parts: list[str] = []
             for block in message.content:
                 text = getattr(block, "text", None)
                 if isinstance(text, str):

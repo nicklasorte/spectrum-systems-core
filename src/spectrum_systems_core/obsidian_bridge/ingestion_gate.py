@@ -10,14 +10,13 @@ import datetime
 import hashlib
 import os
 import uuid
-from typing import Any, Dict
+from typing import Any
 
 import jsonschema
 import yaml
 
 from . import _frontmatter
 from ._paths import schema_digest, schema_path
-
 
 _SCHEMA_NAME = "obsidian_input_artifact"
 _COMPONENT_VERSION = "1.0.0"
@@ -27,7 +26,7 @@ def _now_iso() -> str:
     return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _failure(reason: str, path: str, detail: str) -> Dict[str, Any]:
+def _failure(reason: str, path: str, detail: str) -> dict[str, Any]:
     timestamp = _now_iso()
     _frontmatter.stamp_file(
         path,
@@ -58,7 +57,7 @@ class ObsidianIngestionGate:
         vault_note_path: str,
         vault_root: str,
         pipeline_trigger_tag: str = "#pending-pipeline",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         # Step 1: read + decode
         try:
             with open(vault_note_path, "rb") as fh:
@@ -111,7 +110,7 @@ class ObsidianIngestionGate:
             return _failure("schema_violation", vault_note_path, str(exc))
 
         # Step 7: assemble artifact
-        artifact: Dict[str, Any] = {
+        artifact: dict[str, Any] = {
             "artifact_kind": "obsidian_input_artifact",
             "artifact_type": "obsidian_input_artifact",
             "artifact_id": artifact_id,
@@ -179,6 +178,6 @@ class ObsidianIngestionGate:
         return {"status": "success", "artifact": artifact}
 
 
-def _load_schema() -> Dict[str, Any]:
+def _load_schema() -> dict[str, Any]:
     import json
     return json.loads(schema_path(_SCHEMA_NAME).read_text(encoding="utf-8"))

@@ -32,8 +32,9 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any
 
 __all__ = [
     "AgendaItem",
@@ -134,7 +135,7 @@ class _AgendaCandidate:
     line_index: int  # 0-based index into the source_text line list
     rule: str  # for debug logs / context fields
     char_offset: int = 0  # character offset of the line in source_text
-    next_turn_index: Optional[int] = field(default=None)
+    next_turn_index: int | None = field(default=None)
 
 
 # Public API -----------------------------------------------------------
@@ -154,7 +155,7 @@ def detection_enabled() -> bool:
     return raw not in _DISABLED_VALUES
 
 
-def detect_agenda_items(source_text: str) -> List[AgendaItem]:
+def detect_agenda_items(source_text: str) -> list[AgendaItem]:
     """Parse ``source_text`` for agenda-item headers.
 
     Returns ``[]`` when zero headers are detected. The list is sorted
@@ -178,19 +179,19 @@ def detect_agenda_items(source_text: str) -> List[AgendaItem]:
     #   (1) to validate the all-caps lookahead (must have a following
     #       speaker turn).
     #   (2) to set ``start_turn_index`` on each agenda candidate.
-    turn_line_indices: List[int] = []
+    turn_line_indices: list[int] = []
     for idx, line in enumerate(lines):
         if _SPEAKER_TURN_HINT.match(line):
             turn_line_indices.append(idx)
 
     # Map every line back to "the turn ordinal that contains it".
-    def _turn_at_or_after(line_idx: int) -> Optional[int]:
+    def _turn_at_or_after(line_idx: int) -> int | None:
         for ord_i, turn_li in enumerate(turn_line_indices):
             if turn_li >= line_idx:
                 return ord_i
         return None
 
-    candidates: List[_AgendaCandidate] = []
+    candidates: list[_AgendaCandidate] = []
     for idx, line in enumerate(lines):
         stripped = line.strip()
         if not stripped:
@@ -254,7 +255,7 @@ def detect_agenda_items(source_text: str) -> List[AgendaItem]:
 
     # De-duplicate identical (label, next_turn) pairs preserving order.
     seen: set = set()
-    pruned: List[_AgendaCandidate] = []
+    pruned: list[_AgendaCandidate] = []
     for c in candidates:
         key = (c.label.lower(), c.next_turn_index)
         if key in seen:
@@ -267,7 +268,7 @@ def detect_agenda_items(source_text: str) -> List[AgendaItem]:
     # end_turn_index is one less than item N+1's start, or the LAST
     # turn ordinal for the final item.
     total_turns = max(1, len(turn_line_indices))
-    items: List[AgendaItem] = []
+    items: list[AgendaItem] = []
     for i, cand in enumerate(pruned):
         start = (
             cand.next_turn_index
@@ -299,7 +300,7 @@ def detect_agenda_items(source_text: str) -> List[AgendaItem]:
     # Sort defensively; collapse zero-width items (rare: two headers
     # adjacent with no speaker turn between them).
     items.sort(key=lambda it: it.start_turn_index)
-    collapsed: List[AgendaItem] = []
+    collapsed: list[AgendaItem] = []
     for item in items:
         if collapsed and item.start_turn_index <= collapsed[-1].start_turn_index:
             # Replace the previous item's title with the more specific
@@ -312,9 +313,9 @@ def detect_agenda_items(source_text: str) -> List[AgendaItem]:
 
 
 def assign_agenda_item_ids(
-    chunks: Sequence[Dict[str, Any]],
+    chunks: Sequence[dict[str, Any]],
     agenda_items: Sequence[AgendaItem],
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Annotate ``chunks`` with ``agenda_item_id`` and return the list.
 
     A new list of dicts is returned; the input chunks are not mutated.
@@ -329,7 +330,7 @@ def assign_agenda_item_ids(
     non-empty string after this function returns, per the Phase X2
     "string-not-null" amendment.
     """
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for chunk in chunks:
         new_chunk = dict(chunk) if isinstance(chunk, dict) else {}
         ci = new_chunk.get("chunk_index")
@@ -338,7 +339,7 @@ def assign_agenda_item_ids(
                 ci = int(ci)  # type: ignore[arg-type]
             except (TypeError, ValueError):
                 ci = -1
-        assigned: Optional[str] = None
+        assigned: str | None = None
         for item in agenda_items:
             if item.start_turn_index <= ci <= item.end_turn_index:
                 assigned = item.agenda_item_id
@@ -348,7 +349,7 @@ def assign_agenda_item_ids(
             # agenda item if one exists; otherwise unclassified. We
             # search in reverse to find the latest item that starts at
             # or before ci.
-            previous: Optional[AgendaItem] = None
+            previous: AgendaItem | None = None
             for item in agenda_items:
                 if item.start_turn_index <= ci:
                     previous = item
@@ -398,7 +399,7 @@ def _looks_like_section_label(label: str) -> bool:
 
 def agenda_items_to_artifact_list(
     agenda_items: Sequence[AgendaItem],
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Serialise AgendaItem dataclasses for storage in source_record.
 
     The exact shape:
@@ -410,7 +411,7 @@ def agenda_items_to_artifact_list(
           "end_turn_index": 4
         }
     """
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for item in agenda_items:
         out.append({
             "agenda_item_id": item.agenda_item_id,

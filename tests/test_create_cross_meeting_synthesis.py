@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pytest
 
@@ -36,10 +36,10 @@ def _write_minutes(
     data_lake: Path,
     source_id: str,
     *,
-    decisions: Optional[List[Any]] = None,
-    action_items: Optional[List[Any]] = None,
-    open_questions: Optional[List[Any]] = None,
-    claims: Optional[List[Dict[str, Any]]] = None,
+    decisions: list[Any] | None = None,
+    action_items: list[Any] | None = None,
+    open_questions: list[Any] | None = None,
+    claims: list[dict[str, Any]] | None = None,
     produced_by: str = "meeting_minutes_llm",
 ) -> None:
     """Write one promoted meeting_minutes envelope at the contract path.
@@ -51,7 +51,7 @@ def _write_minutes(
     same envelope shape directly so the pure logic can be exercised in
     isolation.
     """
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "title": f"Meeting {source_id}",
         "summary": f"Summary for {source_id}",
         "schema_version": "1.0.0",
@@ -85,7 +85,7 @@ def _write_minutes(
 
 
 def _synthesis_payload(
-    source_ids: List[str],
+    source_ids: list[str],
     *,
     narrative: str = (
         "The TIG opened with a kickoff on the 7 GHz downlink band and "
@@ -95,9 +95,9 @@ def _synthesis_payload(
         "open question. The trajectory is convergence on the downlink "
         "rule with the methodology still unresolved."
     ),
-    closed_meeting: Optional[str] = None,
+    closed_meeting: str | None = None,
     decision_status: str = "active",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     first = source_ids[0]
     last = source_ids[-1]
     return {
@@ -154,7 +154,7 @@ def _synthesis_payload(
     }
 
 
-def _stub(payload: Dict[str, Any]):
+def _stub(payload: dict[str, Any]):
     def _client(*, system: str, user: str) -> str:  # noqa: ARG001
         return json.dumps(payload)
 
@@ -201,7 +201,7 @@ def _two_meeting_lake(tmp_path: Path) -> Path:
     return dl
 
 
-def _source_ids() -> List[str]:
+def _source_ids() -> list[str]:
     return [
         "tig-kickoff-transcript-20251101",
         "tig-followup-transcript-20251218",

@@ -8,10 +8,9 @@ and degrade gracefully on version mismatch / missing seed?
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List
-
-import pytest
+from typing import Any
 
 from spectrum_systems_core.extraction.action_item_extractor import (
     ActionItemExtractor,
@@ -20,7 +19,6 @@ from spectrum_systems_core.extraction.claim_extractor import ClaimExtractor
 from spectrum_systems_core.extraction.decision_extractor import (
     DecisionExtractor,
 )
-
 
 SEED_PATH = (
     Path(__file__).resolve().parents[2]
@@ -31,26 +29,26 @@ SEED_PATH = (
 )
 
 
-def _capture_prompt() -> tuple[List[str], Callable[[str], Dict[str, Any]]]:
+def _capture_prompt() -> tuple[list[str], Callable[[str], dict[str, Any]]]:
     """Return ``(captured, api_caller)``: the caller records the prompt."""
-    captured: List[str] = []
+    captured: list[str] = []
 
-    def caller(prompt: str) -> Dict[str, Any]:
+    def caller(prompt: str) -> dict[str, Any]:
         captured.append(prompt)
         return {"items": []}
 
     return captured, caller
 
 
-def _decision_chunk() -> Dict[str, Any]:
+def _decision_chunk() -> dict[str, Any]:
     return {"chunk_id": "c1", "speaker": "S", "text": "Group approves plan A."}
 
 
-def _claim_chunk() -> Dict[str, Any]:
+def _claim_chunk() -> dict[str, Any]:
     return {"chunk_id": "c2", "speaker": "S", "text": "Plan A reduces I/N by 3 dB."}
 
 
-def _action_chunk() -> Dict[str, Any]:
+def _action_chunk() -> dict[str, Any]:
     return {"chunk_id": "c3", "speaker": "S", "text": "Alice will draft the memo."}
 
 

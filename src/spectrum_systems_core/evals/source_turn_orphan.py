@@ -26,9 +26,9 @@ purely on lists already in memory in the runner.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Sequence, Set
-
+from typing import Any
 
 # How many orphaned item ids to surface in the report. Beyond this
 # count the report degrades to a single ``... N more`` line so the
@@ -42,12 +42,12 @@ class SourceTurnReport:
     total: int = 0
     orphan_count: int = 0
     orphan_rate: float = 0.0
-    orphaned_item_ids: List[str] = field(default_factory=list)
+    orphaned_item_ids: list[str] = field(default_factory=list)
     distinct_turns_cited: int = 0
     available_turn_count: int = 0
     diversity_rate: float = 0.0
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "item_type": self.item_type,
             "total": self.total,
@@ -60,7 +60,7 @@ class SourceTurnReport:
         }
 
 
-def _item_turn_ids(item: Dict[str, Any]) -> List[str]:
+def _item_turn_ids(item: dict[str, Any]) -> list[str]:
     """Return the chunk-id strings cited by ``item``.
 
     Supports both ``source_turn_ids`` (the meeting_extraction schema
@@ -77,7 +77,7 @@ def _item_turn_ids(item: Dict[str, Any]) -> List[str]:
     return [str(x) for x in raw if isinstance(x, (str, int))]
 
 
-def _item_identifier(item: Dict[str, Any], fallback: str) -> str:
+def _item_identifier(item: dict[str, Any], fallback: str) -> str:
     """Stable id for an item used in orphan reporting.
 
     Falls back to the primary text field for each extractor's items
@@ -96,7 +96,7 @@ def _item_identifier(item: Dict[str, Any], fallback: str) -> str:
 
 
 def compute_source_turn_report(
-    extracted_items: Sequence[Dict[str, Any]],
+    extracted_items: Sequence[dict[str, Any]],
     valid_turn_ids: Iterable[str],
     *,
     item_type: str,
@@ -109,11 +109,11 @@ def compute_source_turn_report(
     still resolves; this mirrors the tolerance the task spec asks
     for in its source-turn-validity gate pseudocode.
     """
-    valid_lower: Set[str] = {str(t).lower() for t in valid_turn_ids if t is not None}
+    valid_lower: set[str] = {str(t).lower() for t in valid_turn_ids if t is not None}
     report = SourceTurnReport(item_type=item_type)
     report.available_turn_count = len(valid_lower)
 
-    cited_turns: Set[str] = set()
+    cited_turns: set[str] = set()
     for index, item in enumerate(extracted_items or []):
         if not isinstance(item, dict):
             continue
@@ -153,7 +153,7 @@ def compute_source_turn_report(
 
 def aggregate_source_turn_reports(
     reports: Sequence[SourceTurnReport],
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Aggregate per-item-type reports into a single eval_summary block.
 
     Aggregate metrics:

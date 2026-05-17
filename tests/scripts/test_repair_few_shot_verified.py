@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -27,8 +27,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 import repair_few_shot_verified as repair_mod  # noqa: E402
 
-
-SCHEMA_BASE: Dict[str, Any] = {
+SCHEMA_BASE: dict[str, Any] = {
     "artifact_type": "decision_few_shot_examples",
     "schema_version": "1.0.0",
     "examples_version": "1",
@@ -36,7 +35,7 @@ SCHEMA_BASE: Dict[str, Any] = {
 }
 
 
-def _signal_predicate(doc: Dict[str, Any]) -> bool:
+def _signal_predicate(doc: dict[str, Any]) -> bool:
     """Exact predicate from .github/workflows/validate-and-baseline.yml."""
     examples = doc.get("examples") or []
     return any(
@@ -46,7 +45,7 @@ def _signal_predicate(doc: Dict[str, Any]) -> bool:
 
 def _make_example(
     *, example_id: str, verified: Any, verified_by: Any = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "example_id": example_id,
         "source_meeting_id": "m-1",
@@ -108,12 +107,12 @@ def test_signal_predicate_fails_on_integer_one() -> None:
 # ----------------------------------------------------------------------
 
 
-def _write_artifact(path: Path, doc: Dict[str, Any]) -> None:
+def _write_artifact(path: Path, doc: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _read_artifact(path: Path) -> Dict[str, Any]:
+def _read_artifact(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 

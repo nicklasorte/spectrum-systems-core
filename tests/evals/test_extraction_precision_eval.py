@@ -4,8 +4,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from spectrum_systems_core.artifacts import new_artifact
 from spectrum_systems_core.control import decide_control
 from spectrum_systems_core.evals import (
@@ -19,7 +17,6 @@ from spectrum_systems_core.evals import (
 from spectrum_systems_core.evals.extraction_precision import (
     EMPTY_SOURCE_TURNS_PREFIX,
 )
-
 
 # ---- fixtures ------------------------------------------------------------
 

@@ -1,7 +1,6 @@
 """Tests for FailurePatternIndex (Phase G — FINDING-G-002, G-003)."""
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path

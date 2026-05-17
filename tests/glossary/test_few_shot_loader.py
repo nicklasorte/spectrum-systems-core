@@ -4,15 +4,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from spectrum_systems_core.glossary.few_shot_loader import (
     FEW_SHOT_ARTIFACT_FILENAME,
     build_few_shot_block,
     load_few_shot_examples,
 )
 from spectrum_systems_core.validation import validate_artifact
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FEW_SHOT_DIR = REPO_ROOT / "data-lake" / "store" / "artifacts" / "evals" / "few_shot"

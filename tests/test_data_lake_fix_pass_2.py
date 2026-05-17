@@ -10,7 +10,6 @@ from spectrum_systems_core.data_lake import (
     run_transcript_pipeline,
 )
 
-
 M1_TRANSCRIPT = (
     "Q3 planning sync\n"
     "DECISION: Approve plan.\n"

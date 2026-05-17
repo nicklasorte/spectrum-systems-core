@@ -35,13 +35,15 @@ import os
 import uuid
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 
 from ._paths import contracts_root
 from .date_utils import (
     extract_meeting_date as _extract_meeting_date,
+)
+from .date_utils import (
     family_tokens as _family_tokens,
 )
 
@@ -57,7 +59,7 @@ def _now_iso() -> str:
     )
 
 
-def _resolve_sdl_root(data_lake_path: str) -> Optional[Path]:
+def _resolve_sdl_root(data_lake_path: str) -> Path | None:
     env = os.environ.get("SDL_ROOT", "").strip()
     if env:
         p = Path(env)
@@ -78,7 +80,7 @@ def _resolve_sdl_root(data_lake_path: str) -> Optional[Path]:
 class GroundTruthLinker:
     """Match transcript source_records to minutes_records by meeting_date."""
 
-    def link(self, data_lake_path: str) -> Dict[str, Any]:
+    def link(self, data_lake_path: str) -> dict[str, Any]:
         try:
             return self._link(data_lake_path)
         except Exception as exc:  # defensive: never raise
@@ -86,7 +88,7 @@ class GroundTruthLinker:
 
     # -- internals ---------------------------------------------------------
 
-    def _link(self, data_lake_path: str) -> Dict[str, Any]:
+    def _link(self, data_lake_path: str) -> dict[str, Any]:
         sdl_root = _resolve_sdl_root(data_lake_path)
         if sdl_root is None:
             return _failure_result(
@@ -108,11 +110,11 @@ class GroundTruthLinker:
             )
         minutes = _load_minutes(sdl_root)
 
-        unmatched_t: List[Dict[str, Any]] = []
-        unmatched_m: List[Dict[str, Any]] = []
+        unmatched_t: list[dict[str, Any]] = []
+        unmatched_m: list[dict[str, Any]] = []
 
         # 1. Anything with no meeting_date on either side is unmatched up-front.
-        t_with_date: List[Dict[str, Any]] = []
+        t_with_date: list[dict[str, Any]] = []
         for t in transcripts:
             if t["meeting_date"] is None:
                 # _normalize_transcript distinguishes "no candidate strings
@@ -123,7 +125,7 @@ class GroundTruthLinker:
                 unmatched_t.append(_unmatched_t(t, reason))
             else:
                 t_with_date.append(t)
-        m_with_date: List[Dict[str, Any]] = []
+        m_with_date: list[dict[str, Any]] = []
         for m in minutes:
             if m["meeting_date"] is None:
                 unmatched_m.append(_unmatched_m(m, "no_meeting_date"))
@@ -131,8 +133,8 @@ class GroundTruthLinker:
                 m_with_date.append(m)
 
         # 2. Bucket by date for the exact-match pass.
-        t_by_date: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        m_by_date: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        t_by_date: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        m_by_date: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for t in t_with_date:
             t_by_date[t["meeting_date"]].append(t)
         for m in m_with_date:
@@ -140,12 +142,12 @@ class GroundTruthLinker:
 
         paired_t_ids: set = set()
         paired_m_ids: set = set()
-        pairs_high: List[Dict[str, Any]] = []
-        pairs_medium: List[Dict[str, Any]] = []
+        pairs_high: list[dict[str, Any]] = []
+        pairs_medium: list[dict[str, Any]] = []
 
         all_dates_with_either = set(t_by_date.keys()) | set(m_by_date.keys())
-        leftover_t: List[Dict[str, Any]] = []
-        leftover_m: List[Dict[str, Any]] = []
+        leftover_t: list[dict[str, Any]] = []
+        leftover_m: list[dict[str, Any]] = []
         for d in sorted(all_dates_with_either):
             ts = t_by_date.get(d, [])
             ms = m_by_date.get(d, [])
@@ -205,8 +207,8 @@ class GroundTruthLinker:
         )
 
         # Build candidate sets in both directions.
-        candidates_for_t: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        candidates_for_m: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        candidates_for_t: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        candidates_for_m: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for t in leftover_t_sorted:
             td = datetime.date.fromisoformat(t["meeting_date"])
             for m in leftover_m_sorted:
@@ -393,7 +395,7 @@ class GroundTruthLinker:
 
 def _load_transcripts(
     data_lake_path: str, sdl_root: Path
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Collect transcripts (source_family == 'meetings') from disk.
 
     Reads BOTH ``store/processed/meetings/<sid>/source_record.json`` and
@@ -410,7 +412,7 @@ def _load_transcripts(
     pairing them as transcripts would silently produce a wrong pair.
     They are NEVER candidates for transcript matching.
     """
-    by_source_id: Dict[str, Dict[str, Any]] = {}
+    by_source_id: dict[str, dict[str, Any]] = {}
 
     # processed/ dir.
     if data_lake_path:
@@ -444,8 +446,8 @@ def _load_transcripts(
                 continue
             by_source_id.setdefault(source_id, rec)
 
-    transcripts: List[Dict[str, Any]] = []
-    filtered: List[Dict[str, Any]] = []
+    transcripts: list[dict[str, Any]] = []
+    filtered: list[dict[str, Any]] = []
     for source_id, rec in sorted(by_source_id.items()):
         title = _payload_get(rec, "title") or ""
         raw_path = _payload_get(rec, "raw_path") or ""
@@ -467,7 +469,7 @@ def _load_transcripts(
     return transcripts, filtered
 
 
-def _read_source_record(path: Path) -> Optional[Dict[str, Any]]:
+def _read_source_record(path: Path) -> dict[str, Any] | None:
     try:
         rec = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -479,7 +481,7 @@ def _read_source_record(path: Path) -> Optional[Dict[str, Any]]:
     return rec
 
 
-def _payload_get(rec: Dict[str, Any], key: str) -> Optional[str]:
+def _payload_get(rec: dict[str, Any], key: str) -> str | None:
     payload = rec.get("payload") if isinstance(rec, dict) else None
     if not isinstance(payload, dict):
         return None
@@ -489,12 +491,12 @@ def _payload_get(rec: Dict[str, Any], key: str) -> Optional[str]:
     return None
 
 
-def _normalize_transcript(rec: Dict[str, Any], source_id: str) -> Dict[str, Any]:
+def _normalize_transcript(rec: dict[str, Any], source_id: str) -> dict[str, Any]:
     payload = rec.get("payload", {}) or {}
     title = payload.get("title") if isinstance(payload.get("title"), str) else None
     artifact_id = rec.get("artifact_id", "")
     meeting_date = _extract_transcript_date(payload)
-    no_date_reason: Optional[str] = None
+    no_date_reason: str | None = None
     if meeting_date is None:
         # Distinguish "regex never matched any of the candidate strings"
         # (no_date_extractable) from "no candidate strings present at all"
@@ -513,13 +515,13 @@ def _normalize_transcript(rec: Dict[str, Any], source_id: str) -> Dict[str, Any]
     }
 
 
-def _filename_candidates(payload: Dict[str, Any]) -> List[str]:
+def _filename_candidates(payload: dict[str, Any]) -> list[str]:
     """Return the ordered candidate strings that may carry the meeting date.
 
     Order: ``payload.title`` → basename of ``payload.raw_path`` → basename
     of ``payload.processed_path``. Empty / non-string values are dropped.
     """
-    out: List[str] = []
+    out: list[str] = []
     title = payload.get("title")
     if isinstance(title, str) and title.strip():
         out.append(title)
@@ -532,7 +534,7 @@ def _filename_candidates(payload: Dict[str, Any]) -> List[str]:
     return out
 
 
-def _extract_transcript_date(payload: Dict[str, Any]) -> Optional[str]:
+def _extract_transcript_date(payload: dict[str, Any]) -> str | None:
     """Extract YYYY-MM-DD from the transcript source_record payload.
 
     Tries each of ``title``, basename(``raw_path``), basename(``processed_path``)
@@ -558,8 +560,8 @@ def _extract_transcript_date(payload: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _load_minutes(sdl_root: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _load_minutes(sdl_root: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     minutes_dir = sdl_root / "minutes"
     if not minutes_dir.is_dir():
         return out
@@ -594,7 +596,7 @@ def _load_minutes(sdl_root: Path) -> List[Dict[str, Any]]:
     return out
 
 
-def _normalize_date(value: Optional[str]) -> Optional[str]:
+def _normalize_date(value: str | None) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     s = value.strip()
@@ -616,11 +618,11 @@ def _normalize_date(value: Optional[str]) -> Optional[str]:
 
 
 def _build_pair(
-    transcript: Dict[str, Any],
-    minutes: Dict[str, Any],
+    transcript: dict[str, Any],
+    minutes: dict[str, Any],
     *,
     confidence: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     # The pair takes its meeting_date from the transcript side (it's the
     # canonical eval anchor). meeting_name prefers the transcript's title;
     # falls back to the minutes-derived name.
@@ -645,7 +647,7 @@ def _build_pair(
     }
 
 
-def _unmatched_t(t: Dict[str, Any], reason: str) -> Dict[str, Any]:
+def _unmatched_t(t: dict[str, Any], reason: str) -> dict[str, Any]:
     return {
         "source_id": t.get("source_id", "") or "",
         "source_artifact_id": t.get("source_artifact_id", "") or "",
@@ -655,7 +657,7 @@ def _unmatched_t(t: Dict[str, Any], reason: str) -> Dict[str, Any]:
     }
 
 
-def _unmatched_m(m: Dict[str, Any], reason: str) -> Dict[str, Any]:
+def _unmatched_m(m: dict[str, Any], reason: str) -> dict[str, Any]:
     return {
         "minutes_id": m.get("minutes_id", "") or "",
         "minutes_artifact_id": m.get("minutes_artifact_id", "") or "",
@@ -665,7 +667,7 @@ def _unmatched_m(m: Dict[str, Any], reason: str) -> Dict[str, Any]:
     }
 
 
-def _stable_sorted_unmatched_t(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _stable_sorted_unmatched_t(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         items,
         key=lambda x: (
@@ -676,7 +678,7 @@ def _stable_sorted_unmatched_t(items: List[Dict[str, Any]]) -> List[Dict[str, An
     )
 
 
-def _stable_sorted_unmatched_m(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _stable_sorted_unmatched_m(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         items,
         key=lambda x: (
@@ -689,7 +691,7 @@ def _stable_sorted_unmatched_m(items: List[Dict[str, Any]]) -> List[Dict[str, An
 
 def _load_existing_pairs(
     sdl_root: Path,
-) -> Dict[Tuple[str, str], Dict[str, Any]]:
+) -> dict[tuple[str, str], dict[str, Any]]:
     """Index existing ground_truth_pair artifacts by (source, minutes) ids.
 
     Reads only ``$SDL_ROOT/ground_truth/*.json`` — non-recursive, so the
@@ -701,7 +703,7 @@ def _load_existing_pairs(
     identifying fields) are silently skipped so a single bad file cannot
     cause the linker to fail closed and refuse to write any pairs.
     """
-    out: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    out: dict[tuple[str, str], dict[str, Any]] = {}
     pairs_dir = sdl_root / "ground_truth"
     if not pairs_dir.is_dir():
         return out
@@ -736,9 +738,9 @@ def _load_existing_pairs(
 
 
 def _partition_against_existing(
-    pairs: List[Dict[str, Any]],
-    existing: Dict[Tuple[str, str], Dict[str, Any]],
-) -> Tuple[List[Dict[str, Any]], int, int]:
+    pairs: list[dict[str, Any]],
+    existing: dict[tuple[str, str], dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int, int]:
     """Split ``pairs`` into (new, already_confirmed_count, already_pending_count).
 
     A pair whose (source_artifact_id, minutes_artifact_id) key is already
@@ -746,7 +748,7 @@ def _partition_against_existing(
     determines the bucket it's counted in. The existing artifact on disk
     is left untouched.
     """
-    new_pairs: List[Dict[str, Any]] = []
+    new_pairs: list[dict[str, Any]] = []
     already_confirmed = 0
     already_pending = 0
     for pair in pairs:
@@ -768,14 +770,14 @@ def _partition_against_existing(
     return new_pairs, already_confirmed, already_pending
 
 
-def _load_schema(name: str) -> Dict[str, Any]:
+def _load_schema(name: str) -> dict[str, Any]:
     schema_file = (
         contracts_root() / "schemas" / "ingestion" / f"{name}.schema.json"
     )
     return json.loads(schema_file.read_text(encoding="utf-8"))
 
 
-def _failure_result(reason: str) -> Dict[str, Any]:
+def _failure_result(reason: str) -> dict[str, Any]:
     return {
         "status": "failure",
         "pairs_produced": 0,
@@ -792,12 +794,12 @@ def _failure_result(reason: str) -> Dict[str, Any]:
 
 
 def _resolve_same_day_collision(
-    transcripts: List[Dict[str, Any]],
-    minutes: List[Dict[str, Any]],
-) -> Tuple[
-    List[Tuple[Dict[str, Any], Dict[str, Any]]],
-    List[Tuple[Dict[str, Any], Dict[str, Any]]],
-    Dict[str, List[Dict[str, Any]]],
+    transcripts: list[dict[str, Any]],
+    minutes: list[dict[str, Any]],
+) -> tuple[
+    list[tuple[dict[str, Any], dict[str, Any]]],
+    list[tuple[dict[str, Any], dict[str, Any]]],
+    dict[str, list[dict[str, Any]]],
 ]:
     """Greedy family-token best-match for same-day collisions.
 
@@ -832,7 +834,7 @@ def _resolve_same_day_collision(
         _family_tokens(m.get("meeting_name") or "") for m in minutes
     ]
 
-    candidates: List[Tuple[int, str, str, int, int]] = []
+    candidates: list[tuple[int, str, str, int, int]] = []
     for ti, t in enumerate(transcripts):
         for mi, m in enumerate(minutes):
             overlap = len(t_tokens[ti] & m_tokens[mi])
@@ -850,7 +852,7 @@ def _resolve_same_day_collision(
 
     matched_t: set = set()
     matched_m: set = set()
-    high: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+    high: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for overlap, _t_aid, _m_aid, ti, mi in candidates:
         if overlap < 1:
             break
@@ -863,7 +865,7 @@ def _resolve_same_day_collision(
     leftover_t_idx = [i for i in range(len(transcripts)) if i not in matched_t]
     leftover_m_idx = [i for i in range(len(minutes)) if i not in matched_m]
 
-    medium: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+    medium: list[tuple[dict[str, Any], dict[str, Any]]] = []
     if len(leftover_t_idx) == 1 and len(leftover_m_idx) == 1:
         ti = leftover_t_idx[0]
         mi = leftover_m_idx[0]

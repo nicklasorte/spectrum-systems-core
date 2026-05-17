@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from ..artifacts import Artifact, ArtifactStore, new_artifact
 from ..context import build_context_bundle

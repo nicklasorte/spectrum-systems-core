@@ -7,14 +7,14 @@ import unittest
 import uuid
 from pathlib import Path
 
-from spectrum_systems_core.governance.apply_compression import (
-    apply_compression,
-)
 from spectrum_systems_core.governance._io import write_json
 from spectrum_systems_core.governance._paths import (
     candidates_archive_dir,
     candidates_dir,
     ensure_governance_tree,
+)
+from spectrum_systems_core.governance.apply_compression import (
+    apply_compression,
 )
 
 from ._fixtures import stage_minimal_repo, write_py_file

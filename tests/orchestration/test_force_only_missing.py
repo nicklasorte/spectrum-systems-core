@@ -9,9 +9,7 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
-
-import pytest
+from typing import Any
 
 from spectrum_systems_core.orchestration import PipelineOrchestrator
 
@@ -58,7 +56,7 @@ def _make_orchestrator() -> PipelineOrchestrator:
     is needed — the test only cares about which source_ids are touched.
     """
 
-    def _ok_transcript(txt_path: Path, source_id: str, store_root: Path) -> Dict[str, Any]:
+    def _ok_transcript(txt_path: Path, source_id: str, store_root: Path) -> dict[str, Any]:
         # Mimic the post-condition the orchestrator's Stages 2-4 chain
         # expects: a source_record stub exists for evidence.
         sid_dir = store_root / "processed" / "meetings" / source_id
@@ -83,7 +81,7 @@ def _make_orchestrator() -> PipelineOrchestrator:
             "text_units": [],
         }
 
-    def _stage_runner_success(source_id: str, store_root: Path) -> Dict[str, Any]:
+    def _stage_runner_success(source_id: str, store_root: Path) -> dict[str, Any]:
         # Write the minimal artifact each stage checks for so the
         # artifact-as-evidence contract resolves to success.
         sid_dir = store_root / "processed" / "meetings" / source_id
@@ -100,7 +98,7 @@ def _make_orchestrator() -> PipelineOrchestrator:
         (sid_dir / "paper" / "claims.jsonl").write_text("", encoding="utf-8")
         return {"status": "success", "reason": ""}
 
-    def _synth_skipped(_store_root: Path) -> Dict[str, Any]:
+    def _synth_skipped(_store_root: Path) -> dict[str, Any]:
         return {"status": "success", "reason": ""}
 
     return PipelineOrchestrator(
@@ -184,7 +182,7 @@ def test_source_ids_failed_includes_stage_2_to_4_failures(
     root = _stage_lake(tmp_path)
     _drop_txt(root, "alpha.txt")
 
-    def _ok_transcript(txt_path: Path, source_id: str, store_root: Path) -> Dict[str, Any]:
+    def _ok_transcript(txt_path: Path, source_id: str, store_root: Path) -> dict[str, Any]:
         sid_dir = store_root / "processed" / "meetings" / source_id
         sid_dir.mkdir(parents=True, exist_ok=True)
         (sid_dir / "source_record.json").write_text(
@@ -205,10 +203,10 @@ def test_source_ids_failed_includes_stage_2_to_4_failures(
             "text_units": [],
         }
 
-    def _stage2_fail(source_id: str, store_root: Path) -> Dict[str, Any]:
+    def _stage2_fail(source_id: str, store_root: Path) -> dict[str, Any]:
         return {"status": "failure", "reason": "synthetic_stage2_failure"}
 
-    def _stage_runner_unused(source_id: str, store_root: Path) -> Dict[str, Any]:
+    def _stage_runner_unused(source_id: str, store_root: Path) -> dict[str, Any]:
         # Stage 3+4 are not attempted when Stage 2 fails — assert by raising
         # if reached.
         raise AssertionError("stage 3/4 must not run after stage 2 failure")

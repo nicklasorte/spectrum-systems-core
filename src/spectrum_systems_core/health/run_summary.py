@@ -25,10 +25,9 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Union
-
-from .finding import HealthFinding
+from typing import Any
 
 _LOG = logging.getLogger(__name__)
 
@@ -48,7 +47,7 @@ def _now_iso() -> str:
     )
 
 
-def _orchestration_dir(data_lake_path: Union[str, Path]) -> Path:
+def _orchestration_dir(data_lake_path: str | Path) -> Path:
     return (
         Path(data_lake_path)
         / "store"
@@ -58,11 +57,11 @@ def _orchestration_dir(data_lake_path: Union[str, Path]) -> Path:
 
 
 def _load_orchestration_artifacts(
-    data_lake_path: Union[str, Path],
-) -> List[Dict[str, Any]]:
+    data_lake_path: str | Path,
+) -> list[dict[str, Any]]:
     """Read every ``*_extraction.json`` orchestration artifact."""
     dir_ = _orchestration_dir(data_lake_path)
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     if not dir_.is_dir():
         return out
     for path in sorted(dir_.glob("*_extraction.json")):
@@ -77,12 +76,12 @@ def _load_orchestration_artifacts(
 
 
 def _load_health_findings(
-    data_lake_path: Union[str, Path],
-) -> List[Dict[str, Any]]:
+    data_lake_path: str | Path,
+) -> list[dict[str, Any]]:
     health_dir = (
         Path(data_lake_path) / "store" / "artifacts" / "health"
     )
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     if not health_dir.is_dir():
         return out
     for path in sorted(health_dir.glob("*.json")):
@@ -95,8 +94,8 @@ def _load_health_findings(
     return out
 
 
-def _aggregate_findings(findings: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    counts: Dict[tuple, int] = {}
+def _aggregate_findings(findings: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts: dict[tuple, int] = {}
     for f in findings:
         code = str(f.get("finding_code") or "")
         sev = str(f.get("severity") or "")
@@ -112,8 +111,8 @@ def _aggregate_findings(findings: Iterable[Dict[str, Any]]) -> List[Dict[str, An
 
 def _row_for_source(
     source_id: str,
-    orch_by_source: Dict[str, Dict[str, Any]],
-) -> Dict[str, Any]:
+    orch_by_source: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
     orch = orch_by_source.get(source_id)
     if orch is None:
         return {
@@ -139,14 +138,14 @@ def _row_for_source(
 
 
 def build_summary(
-    data_lake_path: Union[str, Path],
+    data_lake_path: str | Path,
     pipeline_run_id: str,
     *,
-    source_ids: Optional[Iterable[str]] = None,
-) -> Dict[str, Any]:
+    source_ids: Iterable[str] | None = None,
+) -> dict[str, Any]:
     """Build the ``pipeline_run_summary`` artifact dict."""
     orchestrations = _load_orchestration_artifacts(data_lake_path)
-    orch_by_source: Dict[str, Dict[str, Any]] = {}
+    orch_by_source: dict[str, dict[str, Any]] = {}
     for orch in orchestrations:
         sid = str(orch.get("source_id") or "")
         if not sid:
@@ -161,14 +160,14 @@ def build_summary(
     else:
         source_ids_list = list(source_ids)
 
-    transcripts: List[Dict[str, Any]] = [
+    transcripts: list[dict[str, Any]] = [
         _row_for_source(sid, orch_by_source) for sid in source_ids_list
     ]
 
     total_attempted = sum(t["chunks_attempted"] for t in transcripts)
     total_succeeded = sum(t["chunks_succeeded"] for t in transcripts)
     total_blocked = sum(t["chunks_blocked"] for t in transcripts)
-    block_reason_breakdown: Dict[str, int] = {}
+    block_reason_breakdown: dict[str, int] = {}
     for t in transcripts:
         for reason, count in t["block_reasons"].items():
             block_reason_breakdown[reason] = (
@@ -209,9 +208,9 @@ def _truncate_for_markdown(value: str, limit: int = _MARKDOWN_SOURCE_ID_LIMIT) -
     return value[: limit - 3] + "..."
 
 
-def render_markdown(summary: Dict[str, Any]) -> str:
+def render_markdown(summary: dict[str, Any]) -> str:
     """Render the summary as a GitHub-flavoured markdown block."""
-    lines: List[str] = []
+    lines: list[str] = []
     pipeline_run_id = summary.get("pipeline_run_id") or "<unknown>"
     created_at = summary.get("created_at") or ""
     lines.append(
@@ -276,10 +275,10 @@ def render_markdown(summary: Dict[str, Any]) -> str:
 
 
 def write_artifact(
-    summary: Dict[str, Any],
+    summary: dict[str, Any],
     *,
-    data_lake_path: Union[str, Path],
-) -> Optional[Path]:
+    data_lake_path: str | Path,
+) -> Path | None:
     """Persist ``summary`` as a ``pipeline_run_summary`` artifact.
 
     The artifact lives under
@@ -341,7 +340,7 @@ def emit_step_summary(markdown: str) -> None:
     sys.stdout.write(markdown)
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="spectrum_systems_core.health.run_summary",
         description=(

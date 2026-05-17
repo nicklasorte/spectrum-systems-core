@@ -9,7 +9,6 @@ from spectrum_systems_core.data_lake import (
     write_promoted_artifact,
 )
 
-
 VALID_METADATA = {
     "meeting_id": "m-fix1",
     "title": "Fix pass case",

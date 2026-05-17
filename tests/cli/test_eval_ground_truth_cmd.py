@@ -6,9 +6,7 @@ import io
 import json
 import shutil
 from pathlib import Path
-from typing import Any, Dict
-
-import pytest
+from typing import Any
 
 from spectrum_systems_core.cli import eval_ground_truth
 
@@ -32,19 +30,19 @@ def _make_data_lake(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _read_gate_decision(sdl_root: Path, run_id: str) -> Dict[str, Any]:
+def _read_gate_decision(sdl_root: Path, run_id: str) -> dict[str, Any]:
     return json.loads(
         (sdl_root / "evals" / f"gate_decision_{run_id}.json").read_text(encoding="utf-8")
     )
 
 
-def _read_summary(sdl_root: Path, run_id: str) -> Dict[str, Any]:
+def _read_summary(sdl_root: Path, run_id: str) -> dict[str, Any]:
     return json.loads(
         (sdl_root / "evals" / f"eval_summary_{run_id}.json").read_text(encoding="utf-8")
     )
 
 
-def _findings(data_lake: Path) -> list[Dict[str, Any]]:
+def _findings(data_lake: Path) -> list[dict[str, Any]]:
     findings_dir = data_lake / "store" / "artifacts" / "health"
     if not findings_dir.is_dir():
         return []

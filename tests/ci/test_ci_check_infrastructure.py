@@ -7,23 +7,22 @@ detection function on a real input (real file on disk or a fixture in
 tmp_path) and asserts both positive and negative behavior.
 """
 import json
-import pathlib
 import re
 
 import pytest
 import yaml
 
-from tests.ci.test_no_deprecated_model_strings import (
-    DEPRECATED_MODEL_STRINGS,
-    ALLOWED_LOCATIONS,
-    get_python_files,
-)
 from tests.ci.test_no_artifact_kind_in_schemas import (
     _schema_defines_artifact_kind,
 )
+from tests.ci.test_no_deprecated_model_strings import (
+    ALLOWED_LOCATIONS,
+    DEPRECATED_MODEL_STRINGS,
+    get_python_files,
+)
 from tests.ci.test_no_model_strings_in_workflows import (
-    MODEL_STRING_PATTERN,
     ALLOWED_LINE_PATTERNS,
+    MODEL_STRING_PATTERN,
     _strip_inline_comment,
 )
 
@@ -48,7 +47,6 @@ class TestCheck1Infrastructure:
     def test_scan_excludes_allowed_locations(self):
         """get_python_files must filter out every entry in ALLOWED_LOCATIONS."""
         from tests.ci.test_no_deprecated_model_strings import (
-            SCAN_ROOT,
             _normalize,
         )
         scanned = {_normalize(p) for p in get_python_files()}

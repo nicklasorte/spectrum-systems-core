@@ -16,7 +16,7 @@ import json
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 
@@ -58,13 +58,13 @@ def _canonical_json(obj: Any) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"))
 
 
-def _content_hash(formatted: Dict[str, Any]) -> str:
+def _content_hash(formatted: dict[str, Any]) -> str:
     subset = {k: formatted[k] for k in _HASHED_FIELDS}
     digest = hashlib.sha256(_canonical_json(subset).encode("utf-8")).hexdigest()
     return f"sha256:{digest}"
 
 
-def _load_schema(name: str) -> Dict[str, Any]:
+def _load_schema(name: str) -> dict[str, Any]:
     return json.loads(paper_schema_path(name).read_text(encoding="utf-8"))
 
 
@@ -77,7 +77,7 @@ _READ_MISSING = "missing"
 _READ_UNREADABLE = "unreadable"
 
 
-def _read_json(path: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+def _read_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     """Returns (payload, error_tag). error_tag is None on success or missing.
 
     "missing" signals no file at the path; "unreadable" signals the file
@@ -99,8 +99,8 @@ class PublicationFormatter:
         self,
         revised_draft_id: str,
         repo_root: str,
-        vault_root: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        vault_root: str | None = None,
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         paper_dir, _family = find_paper_dir(repo_root_path, revised_draft_id)
         if paper_dir is None or not (
@@ -196,9 +196,9 @@ class PublicationFormatter:
     def _build_formatted_artifact(
         self,
         *,
-        revised_draft: Dict[str, Any],
-        metadata: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        revised_draft: dict[str, Any],
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
         paper_id = str(uuid.uuid4())
         formatted_at = _now_iso()
         revised_sections = revised_draft.get("revised_sections") or {}
@@ -206,7 +206,7 @@ class PublicationFormatter:
 
         # Two-pass citation transform on sections in deterministic order.
         # Pass 1: assign ref_id by first-occurrence of source_artifact_id.
-        ref_assignments: Dict[str, str] = {}
+        ref_assignments: dict[str, str] = {}
         for section_key in section_keys:
             body = revised_sections.get(section_key) or ""
             for match in _CITATION_MARKER_PATTERN.finditer(body):
@@ -217,13 +217,13 @@ class PublicationFormatter:
                     )
 
         # Pass 2: rewrite bodies and build citations list.
-        sections: List[Dict[str, Any]] = []
-        citations: List[Dict[str, Any]] = []
+        sections: list[dict[str, Any]] = []
+        citations: list[dict[str, Any]] = []
         citation_counter = 0
         for order_index, section_key in enumerate(section_keys):
             body = revised_sections.get(section_key) or ""
 
-            def _replace(match: "re.Match[str]") -> str:
+            def _replace(match: re.Match[str]) -> str:
                 nonlocal citation_counter
                 source_id = match.group(1).lower()
                 ref_id = ref_assignments[source_id]
@@ -264,7 +264,7 @@ class PublicationFormatter:
         authors = [str(a) for a in authors_raw if isinstance(a, str)]
         abstract = str(metadata.get("abstract") or "")
 
-        formatted: Dict[str, Any] = {
+        formatted: dict[str, Any] = {
             "paper_id": paper_id,
             "source_revised_draft_id": revised_draft["source_id"],
             "formatted_at": formatted_at,
@@ -295,7 +295,7 @@ class PublicationFormatter:
 
     def locate_formatted_path(
         self, revised_draft_id: str, repo_root: str, paper_id: str
-    ) -> Optional[Path]:
+    ) -> Path | None:
         paper_dir, _family = find_paper_dir(
             Path(repo_root).resolve(), revised_draft_id
         )

@@ -58,7 +58,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-
 # A speaker label must look like ALL-CAPS letters with optional spaces,
 # hyphens, or dots, ending with a colon and a space. The bound on the
 # label length keeps lines like ``CONTEXT:`` (a prefix marker used by the

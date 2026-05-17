@@ -29,8 +29,6 @@ Block reasons mirror the failure artifact types we emit:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict
-
 
 # String constants for block reasons. Kept here so callers cannot drift
 # from the schema or the orchestrator summary format.
@@ -62,7 +60,7 @@ class ChunkCounters:
     chunks_attempted: int = 0
     chunks_succeeded: int = 0
     chunks_blocked: int = 0
-    block_reasons: Dict[str, int] = field(
+    block_reasons: dict[str, int] = field(
         default_factory=lambda: {r: 0 for r in BLOCK_REASONS}
     )
 
@@ -102,7 +100,7 @@ class ChunkCounters:
             return STAGE_FAILED
         return STAGE_PARTIAL
 
-    def as_dict(self) -> Dict[str, object]:
+    def as_dict(self) -> dict[str, object]:
         """Serialise the counter into the orchestrator-summary shape.
 
         Keys match ``orchestration_result.schema.json`` exactly so the

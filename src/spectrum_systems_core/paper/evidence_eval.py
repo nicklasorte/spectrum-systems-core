@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from ..extraction._paths import find_processed_dir
 
@@ -17,14 +17,14 @@ class EvidenceEval:
 
     def run(
         self,
-        claims: List[Dict[str, Any]],
-        evidence_records: List[Dict[str, Any]],
+        claims: list[dict[str, Any]],
+        evidence_records: list[dict[str, Any]],
         source_id: str,
         repo_root: str,
-    ) -> Dict[str, Any]:
-        eval_results: List[Dict[str, Any]] = []
-        reason_codes: List[str] = []
-        warnings: List[Dict[str, Any]] = []
+    ) -> dict[str, Any]:
+        eval_results: list[dict[str, Any]] = []
+        reason_codes: list[str] = []
+        warnings: list[dict[str, Any]] = []
 
         # EVAL-EVID-001: evidence_grounded
         ungrounded = [
@@ -48,12 +48,12 @@ class EvidenceEval:
             )
 
         # EVAL-EVID-002: high_materiality_coverage
-        evidence_by_claim: Dict[str, List[Dict[str, Any]]] = {}
+        evidence_by_claim: dict[str, list[dict[str, Any]]] = {}
         for r in evidence_records:
             evidence_by_claim.setdefault(r.get("claim_id", ""), []).append(r)
 
-        high_failures: List[str] = []
-        medium_warns: List[str] = []
+        high_failures: list[str] = []
+        medium_warns: list[str] = []
         for claim in claims:
             cid = claim.get("claim_id", "?")
             mat = claim.get("materiality")
@@ -97,7 +97,7 @@ class EvidenceEval:
                     current_hash = sr.get("payload", {}).get("raw_hash", "")
                 except (OSError, json.JSONDecodeError):
                     current_hash = ""
-        stale: List[str] = []
+        stale: list[str] = []
         for r in evidence_records:
             stored = r.get("source_record_hash", "")
             if current_hash and stored and stored != current_hash:
@@ -120,7 +120,7 @@ class EvidenceEval:
         claim_unit_by_id = {
             c.get("claim_id", ""): c.get("source_unit_id", "") for c in claims
         }
-        circular: List[str] = []
+        circular: list[str] = []
         for r in evidence_records:
             cid = r.get("claim_id", "")
             evidence_unit = r.get("source_unit_id", "")

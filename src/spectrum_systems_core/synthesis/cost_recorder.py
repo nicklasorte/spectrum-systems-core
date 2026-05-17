@@ -10,12 +10,11 @@ import datetime
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import jsonschema
 
 from ._paths import synthesis_run_dir, synthesis_schema_path
-
 
 SONNET_INPUT_USD_PER_MTOK = 3.0
 SONNET_OUTPUT_USD_PER_MTOK = 15.0
@@ -44,7 +43,7 @@ def append_cost_record(
     input_tokens: int,
     output_tokens: int,
     model: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     record = {
         "cost_id": str(uuid.uuid4()),
         "run_id": run_id,

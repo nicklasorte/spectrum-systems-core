@@ -6,15 +6,15 @@ import json
 import unittest
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 from unittest.mock import patch
 
 from docx import Document
 
 from spectrum_systems_core.ingestion.docx_extractor import DocxExtractor
 from spectrum_systems_core.ingestion.ingestion_eval import (
-    IngestionEval,
     MIN_CHARS_PER_BYTE,
+    IngestionEval,
 )
 
 
@@ -22,7 +22,7 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _build_rich_docx(path: Path) -> Tuple[str, List[Dict[str, Any]]]:
+def _build_rich_docx(path: Path) -> tuple[str, list[dict[str, Any]]]:
     """Build a .docx with several substantive paragraphs and a table.
 
     Returns ``(extracted_text, text_units)``: the deterministic text
@@ -72,13 +72,13 @@ def _build_rich_docx(path: Path) -> Tuple[str, List[Dict[str, Any]]]:
     # Re-extract via DocxExtractor so the helper returns *exactly* what
     # the extractor produces (avoids whitespace/normalization drift).
     extracted, _, _, _ = DocxExtractor()._extract_body_text(Document(str(path)))
-    text_units: List[Dict[str, Any]] = [
+    text_units: list[dict[str, Any]] = [
         {"text": chunk} for chunk in extracted.split("\n\n")
     ]
     return extracted, text_units
 
 
-def _build_header_only_docx(path: Path) -> Tuple[str, List[Dict[str, Any]]]:
+def _build_header_only_docx(path: Path) -> tuple[str, list[dict[str, Any]]]:
     """Build a .docx that contains only short headings (the production bug).
 
     The .docx zip is post-processed to embed a large filler payload so
@@ -115,10 +115,10 @@ def _build_header_only_docx(path: Path) -> Tuple[str, List[Dict[str, Any]]]:
 def _make_source_record(
     *,
     artifact_id: str,
-    text_units: List[Dict[str, Any]],
+    text_units: list[dict[str, Any]],
     raw_hash: str,
     processed_path: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "artifact_kind": "source_record",
         "artifact_id": artifact_id,

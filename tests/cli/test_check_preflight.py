@@ -12,9 +12,7 @@ import io
 import json
 import uuid
 from pathlib import Path
-from typing import Any, Dict
-
-import pytest
+from typing import Any
 
 from spectrum_systems_core.cli import check_preflight
 
@@ -53,7 +51,7 @@ def _write_kind_only_artifact(sdl_root: Path) -> None:
     """An artifact that carries artifact_kind but not artifact_type."""
     target = sdl_root / "minutes"
     target.mkdir(parents=True, exist_ok=True)
-    obj: Dict[str, Any] = {
+    obj: dict[str, Any] = {
         "artifact_kind": "minutes_record",
         "schema_version": "1.0.0",
         "minutes_id": str(uuid.uuid4()),

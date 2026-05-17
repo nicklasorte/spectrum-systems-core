@@ -12,15 +12,14 @@ import os
 import tempfile
 import unittest
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any
 
 from spectrum_systems_core.extraction import (
-    CHUNK_MERGE_ENABLED_ENV,
-    Chunker,
     MIN_CHUNK_CHARS,
-    MIN_CHUNK_CHARS_ENV,
+    Chunker,
     merge_short_chunks,
 )
 from spectrum_systems_core.validation import validate_artifact
@@ -36,12 +35,12 @@ def _chunk(
     *,
     text: str,
     index: int,
-    unit_ids: Optional[List[str]] = None,
-    speaker: Optional[str] = None,
-    agenda_item_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    unit_ids: list[str] | None = None,
+    speaker: str | None = None,
+    agenda_item_id: str | None = None,
+) -> dict[str, Any]:
     units = unit_ids if unit_ids is not None else [str(uuid.uuid4())]
-    chunk: Dict[str, Any] = {
+    chunk: dict[str, Any] = {
         "chunk_id": str(uuid.uuid4()),
         "source_id": "src-0001",
         "source_family": "meetings",
@@ -64,7 +63,7 @@ def _chunk(
 @contextmanager
 def _env(**vars: str) -> Iterator[None]:
     """Temporarily set/clear environment variables."""
-    previous: Dict[str, Optional[str]] = {}
+    previous: dict[str, str | None] = {}
     for k, v in vars.items():
         previous[k] = os.environ.get(k)
         if v is None:

@@ -17,16 +17,16 @@ import json
 import logging
 import pathlib
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Union
+from collections.abc import Callable
+from typing import Any
 
 from ..config.feature_flag import PHASE_V_FLAG_NAME, FeatureFlag
-from .model_registry import ModelRegistry
-from .post_hoc_verifier import PostHocVerifier, _coerce_item_id
 from ._schemas import (
-    SchemaValidationError,
     validate_meeting_extraction_v2,
     validate_source_verification_result,
 )
+from .model_registry import ModelRegistry
+from .post_hoc_verifier import PostHocVerifier, _coerce_item_id
 
 _LOG = logging.getLogger(__name__)
 
@@ -43,16 +43,16 @@ def _now_iso() -> str:
 
 
 def apply_phase_v_if_enabled(
-    meeting_extraction: Dict[str, Any],
-    chunks_by_id: Dict[str, Dict[str, Any]],
+    meeting_extraction: dict[str, Any],
+    chunks_by_id: dict[str, dict[str, Any]],
     *,
-    data_lake_path: Union[str, pathlib.Path],
-    sdl_root: Union[str, pathlib.Path],
-    pipeline_run_id: Optional[str] = None,
-    api_caller: Optional[Callable[[str], Dict[str, Any]]] = None,
-    model_registry: Optional[ModelRegistry] = None,
-    flag_reader: Optional[FeatureFlag] = None,
-) -> Optional[Dict[str, Any]]:
+    data_lake_path: str | pathlib.Path,
+    sdl_root: str | pathlib.Path,
+    pipeline_run_id: str | None = None,
+    api_caller: Callable[[str], dict[str, Any]] | None = None,
+    model_registry: ModelRegistry | None = None,
+    flag_reader: FeatureFlag | None = None,
+) -> dict[str, Any] | None:
     """If the Phase V flag is enabled, run the verifier and annotate.
 
     Returns the source_verification_result artifact (a dict) when the
@@ -115,7 +115,7 @@ def apply_phase_v_if_enabled(
         )
 
     # Annotate each item with verification_status + exclusion_reasons.
-    by_item_id: Dict[str, Dict[str, Any]] = {
+    by_item_id: dict[str, dict[str, Any]] = {
         v["item_id"]: v for v in verification_result["item_verifications"]
     }
     for key in ("decisions", "claims", "action_items"):
@@ -147,7 +147,7 @@ def apply_phase_v_if_enabled(
     return verification_result
 
 
-def _append_post_hoc_exclusion_reason(item: Dict[str, Any]) -> None:
+def _append_post_hoc_exclusion_reason(item: dict[str, Any]) -> None:
     """When an item failed verification, append the matching reason to
     ``exclusion_reasons``. Coexists with existing ``low_confidence``
     reasons; never duplicates.
@@ -183,9 +183,9 @@ def _append_post_hoc_exclusion_reason(item: Dict[str, Any]) -> None:
 
 
 def write_verification_result(
-    verification_result: Dict[str, Any],
+    verification_result: dict[str, Any],
     *,
-    sdl_root: Union[str, pathlib.Path],
+    sdl_root: str | pathlib.Path,
 ) -> pathlib.Path:
     """Atomic write under ``<sdl_root>/verifications/``."""
     root = pathlib.Path(sdl_root) / "verifications"

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import datetime
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from spectrum_systems_core.extraction.extraction_merger import ExtractionMerger
 
@@ -26,7 +26,7 @@ def _now_iso() -> str:
     )
 
 
-def _default_decisions() -> List[Dict[str, Any]]:
+def _default_decisions() -> list[dict[str, Any]]:
     """Minimal valid decisions covering all three target outcome types.
 
     Each decision carries every field the meeting_extraction schema
@@ -84,12 +84,12 @@ def _default_decisions() -> List[Dict[str, Any]]:
 
 def make_meeting_extraction_artifact(
     source_artifact_id: str,
-    decisions: Optional[List[Dict[str, Any]]] = None,
-    claims: Optional[List[Dict[str, Any]]] = None,
-    action_items: Optional[List[Dict[str, Any]]] = None,
-    classifications: Optional[List[Dict[str, Any]]] = None,
-    extraction_run_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    decisions: list[dict[str, Any]] | None = None,
+    claims: list[dict[str, Any]] | None = None,
+    action_items: list[dict[str, Any]] | None = None,
+    classifications: list[dict[str, Any]] | None = None,
+    extraction_run_id: str | None = None,
+) -> dict[str, Any]:
     """Produce a meeting_extraction artifact via the real merger.
 
     Calls ``ExtractionMerger.merge`` so the output is byte-shape
@@ -122,7 +122,7 @@ def make_meeting_extraction_artifact(
     )
 
 
-def make_source_record(source_id: str, artifact_id: str) -> Dict[str, Any]:
+def make_source_record(source_id: str, artifact_id: str) -> dict[str, Any]:
     """Produce a source_record.json in the format the pipeline writes.
 
     The runner's resolver reads ``artifact_id`` from this file and uses
@@ -152,7 +152,7 @@ def make_ground_truth_pair_from_decision(
     decision_outcome: str = "approval",
     meeting_date: str = "2025-12-18",
     meeting_name: str = "Phase X2 follow-up GT pair fixture",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Produce a ``ground_truth_pair`` via the real writer.
 
     Calls ``scripts.generate_gt_pairs.build_pair`` so the output is
@@ -193,9 +193,9 @@ def make_gt_pair_review(
     pair_id: str,
     reviewer_id: str = "fixture-reviewer",
     outcome_confirmed: bool = True,
-    expected_decision_outcome: Optional[str] = "approval",
-    notes: Optional[str] = None,
-) -> Dict[str, Any]:
+    expected_decision_outcome: str | None = "approval",
+    notes: str | None = None,
+) -> dict[str, Any]:
     """Produce a ``gt_pair_review`` via the real script's writer.
 
     Calls ``scripts.review_gt_pairs.build_review`` so the output stays
@@ -228,7 +228,7 @@ def make_human_minutes_gt_pair(
     source_artifact_id: str,
     ground_truth_text: str,
     extraction_type: str = "decision",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Produce a human-authored ``ground_truth_pair`` via the real writer.
 
     Calls ``scripts.create_human_gt_pairs.build_pair`` so the output is
@@ -257,13 +257,13 @@ def make_human_minutes_gt_pair(
 
 def make_promoted_meeting_minutes_artifact(
     *,
-    lake_root: "Any",
+    lake_root: Any,
     source_id: str,
-    decisions: Optional[List[str]] = None,
-    action_items: Optional[List[str]] = None,
-    open_questions: Optional[List[str]] = None,
-    transcript_text: Optional[str] = None,
-) -> "Any":
+    decisions: list[str] | None = None,
+    action_items: list[str] | None = None,
+    open_questions: list[str] | None = None,
+    transcript_text: str | None = None,
+) -> Any:
     """Produce a promoted ``meeting_minutes`` artifact via the REAL path.
 
     Runs ``run_meeting_minutes_llm_workflow`` (the real governed loop +
@@ -277,6 +277,7 @@ def make_promoted_meeting_minutes_artifact(
     is synthesized to contain every item as a literal substring so the
     within-source eval passes and the artifact actually promotes.
     """
+    import sys as _sys
     from pathlib import Path as _Path
 
     from spectrum_systems_core.data_lake.writer import (
@@ -285,8 +286,6 @@ def make_promoted_meeting_minutes_artifact(
     from spectrum_systems_core.workflows.meeting_minutes_llm import (
         run_meeting_minutes_llm_workflow,
     )
-
-    import sys as _sys
 
     tests_dir = _Path(__file__).resolve().parents[1]
     if str(tests_dir) not in _sys.path:
@@ -336,12 +335,12 @@ def make_promoted_meeting_minutes_artifact(
 
 def make_opus_reference_baseline(
     *,
-    data_lake_root: "Any",
+    data_lake_root: Any,
     source_id: str,
     source_artifact_id: str,
     model: str,
-    items_by_type: Dict[str, List[Any]],
-) -> "Any":
+    items_by_type: dict[str, list[Any]],
+) -> Any:
     """Produce ``opus_reference_minutes.jsonl`` via the REAL builder.
 
     Calls ``create_opus_reference_baselines.build_records`` and the
@@ -352,8 +351,8 @@ def make_opus_reference_baseline(
     ``data_lake_root`` is the data-lake REPO root (the script appends
     ``store/processed/meetings/...`` itself).
     """
-    from pathlib import Path as _Path
     import sys as _sys
+    from pathlib import Path as _Path
 
     scripts_dir = _Path(__file__).resolve().parents[2] / "scripts"
     if str(scripts_dir) not in _sys.path:
@@ -376,7 +375,7 @@ def make_opus_reference_baseline(
 
 def make_decision_few_shot_placeholder(
     extraction_type: str = "decision",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Produce the Phase V placeholder few-shot artifact.
 
     Mirrors the artifact that ships in the repo at

@@ -17,7 +17,7 @@ augmented with a ``source_turns`` list and the payload's
 """
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from ..workflows.agency_question_summary import _extract_agency_question_summary
 from ..workflows.decision_brief import _extract_decision_brief

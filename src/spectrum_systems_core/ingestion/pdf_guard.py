@@ -9,12 +9,10 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict
 
 import jsonschema
 
 from ._paths import schema_path
-
 
 _PDF_MAGIC = b"%PDF"
 
@@ -22,7 +20,7 @@ _PDF_MAGIC = b"%PDF"
 class PDFAdmissionGuard:
     """Validate that a book source is ready for PDF extraction."""
 
-    def validate(self, source_id: str, repo_root: str) -> Dict[str, str]:
+    def validate(self, source_id: str, repo_root: str) -> dict[str, str]:
         env = os.environ.get("DATA_LAKE_PATH", "")
         if not env or not Path(env).exists():
             return _fail("blocked", "DATA_LAKE_PATH not set or does not exist")
@@ -112,6 +110,6 @@ class PDFAdmissionGuard:
         return {"status": "pass", "reason": ""}
 
 
-def _fail(reason: str, detail: str = "") -> Dict[str, str]:
+def _fail(reason: str, detail: str = "") -> dict[str, str]:
     msg = reason if not detail else f"{reason}: {detail}"
     return {"status": "fail", "reason": msg}

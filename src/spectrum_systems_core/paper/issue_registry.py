@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 
@@ -18,8 +18,8 @@ from ._paths import paper_schema_path
 JACCARD_THRESHOLD = 0.7
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     with path.open("r", encoding="utf-8") as fh:
@@ -39,10 +39,10 @@ class IssueRegistry:
 
     def add_issue(
         self,
-        issue: Dict[str, Any],
+        issue: dict[str, Any],
         repo_root: str,
         working_paper_source_id: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, _ = find_processed_dir(
             repo_root_path, working_paper_source_id
@@ -59,7 +59,7 @@ class IssueRegistry:
 
         existing = _read_jsonl(issues_path)
         new_description = issue.get("description", "") or ""
-        similar_ids: List[str] = []
+        similar_ids: list[str] = []
         for prior in existing:
             score = self._jaccard(new_description, prior.get("description", "") or "")
             if score > JACCARD_THRESHOLD:
@@ -115,7 +115,7 @@ class IssueRegistry:
 
     def get_all(
         self, working_paper_source_id: str, repo_root: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         repo_root_path = Path(repo_root).resolve()
         processed_dir, _ = find_processed_dir(
             repo_root_path, working_paper_source_id

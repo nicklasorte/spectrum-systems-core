@@ -10,7 +10,7 @@ import json
 import shutil
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import jsonschema
 
@@ -38,8 +38,8 @@ def _execution_fingerprint(*parts: str) -> str:
     return "sha256:" + hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     with path.open("r", encoding="utf-8") as fh:
@@ -54,13 +54,13 @@ def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
     return out
 
 
-def _append_jsonl(path: Path, record: Dict[str, Any]) -> None:
+def _append_jsonl(path: Path, record: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
 
 
-def _validate(record: Dict[str, Any], schema_name: str) -> Optional[str]:
+def _validate(record: dict[str, Any], schema_name: str) -> str | None:
     schema = json.loads(agency_schema_path(schema_name).read_text(encoding="utf-8"))
     try:
         jsonschema.Draft202012Validator(schema).validate(record)
@@ -72,7 +72,7 @@ def _validate(record: Dict[str, Any], schema_name: str) -> Optional[str]:
 class AgencyProfileStore:
     """Read/write agency profiles and their position + objection history files."""
 
-    def get_or_create(self, agency_name: str, repo_root: str) -> Dict[str, Any]:
+    def get_or_create(self, agency_name: str, repo_root: str) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         normalizer = AliasNormalizer()
         slug = normalizer.normalize(agency_name, str(repo_root_path))
@@ -116,7 +116,7 @@ class AgencyProfileStore:
         )
         return profile
 
-    def load(self, agency_slug: str, repo_root: str) -> Dict[str, Any]:
+    def load(self, agency_slug: str, repo_root: str) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         profile_path = agency_dir(repo_root_path, agency_slug) / "profile.json"
         if not profile_path.is_file():
@@ -149,8 +149,8 @@ class AgencyProfileStore:
         )
 
     def add_position(
-        self, agency_slug: str, position: Dict[str, Any], repo_root: str
-    ) -> Dict[str, Any]:
+        self, agency_slug: str, position: dict[str, Any], repo_root: str
+    ) -> dict[str, Any]:
         # Validate temporal range BEFORE schema (CHECK-RT2-003).
         valid_from = position.get("valid_from")
         valid_until = position.get("valid_until")
@@ -186,13 +186,13 @@ class AgencyProfileStore:
         agency_slug: str,
         repo_root: str,
         recency_years: int = DEFAULT_RECENCY_YEARS,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         repo_root_path = Path(repo_root).resolve()
         positions = _read_jsonl(
             agency_dir(repo_root_path, agency_slug) / "positions.jsonl"
         )
         cutoff = _today_date() - datetime.timedelta(days=365 * max(recency_years, 0))
-        active: List[Dict[str, Any]] = []
+        active: list[dict[str, Any]] = []
         for pos in positions:
             if pos.get("superseded_by") is not None:
                 continue
@@ -211,8 +211,8 @@ class AgencyProfileStore:
         return active
 
     def add_objection_history(
-        self, agency_slug: str, entry: Dict[str, Any], repo_root: str
-    ) -> Dict[str, Any]:
+        self, agency_slug: str, entry: dict[str, Any], repo_root: str
+    ) -> dict[str, Any]:
         validation_error = _validate(entry, "objection_history_entry")
         if validation_error is not None:
             return {
@@ -237,7 +237,7 @@ class AgencyProfileStore:
 
     def get_objection_history(
         self, agency_slug: str, repo_root: str, limit: int | None = None
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         repo_root_path = Path(repo_root).resolve()
         entries = _read_jsonl(
             agency_dir(repo_root_path, agency_slug) / "objection_history.jsonl"

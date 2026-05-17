@@ -6,10 +6,7 @@ BUILT_IN_RECIPES — no other config layer.
 """
 from __future__ import annotations
 
-from typing import Dict, List
-
-
-BUILT_IN_RECIPES: Dict[str, Dict] = {
+BUILT_IN_RECIPES: dict[str, dict] = {
     "default_report_v1": {
         "recipe_id": "default_report_v1",
         "recipe_version": "1.0.0",
@@ -90,10 +87,10 @@ BUILT_IN_RECIPES: Dict[str, Dict] = {
 class RetrievalRegistry:
     """Read-only lookup of built-in retrieval recipes."""
 
-    def get_recipe(self, recipe_id: str) -> Dict:
+    def get_recipe(self, recipe_id: str) -> dict:
         if recipe_id not in BUILT_IN_RECIPES:
             raise KeyError(f"unknown recipe_id: {recipe_id}")
         return BUILT_IN_RECIPES[recipe_id]
 
-    def list_recipes(self) -> List[str]:
+    def list_recipes(self) -> list[str]:
         return sorted(BUILT_IN_RECIPES.keys())

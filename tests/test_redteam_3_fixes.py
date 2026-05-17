@@ -6,14 +6,11 @@ import shutil
 from pathlib import Path
 
 from spectrum_systems_core.data_lake import (
-    AGENCIES_SUBDIR,
     INDEX_FILENAME,
     RUNS_SUBDIR,
-    TOPICS_SUBDIR,
     markdown_dir,
     process_meeting,
 )
-
 
 FIXTURES = Path(__file__).parent / "fixtures" / "golden_meetings"
 

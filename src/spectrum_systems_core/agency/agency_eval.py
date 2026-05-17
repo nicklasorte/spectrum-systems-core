@@ -7,16 +7,15 @@ from __future__ import annotations
 import datetime
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import jsonschema
 
-from ..extraction._paths import find_processed_dir
 from ._paths import agency_dir, agency_schema_path
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     if not path.is_file():
         return out
     with path.open("r", encoding="utf-8") as fh:
@@ -31,9 +30,9 @@ def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
     return out
 
 
-def _scan_all_paper_issues(repo_root: Path) -> Dict[str, str]:
+def _scan_all_paper_issues(repo_root: Path) -> dict[str, str]:
     """Map issue_id -> source_id across every processed/<family>/<source>/paper/issues.jsonl."""
-    out: Dict[str, str] = {}
+    out: dict[str, str] = {}
     processed_root = repo_root / "processed"
     if not processed_root.is_dir():
         return out
@@ -54,10 +53,10 @@ def _scan_all_paper_issues(repo_root: Path) -> Dict[str, str]:
 class AgencyEval:
     """Deterministic evals against agency_profile + positions + history."""
 
-    def run(self, agency_slug: str, repo_root: str) -> Dict[str, Any]:
+    def run(self, agency_slug: str, repo_root: str) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
-        eval_results: List[Dict[str, Any]] = []
-        reason_codes: List[str] = []
+        eval_results: list[dict[str, Any]] = []
+        reason_codes: list[str] = []
 
         agency_path = agency_dir(repo_root_path, agency_slug)
         profile_path = agency_path / "profile.json"
@@ -113,7 +112,7 @@ class AgencyEval:
             for a in (profile.get("aliases") or [])
             if isinstance(a, str)
         }
-        duplicates: List[str] = []
+        duplicates: list[str] = []
         agency_root = repo_root_path / "agency"
         if agency_root.is_dir():
             for sibling in sorted(agency_root.iterdir()):
@@ -156,7 +155,7 @@ class AgencyEval:
         # EVAL-AGENCY-003: positions_have_source_issues
         positions = _read_jsonl(positions_path)
         all_issue_ids = set(_scan_all_paper_issues(repo_root_path).keys())
-        orphans: List[str] = []
+        orphans: list[str] = []
         for pos in positions:
             sids = pos.get("source_issue_ids") or []
             if not sids:
@@ -183,10 +182,10 @@ class AgencyEval:
             )
 
         # EVAL-AGENCY-004: no_stale_position_as_primary (warn).
-        stale_warnings: List[str] = []
+        stale_warnings: list[str] = []
         today = datetime.datetime.now(datetime.timezone.utc).date()
         # Group by topic; pick the most recent valid_from.
-        by_topic: Dict[str, List[Dict[str, Any]]] = {}
+        by_topic: dict[str, list[dict[str, Any]]] = {}
         for pos in positions:
             topic = str(pos.get("topic") or "").strip().lower()
             if not topic:

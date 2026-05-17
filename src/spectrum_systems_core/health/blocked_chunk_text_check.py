@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import List, Union
 
 from .finding import HealthFinding
 
@@ -20,10 +19,10 @@ _LOG = logging.getLogger(__name__)
 
 
 def scan_blocked_chunks(
-    data_lake_path: Union[str, Path],
+    data_lake_path: str | Path,
     *,
     pipeline_run_id: str | None = None,
-) -> List[HealthFinding]:
+) -> list[HealthFinding]:
     """Return one info finding per blocked_chunk artifact lacking chunk_text.
 
     Looks for v1.0.0 envelopes or any v2.0.0+ envelope that somehow
@@ -33,7 +32,7 @@ def scan_blocked_chunks(
     """
     dl = Path(data_lake_path)
     blocked_dir = dl / "store" / "artifacts" / "blocked_chunks"
-    findings: List[HealthFinding] = []
+    findings: list[HealthFinding] = []
     if not blocked_dir.is_dir():
         return findings
     for path in sorted(blocked_dir.glob("*.json")):

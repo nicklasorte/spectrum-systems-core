@@ -3,18 +3,17 @@ from __future__ import annotations
 
 import json
 import pathlib
-from typing import Any, Dict, Optional
+from typing import Any
 
 import jsonschema
-
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 _SCHEMA_DIR = _REPO_ROOT / "contracts" / "schemas" / "verification"
 
-_SCHEMA_CACHE: Dict[str, Dict[str, Any]] = {}
+_SCHEMA_CACHE: dict[str, dict[str, Any]] = {}
 
 
-def load_schema(name: str) -> Dict[str, Any]:
+def load_schema(name: str) -> dict[str, Any]:
     """Return the parsed JSON schema for ``name`` (e.g. ``source_verification_result``).
 
     Cached per process.
@@ -31,7 +30,7 @@ class SchemaValidationError(ValueError):
     """Raised when an artifact fails Phase V schema validation."""
 
 
-def validate_source_verification_result(artifact: Dict[str, Any]) -> None:
+def validate_source_verification_result(artifact: dict[str, Any]) -> None:
     """Raise ``SchemaValidationError`` if ``artifact`` violates the schema.
 
     Uses the bundled JSON Schema. The conditional rule (verified ->
@@ -62,7 +61,7 @@ def validate_source_verification_result(artifact: Dict[str, Any]) -> None:
                 )
 
 
-def validate_meeting_extraction_v2(artifact: Dict[str, Any]) -> None:
+def validate_meeting_extraction_v2(artifact: dict[str, Any]) -> None:
     """Verify schema_version==2.0.0 meeting_extraction has verification_status
     populated on every decision/claim/action_item.
 

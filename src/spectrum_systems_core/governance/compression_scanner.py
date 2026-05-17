@@ -15,7 +15,7 @@ import logging
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from ..harness._io import read_jsonl
 from ..harness._paths import evals_dir
@@ -31,12 +31,11 @@ from ._io import (
 from ._paths import candidates_dir, ensure_governance_tree
 from ._schema import validate_governance_artifact
 
-
 _LOG = logging.getLogger(__name__)
 
 
-def _python_files(root: Path) -> List[Path]:
-    out: List[Path] = []
+def _python_files(root: Path) -> list[Path]:
+    out: list[Path] = []
     for path in sorted(root.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
@@ -45,9 +44,9 @@ def _python_files(root: Path) -> List[Path]:
     return out
 
 
-def _classes_in(path: Path) -> List[tuple[str, int]]:
+def _classes_in(path: Path) -> list[tuple[str, int]]:
     """Return (class_name, line_no) tuples."""
-    out: List[tuple[str, int]] = []
+    out: list[tuple[str, int]] = []
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except (OSError, SyntaxError):
@@ -58,8 +57,8 @@ def _classes_in(path: Path) -> List[tuple[str, int]]:
     return out
 
 
-def _all_text_blob(repo_root: Path, exclude: List[str]) -> str:
-    parts: List[str] = []
+def _all_text_blob(repo_root: Path, exclude: list[str]) -> str:
+    parts: list[str] = []
     for path in repo_root.rglob("*"):
         if not path.is_file():
             continue
@@ -80,9 +79,9 @@ def _make_candidate(
     candidate_path: str,
     candidate_name: str,
     reason: str,
-    evidence: Dict[str, Any],
+    evidence: dict[str, Any],
     recommended_action: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "candidate_id": str(uuid.uuid4()),
         "candidate_type": candidate_type,
@@ -102,17 +101,17 @@ def _make_candidate(
 class CompressionScanner:
     """Find inactivity-based candidates. Recommendation only."""
 
-    def scan(self, repo_root: str | Path) -> Dict[str, Any]:
+    def scan(self, repo_root: str | Path) -> dict[str, Any]:
         repo_root_path = Path(repo_root).resolve()
         ensure_governance_tree(repo_root_path)
-        candidates: List[Dict[str, Any]] = []
+        candidates: list[dict[str, Any]] = []
         files_scanned = 0
 
         # Build a haystack of all *.py + *.json text outside the defining file.
         src_root = repo_root_path / "src"
         py_files = _python_files(src_root) if src_root.is_dir() else []
         # Map file -> text for individual exclusion when checking class usage.
-        py_texts: Dict[Path, str] = {}
+        py_texts: dict[Path, str] = {}
         for path in py_files:
             try:
                 py_texts[path] = path.read_text(encoding="utf-8", errors="ignore")
@@ -244,7 +243,7 @@ class CompressionScanner:
 
         # 4. CLI commands (no usage in 60 days)
         cli_path = src_root / "spectrum_systems_core" / "cli.py"
-        cli_commands: List[str] = []
+        cli_commands: list[str] = []
         if cli_path.is_file():
             try:
                 cli_text = cli_path.read_text(encoding="utf-8")
@@ -291,7 +290,7 @@ class CompressionScanner:
             target = candidates_dir(repo_root_path) / f"{candidate['candidate_id']}.json"
             write_json(target, candidate)
 
-        flagged_items: List[Dict[str, Any]] = []
+        flagged_items: list[dict[str, Any]] = []
         for candidate in candidates:
             flagged_items.append(
                 {
@@ -309,7 +308,7 @@ class CompressionScanner:
 
         prior_audit = find_prior_audit(repo_root_path, "compression_scan")
         prior_value = prior_audit.get("current_value") if prior_audit else None
-        current_value: Dict[str, Any] = {
+        current_value: dict[str, Any] = {
             "total_candidates": len(candidates),
             "by_type": {
                 t: sum(1 for c in candidates if c["candidate_type"] == t)

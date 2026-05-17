@@ -21,13 +21,13 @@ from __future__ import annotations
 import json
 import logging
 import pathlib
-from typing import Any, Dict, Optional, Union
+from typing import Any
 
 _LOG = logging.getLogger(__name__)
 
 # Sonnet-class for generation tasks (Phase V verifier);
 # Haiku-class for extraction tasks (existing extractor stack).
-_DEFAULT_MODELS: Dict[str, Dict[str, str]] = {
+_DEFAULT_MODELS: dict[str, dict[str, str]] = {
     "generation": {"model": "claude-sonnet-4-6", "version": "default"},
     "extraction": {"model": "claude-haiku-4-5-20251001", "version": "default"},
 }
@@ -40,11 +40,11 @@ class ModelRegistryError(LookupError):
 class ModelRegistry:
     """Read SDL_ROOT/config/model_registry.json with sensible defaults."""
 
-    def __init__(self, sdl_root: Optional[Union[str, pathlib.Path]] = None):
+    def __init__(self, sdl_root: str | pathlib.Path | None = None):
         self.sdl_root = pathlib.Path(sdl_root) if sdl_root else None
-        self._cache: Optional[Dict[str, Any]] = None
+        self._cache: dict[str, Any] | None = None
 
-    def _load(self) -> Dict[str, Any]:
+    def _load(self) -> dict[str, Any]:
         if self._cache is not None:
             return self._cache
         if self.sdl_root is None:
@@ -66,7 +66,7 @@ class ModelRegistry:
         self._cache = {}
         return self._cache
 
-    def get(self, task_type: str) -> Dict[str, str]:
+    def get(self, task_type: str) -> dict[str, str]:
         """Return ``{"model": ..., "version": ...}`` for ``task_type``."""
         if not isinstance(task_type, str) or not task_type:
             raise ModelRegistryError(f"invalid task_type: {task_type!r}")

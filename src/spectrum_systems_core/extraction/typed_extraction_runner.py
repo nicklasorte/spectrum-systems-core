@@ -23,32 +23,21 @@ import logging
 import os
 import re
 import uuid
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Set
+from typing import Any
 
-from .action_item_extractor import ActionItemExtractor
-from .chunk_classifier import ChunkClassifier
-from .chunk_metadata_gate import (
-    format_report_for_log as _format_chunk_metadata_report,
-    validate_chunk_metadata as _validate_chunk_metadata,
-)
-from .claim_extractor import ClaimExtractor
-from .classification_cache import ClassificationCache
-from .decision_extractor import DecisionExtractor
-from .extraction_merger import ExtractionMerger
-from .generalization_checker import scan_items as _scan_overgeneralization
-from .glossary_manager import GlossaryManager
-from .population_rates import (
-    RATE_WARN_THRESHOLD as _POPULATION_RATE_WARN_THRESHOLD,
-    below_threshold_fields as _below_pop_threshold_fields,
-    compute_population_rates as _compute_population_rates,
+from ..agenda import (
+    AgendaReferenceError,
+    apply_phase_w_if_enabled,
+    make_phase_w_agenda_resolver,
 )
 from ..evals.source_turn_orphan import (
     aggregate_source_turn_reports as _aggregate_source_turn_reports,
+)
+from ..evals.source_turn_orphan import (
     compute_source_turn_report as _compute_source_turn_report,
 )
-from ._chunk_counters import ChunkCounters
-from ._prompt_blocks import REGULATORY_TAXONOMY_BLOCK
 from ..glossary.chunk_position import (
     POSITION_MIDDLE,
     attention_block_for_position,
@@ -61,35 +50,50 @@ from ..glossary.glossary_builder import load_versioned_glossary
 from ..glossary.term_injector import (
     build_terminology_block,
     find_matching_terms,
-    summarize_injections,
 )
 from ..health.finding import HealthFinding
-from ._failure_artifacts import (
-    clear_chunk_lookup,
-    emit_empty_response,
-    emit_json_parse_failed,
-    emit_rate_limit_exhausted,
-    install_chunk_lookup,
-)
-from ._raw_response_log import write_log_from_context as _write_raw_response_log
-from ._resilience import (
-    EmptyResponseError,
-    MAX_CONCURRENT_HAIKU_CALLS,
-    call_with_backoff,
-    guard_empty_response,
-    strip_markdown_fence,
-)
-from ..agenda import (
-    AgendaReferenceError,
-    apply_phase_w_if_enabled,
-    make_phase_w_agenda_resolver,
-)
 from ..verification.model_registry import ModelRegistry
 from ..verification.pipeline_integration import (
     VerificationIncompleteError,
     apply_phase_v_if_enabled,
 )
-
+from ._chunk_counters import ChunkCounters
+from ._failure_artifacts import (
+    emit_rate_limit_exhausted,
+    install_chunk_lookup,
+)
+from ._prompt_blocks import REGULATORY_TAXONOMY_BLOCK
+from ._raw_response_log import write_log_from_context as _write_raw_response_log
+from ._resilience import (
+    MAX_CONCURRENT_HAIKU_CALLS,
+    EmptyResponseError,
+    call_with_backoff,
+    guard_empty_response,
+    strip_markdown_fence,
+)
+from .action_item_extractor import ActionItemExtractor
+from .chunk_classifier import ChunkClassifier
+from .chunk_metadata_gate import (
+    format_report_for_log as _format_chunk_metadata_report,
+)
+from .chunk_metadata_gate import (
+    validate_chunk_metadata as _validate_chunk_metadata,
+)
+from .claim_extractor import ClaimExtractor
+from .classification_cache import ClassificationCache
+from .decision_extractor import DecisionExtractor
+from .extraction_merger import ExtractionMerger
+from .generalization_checker import scan_items as _scan_overgeneralization
+from .glossary_manager import GlossaryManager
+from .population_rates import (
+    RATE_WARN_THRESHOLD as _POPULATION_RATE_WARN_THRESHOLD,
+)
+from .population_rates import (
+    below_threshold_fields as _below_pop_threshold_fields,
+)
+from .population_rates import (
+    compute_population_rates as _compute_population_rates,
+)
 
 _LOG = logging.getLogger(__name__)
 
@@ -147,8 +151,8 @@ _GLOSSARY_FILENAME_RE = re.compile(r"^spectrum_glossary_v(?P<n>\d+)\.json$")
 
 
 def _resolve_pinned_glossary_path(
-    glossary_root: Optional[Path],
-) -> Optional[Path]:
+    glossary_root: Path | None,
+) -> Path | None:
     """Return the on-disk glossary artifact path the runner should load.
 
     Resolution order:
@@ -162,7 +166,7 @@ def _resolve_pinned_glossary_path(
     if glossary_root is None or not glossary_root.is_dir():
         return None
     raw = os.environ.get(_GLOSSARY_VERSION_ENV, "").strip().lower()
-    candidates: List[tuple] = []
+    candidates: list[tuple] = []
     for path in glossary_root.iterdir():
         m = _GLOSSARY_FILENAME_RE.match(path.name)
         if m:
@@ -191,7 +195,7 @@ def _resolve_pinned_glossary_path(
     return latest_path
 
 
-def _parse_json_response_strict(text: str, chunk_id: str = "") -> Dict[str, Any]:
+def _parse_json_response_strict(text: str, chunk_id: str = "") -> dict[str, Any]:
     """X-1 call order: guard_empty_response -> strip_markdown_fence -> json.loads.
 
     Raises:
@@ -225,7 +229,7 @@ def _parse_json_response_strict(text: str, chunk_id: str = "") -> Dict[str, Any]
     return parsed
 
 
-def _parse_json_response(text: str) -> Dict[str, Any]:
+def _parse_json_response(text: str) -> dict[str, Any]:
     """Legacy tolerant parser. Returns ``{}`` on any failure.
 
     Retained for the existing ``_build_anthropic_caller`` callers and
@@ -265,7 +269,7 @@ def _parse_json_response(text: str) -> Dict[str, Any]:
 
 def _build_anthropic_caller(
     model: str, max_tokens: int = _DEFAULT_MAX_TOKENS
-) -> Callable[[str], Dict[str, Any]]:
+) -> Callable[[str], dict[str, Any]]:
     """Build a Haiku api_caller returning the parsed JSON response.
 
     The returned callable hands the prompt to ``anthropic.Anthropic()``, joins
@@ -281,7 +285,7 @@ def _build_anthropic_caller(
 
     client = anthropic.Anthropic()
 
-    def _call(prompt: str) -> Dict[str, Any]:
+    def _call(prompt: str) -> dict[str, Any]:
         # X-0 part A: every Haiku call goes through call_with_backoff so
         # a transient RateLimitError does not silently produce {} (and
         # hence zero items, which X-1's empty-items gate would then
@@ -312,7 +316,7 @@ def _build_anthropic_caller(
                 exc,
             )
             return {}
-        parts: List[str] = []
+        parts: list[str] = []
         for block in getattr(message, "content", []) or []:
             text = getattr(block, "text", None)
             if isinstance(text, str):
@@ -329,7 +333,7 @@ def _build_anthropic_caller(
 
 def _build_anthropic_batch_classifier_caller(
     model: str, max_tokens: int = 400,
-) -> Callable[[str], Dict[str, Any]]:
+) -> Callable[[str], dict[str, Any]]:
     """Sync caller for the batch classifier.
 
     Differs from ``_build_anthropic_caller`` in two ways:
@@ -345,7 +349,7 @@ def _build_anthropic_batch_classifier_caller(
 
     client = anthropic.Anthropic()
 
-    def _call(prompt: str) -> Dict[str, Any]:
+    def _call(prompt: str) -> dict[str, Any]:
         def _send() -> Any:
             return client.messages.create(
                 model=model,
@@ -368,7 +372,7 @@ def _build_anthropic_batch_classifier_caller(
                 type(exc).__name__, exc,
             )
             return {"text": ""}
-        parts: List[str] = []
+        parts: list[str] = []
         for block in getattr(message, "content", []) or []:
             text = getattr(block, "text", None)
             if isinstance(text, str):
@@ -384,20 +388,21 @@ def _build_anthropic_batch_classifier_caller(
 
 def _build_anthropic_async_batch_classifier_caller(
     model: str, max_tokens: int = 400,
-) -> Callable[[str], Awaitable[Dict[str, Any]]]:
+) -> Callable[[str], Awaitable[dict[str, Any]]]:
     """Async caller for the batch classifier (uses AsyncAnthropic).
 
     The returned coroutine accepts a prompt string and returns
     ``{"text": <response>}``. Errors degrade to ``{"text": ""}`` so the
     batch classifier triggers its per-chunk fallback path.
     """
-    import anthropic
     import asyncio
     import random as _random
 
+    import anthropic
+
     client = anthropic.AsyncAnthropic()
 
-    async def _acall(prompt: str) -> Dict[str, Any]:
+    async def _acall(prompt: str) -> dict[str, Any]:
         # X-0 part A: async equivalent of call_with_backoff. Retry on
         # RateLimitError only; non-rate-limit exceptions surface on the
         # first try. After max_retries the exception re-raises so the
@@ -433,7 +438,7 @@ def _build_anthropic_async_batch_classifier_caller(
             assert last_exc is not None
             raise last_exc
 
-        parts: List[str] = []
+        parts: list[str] = []
         for block in getattr(message, "content", []) or []:
             text = getattr(block, "text", None)
             if isinstance(text, str):
@@ -448,8 +453,8 @@ def _build_anthropic_async_batch_classifier_caller(
 
 
 def _resolve_api_callers(
-    injected: Optional[Dict[str, Callable[[str], Dict[str, Any]]]],
-) -> Dict[str, Callable[[str], Dict[str, Any]]]:
+    injected: dict[str, Callable[[str], dict[str, Any]]] | None,
+) -> dict[str, Callable[[str], dict[str, Any]]]:
     """Return a callers dict with real Haiku callers filling missing keys.
 
     - Injected callers are preserved (so unit tests are unaffected).
@@ -463,7 +468,7 @@ def _resolve_api_callers(
       ``_default_api_caller``. A warning is logged so the run records the
       degraded mode.
     """
-    callers: Dict[str, Callable[[str], Dict[str, Any]]] = dict(injected or {})
+    callers: dict[str, Callable[[str], dict[str, Any]]] = dict(injected or {})
     missing = [k for k in _COMPONENT_KEYS if k not in callers]
     if not missing:
         return callers
@@ -481,7 +486,7 @@ def _resolve_api_callers(
     # built dict and return only the injected callers, preserving the
     # "SDK missing -> all components offline" invariant.
     try:
-        new_callers: Dict[str, Callable[[str], Dict[str, Any]]] = {}
+        new_callers: dict[str, Callable[[str], dict[str, Any]]] = {}
         # X-0: never hardcode the model id. ModelRegistry.get("extraction")
         # is the single source of truth -- callers pin via
         # ``<SDL_ROOT>/config/model_registry.json`` and missing config
@@ -528,8 +533,8 @@ def _resolve_extraction_model_id() -> str:
 
 
 def _resolve_async_classifier_caller(
-    injected: Optional[Callable[[str], Awaitable[Dict[str, Any]]]],
-) -> Optional[Callable[[str], Awaitable[Dict[str, Any]]]]:
+    injected: Callable[[str], Awaitable[dict[str, Any]]] | None,
+) -> Callable[[str], Awaitable[dict[str, Any]]] | None:
     """Build an async classifier caller for the batch path.
 
     Returns None when ``ANTHROPIC_API_KEY`` is unset or the anthropic SDK
@@ -561,7 +566,7 @@ def _now_iso() -> str:
     )
 
 
-def _resolve_store_root(data_lake: Optional[str] = None) -> Optional[Path]:
+def _resolve_store_root(data_lake: str | None = None) -> Path | None:
     raw = data_lake or os.environ.get("DATA_LAKE_PATH") or ""
     if not raw:
         return None
@@ -571,7 +576,7 @@ def _resolve_store_root(data_lake: Optional[str] = None) -> Optional[Path]:
     return p / "store"
 
 
-def _resolve_sdl_root(data_lake: Optional[str] = None) -> Optional[Path]:
+def _resolve_sdl_root(data_lake: str | None = None) -> Path | None:
     env_sdl = os.environ.get("SDL_ROOT", "").strip()
     if env_sdl:
         return Path(env_sdl)
@@ -581,7 +586,7 @@ def _resolve_sdl_root(data_lake: Optional[str] = None) -> Optional[Path]:
     return store / "artifacts"
 
 
-def _resolve_glossary_root(sdl_root: Optional[Path]) -> Optional[Path]:
+def _resolve_glossary_root(sdl_root: Path | None) -> Path | None:
     env_glossary = os.environ.get("SDL_GLOSSARY", "").strip()
     if env_glossary:
         return Path(env_glossary)
@@ -590,7 +595,7 @@ def _resolve_glossary_root(sdl_root: Optional[Path]) -> Optional[Path]:
     return None
 
 
-def _find_chunks_path(store_root: Path, source_id: str) -> Optional[Path]:
+def _find_chunks_path(store_root: Path, source_id: str) -> Path | None:
     for family in _SOURCE_FAMILIES:
         p = store_root / "processed" / family / source_id / "stories" / "chunks.jsonl"
         if p.is_file():
@@ -598,7 +603,7 @@ def _find_chunks_path(store_root: Path, source_id: str) -> Optional[Path]:
     return None
 
 
-def _find_source_artifact_id(store_root: Path, source_id: str) -> Optional[str]:
+def _find_source_artifact_id(store_root: Path, source_id: str) -> str | None:
     for family in _SOURCE_FAMILIES:
         sr_path = store_root / "processed" / family / source_id / "source_record.json"
         if sr_path.is_file():
@@ -612,8 +617,8 @@ def _find_source_artifact_id(store_root: Path, source_id: str) -> Optional[str]:
     return None
 
 
-def _load_chunks(path: Path) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _load_chunks(path: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     try:
         with path.open("r", encoding="utf-8") as fh:
             for line in fh:
@@ -646,11 +651,11 @@ def _build_chunk_classifications_artifact(
     source_id: str,
     extraction_run_id: str,
     extraction_mode: str,
-    classifications: Sequence[Dict[str, Any]],
-    extraction_path_breakdown: Dict[str, int],
+    classifications: Sequence[dict[str, Any]],
+    extraction_path_breakdown: dict[str, int],
     off_topic_rate: float,
     router_model: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build the Phase P3-A T-2 aggregate artifact.
 
     The artifact is forensic provenance for the routing step. It is
@@ -659,7 +664,7 @@ def _build_chunk_classifications_artifact(
     operator triaging a coverage regression can inspect every
     classification call without crawling individual chunk records.
     """
-    per_chunk: List[Dict[str, Any]] = []
+    per_chunk: list[dict[str, Any]] = []
     for cls in classifications or []:
         if not isinstance(cls, dict):
             continue
@@ -689,10 +694,10 @@ def _build_chunk_classifications_artifact(
 
 
 def _write_chunk_classifications_artifact(
-    artifact: Dict[str, Any],
+    artifact: dict[str, Any],
     sdl_root: Path,
     source_artifact_id: str,
-) -> Optional[Path]:
+) -> Path | None:
     """Atomic write the chunk_classifications artifact. Returns path or None.
 
     Validation failures are logged but do not abort the run -- the
@@ -700,7 +705,7 @@ def _write_chunk_classifications_artifact(
     itself never reads the file back during the same process.
     """
     try:
-        from ..validation import validate_artifact, ArtifactValidationError
+        from ..validation import ArtifactValidationError, validate_artifact
         try:
             validate_artifact(artifact, "chunk_classifications")
         except ArtifactValidationError as exc:
@@ -737,14 +742,14 @@ def _is_rate_limit_error(exc: BaseException) -> bool:
 
 
 def _emit_rate_limit_for_all(
-    chunks: Sequence[Dict[str, Any]],
+    chunks: Sequence[dict[str, Any]],
     *,
     counters: ChunkCounters,
     source_id: str,
     component: str,
     detail: str,
     extraction_run_id: str,
-    sdl_root: Optional[Path],
+    sdl_root: Path | None,
 ) -> None:
     """Emit one api_rate_limit_exhausted artifact per chunk that was
     submitted but blocked, and bump ``rate_limit_exhausted`` accordingly.
@@ -779,9 +784,9 @@ def _write_orchestration_result(
     *,
     run_id: str,
     source_id: str,
-    sdl_root: Optional[Path],
-    phase_w_extras: Optional[Dict[str, Any]] = None,
-) -> Optional[Path]:
+    sdl_root: Path | None,
+    phase_w_extras: dict[str, Any] | None = None,
+) -> Path | None:
     """Serialise the counter into the orchestration_result artifact.
 
     The artifact is validated via ``validate_artifact`` before write so
@@ -797,7 +802,7 @@ def _write_orchestration_result(
     schema-valid because the new properties are declared optional in
     ``orchestration_result.schema.json``.
     """
-    artifact: Dict[str, Any] = {
+    artifact: dict[str, Any] = {
         "artifact_type": "orchestration_result",
         "schema_version": "1.0.0",
         "run_id": run_id,
@@ -812,7 +817,7 @@ def _write_orchestration_result(
                 continue
             artifact[key] = value
     try:
-        from ..validation import validate_artifact, ArtifactValidationError
+        from ..validation import ArtifactValidationError, validate_artifact
         try:
             validate_artifact(artifact, "orchestration_result")
         except ArtifactValidationError as exc:
@@ -838,7 +843,7 @@ def _write_orchestration_result(
 
 
 def _spurious_add_count_from_verification(
-    verification_result: Optional[Dict[str, Any]],
+    verification_result: dict[str, Any] | None,
 ) -> int:
     """Phase Z.4: integer count of merged items the post-hoc verifier
     judged ``unsupported`` or ``contradicted``.
@@ -885,7 +890,7 @@ def _spurious_add_count_from_verification(
 _PHASE_W_GLOSSARY_NOT_PRELOADED_LOG_EMITTED: bool = False
 
 
-def _resolve_versioned_glossary_root(sdl_root: Optional[Path]) -> Optional[Path]:
+def _resolve_versioned_glossary_root(sdl_root: Path | None) -> Path | None:
     """Locate the versioned-glossary artifact directory.
 
     The versioned glossary (``spectrum_glossary_v1.json``) ships as an
@@ -907,8 +912,8 @@ def _resolve_versioned_glossary_root(sdl_root: Optional[Path]) -> Optional[Path]
 
 
 def _resolve_versioned_glossary_terms(
-    sdl_root: Optional[Path],
-) -> List[Dict[str, Any]]:
+    sdl_root: Path | None,
+) -> list[dict[str, Any]]:
     """Load the versioned glossary terms list. Returns ``[]`` if absent.
 
     Backward-compatible wrapper around
@@ -929,8 +934,8 @@ def _resolve_versioned_glossary_terms(
 
 
 def _resolve_versioned_glossary_artifact(
-    sdl_root: Optional[Path],
-) -> Optional[Dict[str, Any]]:
+    sdl_root: Path | None,
+) -> dict[str, Any] | None:
     """Load the versioned glossary artifact (or None when absent).
 
     Honours ``GLOSSARY_VERSION=latest|<N>`` per Phase P3-A T-3. The
@@ -968,9 +973,9 @@ def _resolve_versioned_glossary_artifact(
 
 
 def _per_chunk_glossary_records(
-    chunks: Sequence[Dict[str, Any]],
-    glossary_terms: Sequence[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+    chunks: Sequence[dict[str, Any]],
+    glossary_terms: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """Build per-chunk records of glossary term injections + position.
 
     Returns a list (one entry per chunk) of dicts with keys
@@ -980,7 +985,7 @@ def _per_chunk_glossary_records(
     loaded. Term entries carry ``term_id`` (stable UUID) so historical
     comparison is not broken by term-text edits.
     """
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for c in chunks:
         if not isinstance(c, dict):
             continue
@@ -997,8 +1002,8 @@ def _per_chunk_glossary_records(
 
 
 def _phase_w_block_for_group(
-    group_chunks: Sequence[Dict[str, Any]],
-    glossary_terms: Sequence[Dict[str, Any]],
+    group_chunks: Sequence[dict[str, Any]],
+    glossary_terms: Sequence[dict[str, Any]],
     few_shot_block_str: str,
     legacy_glossary_block: str,
 ) -> str:
@@ -1017,7 +1022,7 @@ def _phase_w_block_for_group(
     a fallback only -- when V.2 produces a non-empty terminology
     block, the legacy GlossaryManager output is suppressed.
     """
-    union_terms: List[Dict[str, Any]] = []
+    union_terms: list[dict[str, Any]] = []
     seen_term_ids: set[str] = set()
     any_middle = False
     for c in group_chunks:
@@ -1038,7 +1043,7 @@ def _phase_w_block_for_group(
         attention_block_for_position(POSITION_MIDDLE) if any_middle else ""
     )
 
-    parts: List[str] = []
+    parts: list[str] = []
     if terminology_block:
         parts.append(terminology_block)
     elif legacy_glossary_block:
@@ -1084,7 +1089,7 @@ def build_extraction_prompt(
     Tests can therefore assert ``"ATTENTION DIRECTION" not in
     opening_prompt`` when the attention block is empty.
     """
-    parts: List[str] = [
+    parts: list[str] = [
         f"Extract {extraction_type.upper()} items from the following chunk.",
         REGULATORY_TAXONOMY_BLOCK,
     ]
@@ -1101,8 +1106,8 @@ def build_extraction_prompt(
 
 
 def _glossary_injection_summary_from_records(
-    records: Sequence[Dict[str, Any]],
-) -> Dict[str, Any]:
+    records: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
     """Compute the ``glossary_injection_summary`` shape.
 
     Scans the per-chunk records produced by
@@ -1113,7 +1118,7 @@ def _glossary_injection_summary_from_records(
     """
     chunks_with_matches = 0
     chunks_without_field = 0
-    all_term_ids: List[str] = []
+    all_term_ids: list[str] = []
     for r in records or []:
         if not isinstance(r, dict):
             continue
@@ -1138,12 +1143,12 @@ def _glossary_injection_summary_from_records(
 
 
 def _run_overgeneralization_scan(
-    decisions: Sequence[Dict[str, Any]],
-    claims: Sequence[Dict[str, Any]],
-    chunks_by_id: Dict[str, Dict[str, Any]],
+    decisions: Sequence[dict[str, Any]],
+    claims: Sequence[dict[str, Any]],
+    chunks_by_id: dict[str, dict[str, Any]],
     *,
     pipeline_run_id: str,
-) -> List[HealthFinding]:
+) -> list[HealthFinding]:
     """Run the V.6 generalization checker on decisions + claims.
 
     The checker requires ``source_text`` to be the chunk text the item
@@ -1156,13 +1161,13 @@ def _run_overgeneralization_scan(
     when ``GENERALIZATION_CHECK_ENABLED=false`` or no item triggered.
     """
 
-    def _attach_source(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        out: List[Dict[str, Any]] = []
+    def _attach_source(items: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
         for item in items or []:
             if not isinstance(item, dict):
                 continue
             sources = item.get("source_turn_ids") or []
-            chunk_text_parts: List[str] = []
+            chunk_text_parts: list[str] = []
             for sid in sources:
                 src = chunks_by_id.get(str(sid))
                 if isinstance(src, dict):
@@ -1177,7 +1182,7 @@ def _run_overgeneralization_scan(
     decisions_enriched = _attach_source(decisions)
     claims_enriched = _attach_source(claims)
 
-    findings: List[HealthFinding] = []
+    findings: list[HealthFinding] = []
     findings.extend(
         _scan_overgeneralization(
             decisions_enriched,
@@ -1200,17 +1205,15 @@ def _run_overgeneralization_scan(
 def run_typed_extraction(
     source_id: str,
     *,
-    data_lake: Optional[str] = None,
+    data_lake: str | None = None,
     force: bool = False,
-    api_callers: Optional[Dict[str, Callable[[str], Dict[str, Any]]]] = None,
-    async_classifier_caller: Optional[
-        Callable[[str], Awaitable[Dict[str, Any]]]
-    ] = None,
-    glossary_manager: Optional[GlossaryManager] = None,
-    max_chunks: Optional[int] = None,
+    api_callers: dict[str, Callable[[str], dict[str, Any]]] | None = None,
+    async_classifier_caller: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
+    glossary_manager: GlossaryManager | None = None,
+    max_chunks: int | None = None,
     use_classification_cache: bool = True,
-    max_concurrent_classifier_batches: Optional[int] = None,
-) -> Dict[str, Any]:
+    max_concurrent_classifier_batches: int | None = None,
+) -> dict[str, Any]:
     """Run the typed-extraction pipeline for one source_id.
 
     Returns ``{"status": "success"|"skipped"|"failure", ...}``.
@@ -1278,7 +1281,7 @@ def run_typed_extraction(
     # stale chunk data.
     install_chunk_lookup(chunks)
 
-    available_turn_ids: Set[str] = set()
+    available_turn_ids: set[str] = set()
     for c in chunks:
         cid = c.get("chunk_id") or c.get("id")
         if isinstance(cid, str) and cid:
@@ -1310,11 +1313,11 @@ def run_typed_extraction(
     # reference cannot dangle. Flag-off path is a no-op (chunks
     # unchanged).
     pipeline_run_id = str(uuid.uuid4())
-    data_lake_root: Optional[Path] = None
+    data_lake_root: Path | None = None
     if store_root is not None:
         # data_lake_path = store_root parent (``store/`` lives under it).
         data_lake_root = store_root.parent
-    phase_w_metrics: Dict[str, Any]
+    phase_w_metrics: dict[str, Any]
     if data_lake_root is None or sdl_root is None:
         phase_w_metrics = {
             "agenda_detection_attempted": False,
@@ -1362,7 +1365,7 @@ def run_typed_extraction(
     claim_x = ClaimExtractor(api_caller=api_callers.get("claim"))
     action_x = ActionItemExtractor(api_caller=api_callers.get("action_item"))
 
-    cache: Optional[ClassificationCache] = None
+    cache: ClassificationCache | None = None
     if use_classification_cache and sdl_root is not None:
         try:
             cache = ClassificationCache(str(sdl_root))
@@ -1401,7 +1404,7 @@ def run_typed_extraction(
     # is used because every extractor will see the chunk regardless.
     _early_extraction_mode = _resolve_extraction_mode()
     _skip_classifier = _early_extraction_mode == EXTRACTION_MODE_SINGLE_PASS
-    classifications: List[Dict[str, Any]] = []
+    classifications: list[dict[str, Any]] = []
     if _skip_classifier:
         _LOG.info(
             "extraction_mode_single_pass: skipping classifier (rollback path)"
@@ -1450,7 +1453,7 @@ def run_typed_extraction(
         )
         import threading
 
-        result_box: Dict[str, Any] = {"value": [], "error": None}
+        result_box: dict[str, Any] = {"value": [], "error": None}
 
         def _runner() -> None:
             loop = asyncio.new_event_loop()
@@ -1537,7 +1540,7 @@ def run_typed_extraction(
     if cache is not None:
         cache.save(source_id)
 
-    bucket: Dict[str, List[Dict[str, Any]]] = {
+    bucket: dict[str, list[dict[str, Any]]] = {
         "decision": [], "claim": [], "action_item": [], "off_topic": [],
     }
     if _skip_classifier:
@@ -1563,8 +1566,8 @@ def run_typed_extraction(
     # (including off_topic) so the orchestration summary reflects
     # actual glossary coverage, not just extractor-routed coverage.
     glossary_artifact = _resolve_versioned_glossary_artifact(sdl_root)
-    versioned_glossary_terms: List[Dict[str, Any]] = []
-    glossary_version: Optional[int] = None
+    versioned_glossary_terms: list[dict[str, Any]] = []
+    glossary_version: int | None = None
     if isinstance(glossary_artifact, dict):
         terms = glossary_artifact.get("terms")
         if isinstance(terms, list):
@@ -1583,7 +1586,7 @@ def run_typed_extraction(
 
     few_shot_result = load_few_shot_examples(sdl_root)
     few_shot_block_str = build_few_shot_block(few_shot_result.examples)
-    run_findings: List[HealthFinding] = []
+    run_findings: list[HealthFinding] = []
     if few_shot_result.finding_code:
         try:
             run_findings.append(
@@ -1608,13 +1611,13 @@ def run_typed_extraction(
     # as a fallback for when the versioned glossary is unavailable;
     # the two never both contribute (they share the
     # ``TERMINOLOGY FOR THIS SECTION`` header).
-    def _legacy_block_for(group: Sequence[Dict[str, Any]]) -> str:
+    def _legacy_block_for(group: Sequence[dict[str, Any]]) -> str:
         text = " ".join((c.get("text") or "") for c in group)
         terms = glossary_manager.retrieve_for_chunk(text)
         return glossary_manager.format_for_prompt(terms)
 
     def _block_for(
-        group: Sequence[Dict[str, Any]],
+        group: Sequence[dict[str, Any]],
         *,
         extraction_type: str,
     ) -> str:
@@ -1798,7 +1801,7 @@ def run_typed_extraction(
     # anywhere in the transcript would taint every item. The checker
     # is gated by ``GENERALIZATION_CHECK_ENABLED`` (default on); when
     # disabled the call returns an empty list and the counter is 0.
-    chunks_by_id_for_scan: Dict[str, Dict[str, Any]] = {}
+    chunks_by_id_for_scan: dict[str, dict[str, Any]] = {}
     for c in chunks:
         cid = c.get("chunk_id") or c.get("id")
         if isinstance(cid, str) and cid:
@@ -1917,7 +1920,7 @@ def run_typed_extraction(
     # Phase P3-A T-2: write the chunk_classifications aggregate
     # artifact. Skipped in single_pass mode -- the absence of the
     # file on disk is the rollback signal.
-    chunk_classifications_path: Optional[Path] = None
+    chunk_classifications_path: Path | None = None
     if extraction_mode == EXTRACTION_MODE_TWO_STAGE and sdl_root is not None:
         cc_artifact = _build_chunk_classifications_artifact(
             source_artifact_id=source_artifact_id,
@@ -1992,10 +1995,9 @@ def run_typed_extraction(
     # succeeded-chunk items only (decisions / claims / action_items
     # are all merged-artifact products of succeeded chunks). Blocked
     # chunks NEVER contribute to the denominator.
-    calibration_path: Optional[Path] = None
+    calibration_path: Path | None = None
     from ._calibration import (
         calibration_from_succeeded,
-        CALIBRATION_WARNING_SCHEMA_VERSION as _CWSV,
     )
     calibration = calibration_from_succeeded(
         artifact.get("decisions") or [],
@@ -2006,7 +2008,7 @@ def run_typed_extraction(
     )
     if calibration is not None:
         try:
-            from ..validation import validate_artifact, ArtifactValidationError
+            from ..validation import ArtifactValidationError, validate_artifact
             try:
                 validate_artifact(calibration, "calibration_warning")
             except ArtifactValidationError as exc:
@@ -2097,8 +2099,8 @@ def run_typed_extraction(
 
 def find_meeting_extraction(
     source_artifact_id: str,
-    data_lake: Optional[str] = None,
-) -> Optional[Path]:
+    data_lake: str | None = None,
+) -> Path | None:
     """Return the path to ``<source_artifact_id>_meeting_extraction.json``
     if it exists, else None. Used by EvalAligner integration to decide
     whether to use typed-extraction output as alignment input.

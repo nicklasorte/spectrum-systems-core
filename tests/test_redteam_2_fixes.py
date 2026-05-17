@@ -16,7 +16,6 @@ from spectrum_systems_core.data_lake import (
 from spectrum_systems_core.data_lake.debug import _INSPECTION_HINTS
 from spectrum_systems_core.data_lake.eval_history import _coerce_score
 
-
 FIXTURES = Path(__file__).parent / "fixtures" / "golden_meetings"
 
 
