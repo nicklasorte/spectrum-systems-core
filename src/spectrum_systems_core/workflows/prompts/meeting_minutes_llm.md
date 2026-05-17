@@ -73,6 +73,14 @@ The user message appends, after the raw transcript, a block headed
 the form `[t0000] SPEAKER: text`. The bracketed token (e.g. `t0000`,
 `t0017`) is that turn's `turn_id`.
 
+This turn block is a `turn_id` LOOKUP TABLE ONLY. It is a re-segmented,
+speaker-relabeled rendering and is NOT the source of truth for any
+verbatim-checked field. Every verbatim string you emit (see the
+"Verbatim extraction" section) MUST be copied character-for-character
+from the RAW TRANSCRIPT above this block — never from a turn line, even
+if the turn line looks cleaner. Use the turn block solely to read off
+the `turn_id`s for `grounding.source_turns`.
+
 For EVERY item you emit in `decisions`, `action_items`,
 `open_questions`, and every structured array, you MUST add one entry to
 the top-level `grounding` array:
@@ -166,9 +174,11 @@ Legacy string arrays:
   postponed, amended, ratified, revoked, directed, considered, agreed,
   decided, endorsed, concurred, confirmed, finalized, resolved. Use the
   transcript's actual verb; if it is one of these, the decision is
-  classified. If the transcript uses none of these, omit `verb` (do
-  NOT invent one) — leaving it absent is handled, an invented verb is
-  not.
+  classified. If the transcript's governing word is NOT one of the
+  verbs listed above, set `verb` to exactly the literal string
+  "unclassified" — do NOT invent, approximate, or pick the closest
+  verb, and do NOT omit the key. "unclassified" is the only sanctioned
+  value for an out-of-list governing word.
 - action_item: a task or follow-up the meeting assigned (an owner is
   doing something).
 - open_question: a question the meeting raised and left unresolved.
@@ -383,5 +393,19 @@ as the `kind`, e.g. `"issue_registry_entry"`, `"procedural_ruling"`).
   compound (two facts). Default to `"atomic"` if unclear. This is
   the only valid pair of values — never emit any other string. It is
   optional on every claim; a claim that omits it is still valid.
+
+# Enforced enum values (1.3.0 — must match EXACTLY)
+
+These fields are validated against a strict schema that rejects any
+value not listed below. Use ONLY a listed value. If the transcript does
+not clearly map to one, use the catch-all where shown; if there is no
+catch-all and you are unsure, OMIT the whole item — an omitted item is
+always safe, but an out-of-list value blocks the entire artifact:
+
+- `issue_registry_entry.issue_type`: technical | policy | procedural | regulatory | coordination
+- `issue_registry_entry.status`: open | in_progress | resolved | deferred
+- `position_statement.position_type`: support | opposition | conditional | neutral | unclear
+- `external_stakeholder_input.input_type`: industry_comment | itu_submission | congressional_direction | agency_guidance | public_comment | other  (use `other` if unsure)
+- `procedural_ruling.ruling_type`: scope_boundary | process_rule | meeting_procedure | participation_rule | classification_handling | other  (use `other` if unsure)
 
 Output the JSON object now.
