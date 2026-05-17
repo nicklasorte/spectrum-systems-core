@@ -48,6 +48,19 @@ class CanonicalTaxonomySourceTests(unittest.TestCase):
         for outcome in taxonomy.DECISION_OUTCOME_TYPES:
             self.assertIn(outcome, REGULATORY_TAXONOMY_BLOCK)
 
+    def test_unclassified_sentinel_disjoint_from_real_verbs(self) -> None:
+        # The indeterminate-verb sentinel must never collide with a real
+        # decision / ambiguous verb, or a future taxonomy edit could
+        # silently turn the "no verb claim" marker into a recognised
+        # classification (or vice versa) — exactly the drift class this
+        # module exists to prevent.
+        self.assertNotIn(
+            taxonomy.UNCLASSIFIED_DECISION_VERB, taxonomy.DECISION_VERBS
+        )
+        self.assertNotIn(
+            taxonomy.UNCLASSIFIED_DECISION_VERB, taxonomy.AMBIGUOUS_VERBS
+        )
+
 
 class TaxonomyHaltFindingTests(unittest.TestCase):
     """Phase T.1: the finding-builder respects the env flag."""

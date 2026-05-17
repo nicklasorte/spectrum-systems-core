@@ -29,6 +29,7 @@ from pathlib import Path
 
 from ..artifacts import Artifact
 from ..config import preflight_llm_config
+from ..config.taxonomy import UNCLASSIFIED_DECISION_VERB
 from ..data_lake.chunker import chunk_transcript
 from ..validation import (
     ArtifactValidationError,
@@ -36,6 +37,7 @@ from ..validation import (
     validate_artifact,
 )
 from ..evals import (
+    resolve_decision_verb,
     run_grounding_coverage_eval,
     run_llm_gt_coverage_eval,
     run_llm_nonempty_eval,
@@ -278,6 +280,51 @@ def _parse_llm_payload(raw: str) -> dict | None:
     return out
 
 
+def _fill_unclassified_decision_verbs(decisions: list) -> list:
+    """Stamp the explicit ``UNCLASSIFIED_DECISION_VERB`` sentinel onto an
+    object-form decision the model left without a classifiable verb.
+
+    Why this exists (the 34-chunk block): the extraction prompt
+    encourages the OBJECT decision form whenever stakeholders /
+    confidence can be attributed. At scale the model emits many such
+    object decisions and does not always supply a ``verb``; when the
+    decision text also carries no taxonomy verb the regulatory_verb gate
+    hard-blocks the whole run with ``verb_not_classified:__missing__``.
+    The IDENTICAL decision in plain-string form has always promoted —
+    the gate never required a verb for string decisions — so the block
+    is an object-vs-string inconsistency, not a trust property.
+
+    Scope is deliberately minimal and fail-closed-preserving:
+
+    * Only dict items with a non-empty ``text`` are touched. String
+      decisions and malformed items are returned verbatim (the strict
+      schema / within-source evals own those, unchanged).
+    * The fill fires ONLY when ``resolve_decision_verb`` — the EXACT
+      function the regulatory_verb gate uses — returns ``None``, i.e.
+      precisely the ``__missing__`` block case (no declared verb AND no
+      taxonomy verb in text). A decision that CLAIMS a verb (recognised
+      or garbage) is never overridden, so a hallucinated / mis-extracted
+      verb still blocks: the hallucination-defence property is intact.
+    * A decision whose text already yields a taxonomy verb is left as-is
+      so the existing text-derived classification still applies.
+
+    ``verb`` is schema-optional, so this has zero strict-schema-gate
+    impact. Returns a NEW list — model output is never mutated in place.
+    """
+    out: list = []
+    for item in decisions:
+        if (
+            isinstance(item, dict)
+            and isinstance(item.get("text"), str)
+            and item["text"].strip()
+            and resolve_decision_verb(item) is None
+        ):
+            out.append({**item, "verb": UNCLASSIFIED_DECISION_VERB})
+        else:
+            out.append(item)
+    return out
+
+
 def _make_extract(
     *,
     client: LLMClient,
@@ -353,6 +400,15 @@ def _make_extract(
                     # Ungrounded (1.0.0) path: drop grounding so the
                     # payload is byte-identical to the pre-Phase-Y shape.
                     parsed.pop("grounding", None)
+                # Option C: record the explicit indeterminate-verb
+                # sentinel on any object-form decision the model left
+                # unclassifiable, BEFORE schema validation and the
+                # content hash. verb is schema-optional so the strict
+                # schema gate is unaffected; this only converts a silent
+                # regulatory_verb hard-block into an auditable field.
+                parsed["decisions"] = _fill_unclassified_decision_verbs(
+                    parsed["decisions"]
+                )
                 candidate = _base_payload(title, grounded)
                 candidate.update(parsed)
                 reason = _schema_reject_reason(candidate)

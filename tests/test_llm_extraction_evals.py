@@ -250,3 +250,101 @@ def test_step2_rejection_missing_one_array_blocks():
     )
     assert _decision(result) == "block"
     assert result.promoted is False
+
+
+# ---- Option C: 34-chunk regression — object decision, no verb ----------
+#
+# At full-transcript scale the model emits object-form decisions (to
+# attach stakeholders / confidence, which the prompt encourages) and
+# does not always supply a verb. Before the fix the regulatory_verb gate
+# hard-blocked the whole run with verb_not_classified:__missing__ even
+# though the IDENTICAL decision as a plain string promotes. These tests
+# pin the fix AND its no-weakening boundary.
+
+# Verbatim substring of dec18_transcript.txt with NO taxonomy verb.
+_INSRC_NO_VERB = "DoD has a concern about the aggregate interference methodology"
+
+
+def _base_kwargs(decisions):
+    return dict(
+        decisions=decisions,
+        action_items=DEC18_ACTION_ITEMS,
+        open_questions=DEC18_OPEN_QUESTIONS,
+        technical_parameters=DEC18_TECHNICAL_PARAMETERS,
+    )
+
+
+def test_optionc_object_decision_without_verb_now_promotes():
+    result = run_meeting_minutes_llm_workflow(
+        DEC18,
+        client=json_stub(
+            **_base_kwargs([
+                DEC18_DECISIONS[0],
+                {"text": _INSRC_NO_VERB,
+                 "stakeholders": ["DoD"], "confidence": 0.6},
+            ])
+        ),
+    )
+    assert result.promoted is True
+    assert _decision(result) == "allow"
+    # The indeterminate verb is recorded ON the artifact (auditable
+    # field), not silently dropped.
+    decisions = result.meeting_minutes.payload["decisions"]
+    stamped = [
+        d for d in decisions
+        if isinstance(d, dict) and d.get("verb") == "unclassified"
+    ]
+    assert len(stamped) == 1
+    verb = _eval(result, "regulatory_verb")
+    assert verb["status"] == "pass"
+    assert any(
+        rc.startswith("verb_unclassified:") for rc in verb["reason_codes"]
+    )
+
+
+def test_optionc_no_weakening_claimed_garbage_verb_still_blocks():
+    result = run_meeting_minutes_llm_workflow(
+        DEC18,
+        client=json_stub(
+            **_base_kwargs([
+                DEC18_DECISIONS[0],
+                {"text": _INSRC_NO_VERB, "verb": "frobnicated"},
+            ])
+        ),
+    )
+    assert result.promoted is False
+    assert _decision(result) == "block"
+    verb = _eval(result, "regulatory_verb")
+    assert verb["status"] == "fail"
+    assert any(
+        rc.startswith("verb_not_classified:frobnicated")
+        for rc in verb["reason_codes"]
+    )
+
+
+def test_optionc_string_form_decisions_byte_identical_no_sentinel():
+    result = run_meeting_minutes_llm_workflow(
+        DEC18,
+        client=json_stub(**_base_kwargs([DEC18_DECISIONS[0], _INSRC_NO_VERB])),
+    )
+    assert result.promoted is True
+    decisions = result.meeting_minutes.payload["decisions"]
+    assert all(isinstance(d, str) for d in decisions)
+
+
+def test_optionc_text_derived_verb_is_not_overridden_by_sentinel():
+    # Object decision, no `verb` key, but text contains "approved" —
+    # the existing text-derived classification must still apply; the
+    # producer must NOT stamp the sentinel over a classifiable decision.
+    result = run_meeting_minutes_llm_workflow(
+        DEC18,
+        client=json_stub(
+            **_base_kwargs([{"text": DEC18_DECISIONS[0]}])
+        ),
+    )
+    assert result.promoted is True
+    decision = result.meeting_minutes.payload["decisions"][0]
+    assert "verb" not in decision  # untouched — text already classifies
+    verb = _eval(result, "regulatory_verb")
+    assert verb["status"] == "pass"
+    assert verb["reason_codes"] == []
