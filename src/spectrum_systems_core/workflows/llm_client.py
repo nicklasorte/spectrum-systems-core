@@ -28,11 +28,24 @@ from typing import Protocol
 # revisions.
 EXTRACTION_MODEL = "claude-haiku-4-5-20251001"
 
-# Generous but bounded — meeting minutes JSON is small. Bounding the
-# token budget keeps a runaway response from silently truncating into
-# invalid JSON without the strict-schema eval noticing (it would, but
-# the bound makes the failure cheap).
-_MAX_TOKENS = 4000
+# Generous but bounded. The meeting_minutes_llm extraction is NOT small:
+# the schema_version 1.3.0 prompt asks for ~24 structured arrays
+# (decisions/action_items/open_questions + 12 PR #123/#141 arrays + the
+# 8 cross-meeting types + grounding). Over a full-transcript run that
+# JSON needs well past 4000 output tokens. The old 4000 default silently
+# truncated such a response mid-emit into invalid JSON: _parse_llm_payload
+# then returned None and the producer emitted a base payload with NO
+# decisions/action_items/open_questions, so required_meeting_minutes_fields
+# + regulatory_verb + llm_extraction_strict_schema all failed together
+# (the verb sentinel never ran -- parsed was None). This is the SAME
+# root cause create_opus_reference_baselines.py already documented and
+# worked around locally with _OPUS_MAX_TOKENS=16384 ("the observed
+# malformed_llm_response root cause"); the production workflow inherited
+# the inadequate shared default. Aligned to 16384 so a legitimate
+# full-scale extraction completes. This is a transport budget, not a
+# gate: a still-over-budget or malformed response is STILL blocked
+# fail-closed by the unchanged strict-schema eval -- nothing is weakened.
+_MAX_TOKENS = 16384
 
 
 class LLMClientError(RuntimeError):
@@ -91,6 +104,23 @@ class AnthropicJSONClient:
             raise LLMClientError(
                 f"live extraction call failed: {type(exc).__name__}: {exc}"
             ) from exc
+
+        # Governance hardening: a response cut off at the token cap is
+        # invalid JSON. The downstream parser would silently turn that
+        # into None and the producer into a no-arrays base payload --
+        # a block "a new engineer could not explain from the artifact
+        # alone" (CLAUDE.md auto-debug rule). Surface it as an explicit,
+        # machine-grepable LLMClientError so the cause is a field on the
+        # debug artifact (_llm_error), not a mystery parse miss. This
+        # does NOT change the promote/block outcome -- a truncated
+        # response blocks either way; it only makes the failure loud.
+        stop_reason = getattr(message, "stop_reason", None)
+        if stop_reason == "max_tokens":
+            raise LLMClientError(
+                "llm_output_truncated:max_tokens "
+                f"(model={self._model}, max_tokens={self._max_tokens}); "
+                "raise max_tokens for this extraction"
+            )
 
         parts: list[str] = []
         for block in getattr(message, "content", []) or []:
