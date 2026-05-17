@@ -1,0 +1,182 @@
+name: Create cross-meeting synthesis
+
+# Reads EVERY promoted meeting_minutes artifact in nicklasorte/data-lake
+# (the STRUCTURED product artifacts — never a raw transcript) and runs a
+# SINGLE Opus pass over the whole corpus to produce one
+# cross_meeting_synthesis instrument artifact: decision threads, an
+# open-action registry, claim drift, the unresolved-question registry,
+# and a narrative arc of the TIG process. It is the cross-meeting
+# analogue of compare-opus-haiku / compare-corpus — NOT a promoted
+# product artifact, never read back into the governed loop, never in
+# the artifact index.
+#
+# Model pinning: the Opus model string is NOT hardcoded here. The
+# binding no-model-strings-in-workflows CI gate
+# (tests/ci/test_no_model_strings_in_workflows) forbids any
+# claude-<tier>-<n> literal on a non-comment line of a workflow file.
+# The pinned string lives in ai/registry/model_registry.json under the
+# "complex_reasoning" key (the opus entry — cross-meeting synthesis is
+# exactly the cross-system-reasoning task that key names). This
+# workflow resolves it at run time into SYNTHESIS_MODEL and passes it
+# through --model; the script stamps it into the artifact as model_id
+# so a past synthesis keeps its exact model even after the registry is
+# rolled forward.
+#
+# To ship a new Opus: edit the "complex_reasoning" value in
+# ai/registry/model_registry.json (one line, one file) and re-run.
+#
+# dry_run defaults to TRUE: inspect the first run before anything is
+# committed to nicklasorte/data-lake.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run: run the synthesis, write/commit nothing'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      min_meetings:
+        description: 'Minimum promoted meeting_minutes artifacts (floor is always >= 2)'
+        required: false
+        default: '2'
+
+permissions:
+  contents: read
+
+jobs:
+  create-cross-meeting-synthesis:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install anthropic  # explicit safety net
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      - name: Resolve Opus model from registry
+        id: model
+        run: |
+          set -euo pipefail
+          # The pinned string lives ONLY in this JSON file (kept out of
+          # YAML so the no-model-strings-in-workflows gate stays green).
+          SYNTHESIS_MODEL="$(python -c "import json;print(json.load(open('ai/registry/model_registry.json'))['models']['complex_reasoning'])")"
+          if [ -z "$SYNTHESIS_MODEL" ]; then
+            echo "::error::complex_reasoning missing from ai/registry/model_registry.json"
+            exit 1
+          fi
+          echo "SYNTHESIS_MODEL=$SYNTHESIS_MODEL" >> "$GITHUB_ENV"
+          echo "Resolved Opus model: $SYNTHESIS_MODEL"
+
+      - name: Ensure data-lake .gitignore negation
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          CLONE_PATH: ${{ github.workspace }}/data-lake
+        run: |
+          set -euo pipefail
+          # The artifact must be committable BEFORE the script writes it
+          # (the script's own gitignore_blocks_artifact guard runs right
+          # after the write). Git cannot re-include a file whose parent
+          # directory is excluded, so a bare file negation is not
+          # enough: re-include the directory chain FIRST
+          # (!**/artifacts/**/ — directories only) and THEN the specific
+          # synthesis file. Same shape as the precedent that makes
+          # !**/processed/**/source_record.json work. Each line is
+          # appended idempotently (only when absent).
+          GI="$CLONE_PATH/.gitignore"
+          DIR_RULE='!**/artifacts/**/'
+          FILE_RULE='!**/artifacts/synthesis/*.json'
+          touch "$GI"
+          added=0
+          if ! grep -qxF "$DIR_RULE" "$GI"; then
+            printf '\n# Cross-meeting synthesis (instrument artifact, never promoted)\n%s\n' "$DIR_RULE" >> "$GI"
+            added=1
+          fi
+          if ! grep -qxF "$FILE_RULE" "$GI"; then
+            printf '%s\n' "$FILE_RULE" >> "$GI"
+            added=1
+          fi
+          if [ "$added" -eq 1 ]; then
+            echo "Ensured cross-meeting synthesis negation in data-lake .gitignore"
+          else
+            echo "Cross-meeting synthesis negation already present in data-lake .gitignore"
+          fi
+
+      - name: Create cross-meeting synthesis
+        id: create
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          MIN_MEETINGS: ${{ github.event.inputs.min_meetings }}
+        run: |
+          set -euo pipefail
+          ARGS=( --data-lake "${{ github.workspace }}/data-lake" --model "$SYNTHESIS_MODEL" --min-meetings "${MIN_MEETINGS:-2}" )
+          if [ "$DRY_RUN" = "true" ]; then
+            ARGS+=( --dry-run )
+          fi
+          python scripts/create_cross_meeting_synthesis.py "${ARGS[@]}" \
+            | tee /tmp/synthesis_summary.json
+          MEETINGS="$(python -c "import json;print(json.load(open('/tmp/synthesis_summary.json'))['meetings_synthesized'])")"
+          echo "SYNTHESIS_MEETINGS=$MEETINGS" >> "$GITHUB_ENV"
+
+      - name: Push synthesis to nicklasorte/data-lake
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            feat(synthesis): cross-meeting synthesis
+            model=${{ env.SYNTHESIS_MODEL }}
+            meetings=${{ env.SYNTHESIS_MEETINGS }} [skip ci][baseline-commit]
+          add_paths: |
+            .gitignore
+            store/artifacts/
+
+      - name: Post summary
+        if: always()
+        run: |
+          python - <<'EOF'
+          import json, os, pathlib
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
+          p = pathlib.Path("/tmp/synthesis_summary.json")
+          with open(summary_path, "a") as f:
+              f.write("## Cross-meeting synthesis\n\n")
+              if not p.is_file():
+                  f.write("No summary produced (script did not run).\n")
+                  raise SystemExit(0)
+              text = p.read_text(encoding="utf-8").strip()
+              try:
+                  data = json.loads(text)
+              except json.JSONDecodeError:
+                  f.write("```\n" + text + "\n```\n")
+                  raise SystemExit(0)
+              f.write(f"- status: **{data.get('status')}**\n")
+              f.write(f"- model: `{data.get('model')}`\n")
+              f.write(f"- dry_run: {data.get('dry_run')}\n")
+              f.write(f"- summarized_context: {data.get('summarized_context')}\n")
+              f.write(f"- meetings synthesized: {data.get('meetings_synthesized')}\n")
+              f.write(f"- decision threads: {data.get('decision_threads')} "
+                      f"({data.get('decision_threads_open')} open)\n")
+              f.write(f"- open actions: {data.get('open_actions')}\n")
+              f.write(f"- claim drift detected: {data.get('claim_drift_detected')}\n")
+              f.write(f"- unresolved questions: {data.get('unresolved_questions')}\n")
+              f.write(f"- total items read: {data.get('total_items_read')}\n")
+          EOF
