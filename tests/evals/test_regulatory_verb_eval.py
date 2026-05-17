@@ -340,3 +340,108 @@ def test_run_required_evals_skips_regulatory_verb_for_non_decision_types():
     results = run_required_evals(artifact)
     eval_types = [r.payload["eval_type"] for r in results]
     assert REGULATORY_VERB_EVAL_TYPE not in eval_types
+
+
+# ---- prompt↔eval taxonomy alignment (the persistent block, fixed) -------
+#
+# Root cause of the 6-PR meeting_minutes_llm full-transcript block: the
+# extraction prompt's own decision definition sanctions "agreed" /
+# "decided" (and direct decision synonyms) and instructs the model to
+# emit the governing verb actually used in the transcript, but the
+# regulatory_verb eval's classified-pass set omitted them — so a
+# correctly-extracted OBJECT-form decision the model faithfully
+# labelled "agreed" hard-blocked while the IDENTICAL decision in
+# plain-STRING form promoted (string decisions are never verb-checked).
+# These pin the alignment AND the no-weakening invariants.
+
+import pathlib  # noqa: E402
+import re  # noqa: E402
+
+from spectrum_systems_core.config.taxonomy import (  # noqa: E402
+    DECISION_SYNONYM_VERBS,
+)
+from spectrum_systems_core.evals import (  # noqa: E402
+    CLASSIFIED_DECISION_VERBS,
+)
+
+_PROMPT_PATH = (
+    pathlib.Path(__file__).resolve().parents[2]
+    / "src"
+    / "spectrum_systems_core"
+    / "workflows"
+    / "prompts"
+    / "meeting_minutes_llm.md"
+)
+
+
+@pytest.mark.parametrize("verb", sorted(DECISION_SYNONYM_VERBS))
+def test_prompt_sanctioned_decision_synonym_promotes_object_form(verb):
+    """Every DECISION_SYNONYM_VERBS member, on an object-form decision,
+    passes the gate (no block) — the fix for the persistent
+    regulatory_verb hard-block."""
+    artifact = _meeting_minutes(
+        [{"text": "The group agreed on the threshold.", "verb": verb}]
+    )
+    result = run_regulatory_verb_eval(artifact)
+    assert result.payload["status"] == "pass", (verb, result.payload)
+    assert not any(
+        c.startswith(VERB_NOT_CLASSIFIED_PREFIX)
+        for c in result.payload["reason_codes"]
+    ), (verb, result.payload["reason_codes"])
+
+
+def test_object_agreed_decision_no_longer_blocks_control():
+    """End-to-end: an object decision verb='agreed' -> allow (was the
+    persistent ``failed:regulatory_verb`` block)."""
+    artifact = _meeting_minutes(
+        [{"text": "The group approved the 7 GHz threshold.",
+          "verb": "agreed"}]
+    )
+    results = run_required_evals(artifact)
+    decision = decide_control(artifact, results)
+    assert decision.payload["decision"] == "allow", decision.payload
+
+
+def test_prompt_recognized_decision_verbs_match_eval_no_drift():
+    """CLAUDE.md anti-drift: every decision verb the prompt enumerates
+    as 'recognized' MUST be in the eval's classified-pass set. The
+    meeting_minutes_llm prompt is a static markdown file (it cannot
+    import the taxonomy), so this test is the structural pin that the
+    prompt and the eval cannot silently drift apart again."""
+    text = _PROMPT_PATH.read_text(encoding="utf-8")
+    m = re.search(
+        r"recognized decision verbs are:\s*(.+?)\.\s", text, re.DOTALL
+    )
+    assert m, "prompt no longer enumerates the recognized decision verbs"
+    verbs = [
+        v.strip().lower()
+        for v in m.group(1).replace("\n", " ").split(",")
+        if v.strip()
+    ]
+    assert len(verbs) >= 19, verbs
+    missing = [v for v in verbs if v not in CLASSIFIED_DECISION_VERBS]
+    assert not missing, (
+        f"prompt sanctions decision verbs the eval would BLOCK "
+        f"(prompt↔eval drift): {missing}"
+    )
+    # And the curated synonym set is fully reflected in the prompt.
+    assert DECISION_SYNONYM_VERBS.issubset(set(verbs)), (
+        DECISION_SYNONYM_VERBS - set(verbs)
+    )
+
+
+def test_no_weakening_garbage_verb_still_blocks_after_alignment():
+    """A hallucinated / garbage verb absent from the curated taxonomy
+    still falls through to the fail-closed block — widening the
+    classified set with prompt-sanctioned verbs did NOT weaken the
+    hallucination defence."""
+    artifact = _meeting_minutes(
+        [{"text": "The group frobnicated the band plan.",
+          "verb": "frobnicated"}]
+    )
+    result = run_regulatory_verb_eval(artifact)
+    assert result.payload["status"] == "fail"
+    assert any(
+        c.startswith(VERB_NOT_CLASSIFIED_PREFIX)
+        for c in result.payload["reason_codes"]
+    )

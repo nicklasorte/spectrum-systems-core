@@ -245,6 +245,172 @@ def test_cli_blocked_run_exits_nonzero(tmp_path, capsys) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Deterministic-transport seam on the ACTUAL CLI command.
+#
+# Before this seam there was NO way to exercise
+# ``python -m spectrum_systems_core.cli meeting-minutes-llm`` (the exact
+# production entry point validate-and-baseline.yml invokes) without a
+# live ANTHROPIC_API_KEY + network — every prior "verification" was a
+# Python-level run_meeting_minutes_dispatch sim with a perfect
+# string-decision stub, which never touched this entry point and (by
+# emitting plain-string decisions) never exercised the object-form
+# regulatory_verb path the real prompt pushes. The env-var seam closes
+# that gap: the real prompt / chunker / taxonomy / every eval / the
+# staged source.txt / the control + promotion gate all still run; only
+# the transport is fixed.
+# ---------------------------------------------------------------------------
+
+import os  # noqa: E402
+import subprocess  # noqa: E402
+import sys  # noqa: E402
+
+_DEC18_OBJ_DECISIONS = [
+    # Verbatim spans of dec18_transcript.txt, object form, labelled with
+    # ``agreed`` — the prompt-sanctioned decision verb that persistently
+    # hard-blocked regulatory_verb before the taxonomy alignment.
+    {
+        "text": (
+            "The group approved the 7 GHz downlink threshold of "
+            "minus 47 dBm per megahertz."
+        ),
+        "verb": "agreed",
+    },
+    {
+        "text": (
+            "The group deferred the aggregate interference methodology "
+            "pending further study."
+        ),
+        "verb": "deferred",
+    },
+]
+
+
+def _faithful_llm_response_json() -> str:
+    """A faithful, schema-valid, fully-grounded model response over the
+    dec18 fixture (object-form decisions, verbatim text). This is what a
+    well-behaved Haiku returns; the real evals must promote it."""
+    decisions = _DEC18_OBJ_DECISIONS
+    action = "DoD will submit revised ERP values before the next session."
+    question = (
+        "What is the coordination distance for federal incumbents in "
+        "the 7 GHz band?"
+    )
+    tparam = {
+        "param_id": "p1",
+        "parameter_name": "7 GHz downlink threshold",
+        "value": "minus 47 dBm per megahertz",
+        "unit": "dBm/MHz",
+        "context": "approved threshold",
+        "speaker": "NTIA Lead",
+    }
+    empty = {
+        k: []
+        for k in (
+            "commitments", "risks", "claims", "cross_references",
+            "attendees", "topics", "regulatory_references",
+            "named_artifacts", "scheduled_events", "sentiment_indicators",
+            "meeting_phases", "issue_registry_entry", "position_statement",
+            "dissent_or_objection", "agenda_item", "precedent_reference",
+            "external_stakeholder_input", "glossary_definition",
+            "procedural_ruling",
+        )
+    }
+    grounding = [
+        {"kind": "decision", "text": decisions[0]["text"],
+         "source_turns": ["t0000"]},
+        {"kind": "decision", "text": decisions[1]["text"],
+         "source_turns": ["t0000"]},
+        {"kind": "action_item", "text": action,
+         "source_turns": ["t0000"]},
+        {"kind": "open_question", "text": question,
+         "source_turns": ["t0000"]},
+        {"kind": "technical_parameter",
+         "text": "minus 47 dBm per megahertz", "source_turns": ["t0000"]},
+    ]
+    return json.dumps(
+        {
+            "decisions": decisions,
+            "action_items": [action],
+            "open_questions": [question],
+            "technical_parameters": [tparam],
+            "grounding": grounding,
+            **empty,
+        }
+    )
+
+
+def test_actual_cli_command_promotes_via_stub_seam(tmp_path) -> None:
+    """The REAL CLI command (subprocess, no key, env-var stub seam)
+    promotes a faithful object-form extraction whose decisions are
+    labelled with the prompt-sanctioned verb ``agreed``. This is the
+    end-to-end proof the prior PRs could not produce: the production
+    entry point, real prompt + taxonomy + every eval + the staged
+    source.txt, exit 0 + a promoted artifact on disk."""
+    lake = _stage_source_txt(tmp_path)
+    fixture = tmp_path / "faithful_response.json"
+    fixture.write_text(_faithful_llm_response_json(), encoding="utf-8")
+
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    env["MEETING_MINUTES_LLM_STUB_RESPONSE_PATH"] = str(fixture)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "spectrum_systems_core.cli",
+            "meeting-minutes-llm",
+            "--source-id",
+            SOURCE_ID,
+            "--data-lake",
+            str(lake),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert "OK produced_by=meeting_minutes_llm" in proc.stdout, proc.stdout
+
+    written = sorted(
+        (lake / "store" / "processed" / "meetings" / SOURCE_ID).glob(
+            "meeting_minutes__*.json"
+        )
+    )
+    assert len(written) == 1, written
+    body = json.loads(written[0].read_text(encoding="utf-8"))
+    assert body["status"] == "promoted"
+    assert (
+        body["payload"]["provenance"]["produced_by"] == "meeting_minutes_llm"
+    )
+    # The object-form decision labelled ``agreed`` survived the
+    # regulatory_verb gate (the persistent block, now fixed).
+    assert body["payload"]["decisions"][0]["verb"] == "agreed"
+
+
+def test_actual_cli_command_stub_seam_fail_closed_missing_fixture(
+    tmp_path, capsys
+) -> None:
+    """The seam is fail-closed: a stub path pointing at a non-existent
+    file HALTS (exit 2) and never silently falls back to the live
+    client — a silent fallback would recreate the unexplainable block
+    the auto-debug rule bans."""
+    lake = _stage_source_txt(tmp_path)
+    rc = meeting_minutes_llm(
+        source_id=SOURCE_ID,
+        data_lake=str(lake),
+        client=None,
+        env={"MEETING_MINUTES_LLM_STUB_RESPONSE_PATH": str(
+            tmp_path / "does_not_exist.json"
+        )},
+    )
+    assert rc == 2
+    assert "stub response path unreadable" in capsys.readouterr().out
+    proc = lake / "store" / "processed" / "meetings" / SOURCE_ID
+    assert not proc.exists() or not sorted(proc.glob("meeting_minutes__*.json"))
+
+
+# ---------------------------------------------------------------------------
 # 3 + 4 + 5. validate-and-baseline.yml structure.
 #
 # PyYAML maps the top-level ``on:`` key to the boolean True (YAML 1.1),

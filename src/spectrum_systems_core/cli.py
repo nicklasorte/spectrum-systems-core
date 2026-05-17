@@ -2895,6 +2895,51 @@ def meeting_minutes_llm(
     from .data_lake.writer import write_promoted_artifact
     from .workflows import run_meeting_minutes_llm_workflow
 
+    resolved_env = env if env is not None else os.environ
+
+    # Deterministic-transport seam for the ACTUAL production entry
+    # point. Production (a real ANTHROPIC_API_KEY, env var unset) is
+    # byte-identical: ``client`` stays None and the workflow constructs
+    # the real AnthropicJSONClient after its fail-closed preflight,
+    # exactly as before. When MEETING_MINUTES_LLM_STUB_RESPONSE_PATH is
+    # set, that file's contents ARE the model's raw response and a
+    # file-backed transport is injected instead — so the real prompt,
+    # chunker, taxonomy, EVERY eval, the real staged source.txt and the
+    # control / promotion gate ALL still run; only the network call is
+    # replaced. This is what lets CI exercise the real CLI command
+    # end-to-end without a live key — closing the gap that let prior
+    # PRs ship "promoted=True" from a dispatch-level simulation that
+    # never touched this entry point. Fail-closed: a missing / empty /
+    # unreadable fixture HALTS (exit 2); it never silently falls back
+    # to the live client (a silent fallback would re-create the exact
+    # "block a new engineer cannot explain" the auto-debug rule bans).
+    if client is None:
+        _stub_path = resolved_env.get(
+            "MEETING_MINUTES_LLM_STUB_RESPONSE_PATH"
+        )
+        if _stub_path:
+            try:
+                _stub_text = _Path(_stub_path).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                print(
+                    "meeting-minutes-llm: stub response path unreadable: "
+                    f"{_stub_path} ({exc})",
+                    file=out,
+                )
+                return 2
+            if not _stub_text.strip():
+                print(
+                    "meeting-minutes-llm: stub response file empty: "
+                    f"{_stub_path}",
+                    file=out,
+                )
+                return 2
+
+            def _stub_client(*, system: str, user: str) -> str:  # noqa: ARG001
+                return _stub_text
+
+            client = _stub_client
+
     try:
         result = run_meeting_minutes_llm_workflow(
             transcript_text,
@@ -2902,7 +2947,7 @@ def meeting_minutes_llm(
             meeting_id=source_id,
             source_id=source_id,
             lake_root=store_root,
-            env=env if env is not None else os.environ,
+            env=resolved_env,
             max_chunks=max_chunks,
         )
     except LLMConfigError as exc:

@@ -158,7 +158,17 @@ Even there, never invent content the transcript does not state.
 Legacy string arrays:
 
 - decision: something the meeting decided, approved, rejected,
-  deferred, adopted, or agreed.
+  deferred, adopted, or agreed. When you emit the object form, set
+  `verb` to the governing decision verb actually used in the
+  transcript. The recognized decision verbs are: approved, rejected,
+  deferred, noted, required, recommended, prohibited, authorized,
+  designated, adopted, declined, tabled, withdrawn, accepted, denied,
+  postponed, amended, ratified, revoked, directed, considered, agreed,
+  decided, endorsed, concurred, confirmed, finalized, resolved. Use the
+  transcript's actual verb; if it is one of these, the decision is
+  classified. If the transcript uses none of these, omit `verb` (do
+  NOT invent one) — leaving it absent is handled, an invented verb is
+  not.
 - action_item: a task or follow-up the meeting assigned (an owner is
   doing something).
 - open_question: a question the meeting raised and left unresolved.
