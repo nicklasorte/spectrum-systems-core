@@ -1,0 +1,109 @@
+name: Debug LLM extraction
+
+# One-shot debug workflow. Runs ONLY the meeting-minutes-llm CLI step in
+# isolation — NO deterministic run-pipeline / extract-typed stages before
+# it, NO baseline step, NO Haiku-vs-Opus comparison trigger, and NO push
+# back to nicklasorte/data-lake. It exists to cut the LLM-extraction debug
+# cycle from ~10 minutes (the full validate-and-baseline chain) to under
+# 2 minutes when iterating on the meeting_minutes_llm schema gate.
+#
+# It reads the canonical transcript the deterministic run-pipeline stage
+# previously staged at <data-lake>/store/raw/meetings/<source_id>/source.txt
+# (so a prior real pipeline run must have populated nicklasorte/data-lake
+# for this source_id). It does not regenerate that input — that is the
+# whole point of running the LLM step in isolation.
+#
+# Fail-closed: the CLI exits 2 on a missing/empty staged transcript or an
+# unset ANTHROPIC_API_KEY (LLMConfigError), and exits 1 when the control
+# gate blocks promotion. Either way this workflow surfaces the full CLI
+# output (which includes reason_code / reason_codes) and exits 1. Only a
+# promoted artifact (CLI exit 0) prints PROMOTED and exits 0.
+#
+# Not part of the production pipeline chain; trigger manually with
+# workflow_dispatch from the Actions tab.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_id:
+        description: 'Transcript slug to run meeting-minutes-llm for'
+        required: true
+      max_chunks:
+        description: >-
+          DEBUG ONLY. Stop after the first N transcript chunks and
+          truncate the model input to match. Leave empty for all chunks.
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  debug-llm-extraction:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+      SOURCE_ID: ${{ github.event.inputs.source_id }}
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: python -m pip install -e .
+
+      - name: Run meeting-minutes-llm in isolation
+        env:
+          # Empty string -> the flag is never appended and all chunks
+          # are processed. Non-empty only for fast schema-gate iteration.
+          MAX_CHUNKS: ${{ github.event.inputs.max_chunks }}
+        run: |
+          set -o pipefail
+
+          MAX_CHUNKS_ARG=()
+          if [ -n "${MAX_CHUNKS}" ]; then
+            MAX_CHUNKS_ARG=(--max-chunks "${MAX_CHUNKS}")
+          fi
+
+          # Capture combined stdout+stderr while still streaming it live
+          # to the step log (step requirement: print full stdout/stderr).
+          # PIPESTATUS[0] is the CLI exit code, not tee's.
+          python -m spectrum_systems_core.cli meeting-minutes-llm \
+            --source-id "${SOURCE_ID}" \
+            --data-lake "${DATA_LAKE_PATH}" \
+            "${MAX_CHUNKS_ARG[@]}" 2>&1 | tee /tmp/mml_output.txt
+          CLI_EXIT="${PIPESTATUS[0]}"
+
+          echo "----------------------------------------------------------"
+          echo "meeting-minutes-llm CLI exit code: ${CLI_EXIT}"
+
+          if [ "${CLI_EXIT}" -eq 0 ]; then
+            echo "PROMOTED"
+            exit 0
+          fi
+
+          # Any non-zero exit (1 = control-blocked, 2 = pre-run halt /
+          # LLMConfigError) is a debug failure. The CLI already wrote the
+          # reason_code(s) into the captured output; re-surface them
+          # explicitly, then dump the full output so plain pre-run halt
+          # messages (which carry no reason_code token) are not lost.
+          echo "=== reason_codes ==="
+          if grep -nE 'reason_code' /tmp/mml_output.txt; then
+            :
+          else
+            echo "(no reason_code token in output — see full output below)"
+          fi
+          echo "=== full CLI output ==="
+          cat /tmp/mml_output.txt
+          exit 1
