@@ -460,4 +460,16 @@ A PostToolUse hook runs automatically after every file edit:
 - `pytest tests/ -x -q` — stops at first failure, shows last 20 lines
 - `ruff check src/ tests/` — lint check across all source and test files
 
+## Slash commands
+
+The non-negotiable protocols above are enforced via slash commands. Use these
+instead of re-reading the relevant CLAUDE.md sections during a session.
+
+| Command | When to use |
+|---|---|
+| `/ship` | Before every PR — enforces the Claude Code Execution Standard |
+| `/pr-failure` | When any PR check fails — enforces the PR failure protocol |
+| `/integration-check` | Before `/ship` when scripts were touched — enforces the integration test requirement |
+| `/debug` | When a bug resists an obvious fix, or when `/ship` verification fails |
+
 Do not declare a fix complete if either command is failing. If tests fail after an edit, treat it as a signal to invoke `/debug`.

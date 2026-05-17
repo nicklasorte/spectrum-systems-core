@@ -1,5 +1,5 @@
 ---
-description: Apply the scientific method to a bug that resists an obvious fix
+description: Apply the scientific method to a bug that resists an obvious fix. If /ship verification fails, run this first.
 ---
 
 You are debugging a problem that does not have an obvious fix. Do not attempt repeated fixes. Follow this protocol strictly. Each cycle must visibly narrow the search space.
