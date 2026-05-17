@@ -85,6 +85,17 @@ _PRIMARY_TEXT_FIELD: Dict[str, Optional[str]] = {
     "claims": "claim_text",
     "sentiment_indicators": "text_preview",
     "meeting_phases": "phase_name",
+    # 1.3.0 additions — MUST stay byte-equal to the baseline producer's
+    # map (asserted by tests/test_compare_opus_haiku.py); an asymmetric
+    # reader would make the Haiku-vs-Opus diff lie.
+    "issue_registry_entry": "title",
+    "position_statement": "position_text",
+    "dissent_or_objection": "objection_text",
+    "agenda_item": "title",
+    "precedent_reference": "reference_text",
+    "external_stakeholder_input": "input_text",
+    "glossary_definition": "term",
+    "procedural_ruling": "ruling_text",
 }
 
 # Object-form fallbacks for the legacy string arrays (the schema allows

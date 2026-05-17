@@ -409,18 +409,20 @@ def _phase(**overrides) -> dict:
     return base
 
 
-def test_schema_version_enum_has_all_three():
-    """1.2.0 sits in the enum alongside 1.0.0 and 1.1.0 (additivity:
-    a legacy version string still validates; an unknown one does not)."""
+def test_schema_version_enum_has_all_four():
+    """1.3.0 sits in the enum alongside 1.0.0, 1.1.0 and 1.2.0
+    (additivity: every legacy version string still validates; an
+    unknown one does not)."""
     schema = _load_schema(ARTIFACT_TYPE)
     assert schema["properties"]["schema_version"]["enum"] == [
         "1.0.0",
         "1.1.0",
         "1.2.0",
+        "1.3.0",
     ]
 
 
-@pytest.mark.parametrize("version", ["1.0.0", "1.1.0", "1.2.0"])
+@pytest.mark.parametrize("version", ["1.0.0", "1.1.0", "1.2.0", "1.3.0"])
 @pytest.mark.parametrize(
     "fixture_dir",
     sorted(p for p in GOLDEN_DIR.iterdir() if p.is_dir())
@@ -428,12 +430,12 @@ def test_schema_version_enum_has_all_three():
     else [],
     ids=lambda p: p.name,
 )
-def test_golden_transcripts_validate_on_all_three_schema_versions(
+def test_golden_transcripts_validate_on_all_four_schema_versions(
     fixture_dir, version
 ):
     """Schema additivity proof: every golden transcript's real regex
     payload validates when its schema_version is set to 1.0.0, 1.1.0,
-    OR 1.2.0 — no legacy artifact breaks on the 1.2.0 schema."""
+    1.2.0, OR 1.3.0 — no legacy artifact breaks on the 1.3.0 schema."""
     transcript = (fixture_dir / "transcript.txt").read_text(encoding="utf-8")
     payload = run_meeting_minutes_workflow(transcript).meeting_minutes.payload
     art = _flat(payload)
@@ -648,7 +650,7 @@ def test_word_level_timestamps_not_boolean_fails():
 # fields still validates (the core additivity guarantee).
 
 
-@pytest.mark.parametrize("version", ["1.0.0", "1.1.0", "1.2.0"])
+@pytest.mark.parametrize("version", ["1.0.0", "1.1.0", "1.2.0", "1.3.0"])
 def test_legacy_artifact_without_any_1_2_0_field_validates(version):
     legacy = {
         "artifact_type": ARTIFACT_TYPE,
@@ -660,3 +662,481 @@ def test_legacy_artifact_without_any_1_2_0_field_validates(version):
         "open_questions": ["Do we need a separate empty-transcript eval?"],
     }
     validate_artifact(legacy, ARTIFACT_TYPE)
+
+
+# ====================================================================
+# schema_version 1.3.0 — eight new optional cross-meeting arrays plus
+# the optional claim_complexity field on claims items.
+#
+# Trust property: every 1.3.0 array is optional (absent validates on
+# the 1.3.0 schema AND a legacy version string), and every present
+# item is typed fail-closed (enum miss / unknown key / missing
+# required field rejected, never silently accepted).
+# ====================================================================
+
+
+def _issue(**o) -> dict:
+    base = {
+        "issue_id": "issue-1",
+        "title": "Aggregate interference modeling methodology",
+        "description": "The TIG has not agreed on the propagation model "
+        "for the 7 GHz downlink protection-zone analysis.",
+        "issue_type": "technical",
+        "raised_by": "DoD Rep",
+        "status": "open",
+    }
+    base.update(o)
+    return base
+
+
+def _position(**o) -> dict:
+    base = {
+        "position_id": "pos-1",
+        "agency": "DoW",
+        "speaker": "DoW Rep",
+        "topic": "Classified system parameters",
+        "position_text": "DoW's position is that classified system "
+        "parameters cannot be shared in this forum.",
+        "position_type": "opposition",
+    }
+    base.update(o)
+    return base
+
+
+def _dissent(**o) -> dict:
+    base = {
+        "dissent_id": "dis-1",
+        "objector": "NTIA Lead",
+        "agency": "NTIA",
+        "objection_text": "NTIA objects to adopting the threshold before "
+        "the aggregate study is complete.",
+        "objection_topic": "Adopting the 7 GHz downlink threshold",
+    }
+    base.update(o)
+    return base
+
+
+def _agenda(**o) -> dict:
+    base = {"item_id": "ag-1", "title": "Study Plan Content Review"}
+    base.update(o)
+    return base
+
+
+def _precedent(**o) -> dict:
+    base = {
+        "ref_id": "prec-1",
+        "speaker": "Chair Smith",
+        "reference_text": "as we agreed at the December working group "
+        "meeting",
+        "purpose": "justification",
+    }
+    base.update(o)
+    return base
+
+
+def _stakeholder(**o) -> dict:
+    base = {
+        "input_id": "ext-1",
+        "stakeholder": "CTIA",
+        "relayed_by": "FCC Rep",
+        "input_text": "CTIA submitted comments saying the proposed "
+        "protection zone is larger than necessary.",
+        "input_type": "industry_comment",
+    }
+    base.update(o)
+    return base
+
+
+def _glossary(**o) -> dict:
+    base = {
+        "definition_id": "gl-1",
+        "term": "protection zone",
+        "definition": "The area within which interference must be "
+        "managed to protect federal incumbents.",
+        "defined_by": "NTIA Lead",
+    }
+    base.update(o)
+    return base
+
+
+def _ruling(**o) -> dict:
+    base = {
+        "ruling_id": "rul-1",
+        "ruling_text": "This TIG is scoped to 7250-7400 MHz only.",
+        "ruled_by": "Chair Smith",
+        "ruling_type": "scope_boundary",
+    }
+    base.update(o)
+    return base
+
+
+_NEW_ARRAY_KEYS = (
+    "issue_registry_entry",
+    "position_statement",
+    "dissent_or_objection",
+    "agenda_item",
+    "precedent_reference",
+    "external_stakeholder_input",
+    "glossary_definition",
+    "procedural_ruling",
+)
+
+
+def _v130_all_populated() -> dict:
+    art = _fully_populated()
+    art["schema_version"] = "1.3.0"
+    art["issue_registry_entry"] = [_issue()]
+    art["position_statement"] = [_position()]
+    art["dissent_or_objection"] = [_dissent()]
+    art["agenda_item"] = [_agenda()]
+    art["precedent_reference"] = [_precedent()]
+    art["external_stakeholder_input"] = [_stakeholder()]
+    art["glossary_definition"] = [_glossary()]
+    art["procedural_ruling"] = [_ruling()]
+    return art
+
+
+# ---- additivity ----------------------------------------------------
+
+
+def test_v130_all_new_arrays_empty_validates():
+    art = _fully_populated()
+    art["schema_version"] = "1.3.0"
+    for key in _NEW_ARRAY_KEYS:
+        art[key] = []
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_v130_all_new_arrays_populated_validates():
+    validate_artifact(_v130_all_populated(), ARTIFACT_TYPE)
+
+
+@pytest.mark.parametrize("version", ["1.0.0", "1.1.0", "1.2.0", "1.3.0"])
+def test_new_arrays_present_validate_on_every_schema_version(version):
+    """Additivity in the strict sense: the eight new arrays are allowed
+    (but never required) on ALL declared versions — a 1.0.0 artifact
+    that happens to carry them still validates, and absence never
+    blocks. New fields allowed-but-not-required = no legacy breakage."""
+    art = _v130_all_populated()
+    art["schema_version"] = version
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_legacy_minimal_artifact_validates_on_1_3_0_schema():
+    """A bare 1.0.0 legacy artifact with NONE of the new arrays
+    validates against the (now 1.3.0) schema unchanged."""
+    legacy = {
+        "artifact_type": ARTIFACT_TYPE,
+        "schema_version": "1.0.0",
+        "title": "Quarterly sync",
+        "summary": "Team reviewed Q3 priorities.",
+        "decisions": ["Approve Q3 roadmap."],
+        "action_items": ["Draft SSC-002 scope."],
+        "open_questions": ["Anything left open?"],
+    }
+    validate_artifact(legacy, ARTIFACT_TYPE)
+
+
+# ---- happy-path enum coverage --------------------------------------
+
+
+@pytest.mark.parametrize(
+    "status", ["open", "in_progress", "resolved", "deferred"]
+)
+def test_issue_registry_entry_each_status_validates(status):
+    art = _v130_all_populated()
+    art["issue_registry_entry"] = [_issue(status=status)]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+@pytest.mark.parametrize(
+    "issue_type",
+    ["technical", "policy", "procedural", "regulatory", "coordination"],
+)
+def test_issue_registry_entry_each_type_validates(issue_type):
+    art = _v130_all_populated()
+    art["issue_registry_entry"] = [_issue(issue_type=issue_type)]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+@pytest.mark.parametrize(
+    "ptype",
+    ["support", "opposition", "conditional", "neutral", "unclear"],
+)
+def test_position_statement_each_type_validates(ptype):
+    art = _v130_all_populated()
+    art["position_statement"] = [_position(position_type=ptype)]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_dissent_resolved_false_validates():
+    art = _v130_all_populated()
+    art["dissent_or_objection"] = [_dissent(resolved=False)]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_dissent_resolved_true_validates():
+    art = _v130_all_populated()
+    art["dissent_or_objection"] = [
+        _dissent(resolved=True, resolution="Withdrawn after discussion.")
+    ]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_agenda_item_item_number_null_validates():
+    art = _v130_all_populated()
+    art["agenda_item"] = [_agenda(item_number=None, presenter=None)]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_agenda_item_minimal_required_only_validates():
+    art = _v130_all_populated()
+    art["agenda_item"] = [{"item_id": "ag-2", "title": "Roll call"}]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_agenda_item_allocated_minutes_integer_validates():
+    art = _v130_all_populated()
+    art["agenda_item"] = [_agenda(allocated_minutes=30)]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+@pytest.mark.parametrize(
+    "purpose",
+    ["justification", "contrast", "correction", "context", "unknown"],
+)
+def test_precedent_reference_each_purpose_validates(purpose):
+    art = _v130_all_populated()
+    art["precedent_reference"] = [_precedent(purpose=purpose)]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+@pytest.mark.parametrize(
+    "itype",
+    [
+        "industry_comment",
+        "itu_submission",
+        "congressional_direction",
+        "agency_guidance",
+        "public_comment",
+        "other",
+    ],
+)
+def test_external_stakeholder_input_each_type_validates(itype):
+    art = _v130_all_populated()
+    art["external_stakeholder_input"] = [_stakeholder(input_type=itype)]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+@pytest.mark.parametrize("auth", [True, False])
+def test_glossary_definition_authoritative_validates(auth):
+    art = _v130_all_populated()
+    art["glossary_definition"] = [_glossary(authoritative=auth)]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+@pytest.mark.parametrize(
+    "rtype",
+    [
+        "scope_boundary",
+        "process_rule",
+        "meeting_procedure",
+        "participation_rule",
+        "classification_handling",
+        "other",
+    ],
+)
+def test_procedural_ruling_each_type_validates(rtype):
+    art = _v130_all_populated()
+    art["procedural_ruling"] = [_ruling(ruling_type=rtype)]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+@pytest.mark.parametrize("binding", [True, False])
+def test_procedural_ruling_binding_validates(binding):
+    art = _v130_all_populated()
+    art["procedural_ruling"] = [_ruling(binding=binding)]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+# ---- fail-closed rejection paths -----------------------------------
+
+
+def test_issue_registry_entry_status_outside_enum_fails():
+    art = _v130_all_populated()
+    art["issue_registry_entry"] = [_issue(status="done")]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_issue_registry_entry_missing_required_field_fails():
+    art = _v130_all_populated()
+    bad = _issue()
+    del bad["raised_by"]
+    art["issue_registry_entry"] = [bad]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_issue_registry_entry_unknown_key_fails():
+    art = _v130_all_populated()
+    art["issue_registry_entry"] = [_issue(smuggled="x")]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_position_statement_position_type_outside_enum_fails():
+    art = _v130_all_populated()
+    art["position_statement"] = [_position(position_type="maybe")]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_position_statement_missing_agency_fails():
+    art = _v130_all_populated()
+    bad = _position()
+    del bad["agency"]
+    art["position_statement"] = [bad]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_dissent_resolved_not_boolean_fails():
+    art = _v130_all_populated()
+    art["dissent_or_objection"] = [_dissent(resolved="no")]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_precedent_reference_purpose_outside_enum_fails():
+    art = _v130_all_populated()
+    art["precedent_reference"] = [_precedent(purpose="because")]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_external_stakeholder_input_type_outside_enum_fails():
+    art = _v130_all_populated()
+    art["external_stakeholder_input"] = [
+        _stakeholder(input_type="rumor")
+    ]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_glossary_definition_authoritative_not_boolean_fails():
+    art = _v130_all_populated()
+    art["glossary_definition"] = [_glossary(authoritative="yes")]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_procedural_ruling_ruling_type_outside_enum_fails():
+    art = _v130_all_populated()
+    art["procedural_ruling"] = [_ruling(ruling_type="vibes")]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_new_array_empty_string_primary_text_fails():
+    """Each new type's primary text field is minLength 1 so a
+    schema-valid item is always a usable non-empty string downstream
+    (the Opus reference baseline never HALTs on a valid item)."""
+    art = _v130_all_populated()
+    art["procedural_ruling"] = [_ruling(ruling_text="")]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+# ---- claim_complexity (optional field on claims items) -------------
+
+
+def test_claim_complexity_atomic_validates():
+    art = _v130_all_populated()
+    art["claims"] = [_claim(claim_complexity="atomic")]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_claim_complexity_compound_validates():
+    art = _v130_all_populated()
+    art["claims"] = [_claim(claim_complexity="compound")]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_claim_complexity_absent_validates():
+    """claim_complexity is OPTIONAL — a claim that omits it (every
+    legacy claim) validates unchanged."""
+    art = _v130_all_populated()
+    art["claims"] = [_claim()]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_claim_complexity_outside_enum_fails():
+    art = _v130_all_populated()
+    art["claims"] = [_claim(claim_complexity="wrong")]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+@pytest.mark.parametrize("version", ["1.0.0", "1.1.0", "1.2.0", "1.3.0"])
+def test_claim_with_complexity_validates_on_every_version(version):
+    art = _v130_all_populated()
+    art["schema_version"] = version
+    art["claims"] = [_claim(claim_complexity="atomic")]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+# ---- Opus-baseline lock-step guard (mission-critical) --------------
+#
+# The mission runs the Opus reference baseline over all transcripts
+# right after this schema change. ``create_opus_reference_baselines.
+# extraction_types()`` derives the type list from THIS schema's array
+# properties and HARD-RAISES ``unmapped_extraction_type`` for any
+# array missing a ``_PRIMARY_TEXT_FIELD`` mapping. If that regressed,
+# the Opus batch would crash before producing a single baseline. This
+# test fails closed in-suite instead of post-CI.
+
+
+def _import_scripts():
+    import sys
+
+    scripts = str(
+        pathlib.Path(__file__).resolve().parents[1] / "scripts"
+    )
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import compare_opus_haiku as cmp  # noqa: WPS433
+    import create_opus_reference_baselines as crb  # noqa: WPS433
+
+    return crb, cmp
+
+
+def test_opus_extraction_types_cover_every_new_array():
+    """extraction_types() must not raise and must include all eight
+    new arrays — proves the Opus batch run will capture them."""
+    crb, _ = _import_scripts()
+    types = crb.extraction_types()  # raises if any array is unmapped
+    for key in _NEW_ARRAY_KEYS:
+        assert key in types, f"{key} not derived for the Opus baseline"
+
+
+def test_new_arrays_mapped_in_both_primary_text_field_maps():
+    """Both scripts' _PRIMARY_TEXT_FIELD maps must carry every new
+    array, mapped to a schema-required minLength-1 string field so a
+    schema-valid item never HALTs the baseline. The byte-equality of
+    the two maps is asserted in test_compare_opus_haiku.py; here we
+    assert the new keys are present and point at a required field."""
+    crb, cmp = _import_scripts()
+    schema = _load_schema(ARTIFACT_TYPE)
+    for key in _NEW_ARRAY_KEYS:
+        assert key in crb._PRIMARY_TEXT_FIELD, f"{key} unmapped (crb)"
+        assert key in cmp._PRIMARY_TEXT_FIELD, f"{key} unmapped (cmp)"
+        field = crb._PRIMARY_TEXT_FIELD[key]
+        item = schema["properties"][key]["items"]
+        assert field in item["required"], (
+            f"{key} primary text field {field!r} must be schema-required"
+        )
+        assert item["properties"][field].get("minLength") == 1, (
+            f"{key}.{field} must be minLength 1 so the baseline never "
+            f"HALTs on a schema-valid item"
+        )

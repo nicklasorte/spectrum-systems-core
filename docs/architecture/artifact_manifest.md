@@ -177,6 +177,128 @@ calling `git check-ignore`.
     from this schema, so all three new arrays have
     `_PRIMARY_TEXT_FIELD` mappings (`claim_text` / `text_preview` /
     `phase_name`).
+- **schema_version 1.3.0 additive optional fields** — eight new
+  optional cross-meeting arrays plus the optional `claim_complexity`
+  field on `claims` items. Every field is optional and every array is
+  absent-by-default, so each legacy 1.0.0 / 1.1.0 / 1.2.0 artifact
+  validates unchanged on the 1.3.0 schema (proven by
+  `tests/test_meeting_minutes_schema.py` across all 6 golden
+  transcripts on all four versions). These types become important at
+  30-50 meeting scale because the value of the corpus shifts from
+  single-meeting fidelity to cross-meeting structure: issues, positions,
+  precedents, and rulings only become legible as graphs/threads once
+  there are dozens of meetings to connect. "Within-source coverage" =
+  whether the primary text is a verbatim/near-verbatim transcript span
+  the within-source eval could check.
+  - `issue_registry_entry` — array of `{issue_id, title, description,
+    issue_type, raised_by, status, resolution_summary,
+    related_decisions, source_turns}`; `issue_type` ∈ {technical,
+    policy, procedural, regulatory, coordination}, `status` ∈ {open,
+    in_progress, resolved, deferred}. Purpose: substantive
+    technical/policy problems worked across meetings, distinct from
+    `open_questions` (procedural) and `decisions` (resolutions).
+    Scale rationale: at 30-50 meetings an unresolved issue spans many
+    sessions; a registry is the only way to see what is still open
+    corpus-wide. Within-source coverage: no (`title`/`description`
+    are paraphrased labels, same exclusion class as `topics`). Set
+    by: extraction model.
+  - `position_statement` — array of `{position_id, agency, speaker,
+    topic, position_text, position_type, caveats, source_turns}`;
+    `position_type` ∈ {support, opposition, conditional, neutral,
+    unclear}. Purpose: agency-attributed stances that recur/evolve
+    across meetings; not decisions. Scale rationale: position drift
+    over a 30-50 meeting arc is a primary analytical signal and is
+    invisible without per-meeting position capture. Within-source
+    coverage: yes (`position_text` is a verbatim/near-verbatim
+    speaker statement). Set by: extraction model.
+  - `dissent_or_objection` — array of `{dissent_id, objector, agency,
+    objection_text, objection_topic, resolution, resolved,
+    source_turns}`. Purpose: formal on-the-record objections,
+    distinct from `risks` (warnings) and `sentiment_indicators`
+    (tone). Scale rationale: at scale, which objections were raised
+    and whether they were ever resolved is a governance audit trail.
+    Within-source coverage: yes (`objection_text` is the objection as
+    stated). Set by: extraction model.
+  - `agenda_item` — array of `{item_id, item_number, title,
+    presenter, allocated_minutes, start_turn_id, end_turn_id,
+    outcome}`. Purpose: formal agenda structure — the organizational
+    spine for a cross-meeting document, not the content. Scale
+    rationale: a 30-50 meeting document set needs a recoverable
+    structural skeleton to be navigable. Within-source coverage: no
+    (structural segmentation; `title` is a label, same class as
+    `meeting_phases`). Set by: extraction model.
+  - `precedent_reference` — array of `{ref_id, speaker,
+    reference_text, referenced_meeting_date,
+    referenced_decision_or_study, purpose, source_turns}`; `purpose`
+    ∈ {justification, contrast, correction, context, unknown}.
+    Purpose: a speaker citing a prior meeting/decision/study as
+    justification. Scale rationale: across 30-50 meetings these form
+    a citation graph showing how decisions build on each other.
+    Within-source coverage: yes (`reference_text` is the
+    verbatim/near-verbatim phrasing the speaker used). Set by:
+    extraction model.
+  - `external_stakeholder_input` — array of `{input_id, stakeholder,
+    relayed_by, input_text, input_type, document_reference,
+    source_turns}`; `input_type` ∈ {industry_comment, itu_submission,
+    congressional_direction, agency_guidance, public_comment, other}.
+    Purpose: input relayed from parties not in the room; requires
+    explicitly relayed content, not a bare document mention. Scale
+    rationale: tracking how outside pressure entered the process over
+    a long arc is a key external-influence signal. Within-source
+    coverage: yes (`input_text` is the relayed content as the speaker
+    voiced it — a transcript span). Set by: extraction model.
+  - `glossary_definition` — array of `{definition_id, term,
+    definition, defined_by, context, authoritative, source_turns}`.
+    Purpose: terms formally defined for the study; builds a living
+    domain glossary. Scale rationale: a 30-50 meeting corpus
+    accumulates a working vocabulary that must be defined once and
+    reused consistently. Within-source coverage: no (`term` is a
+    proper-noun-class token and `definition` may be "as stated or
+    implied" / paraphrased — same exclusion class as
+    `named_artifacts`). Set by: extraction model.
+  - `procedural_ruling` — array of `{ruling_id, ruling_text,
+    ruled_by, ruling_type, binding, source_turns}`; `ruling_type` ∈
+    {scope_boundary, process_rule, meeting_procedure,
+    participation_rule, classification_handling, other}. Purpose:
+    chair/co-lead rulings on procedure/scope; distinct from
+    substantive `decisions`. Scale rationale: the governance
+    framework of the TIG is established incrementally across many
+    meetings and is only legible when collected. Within-source
+    coverage: yes (`ruling_text` is the ruling as the chair stated
+    it). Set by: extraction model.
+  - `claim_complexity` — optional enum (`atomic` / `compound`) on
+    each `claims` item; optional on every claim so legacy claims
+    omit it (additivity). Purpose: marks whether a claim is a single
+    independently verifiable fact or a bundle that should be split.
+    Scale rationale: at corpus scale, compound claims must be split
+    before they can be cross-checked or counted reliably; the flag is
+    the seam for that future atomization. Within-source coverage: n/a
+    (a classification flag, not extracted text). Set by: extraction
+    model.
+  - Carry-through: all eight new arrays are added to
+    `workflows/meeting_minutes_llm._STRUCTURED_ARRAYS` (Haiku path)
+    in lock-step with the prompt, so a model-emitted value reaches
+    the artifact and is validated fail-closed by the strict-schema
+    eval (an explicit `null` or a malformed item blocks promotion —
+    never silently dropped, never a dead prompt instruction). The
+    Opus reference-baseline workflow derives its extraction types
+    from this schema's array properties and HARD-RAISES
+    `unmapped_extraction_type` for any unmapped array, so all eight
+    have `_PRIMARY_TEXT_FIELD` mappings in BOTH
+    `scripts/create_opus_reference_baselines.py` and the mirrored
+    `scripts/compare_opus_haiku.py` (each mapped to a
+    schema-required, minLength-1 string so a schema-valid item never
+    HALTs the baseline): `issue_registry_entry`→`title`,
+    `position_statement`→`position_text`,
+    `dissent_or_objection`→`objection_text`, `agenda_item`→`title`,
+    `precedent_reference`→`reference_text`,
+    `external_stakeholder_input`→`input_text`,
+    `glossary_definition`→`term`, `procedural_ruling`→`ruling_text`.
+    `scripts/create_cross_meeting_synthesis.py` reads only
+    decisions/actions/questions/claims via fixed field constants and
+    does not derive types from the schema, so it is unaffected
+    (cross-meeting synthesis of the new types is a deliberately
+    separate future slice).
 - **Git-tracked:** NO — `meeting_minutes` product artifacts live in
   the separate `nicklasorte/data-lake` repo under
   `processed/meetings/` (data-lake contract §6.1: only promoted
@@ -307,8 +429,12 @@ calling `git check-ignore`.
 - **Path template:** `data-lake/store/processed/meetings/<source_id>/reference_baselines/opus_reference_minutes.jsonl`
 - **Schema:** per-item `item_data` conforms to the matching array-item
   shape in `src/spectrum_systems_core/schemas/meeting_minutes.schema.json`
-  (all 13 array types from PR #123; extraction types are derived from
-  that schema's array properties so there is no parallel list to drift).
+  (every array property the schema declares — currently 23, including
+  the eight schema_version 1.3.0 cross-meeting arrays; extraction types
+  are derived from that schema's array properties via
+  `extraction_types()` so there is no parallel list to drift, and a new
+  array missing a `_PRIMARY_TEXT_FIELD` mapping HARD-RAISES
+  `unmapped_extraction_type` rather than being silently skipped).
   The JSONL line envelope itself is the reference-baseline record shape
   documented in the script docstring.
 - **Git-tracked:** NO — same reasoning as `human_minutes_gt_pairs`: the
