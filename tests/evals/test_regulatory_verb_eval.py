@@ -58,6 +58,56 @@ def test_canonical_verb_deferred_passes():
     assert result.payload["reason_codes"] == []
 
 
+def test_canonical_regulatory_verb_adopted_passes():
+    """Regression for the prompt↔eval taxonomy-drift block: a verb the
+    extraction prompt explicitly instructs the model to emit (``adopted``
+    is in the canonical ``REGULATORY_VERBS``) must classify as a real
+    decision verb, not hard-block with ``verb_not_classified``."""
+    artifact = _meeting_minutes(
+        [{"text": "The committee adopted the band plan.", "verb": "adopted"}]
+    )
+    result = run_regulatory_verb_eval(artifact)
+    assert result.payload["status"] == "pass"
+    assert result.payload["reason_codes"] == []
+
+
+def test_every_canonical_regulatory_verb_passes():
+    """Every verb the canonical taxonomy (and the prompt) sanctions must
+    pass the gate. Pins the no-drift property: the eval's classified set
+    is the canonical taxonomy, not an ad-hoc subset."""
+    from spectrum_systems_core.config.taxonomy import REGULATORY_VERBS
+
+    for verb in REGULATORY_VERBS:
+        artifact = _meeting_minutes(
+            [{"text": f"The committee {verb} the band plan.", "verb": verb}]
+        )
+        result = run_regulatory_verb_eval(artifact)
+        # ``recommended`` is also an AMBIGUOUS verb → it passes WITH a
+        # warn; every other canonical verb passes cleanly. Neither
+        # blocks.
+        assert result.payload["status"] == "pass", verb
+        assert not any(
+            r.startswith(VERB_NOT_CLASSIFIED_PREFIX)
+            for r in result.payload["reason_codes"]
+        ), verb
+
+
+def test_recommended_is_both_regulatory_and_ambiguous_still_warns():
+    """No-weakening of the operator signal: ``recommended`` is in
+    REGULATORY_VERBS ∩ AMBIGUOUS_VERBS. Widening the classified set must
+    NOT make it pass silently — the ambiguous-warn is checked first so
+    the operator still sees the informal-language signal."""
+    artifact = _meeting_minutes(
+        [{"text": "The chair recommended the change.", "verb": "recommended"}]
+    )
+    result = run_regulatory_verb_eval(artifact)
+    assert result.payload["status"] == "pass"
+    assert any(
+        r.startswith(VERB_AMBIGUOUS_PREFIX)
+        for r in result.payload["reason_codes"]
+    )
+
+
 def test_ambiguous_verb_discussed_warns_but_passes():
     artifact = _meeting_minutes(
         [{"text": "The committee discussed the amendment.",

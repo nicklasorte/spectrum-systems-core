@@ -354,6 +354,105 @@ def test_optionc_text_derived_verb_is_not_overridden_by_sentinel():
     assert verb["reason_codes"] == []
 
 
+# ---- Prompt↔eval taxonomy-drift regression (BLOCK 1 real root cause) ----
+#
+# The verb sentinel (Option C above) only fires when NO verb is
+# classifiable. The actual production block was different: the model,
+# doing exactly what the prompt instructs, emits an object decision with
+# a real canonical regulatory verb (``adopted`` / ``authorized`` /
+# ``ratified`` / ...). The eval used a 6-verb ad-hoc subset, so those
+# correctly-extracted decisions hard-blocked with
+# ``verb_not_classified:<verb>``. The fix widens the eval's classified
+# set to the canonical ``REGULATORY_VERBS`` taxonomy the prompt uses.
+
+
+def test_canonical_regulatory_verb_adopted_promotes_through_workflow():
+    """An object decision whose verb is a canonical regulatory verb the
+    prompt explicitly sanctions (``adopted``) must promote — it is NOT
+    the sentinel path (the verb is claimed and recognised)."""
+    result = run_meeting_minutes_llm_workflow(
+        DEC18,
+        client=json_stub(
+            **_base_kwargs([
+                {"text": DEC18_DECISIONS[0], "verb": "adopted"},
+            ])
+        ),
+    )
+    assert result.promoted is True
+    assert _decision(result) == "allow"
+    verb = _eval(result, "regulatory_verb")
+    assert verb["status"] == "pass"
+    # NOT routed through the indeterminate sentinel — a real verb is
+    # classified, so there is no verb_unclassified surface note.
+    assert verb["reason_codes"] == []
+    decision = result.meeting_minutes.payload["decisions"][0]
+    assert decision["verb"] == "adopted"  # claimed verb left intact
+
+
+def test_canonical_drift_fix_does_not_weaken_garbage_verb_still_blocks():
+    """No-weakening boundary: widening to the canonical taxonomy must
+    NOT admit a verb the taxonomy does not contain. A hallucinated verb
+    on a within-source-grounded decision still hard-blocks."""
+    result = run_meeting_minutes_llm_workflow(
+        DEC18,
+        client=json_stub(
+            **_base_kwargs([
+                {"text": DEC18_DECISIONS[0], "verb": "bamboozled"},
+            ])
+        ),
+    )
+    assert result.promoted is False
+    assert _decision(result) == "block"
+    verb = _eval(result, "regulatory_verb")
+    assert verb["status"] == "fail"
+    assert any(
+        rc.startswith("verb_not_classified:bamboozled")
+        for rc in verb["reason_codes"]
+    )
+
+
+# ---- Verbatim-extraction prompt regression (BLOCK 2) -------------------
+#
+# The within-source gate requires the extracted text to be a normalized
+# substring of the transcript. The prompt previously licensed
+# "near-verbatim" text; the fix removes that license for every
+# within-source-checked field. The gate itself is unchanged — these
+# tests pin that a paraphrased item still hard-blocks (gate not
+# weakened) while a verbatim item promotes.
+
+
+def test_block2_paraphrased_decision_text_still_blocks_within_source():
+    paraphrase = "The group OK'd a downlink power limit of about -47 dBm."
+    assert paraphrase not in DEC18  # genuinely not a verbatim span
+    result = run_meeting_minutes_llm_workflow(
+        DEC18,
+        client=json_stub(
+            **_base_kwargs([{"text": paraphrase, "verb": "approved"}])
+        ),
+    )
+    assert result.promoted is False
+    assert _decision(result) == "block"
+    ws = _eval(result, WITHIN_SOURCE_EVAL_TYPE)
+    assert ws["status"] == "fail"
+    assert any(
+        rc.startswith(EXTRACTION_NOT_IN_SOURCE) for rc in ws["reason_codes"]
+    )
+
+
+def test_block2_verbatim_decision_text_passes_within_source():
+    result = run_meeting_minutes_llm_workflow(
+        DEC18,
+        client=json_stub(
+            **_base_kwargs([{"text": DEC18_DECISIONS[0], "verb": "adopted"}])
+        ),
+    )
+    assert result.promoted is True
+    assert _decision(result) == "allow"
+    ws = _eval(result, WITHIN_SOURCE_EVAL_TYPE)
+    assert ws["status"] == "pass"
+    assert ws["items_not_in_source"] == 0
+
+
 # ---- Full-transcript output-truncation regression ----------------------
 #
 # At full-transcript scale the schema_version 1.3.0 extraction (~24

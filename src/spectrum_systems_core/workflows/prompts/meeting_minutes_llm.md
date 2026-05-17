@@ -15,8 +15,8 @@ any other keys. Do not wrap the object in another object.
 ```
 {
   "decisions": ["<verbatim decision text>", {"text":"<verbatim decision text>","verb":"approved","stakeholders":["DoD"],"confidence":0.9,"rationale":"because the PCC directed it"}, ...],
-  "action_items": ["<verbatim or near-verbatim action text>", ...],
-  "open_questions": ["<verbatim or near-verbatim question text>", ...],
+  "action_items": ["<verbatim action text — word-for-word from the transcript>", ...],
+  "open_questions": ["<verbatim question text — word-for-word from the transcript>", ...],
   "commitments": [{"commitment_id","owner","commitment_text","due","source_speaker"}, ...],
   "risks": [{"risk_id","risk_text","raised_by","severity","mitigation_mentioned"}, ...],
   "claims": [{"claim_id","claim_text","speaker","external_references","evidence_in_transcript","claim_complexity"}, ...],
@@ -45,8 +45,9 @@ any other keys. Do not wrap the object in another object.
 NOT turn them into objects. A `decisions` item may be a plain verbatim
 string OR an object `{"text","verb","stakeholders","confidence"}`:
 
-- `text`: the verbatim or near-verbatim decision text (required in the
-  object form).
+- `text`: the verbatim decision text — word-for-word from the
+  transcript, never paraphrased or summarized (required in the object
+  form).
 - `verb`: the governing decision verb actually used in the transcript
   (e.g. "approved", "deferred", "adopted", "rejected").
 - `stakeholders`: list the names of stakeholders affected by or
@@ -95,11 +96,12 @@ grounding entry, blocks the entire artifact — it is never promoted.
 
 1. Extract ONLY what the transcript states. The transcript text is the
    complete and only source. Do not use outside knowledge.
-2. Every string you emit (a `decisions` / `action_items` /
-   `open_questions` item, or any text field of a structured object)
-   MUST be a verbatim or near-verbatim span of the transcript (you may
-   trim a leading speaker label, bullet, or number and join a sentence
-   that wrapped across lines — nothing more).
+2. Every string you emit for a verbatim-checked field (see the
+   "Verbatim extraction" section below) MUST be a verbatim span of the
+   transcript. The only edits allowed are: trim a leading speaker
+   label, bullet, or number, and join a sentence that wrapped across
+   lines. Nothing more — no paraphrase, no summary, no rephrasing, no
+   word substitution, no reordering.
 3. If something is not in the transcript, omit it. Do not infer. Do not
    summarise loosely. Do not paraphrase into something the transcript
    does not literally support.
@@ -114,6 +116,42 @@ grounding entry, blocks the entire artifact — it is never promoted.
    empty array `[]` for that key.** This applies to every key,
    including all structured arrays below. An empty array is never a
    failure; a hallucinated item always is.
+
+# Verbatim extraction (binding — this is a hard trust gate)
+
+Extract verbatim text as stated in the transcript. Do not paraphrase,
+summarize, or rephrase. The extracted text must appear word-for-word in
+the transcript.
+
+This rule is enforced mechanically: the extracted text is normalized
+(lowercased, whitespace collapsed) and must be a substring of the
+normalized transcript. A paraphrased, summarized, or reworded value —
+even one that is faithful in meaning — fails the gate and blocks the
+entire artifact from being promoted. When a transcript sentence is long,
+copy the exact span; do NOT condense it. The only edits permitted are
+trimming a leading speaker label / bullet / number and joining a
+sentence that wrapped across lines.
+
+Apply this strict word-for-word rule to EVERY one of these fields:
+
+- `decisions` items — the plain-string form AND the object form's
+  `text` field.
+- `action_items` items — the plain-string form AND the object form's
+  `action` field.
+- `open_questions` items — the plain-string form AND the object form's
+  `question_text` field.
+- `claims[].claim_text`.
+- `commitments[].commitment_text`.
+- `risks[].risk_text`.
+- `technical_parameters[].value`.
+
+Do NOT apply the strict word-for-word rule to these fields — they may
+legitimately carry paraphrased, summarized, or proper-noun text and are
+NOT substring-checked: `attendees`, `topics`, `scheduled_events`,
+`regulatory_references`, `cross_references`, `named_artifacts`, and the
+non-listed descriptive fields of any structured object (e.g. a
+`summary`, `context`, `rationale`, or `mitigation_mentioned` field).
+Even there, never invent content the transcript does not state.
 
 # Category definitions
 
@@ -178,7 +216,8 @@ only when the transcript actually states it):
 - claim: a factual or analytical assertion made in the meeting,
   distinct from a decision (which commits the group) and a risk (a
   flagged problem). `claim_id` is a short slug you assign;
-  `claim_text` is the verbatim or near-verbatim assertion;
+  `claim_text` is the verbatim assertion — word-for-word from the
+  transcript, never paraphrased or summarized;
   `speaker` is who made it (or `null`).
   - `external_references`: list of specific documents, articles,
     or regulations cited as evidence for this claim. Only include
