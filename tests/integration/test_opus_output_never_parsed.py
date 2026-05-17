@@ -107,6 +107,7 @@ def test_registered_eval_entrypoints_are_the_frozen_set():
         "run_llm_nonempty_eval",
         "run_llm_within_source_eval",
         "run_llm_gt_coverage_eval",
+        "run_tlc_routed_eval",
     }
     assert found == expected, (
         f"eval entrypoint surface changed: only-in-found="
@@ -180,6 +181,12 @@ def test_no_eval_surfaces_raw_output(tmp_path):
     results.append(evals_pkg.run_llm_within_source_eval(art, "transcript text"))
     results.append(
         evals_pkg.run_llm_gt_coverage_eval(art, source_id=None, lake_root=None)
+    )
+    # P8-A routing eval: classifies content arrays and re-runs the
+    # per-lane eval subset. It never reads raw_output (it iterates only
+    # classified content-array keys), so the sentinel must not surface.
+    results.append(
+        evals_pkg.run_tlc_routed_eval(art, transcript_text="transcript text")
     )
 
     for r in results:

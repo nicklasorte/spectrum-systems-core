@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 from ..artifacts import Artifact
-from ..config import preflight_llm_config
+from ..config import LLMConfigError, preflight_llm_config
 from ..config.taxonomy import UNCLASSIFIED_DECISION_VERB
 from ..data_lake.chunker import chunk_transcript
 from ..validation import (
@@ -51,6 +51,7 @@ from ..evals import (
     run_llm_strict_schema_eval,
     run_llm_within_source_eval,
     run_source_turn_validity_eval_from_chunks,
+    run_tlc_routed_eval,
 )
 from ._loop import run_governed_loop
 from .llm_client import AnthropicJSONClient, LLMClient, LLMClientError
@@ -59,6 +60,81 @@ from .meeting_minutes import WorkflowResult
 PRODUCED_BY = "meeting_minutes_llm"
 
 _PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "meeting_minutes_llm.md"
+
+# Single source of truth for the extraction model string. NEVER hardcode
+# a model literal in this module — the value below is a PATH to the
+# registry file, not a model id. P8-A swapped Haiku → Sonnet here because
+# the 21-type / ~6500-token constraint prompt exceeds Haiku's reliable
+# instruction-following ceiling at 34-chunk full-transcript scale.
+_MODEL_REGISTRY_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "ai"
+    / "registry"
+    / "model_registry.json"
+)
+_EXTRACTION_REGISTRY_KEY = "meeting_minutes_extraction"
+_MODEL_REGISTRY_ERROR = "model_registry_error"
+
+
+def _resolve_extraction_model() -> tuple[str, int]:
+    """Resolve ``(model_id, max_tokens)`` for meeting_minutes extraction.
+
+    The only source is ``ai/registry/model_registry.json`` →
+    ``meeting_minutes_extraction``. Fail-closed and HALT-not-infer: a
+    missing file, malformed JSON, a missing entry, a missing/blank
+    ``model_id`` or a non-positive-int ``max_tokens`` raises
+    :class:`LLMConfigError` BEFORE any artifact is produced. There is no
+    hardcoded model fallback by design — a misconfigured registry must
+    stop the run, never silently substitute a different model (that is
+    the exact "artifact where model_id doesn't match the registry entry
+    actually used" failure the mission's red team forbids).
+    """
+    try:
+        raw = _MODEL_REGISTRY_PATH.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise LLMConfigError(
+            f"cannot read model registry at {_MODEL_REGISTRY_PATH}: {exc}",
+            reason_code=_MODEL_REGISTRY_ERROR,
+        ) from exc
+    try:
+        registry = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise LLMConfigError(
+            f"model registry at {_MODEL_REGISTRY_PATH} is not valid "
+            f"JSON: {exc}",
+            reason_code=_MODEL_REGISTRY_ERROR,
+        ) from exc
+    entry = (
+        registry.get(_EXTRACTION_REGISTRY_KEY)
+        if isinstance(registry, dict)
+        else None
+    )
+    if not isinstance(entry, dict):
+        raise LLMConfigError(
+            f"model registry has no '{_EXTRACTION_REGISTRY_KEY}' object",
+            reason_code=_MODEL_REGISTRY_ERROR,
+        )
+    model_id = entry.get("model_id")
+    if not isinstance(model_id, str) or not model_id.strip():
+        raise LLMConfigError(
+            f"'{_EXTRACTION_REGISTRY_KEY}.model_id' is missing or not a "
+            "non-empty string",
+            reason_code=_MODEL_REGISTRY_ERROR,
+        )
+    max_tokens = entry.get("max_tokens")
+    # bool is an int subclass — reject it explicitly so ``true`` in the
+    # registry cannot pass as a token budget.
+    if (
+        not isinstance(max_tokens, int)
+        or isinstance(max_tokens, bool)
+        or max_tokens <= 0
+    ):
+        raise LLMConfigError(
+            f"'{_EXTRACTION_REGISTRY_KEY}.max_tokens' is missing or not "
+            "a positive integer",
+            reason_code=_MODEL_REGISTRY_ERROR,
+        )
+    return model_id.strip(), max_tokens
 
 # Header delimiting the turn-segmented transcript appended to the user
 # message. The raw transcript is sent FIRST (so the verbatim
@@ -625,6 +701,7 @@ def _make_extract(
     *,
     client: LLMClient,
     meeting_id: str | None,
+    model_id: str,
 ):
     def _base_payload(title: str, grounded: bool) -> dict:
         payload: dict = {
@@ -634,7 +711,18 @@ def _make_extract(
             # per-item grounding check + source_turn_validity apply;
             # the ungrounded path stays byte-identical at 1.0.0.
             "schema_version": "1.1.0" if grounded else "1.0.0",
-            "provenance": {"produced_by": PRODUCED_BY},
+            # provenance.model_id is the registry-resolved extraction
+            # model actually used for THIS run, recorded so a past
+            # artifact keeps its exact model after the registry rolls
+            # forward and so the unit gate can assert
+            # artifact.model_id == registry entry. The meeting_minutes
+            # schema's ``provenance`` object permits additional keys
+            # (no additionalProperties:false there), so this is schema
+            # additive — the strict-schema eval still passes.
+            "provenance": {
+                "produced_by": PRODUCED_BY,
+                "model_id": model_id,
+            },
         }
         if grounded:
             # word_level_timestamps is set by the chunker, NOT the
@@ -777,10 +865,21 @@ def run_meeting_minutes_llm_workflow(
     decision, so a run with ``debug_chunks=False`` is byte-identical to
     one before this knob existed (additivity / rollback).
     """
+    # Resolve the extraction model FIRST — before any artifact is
+    # produced and regardless of whether the transport is injected (a
+    # stub client still produces an artifact that must carry the
+    # registry-resolved provenance.model_id). A misconfigured registry
+    # HALTS here fail-closed rather than producing a blocked artifact
+    # with the wrong / no model_id.
+    model_id, max_tokens = _resolve_extraction_model()
     if client is None:
         preflight_llm_config(enabled=True, env=env)
-    active_client: LLMClient = client or AnthropicJSONClient()
-    extract = _make_extract(client=active_client, meeting_id=meeting_id)
+    active_client: LLMClient = client or AnthropicJSONClient(
+        model=model_id, max_tokens=max_tokens
+    )
+    extract = _make_extract(
+        client=active_client, meeting_id=meeting_id, model_id=model_id
+    )
 
     # Phase Y: chunk the transcript so the model can attribute every
     # extracted item to specific turn_ids, and so the deterministic
@@ -813,6 +912,15 @@ def run_meeting_minutes_llm_workflow(
         functools.partial(
             run_llm_gt_coverage_eval, source_id=source_id, lake_root=lake_root
         ),
+        # P8-A TLC routing. Appended AFTER the four LLM evals above so it
+        # is purely additive — none of those is removed or weakened. It
+        # classifies each extracted item by type lane and re-runs the
+        # per-lane eval subset, folding the outcomes into ONE combined
+        # eval_result the same decide_control gate blocks on. Because it
+        # only CALLS the unmodified eval functions, it can add a fail
+        # signal but never relax one (HIGH_STAKES keeps the full set;
+        # STANDARD gets within_source + strict_schema).
+        functools.partial(run_tlc_routed_eval, transcript_text=input_text),
     ]
     if grounded:
         # Same eval logic and same control authority as the data-lake
