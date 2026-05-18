@@ -15,11 +15,11 @@
     }
   },
   "meeting_minutes_extraction": {
-    "model_id": "claude-sonnet-4-6",
-    "purpose": "Full 21-type meeting minutes extraction — requires reliable instruction-following at 6500-token prompt complexity. Haiku ceiling exceeded at 34-chunk full transcript scale.",
+    "model_id": "claude-haiku-4-5-20251001",
+    "purpose": "Full 21-type meeting minutes extraction. Routes to claude-haiku-4-5-20251001. This entry supersedes the prior P8-A Sonnet upgrade: the meeting_minutes_extraction lane is migrated back to claude-haiku-4-5-20251001 by operator direction.",
     "deprecated_params": [],
     "max_tokens": 16384,
-    "notes": "Upgrade from haiku-4-5 (P8-A). Route high-volume STANDARD types back to claude-haiku-4-5-20251001 once P8-A per-type routing splits the single full-payload pass into per-tier model calls — until then ONE Sonnet pass produces the whole 21-type payload. max_tokens is the transport budget for that single whole-transcript response, NOT an eval gate: a full 34-chunk Sonnet extraction emits the entire payload (decisions/action_items/open_questions + ~20 structured arrays + grounding) in one response and needs well past 8192 output tokens; 16384 is the proven non-truncating value (same root cause documented in workflows/llm_client.py::_MAX_TOKENS and create_opus_reference_baselines._OPUS_MAX_TOKENS). A still-over-budget or malformed response is STILL blocked fail-closed by the unchanged strict-schema eval — nothing is weakened."
+    "notes": "Migrated back to claude-haiku-4-5-20251001, superseding the P8-A claude-sonnet-4-6 upgrade. ONE Haiku pass produces the whole 21-type payload. max_tokens is the transport budget for that single whole-transcript response, NOT an eval gate: a full 34-chunk extraction emits the entire payload (decisions/action_items/open_questions + ~20 structured arrays + grounding) in one response and needs well past 8192 output tokens; 16384 is the proven non-truncating value (same root cause documented in workflows/llm_client.py::_MAX_TOKENS and create_opus_reference_baselines._OPUS_MAX_TOKENS). A still-over-budget or malformed response is STILL blocked fail-closed by the unchanged strict-schema eval — nothing is weakened by the model swap."
   },
   "note": "No hardcoded model strings anywhere in code. All model resolution must use the registry. Update this file to migrate model versions."
 }
