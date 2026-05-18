@@ -148,16 +148,25 @@ _TURN_BLOCK_HEADER = (
 
 
 def _render_turn_block(chunks: list[dict]) -> str:
-    """Deterministic ``[turn_id] SPEAKER: text`` listing of the chunked
-    transcript. Same chunks → same string (chunks are already a pure
-    function of the transcript), so the grounded prompt stays
-    replay-stable."""
+    """Deterministic turn-ID look-up table for grounding citations.
+
+    Format: ``[turn_id] SPEAKER (lines N-M)`` — text body deliberately
+    excluded. The raw transcript is already in the user message, so the
+    model reads text from there and cites turn_ids from this table. The
+    old ``[turn_id] SPEAKER: text`` format caused
+    extraction_within_source_required failures: the model included the
+    ``[t0066]`` prefix from this block in extracted items, whose
+    normalized form is not a substring of the raw transcript (which has
+    no turn-ID tokens). Same chunks → same string; replay-stable.
+    """
     lines: list[str] = []
     for chunk in chunks:
         speaker = chunk.get("speaker")
-        who = f" {speaker}:" if speaker else ""
+        who = f" {speaker}" if speaker else ""
+        line_start = chunk.get("line_start", "?")
+        line_end = chunk.get("line_end", "?")
         lines.append(
-            f"[{chunk['turn_id']}]{who} {chunk.get('text', '')}"
+            f"[{chunk['turn_id']}]{who} (lines {line_start}-{line_end})"
         )
     return _TURN_BLOCK_HEADER + "\n".join(lines)
 
