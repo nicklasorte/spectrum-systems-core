@@ -1,7 +1,10 @@
 """Steps 3-6 gates: hallucination defense, non-empty, within-source,
-GT-coverage. Each gate has a happy path AND a rejection path that
-proves it fails closed (eval fail -> reason code -> control block ->
-unpromoted artifact).
+GT-coverage. The hard gates have a happy path AND a rejection path
+that proves they fail closed (eval fail -> reason code -> control
+block -> unpromoted artifact). within-source is the one DELIBERATE
+exception: it is a measurement instrument, not a trust gate, so a
+miss is demoted to a logged warn for every type and never blocks (see
+tests/test_within_source_routing.py).
 """
 from __future__ import annotations
 
@@ -111,7 +114,14 @@ def test_step5_happy_all_items_in_source():
     assert within["items_not_in_source"] == 0
 
 
-def test_step5_rejection_injected_non_source_decision_blocks():
+def test_step5_injected_non_source_decision_warns_not_blocks():
+    """An injected, non-source decision no longer hard-blocks via
+    within_source — that eval is a measurement instrument and demotes
+    the miss to a logged warn. This run still blocks, but via a
+    DIFFERENT, unchanged hard gate (the proxy-nonempty gate, because
+    technical_parameters/named_artifacts/scheduled_events are empty on
+    a content-bearing transcript). Proves within_source is softened
+    while the other gates are not."""
     result = run_meeting_minutes_llm_workflow(
         DEC18,
         client=json_stub(
@@ -121,14 +131,29 @@ def test_step5_rejection_injected_non_source_decision_blocks():
         ),
     )
     within = _eval(result, WITHIN_SOURCE_EVAL_TYPE)
-    assert within["status"] == "fail"
+    assert within["status"] == "warn"
     assert within["items_not_in_source"] >= 1
     assert any(
+        rc.startswith("within_source_warn")
+        for rc in within["reason_codes"]
+    )
+    # The block-causing prefix is gone — logged, not blocking.
+    assert not any(
         rc.startswith(EXTRACTION_NOT_IN_SOURCE)
         for rc in within["reason_codes"]
     )
+    # within_source is NOT what blocked the run …
+    assert (
+        f"failed:{WITHIN_SOURCE_EVAL_TYPE}"
+        not in result.control_decision.payload["reason_codes"]
+    )
+    # … another, unchanged hard gate still does.
     assert _decision(result) == "block"
     assert result.promoted is False
+    assert (
+        "failed:llm_extraction_nonempty_required"
+        in result.control_decision.payload["reason_codes"]
+    )
 
 
 # ---- Step 6: coverage vs human GT pairs (observe-only) ------------------
@@ -413,15 +438,15 @@ def test_canonical_drift_fix_does_not_weaken_garbage_verb_still_blocks():
 
 # ---- Verbatim-extraction prompt regression (BLOCK 2) -------------------
 #
-# The within-source gate requires the extracted text to be a normalized
-# substring of the transcript. The prompt previously licensed
-# "near-verbatim" text; the fix removes that license for every
-# within-source-checked field. The gate itself is unchanged — these
-# tests pin that a paraphrased item still hard-blocks (gate not
-# weakened) while a verbatim item promotes.
+# The within-source eval measures whether the extracted text is a
+# normalized substring of the transcript. It is a MEASUREMENT
+# INSTRUMENT, not a trust gate: a paraphrased item is demoted to a
+# logged warn (recorded for the correction miner) and PROMOTES, while
+# a verbatim item passes clean. The warn is still emitted with the
+# rewritten ``within_source_warn`` prefix so the miss is never lost.
 
 
-def test_block2_paraphrased_decision_text_still_blocks_within_source():
+def test_block2_paraphrased_decision_text_warns_and_promotes():
     paraphrase = "The group OK'd a downlink power limit of about -47 dBm."
     assert paraphrase not in DEC18  # genuinely not a verbatim span
     result = run_meeting_minutes_llm_workflow(
@@ -430,12 +455,25 @@ def test_block2_paraphrased_decision_text_still_blocks_within_source():
             **_base_kwargs([{"text": paraphrase, "verb": "approved"}])
         ),
     )
-    assert result.promoted is False
-    assert _decision(result) == "block"
+    # within_source is warn-only: a paraphrased decision is logged, not
+    # blocked, so the run promotes.
+    assert result.promoted is True
+    assert _decision(result) == "allow"
     ws = _eval(result, WITHIN_SOURCE_EVAL_TYPE)
-    assert ws["status"] == "fail"
+    assert ws["status"] == "warn"
     assert any(
+        rc.startswith("within_source_warn") for rc in ws["reason_codes"]
+    )
+    # The block-causing prefix is gone — logged, not blocking.
+    assert not any(
         rc.startswith(EXTRACTION_NOT_IN_SOURCE) for rc in ws["reason_codes"]
+    )
+    # The miss is recorded on the promoted artifact for the miner.
+    warnings = result.meeting_minutes.payload["provenance"][
+        "within_source_warnings"
+    ]
+    assert warnings and all(
+        w.startswith("within_source_warn") for w in warnings
     )
 
 
