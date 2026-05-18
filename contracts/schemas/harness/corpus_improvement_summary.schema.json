@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/harness/corpus_improvement_summary.schema.json",
+  "title": "corpus_improvement_summary",
+  "description": "Phase Z.5 — the roll-up of one multi-transcript improvement cycle (--all-transcripts). The all-or-nothing pre-flight (corpus_ingest_summary present, zero blocked, no open correction/* PR) runs BEFORE any phase; once it passes, per-transcript errors are isolated. corpus_f1 is the mean total_f1 across present transcripts, and is null (never NaN / div-by-zero) when no transcript completed (red-team Pass 1 #5).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "produced_at",
+    "cycle_id",
+    "total_transcripts",
+    "present",
+    "blocked",
+    "corpus_f1",
+    "per_transcript"
+  ],
+  "properties": {
+    "artifact_type": { "const": "corpus_improvement_summary" },
+    "schema_version": { "const": "1.0.0" },
+    "produced_at": { "type": "string", "format": "date-time" },
+    "cycle_id": { "type": "string", "minLength": 1 },
+    "total_transcripts": { "type": "integer", "minimum": 0 },
+    "present": { "type": "integer", "minimum": 0 },
+    "blocked": { "type": "integer", "minimum": 0 },
+    "corpus_f1": { "type": ["number", "null"] },
+    "corpus_f1_null_reason": { "type": ["string", "null"] },
+    "preflight_halt_reason": { "type": ["string", "null"] },
+    "per_transcript": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "transcript_id",
+          "overall_status",
+          "total_f1",
+          "false_negative_count",
+          "correction_candidates_produced"
+        ],
+        "properties": {
+          "transcript_id": { "type": "string", "minLength": 1 },
+          "overall_status": { "enum": ["promoted", "blocked", "error"] },
+          "total_f1": { "type": ["number", "null"] },
+          "false_negative_count": { "type": ["integer", "null"] },
+          "correction_candidates_produced": { "type": ["integer", "null"] },
+          "blocking_phase": { "type": ["string", "null"] },
+          "error_or_none": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

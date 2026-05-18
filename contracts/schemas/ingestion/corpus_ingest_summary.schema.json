@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/ingestion/corpus_ingest_summary.schema.json",
+  "title": "corpus_ingest_summary",
+  "description": "Phase Z.4 — the corpus-level roll-up emitted AFTER every transcript in config/corpus_manifest.yaml has been processed (never during, so a parallel ingest race cannot drop a per-transcript result — red-team Pass 1 #4). present + blocked == total_transcripts; blocked_ids lists exactly the blocked transcripts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "produced_at",
+    "total_transcripts",
+    "present",
+    "blocked",
+    "blocked_ids"
+  ],
+  "properties": {
+    "artifact_type": { "const": "corpus_ingest_summary" },
+    "schema_version": { "const": "1.0.0" },
+    "produced_at": { "type": "string", "format": "date-time" },
+    "total_transcripts": { "type": "integer", "minimum": 0 },
+    "present": { "type": "integer", "minimum": 0 },
+    "blocked": { "type": "integer", "minimum": 0 },
+    "blocked_ids": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

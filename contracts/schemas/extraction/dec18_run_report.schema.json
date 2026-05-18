@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/extraction/dec18_run_report.schema.json",
+  "title": "dec18_run_report",
+  "description": "Phase Z.1 — the end-to-end status of one Y.1..Y.4 run over the Dec 18 7 GHz Downlink TIG kickoff transcript with real data. Emitted whether the run completes or halts at a pre-flight / floor gate; a halt sets halted_at + halt_reason and leaves control_decision='not_reached'. haiku_artifact_produced_at + haiku_artifact_stale_warning record which promoted Haiku extraction the comparison was scored against so a stale-baseline comparison is never silently trusted (Phase Z red-team Pass 1 #1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "transcript_id",
+    "produced_at",
+    "phases",
+    "ceiling_item_count",
+    "total_f1",
+    "per_type_f1",
+    "false_negative_count",
+    "control_decision"
+  ],
+  "properties": {
+    "artifact_type": { "const": "dec18_run_report" },
+    "schema_version": { "const": "1.0.0" },
+    "transcript_id": { "type": "string", "minLength": 1 },
+    "produced_at": { "type": "string", "format": "date-time" },
+    "phases": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Y_1", "Y_2", "Y_3", "Y_4"],
+      "properties": {
+        "Y_1": { "enum": ["present", "partial", "missing", "blocked"] },
+        "Y_2": { "enum": ["present", "partial", "missing", "blocked"] },
+        "Y_3": { "enum": ["present", "partial", "missing", "blocked"] },
+        "Y_4": { "enum": ["present", "partial", "missing", "blocked"] }
+      }
+    },
+    "ceiling_item_count": { "type": "integer" },
+    "total_f1": { "type": ["number", "null"] },
+    "per_type_f1": { "type": "object" },
+    "false_negative_count": { "type": "integer" },
+    "control_decision": { "enum": ["allow", "block", "not_reached"] },
+    "control_reason": { "type": ["string", "null"] },
+    "halted_at": { "type": ["string", "null"] },
+    "halt_reason": { "type": ["string", "null"] },
+    "haiku_artifact_id": { "type": ["string", "null"] },
+    "haiku_artifact_produced_at": { "type": ["string", "null"] },
+    "haiku_artifact_stale_warning": { "type": ["string", "null"] }
+  }
+}

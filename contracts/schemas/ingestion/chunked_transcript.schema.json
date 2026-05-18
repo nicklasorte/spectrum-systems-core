@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/ingestion/chunked_transcript.schema.json",
+  "title": "chunked_transcript",
+  "description": "Phase Z.4 — the deterministic speaker-turn chunking of one ingested transcript, produced by the existing data_lake.chunker.chunk_transcript. Not a promoted product; the per-transcript ingest record (transcript_ingest_result) points at this artifact's id when status='present'.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "transcript_id",
+    "produced_at",
+    "speaker_turn_count",
+    "character_count",
+    "chunker_version",
+    "chunks"
+  ],
+  "properties": {
+    "artifact_type": { "const": "chunked_transcript" },
+    "schema_version": { "const": "1.0.0" },
+    "transcript_id": { "type": "string", "minLength": 1 },
+    "produced_at": { "type": "string", "format": "date-time" },
+    "speaker_turn_count": { "type": "integer", "minimum": 0 },
+    "character_count": { "type": "integer", "minimum": 0 },
+    "chunker_version": { "type": "string", "minLength": 1 },
+    "chunks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["turn_id", "speaker", "text"],
+        "properties": {
+          "turn_id": { "type": "string", "minLength": 1 },
+          "speaker": { "type": ["string", "null"] },
+          "text": { "type": "string" }
+        }
+      }
+    }
+  }
+}
