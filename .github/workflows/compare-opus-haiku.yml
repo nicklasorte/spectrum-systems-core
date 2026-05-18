@@ -162,3 +162,10 @@ jobs:
           else
             echo "F1 >= 0.70 or comparison did not succeed — not triggering correction miner"
           fi
+
+      - name: Debug workflow failure
+        if: failure()
+        run: |
+          python scripts/debug_workflow_failure.py \
+            --workflow "${{ github.workflow }}" \
+            --job "${{ github.job }}"
