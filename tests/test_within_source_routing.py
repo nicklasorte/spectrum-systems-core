@@ -1,46 +1,51 @@
-"""within_source BLOCK→WARN demotion routing.
+"""within_source is warn-only GLOBALLY (measurement instrument).
 
-The ``extraction_within_source_required`` eval blocks promotion when an
-extracted item is not a verbatim (normalized) substring of the
-transcript. For the accountability-bearing HIGH_STAKES lane that hard
-block is correct and unchanged. For the high-volume STANDARD descriptive
-lane a miss is usually slight model paraphrase / transcript-encoding
-noise, not a trust failure — so a STANDARD-only miss is DEMOTED to a
-logged warn (promote, but record it) while HIGH_STAKES still hard
-blocks.
+``extraction_within_source_required`` flags an extracted item that is
+not a verbatim (normalized) substring of the transcript. That signal
+is a MEASUREMENT INSTRUMENT that feeds the correction miner, NOT a
+trust gate. It must therefore never hard-block promotion, for ANY
+type: a single paraphrased item must not block a 138-chunk run and
+starve the miner of the other grounded entries.
 
 These tests prove, end to end:
 
-* HIGH_STAKES within_source miss still BLOCKS (hard block preserved).
-* STANDARD-only within_source miss demotes to WARN.
+* A within_source miss demotes to WARN for EVERY type (decisions,
+  risks, action_items, commitments, …) — there is no hard-block lane.
 * A WARN does not block promotion; its codes land on the promoted
-  artifact's provenance.
-* A HIGH_STAKES fabrication still blocks promotion with the original
-  (non-rewritten) ``extraction_not_in_source`` reason code.
+  artifact's provenance and on the control_decision.
 * The WARN row is present in eval_history.jsonl (correction-miner
   readable: a row whose ``status == "warn"`` and whose reason codes
-  carry the ``within_source_warn:`` prefix).
-* The hard-block set can never drift from HIGH_STAKES_TYPES.
-* Fail-closed: a mixed (HIGH_STAKES + STANDARD) or unparseable miss is
-  NEVER demoted out of the block; a WARN status is never a blocking
-  code.
+  carry the ``within_source_warn`` prefix).
+* ``WITHIN_SOURCE_HARD_BLOCK_TYPES`` is empty — no type hard-blocks.
+* The OTHER gates are unchanged: ``regulatory_verb`` and
+  ``llm_extraction_strict_schema`` still HARD-BLOCK; only within_source
+  warns. ``route_within_source_eval`` only ever demotes the
+  within_source eval, never another eval.
+* Even a mixed / unparseable within_source fail still demotes (the
+  instrument never blocks) and its codes are logged, never dropped.
 """
 from __future__ import annotations
 
 import json
+
+import pytest
 
 from spectrum_systems_core.artifacts import new_artifact
 from spectrum_systems_core.control import decide_control
 from spectrum_systems_core.evals import (
     EXTRACTION_NOT_IN_SOURCE,
     HIGH_STAKES_TYPES,
+    REGULATORY_VERB_EVAL_TYPE,
     STANDARD_TYPES,
+    STRICT_SCHEMA_EVAL_TYPE,
     WITHIN_SOURCE_EVAL_TYPE,
     WITHIN_SOURCE_HARD_BLOCK_TYPES,
     WITHIN_SOURCE_WARN_PREFIX,
     route_within_source_eval,
     route_within_source_result,
+    run_llm_strict_schema_eval,
     run_llm_within_source_eval,
+    run_regulatory_verb_eval,
 )
 from spectrum_systems_core.workflows import run_meeting_minutes_llm_workflow
 from spectrum_systems_core.workflows.llm_eval_history import (
@@ -60,10 +65,17 @@ DEC18 = load_fixture("dec18_transcript.txt")
 # A genuine paraphrase of DEC18_ACTION_ITEMS[0] ("DoD will submit
 # revised ERP values before the next session.") — semantically the same
 # but not a normalized substring of the transcript, so within_source
-# fails on this STANDARD-lane item.
+# fails on this item.
 _PARAPHRASE_ACTION = (
     "DoD agreed to send updated ERP figures ahead of the following meeting."
 )
+
+# A fabricated DECISION absent from the transcript. Its verb
+# ("approved") IS a classified regulatory verb and the string is
+# schema-valid, so the ONLY eval that flags it is within_source — which
+# now warns. This is the exact case that used to hard-block a whole run
+# on one item.
+_FABRICATED_DECISION = "The committee approved a brand new unrelated budget line."
 
 
 def _base_payload(**overrides) -> dict:
@@ -104,38 +116,169 @@ def _decision(result) -> str:
 
 
 # ---------------------------------------------------------------------
-# Step 6 — required tests
+# Mission Step 3 — required tests
 # ---------------------------------------------------------------------
 
 
-def test_high_stakes_within_source_still_blocks():
-    """A decision (HIGH_STAKES) whose text is not in the transcript ->
-    route returns it unchanged: status stays ``fail`` (hard block)."""
+def test_decisions_within_source_now_warns():
+    """A decisions item whose text is NOT verbatim in the transcript
+    used to hard-block. It now demotes to ``warn`` like every other
+    type — within_source is a measurement instrument, not a trust
+    gate."""
     art = _mk(
         _base_payload(
-            decisions=["A decision that never appears anywhere in the body."]
+            decisions=["A decision that never appears verbatim anywhere."]
         )
     )
     res = run_llm_within_source_eval(art, "totally unrelated transcript body")
     assert res.payload["status"] == "fail"
 
     routed = route_within_source_result(res, "decisions")
-    assert routed.payload["status"] == "fail"
-    # The original block-causing code is preserved verbatim (NOT
-    # rewritten to within_source_warn).
+    assert routed.payload["status"] == "warn"
     assert any(
+        rc.startswith(WITHIN_SOURCE_WARN_PREFIX)
+        for rc in routed.payload["reason_codes"]
+    )
+    # The block-causing prefix is gone — it is logged, not blocking.
+    assert not any(
         rc.startswith(EXTRACTION_NOT_IN_SOURCE)
         for rc in routed.payload["reason_codes"]
     )
-    assert not any(
+    # A NEW envelope — the original failed result is not mutated.
+    assert res.payload["status"] == "fail"
+    assert routed.artifact_id != res.artifact_id
+    # The real pipeline path (lane derived internally) also warns.
+    assert route_within_source_eval(res).payload["status"] == "warn"
+
+
+@pytest.mark.parametrize(
+    "key,item",
+    [
+        ("decisions", "A decision absent from the body entirely."),
+        ("risks", {"risk_text": "A risk absent from the body entirely."}),
+        ("action_items", "An action item absent from the body entirely."),
+        (
+            "commitments",
+            {"commitment_text": "A commitment absent from the body."},
+        ),
+    ],
+)
+def test_all_types_within_source_warn(key, item):
+    """For decisions, risks, action_items and commitments alike, a
+    within_source miss demotes to ``warn`` — there is no hard-block
+    lane left. Both the spec primitive (explicit item_type) and the
+    real pipeline path agree."""
+    art = _mk(_base_payload(**{key: [item]}))
+    res = run_llm_within_source_eval(art, "totally unrelated transcript body")
+    assert res.payload["status"] == "fail"
+    # The miss is tagged with this array key so it is measured, not
+    # silently dropped.
+    assert any(
+        rc.startswith(f"{EXTRACTION_NOT_IN_SOURCE}:{key}:")
+        for rc in res.payload["reason_codes"]
+    )
+
+    routed = route_within_source_result(res, key)
+    assert routed.payload["status"] == "warn"
+    assert routed.payload["within_source_demoted"] is True
+    assert any(
         rc.startswith(WITHIN_SOURCE_WARN_PREFIX)
         for rc in routed.payload["reason_codes"]
     )
 
+    derived = route_within_source_eval(res)
+    assert derived.payload["status"] == "warn"
+
+
+def test_other_gates_unchanged():
+    """within_source is the ONLY gate that warns. ``regulatory_verb``
+    and ``llm_extraction_strict_schema`` still HARD-BLOCK, and
+    ``route_within_source_eval`` refuses to demote any non-within_source
+    eval (defence in depth)."""
+    transcript = "totally unrelated transcript body"
+
+    # 1. regulatory_verb still HARD-BLOCKS on a decision whose verb is
+    #    not in the taxonomy. It is NOT demoted to warn.
+    rv_art = _mk(
+        _base_payload(
+            decisions=[
+                {"text": "The board frobnicated the rule.", "verb": "frobnicated"}
+            ]
+        )
+    )
+    rv = run_regulatory_verb_eval(rv_art)
+    assert rv.payload["status"] == "fail"
+    assert rv.payload["eval_type"] == REGULATORY_VERB_EVAL_TYPE
+    # The within_source router must never touch another eval.
+    assert route_within_source_eval(rv).payload["status"] == "fail"
+    rv_decision = decide_control(rv_art, [rv])
+    assert rv_decision.payload["decision"] == "block"
+    assert (
+        f"failed:{REGULATORY_VERB_EVAL_TYPE}"
+        in rv_decision.payload["reason_codes"]
+    )
+
+    # 2. strict_schema still HARD-BLOCKS on a schema violation. It is
+    #    NOT demoted to warn.
+    ss_art = _mk(
+        _base_payload(
+            schema_version="1.2.0",
+            meeting_phases=[{"phase_id": "p1", "phase_name": "lunch"}],
+        )
+    )
+    ss = run_llm_strict_schema_eval(ss_art)
+    assert ss.payload["status"] == "fail"
+    assert ss.payload["eval_type"] == STRICT_SCHEMA_EVAL_TYPE
+    assert route_within_source_eval(ss).payload["status"] == "fail"
+    ss_decision = decide_control(ss_art, [ss])
+    assert ss_decision.payload["decision"] == "block"
+    assert (
+        f"failed:{STRICT_SCHEMA_EVAL_TYPE}"
+        in ss_decision.payload["reason_codes"]
+    )
+
+    # 3. within_source is the ONLY gate that warns — a decisions miss
+    #    alone leads to ``allow``.
+    ws_art = _mk(_base_payload(decisions=["A decision absent from the body."]))
+    ws = route_within_source_eval(
+        run_llm_within_source_eval(ws_art, transcript)
+    )
+    assert ws.payload["status"] == "warn"
+    ws_decision = decide_control(ws_art, [ws])
+    assert ws_decision.payload["decision"] == "allow"
+    assert ws_decision.payload["reason_codes"] == []
+    assert ws_decision.payload["within_source_warnings"]
+
+
+# ---------------------------------------------------------------------
+# Hard-block set is empty; lane sets unchanged
+# ---------------------------------------------------------------------
+
+
+def test_within_source_hard_block_set_is_empty():
+    """No type hard-blocks within_source. The lane sets that drive
+    WHICH evals run (regulatory_verb / nonempty are HIGH_STAKES-only)
+    are deliberately UNCHANGED — only the within_source pass/fail
+    semantics changed."""
+    assert WITHIN_SOURCE_HARD_BLOCK_TYPES == frozenset()
+    assert "decisions" not in WITHIN_SOURCE_HARD_BLOCK_TYPES
+    assert "risks" not in WITHIN_SOURCE_HARD_BLOCK_TYPES
+    # The routing lanes themselves are untouched (other gates depend on
+    # them): decisions is still HIGH_STAKES, risks still STANDARD.
+    assert "decisions" in HIGH_STAKES_TYPES
+    assert "risks" in STANDARD_TYPES
+    assert not (HIGH_STAKES_TYPES & STANDARD_TYPES)
+
+
+# ---------------------------------------------------------------------
+# Full workflow path — warn promotes, codes land on provenance
+# ---------------------------------------------------------------------
+
 
 def test_standard_within_source_demoted_to_warn():
-    """An action_item (STANDARD) paraphrase -> route demotes the result
-    to ``warn`` and rewrites the codes to ``within_source_warn``."""
+    """An action_item paraphrase -> route demotes to ``warn`` and
+    rewrites the codes to ``within_source_warn``; a NEW envelope is
+    returned (the original failed result is not mutated)."""
     art = _mk(
         _base_payload(
             action_items=["A paraphrased action item not present at all."]
@@ -150,20 +293,45 @@ def test_standard_within_source_demoted_to_warn():
         rc.startswith(WITHIN_SOURCE_WARN_PREFIX)
         for rc in routed.payload["reason_codes"]
     )
-    # The block-causing prefix is gone (it is logged, not blocking).
     assert not any(
         rc.startswith(EXTRACTION_NOT_IN_SOURCE)
         for rc in routed.payload["reason_codes"]
     )
-    # A new envelope is returned — the original failed result is not
-    # mutated in place.
     assert res.payload["status"] == "fail"
     assert routed.artifact_id != res.artifact_id
 
 
+def test_risks_demoted_to_warn():
+    """A risk (STANDARD, object-form ``risk_text``) whose text is not
+    verbatim routes to ``warn`` on both the spec-primitive and the
+    real pipeline path."""
+    art = _mk(
+        _base_payload(
+            risks=[
+                {"risk_text": "A risk that never appears in the body at all."}
+            ]
+        )
+    )
+    res = run_llm_within_source_eval(art, "totally unrelated transcript body")
+    assert res.payload["status"] == "fail"
+    assert any(
+        rc.startswith(f"{EXTRACTION_NOT_IN_SOURCE}:risks:")
+        for rc in res.payload["reason_codes"]
+    )
+
+    routed = route_within_source_result(res, "risks")
+    assert routed.payload["status"] == "warn"
+    assert any(
+        rc.startswith(WITHIN_SOURCE_WARN_PREFIX)
+        for rc in routed.payload["reason_codes"]
+    )
+    assert route_within_source_eval(res).payload["status"] == "warn"
+
+
 def test_warn_does_not_block_promotion():
-    """Full eval path: a STANDARD-lane paraphrase promotes, and the warn
-    codes land on the promoted artifact's provenance."""
+    """Full eval path: a paraphrased action_item promotes, and the warn
+    codes land on the promoted artifact's provenance and the
+    control_decision."""
     assert _PARAPHRASE_ACTION not in DEC18  # genuinely not verbatim
     result = run_meeting_minutes_llm_workflow(
         DEC18,
@@ -190,50 +358,55 @@ def test_warn_does_not_block_promotion():
     assert all(
         w.startswith(WITHIN_SOURCE_WARN_PREFIX) for w in warnings
     )
-    # The control_decision carries the same warn codes (their
-    # authoritative source).
     assert (
         result.control_decision.payload["within_source_warnings"] == warnings
     )
 
 
-def test_high_stakes_fabrication_blocks_promotion():
-    """Full eval path: a fabricated decision (HIGH_STAKES) still blocks
-    with the original ``extraction_not_in_source`` reason code, and no
-    within_source_warnings are written (nothing was promoted)."""
+def test_fabricated_decision_now_promotes_with_warn():
+    """The exact case that used to hard-block a whole run: a fabricated
+    DECISION absent from the transcript whose verb is a real regulatory
+    verb. Only within_source flags it, so it now PROMOTES with the miss
+    logged as a warn (the 138-chunk-run-unblocking outcome)."""
+    assert _FABRICATED_DECISION not in DEC18
     result = run_meeting_minutes_llm_workflow(
         DEC18,
         client=json_stub(
-            decisions=[
-                "The committee approved a brand new unrelated budget line."
-            ],
+            decisions=[_FABRICATED_DECISION],
+            action_items=["DoD will submit revised ERP values."],
+            open_questions=DEC18_OPEN_QUESTIONS,
+            technical_parameters=DEC18_TECHNICAL_PARAMETERS,
         ),
     )
-    assert result.promoted is False
-    assert _decision(result) == "block"
+    assert result.promoted is True
+    assert _decision(result) == "allow"
 
     within = _within_eval(result)
-    assert within["status"] == "fail"
+    assert within["status"] == "warn"
     assert any(
+        rc.startswith(WITHIN_SOURCE_WARN_PREFIX)
+        and "decisions" in rc
+        for rc in within["reason_codes"]
+    )
+    # The block-causing prefix is gone — logged, not blocking.
+    assert not any(
         rc.startswith(EXTRACTION_NOT_IN_SOURCE)
         for rc in within["reason_codes"]
     )
-    # The block is attributed to within_source in the decision.
-    assert (
-        f"failed:{WITHIN_SOURCE_EVAL_TYPE}"
-        in result.control_decision.payload["reason_codes"]
-    )
-    # A blocked run never stamps within_source_warnings on provenance.
-    assert (
+    warnings = result.meeting_minutes.payload["provenance"][
         "within_source_warnings"
-        not in result.meeting_minutes.payload.get("provenance", {})
+    ]
+    assert warnings and all(
+        w.startswith(WITHIN_SOURCE_WARN_PREFIX) for w in warnings
     )
 
 
 def test_warn_appears_in_eval_history(tmp_path):
     """After a warn promote, the eval_history projection carries a row
     the correction miner can read: ``status == "warn"`` and a reason
-    code with the ``within_source_warn:`` prefix."""
+    code with the ``within_source_warn`` prefix. The within_source eval
+    still RAN (it is the within_source eval_type, demoted — not a
+    removed / renamed eval)."""
     result = run_meeting_minutes_llm_workflow(
         DEC18,
         client=json_stub(
@@ -265,119 +438,18 @@ def test_warn_appears_in_eval_history(tmp_path):
         )
     ]
     assert warn_rows, "no within_source_warn row in eval_history.jsonl"
-    # The within_source eval still ran for all types — the row is the
-    # within_source eval_type, demoted (not a removed / renamed eval).
     assert warn_rows[0]["eval_type"] == WITHIN_SOURCE_EVAL_TYPE
 
 
-def test_hard_block_types_equals_high_stakes_types():
-    assert WITHIN_SOURCE_HARD_BLOCK_TYPES == HIGH_STAKES_TYPES
-
-
 # ---------------------------------------------------------------------
-# risks demoted HIGH_STAKES → STANDARD (analytical, not binding)
+# The instrument NEVER blocks — mixed / unparseable still warn
 # ---------------------------------------------------------------------
 
 
-def test_risks_demoted_to_warn():
-    """A risk (now STANDARD) whose text is not verbatim in the
-    transcript routes to ``warn``: a risk is an analytical observation,
-    not a binding commitment, so a paraphrase is logged not blocked.
-
-    ``risks`` is a Step-4 structured array (text field ``risk_text``),
-    so the within_source eval picks it up only as an object item — the
-    same shape the real meeting_minutes_llm extraction emits.
-    """
-    art = _mk(
-        _base_payload(
-            risks=[
-                {"risk_text": "A risk that never appears in the body at all."}
-            ]
-        )
-    )
-    res = run_llm_within_source_eval(art, "totally unrelated transcript body")
-    assert res.payload["status"] == "fail"
-    # Sanity: the miss is tagged with the ``risks`` array key so lane
-    # derivation can route it.
-    assert any(
-        rc.startswith(f"{EXTRACTION_NOT_IN_SOURCE}:risks:")
-        for rc in res.payload["reason_codes"]
-    )
-
-    # Spec primitive with the explicit item_type.
-    routed = route_within_source_result(res, "risks")
-    assert routed.payload["status"] == "warn"
-    assert any(
-        rc.startswith(WITHIN_SOURCE_WARN_PREFIX)
-        for rc in routed.payload["reason_codes"]
-    )
-    # The block-causing prefix is gone (logged, not blocking).
-    assert not any(
-        rc.startswith(EXTRACTION_NOT_IN_SOURCE)
-        for rc in routed.payload["reason_codes"]
-    )
-    # A new envelope — the original failed result is not mutated.
-    assert res.payload["status"] == "fail"
-    assert routed.artifact_id != res.artifact_id
-
-    # The real pipeline path (lane derived from the result's own codes,
-    # not an explicit item_type) also demotes — this is what unblocks
-    # the full 138-chunk run.
-    derived = route_within_source_eval(res)
-    assert derived.payload["status"] == "warn"
-
-
-def test_decisions_still_hard_blocks():
-    """A decision (still HIGH_STAKES) whose text is not verbatim in the
-    transcript routes UNCHANGED: status stays ``fail``. The decisions
-    hard block is preserved exactly — demoting risks must not weaken
-    it."""
-    art = _mk(
-        _base_payload(
-            decisions=["A decision that never appears verbatim anywhere."]
-        )
-    )
-    res = run_llm_within_source_eval(art, "totally unrelated transcript body")
-    assert res.payload["status"] == "fail"
-
-    routed = route_within_source_result(res, "decisions")
-    assert routed.payload["status"] == "fail"
-    # Original block-causing code preserved verbatim (NOT rewritten).
-    assert any(
-        rc.startswith(EXTRACTION_NOT_IN_SOURCE)
-        for rc in routed.payload["reason_codes"]
-    )
-    assert not any(
-        rc.startswith(WITHIN_SOURCE_WARN_PREFIX)
-        for rc in routed.payload["reason_codes"]
-    )
-    # The derived-lane path also keeps the block.
-    derived = route_within_source_eval(res)
-    assert derived.payload["status"] == "fail"
-
-
-def test_high_stakes_set_no_longer_contains_risks():
-    """The type classification moved: risks left HIGH_STAKES for
-    STANDARD; decisions stayed HIGH_STAKES; and the hard-block set
-    (derived from HIGH_STAKES) therefore no longer contains risks."""
-    assert "risks" not in HIGH_STAKES_TYPES
-    assert "risks" in STANDARD_TYPES
-    assert "decisions" in HIGH_STAKES_TYPES
-    # The hard-block set is HIGH_STAKES verbatim, so it dropped risks
-    # too while keeping decisions.
-    assert "risks" not in WITHIN_SOURCE_HARD_BLOCK_TYPES
-    assert "decisions" in WITHIN_SOURCE_HARD_BLOCK_TYPES
-
-
-# ---------------------------------------------------------------------
-# Embedded red-team hardening
-# ---------------------------------------------------------------------
-
-
-def test_mixed_high_and_standard_within_source_blocks():
-    """A result that fails on BOTH a decision (HIGH_STAKES) and an
-    action_item (STANDARD) must NOT demote — HIGH_STAKES wins, the
-    combined result still hard-blocks."""
+def test_mixed_high_and_standard_within_source_warns():
+    """A result that fails on BOTH a decision (was HIGH_STAKES) and an
+    action_item (STANDARD) now demotes to ``warn`` — there is no
+    hard-block lane, so a mixed miss is logged, never blocked."""
     art = _mk(
         _base_payload(
             decisions=["A fabricated decision absent from the body."],
@@ -388,16 +460,23 @@ def test_mixed_high_and_standard_within_source_blocks():
     assert res.payload["status"] == "fail"
 
     routed = route_within_source_eval(res)
-    assert routed.payload["status"] == "fail"
+    assert routed.payload["status"] == "warn"
+    # Every miss is logged with the warn prefix; none is dropped.
     assert any(
+        rc.startswith(WITHIN_SOURCE_WARN_PREFIX)
+        for rc in routed.payload["reason_codes"]
+    )
+    assert not any(
         rc.startswith(EXTRACTION_NOT_IN_SOURCE)
         for rc in routed.payload["reason_codes"]
     )
 
 
-def test_unparseable_within_source_codes_fail_closed():
+def test_unparseable_within_source_codes_still_warn():
     """A within_source fail whose codes cannot be parsed back to a type
-    must NOT be demoted (fail-closed)."""
+    still demotes to ``warn`` (the instrument never blocks) and the
+    original code is preserved in the payload, not dropped — the
+    correction miner must still see it."""
     bogus = new_artifact(
         artifact_type="eval_result",
         payload={
@@ -410,7 +489,36 @@ def test_unparseable_within_source_codes_fail_closed():
         status="evaluated",
     )
     routed = route_within_source_eval(bogus)
+    assert routed.payload["status"] == "warn"
+    # The code had no EXTRACTION_NOT_IN_SOURCE prefix to rewrite, so it
+    # is preserved verbatim — logged, never silently dropped.
+    assert "garbage_without_a_known_prefix" in routed.payload["reason_codes"]
+    assert routed.payload["within_source_demoted"] is True
+
+
+def test_non_within_source_eval_is_never_demoted():
+    """``route_within_source_eval`` only ever demotes the within_source
+    eval. A failing eval of any other type is returned untouched so a
+    caller cannot accidentally soften another gate."""
+    other = new_artifact(
+        artifact_type="eval_result",
+        payload={
+            "eval_type": STRICT_SCHEMA_EVAL_TYPE,
+            "status": "fail",
+            "score": 0.0,
+            "reason_codes": ["schema_violation:boom"],
+        },
+        trace_id="t",
+        status="evaluated",
+    )
+    routed = route_within_source_eval(other)
+    assert routed is other
     assert routed.payload["status"] == "fail"
+
+
+# ---------------------------------------------------------------------
+# decide_control treats warn as non-blocking (unchanged)
+# ---------------------------------------------------------------------
 
 
 def test_warn_status_never_in_blocking_codes():
@@ -435,7 +543,7 @@ def test_warn_status_never_in_blocking_codes():
             "eval_type": WITHIN_SOURCE_EVAL_TYPE,
             "status": "warn",
             "score": 0.0,
-            "reason_codes": [f"{WITHIN_SOURCE_WARN_PREFIX}:action_items:foo"],
+            "reason_codes": [f"{WITHIN_SOURCE_WARN_PREFIX}:decisions:foo"],
         },
         trace_id="t",
         status="evaluated",
@@ -444,13 +552,14 @@ def test_warn_status_never_in_blocking_codes():
     assert decision.payload["decision"] == "allow"
     assert decision.payload["reason_codes"] == []
     assert decision.payload["within_source_warnings"] == [
-        f"{WITHIN_SOURCE_WARN_PREFIX}:action_items:foo"
+        f"{WITHIN_SOURCE_WARN_PREFIX}:decisions:foo"
     ]
 
 
 def test_fail_still_blocks_alongside_warn():
-    """A real ``fail`` blocks even when a ``warn`` is also present —
-    the demotion never rescues an unrelated hard failure."""
+    """A real ``fail`` (strict_schema) blocks even when a within_source
+    ``warn`` is also present — demotion never rescues an unrelated hard
+    failure, and the warn is still recorded on the blocked run."""
     target = _mk(_base_payload())
     hard_fail = new_artifact(
         artifact_type="eval_result",
@@ -479,7 +588,6 @@ def test_fail_still_blocks_alongside_warn():
     assert "failed:llm_extraction_strict_schema" in (
         decision.payload["reason_codes"]
     )
-    # The warn is still recorded even on a blocked run (audit).
     assert decision.payload["within_source_warnings"] == [
         f"{WITHIN_SOURCE_WARN_PREFIX}:topics:foo"
     ]

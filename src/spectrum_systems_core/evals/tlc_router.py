@@ -14,14 +14,20 @@ Lanes
   technical_parameters and the cross-meeting accountability arrays.
   Run the FULL eval set: ``regulatory_verb`` + ``within_source`` +
   ``strict_schema`` + ``nonempty``. Same-or-stricter than before.
-* ``STANDARD_TYPES`` — high-volume descriptive arrays (including
-  ``risks``, which is an analytical artifact, not a binding
-  commitment: a paraphrased risk is still useful, so a within_source
-  miss there is a logged WARN, not a hard block). Run
+* ``STANDARD_TYPES`` — high-volume descriptive arrays. Run
   ``within_source`` + ``strict_schema`` only. ``regulatory_verb`` is
   skipped because it is decision-governing-verb specific and not
   applicable to these types; ``nonempty`` is the HIGH_STAKES content
   floor and is not part of the STANDARD subset.
+
+The two lanes only decide which evals RUN (``regulatory_verb`` and
+``nonempty`` are HIGH_STAKES-only). They do NOT decide within_source
+pass/fail semantics: ``extraction_within_source_required`` is a
+measurement instrument, not a trust gate, so a within_source miss is
+demoted to a logged WARN for EVERY type, in BOTH lanes (see the
+within_source demotion contract below). The real trust gates
+(``regulatory_verb``, ``strict_schema``/``llm_extraction_strict_schema``,
+``required_*_fields``, grounding) remain hard blocks, unchanged.
 
 Why this is additive, never subtractive
 ---------------------------------------
@@ -30,10 +36,15 @@ The router CALLS the unmodified eval functions and never reimplements a
 weaker variant. It is appended to ``extra_evals`` AFTER the workflow's
 existing four LLM evals and the global ``run_required_evals`` (which
 already runs ``regulatory_verb`` for meeting_minutes) — none of those is
-removed. The router can therefore only ADD a fail signal, never relax
-one: a payload that blocked before still blocks. HIGH_STAKES types get
-the same evals as before; STANDARD types get a subset that is still a
-strict superset of "nothing" and is enforced fail-closed.
+removed. With ONE deliberate exception — ``within_source`` is demoted
+to a logged WARN for every type (it is a measurement instrument that
+feeds the correction miner, not a trust gate) — the router can only
+ADD a fail signal, never relax one. Every other routed sub-eval
+(``strict_schema``, ``regulatory_verb``, ``nonempty``) keeps its
+hard-block semantics: a payload those blocked before still blocks.
+HIGH_STAKES types get the same evals as before; STANDARD types get a
+subset that is still a strict superset of "nothing" and is enforced
+fail-closed.
 
 Fail-closed invariants
 ----------------------
@@ -195,102 +206,65 @@ assert _CLASSIFIED == _ALL_CONTENT_ARRAYS, (
 
 # within_source demotion contract -------------------------------------
 #
-# The ``extraction_within_source_required`` eval blocks promotion when
-# an extracted item is not a verbatim (normalized) substring of the
-# transcript. For the accountability-bearing HIGH_STAKES lane that hard
-# block is correct and stays. For the high-volume STANDARD descriptive
-# lane a miss is usually slight model paraphrase / transcript-encoding
-# noise, not a trust failure — blocking there starves the correction
-# miner of every input. So a STANDARD-lane within_source miss is
-# DEMOTED to a logged warn (promote, but record it); a HIGH_STAKES miss
-# is unchanged.
+# The ``extraction_within_source_required`` eval flags an extracted
+# item that is not a verbatim (normalized) substring of the transcript.
+# That signal is a MEASUREMENT INSTRUMENT, not a trust gate: it feeds
+# the correction miner so verbatim extraction improves over time. It
+# must therefore NEVER hard-block promotion, for ANY type. A single
+# paraphrased item must not block a 138-chunk run and starve the miner
+# of the other 200+ grounded entries.
 #
-# The hard-block set is HIGH_STAKES verbatim — a SEPARATE name for
-# read-clarity at the call site, with an import-time assertion that it
-# can never drift from HIGH_STAKES_TYPES (a drift would silently move a
-# HIGH_STAKES type out of the hard block).
-WITHIN_SOURCE_HARD_BLOCK_TYPES: frozenset[str] = HIGH_STAKES_TYPES
-assert WITHIN_SOURCE_HARD_BLOCK_TYPES == HIGH_STAKES_TYPES, (
-    "WITHIN_SOURCE_HARD_BLOCK_TYPES must equal HIGH_STAKES_TYPES; a "
-    "drift would demote a HIGH_STAKES within_source miss to warn"
+# So a within_source miss is DEMOTED to a logged warn for EVERY type,
+# in BOTH lanes (promote, but record it). The real trust gates —
+# ``regulatory_verb``, ``llm_extraction_strict_schema``,
+# ``required_meeting_minutes_fields``, grounding coverage — remain hard
+# blocks, entirely unchanged.
+#
+# ``WITHIN_SOURCE_HARD_BLOCK_TYPES`` is intentionally EMPTY: no type
+# hard-blocks within_source. It is kept (rather than deleted) as a
+# named, tested invariant so a future change that tries to make
+# within_source block again has to delete this assertion deliberately,
+# not silently repopulate a set. Do NOT add types here — that would
+# turn the measurement instrument back into a trust gate.
+WITHIN_SOURCE_HARD_BLOCK_TYPES: frozenset[str] = frozenset()
+assert WITHIN_SOURCE_HARD_BLOCK_TYPES == frozenset(), (
+    "within_source is warn-only globally; NO type hard-blocks it. "
+    "WITHIN_SOURCE_HARD_BLOCK_TYPES must stay empty — repopulating it "
+    "would convert a measurement instrument back into a trust gate"
 )
-
-# Fail-closed sentinel for the type-derivation helper. It MUST be a
-# member of the hard-block set so that an unparseable / mixed / unknown
-# within_source failure is NEVER demoted out of a block.
-_HARD_BLOCK_SENTINEL = "decisions"
-assert _HARD_BLOCK_SENTINEL in WITHIN_SOURCE_HARD_BLOCK_TYPES
-
-
-def _within_source_effective_item_type(eval_result: Artifact) -> str:
-    """Derive the routing item type from a within_source eval_result.
-
-    A within_source eval_result is a single combined result whose
-    ``reason_codes`` are ``extraction_not_in_source:<key>:<text>`` —
-    one per item that is not in the transcript, tagged with the array
-    key (``<key>`` is the extraction type). Routing is per-result, so
-    the result is demotable to warn ONLY when EVERY failing item is a
-    STANDARD type.
-
-    Fail-closed: if ANY failing item is a hard-block (HIGH_STAKES)
-    type, or a code is unparseable, or a key is unknown, return a
-    hard-block type so ``route_within_source_result`` keeps the block.
-    Only an all-STANDARD failure returns a STANDARD type (→ demote).
-    """
-    payload = (
-        eval_result.payload if isinstance(eval_result.payload, dict) else {}
-    )
-    codes = payload.get("reason_codes") or []
-    standard_seen: str | None = None
-    for rc in codes:
-        if not isinstance(rc, str):
-            return _HARD_BLOCK_SENTINEL
-        # text segment may itself contain ':' — bound the split.
-        parts = rc.split(":", 2)
-        if len(parts) < 2 or parts[0] != EXTRACTION_NOT_IN_SOURCE:
-            return _HARD_BLOCK_SENTINEL
-        key = parts[1]
-        if key in WITHIN_SOURCE_HARD_BLOCK_TYPES:
-            return key
-        if key in STANDARD_TYPES:
-            standard_seen = key
-        else:
-            # Unknown extraction type → never silently demote.
-            return _HARD_BLOCK_SENTINEL
-    if standard_seen is not None:
-        return standard_seen
-    # ``status == "fail"`` with no parseable code (should not happen for
-    # within_source, which always emits a code per miss) → fail closed.
-    return _HARD_BLOCK_SENTINEL
 
 
 def route_within_source_result(
     eval_result: Artifact, item_type: str
 ) -> Artifact:
-    """Route ONE within_source eval_result by item type.
+    """Route ONE within_source eval_result. Always warn-only.
 
-    Contract (mission spec, exact):
+    Contract:
 
     * ``status != "fail"`` (pass / already-warn) → return unchanged.
-    * ``item_type`` in ``WITHIN_SOURCE_HARD_BLOCK_TYPES`` (HIGH_STAKES)
-      → return unchanged (the hard block is preserved verbatim).
-    * otherwise (STANDARD) → return a NEW eval_result whose
-      ``status`` is ``"warn"`` and whose ``reason_codes`` are the
-      original codes with ``extraction_not_in_source`` rewritten to
-      ``within_source_warn``. A new envelope is returned (never an
-      in-place payload edit) so the original failed result is not
-      mutated and the warn is auditable as its own artifact.
+    * ``status == "fail"`` → return a NEW eval_result whose ``status``
+      is ``"warn"`` and whose ``reason_codes`` are the original codes
+      with ``extraction_not_in_source`` rewritten to
+      ``within_source_warn``. This holds for EVERY type — within_source
+      is a measurement instrument, not a trust gate, so it never
+      hard-blocks. A new envelope is returned (never an in-place
+      payload edit) so the original failed result is not mutated and
+      the warn is auditable as its own artifact.
+
+    ``item_type`` is retained for the spec-primitive call shape the
+    unit tests drive (an explicit per-type assertion that every type
+    demotes). It NO LONGER gates anything: the demotion is global, so
+    the result is byte-identical for any ``item_type``.
 
     The returned warn result also carries ``within_source_warn_codes``
     and ``within_source_demoted: true`` so a reader does not have to
     re-parse ``reason_codes``.
     """
+    del item_type  # warn-only is global; the type no longer gates.
     payload = (
         eval_result.payload if isinstance(eval_result.payload, dict) else {}
     )
     if payload.get("status") != "fail":
-        return eval_result
-    if item_type in WITHIN_SOURCE_HARD_BLOCK_TYPES:
         return eval_result
 
     old_codes = list(payload.get("reason_codes") or [])
@@ -317,15 +291,14 @@ def route_within_source_result(
 
 
 def route_within_source_eval(eval_result: Artifact) -> Artifact:
-    """Route a within_source eval_result, deriving the lane from its
-    own reason codes (the real pipeline produces ONE combined,
-    possibly-mixed result, not one-per-type).
+    """Route a within_source eval_result to a logged warn.
 
     This is the function every real call site uses;
     ``route_within_source_result`` is the spec primitive the unit
-    tests drive with an explicit ``item_type``. Composing them keeps
-    the primitive pure and the lane derivation fail-closed in one
-    place.
+    tests drive with an explicit ``item_type``. Demotion is global —
+    no lane is derived from the codes, because no type hard-blocks
+    within_source — so this only has to confirm the result really is
+    the within_source eval before demoting it.
     """
     if not isinstance(eval_result.payload, dict):
         return eval_result
@@ -334,9 +307,7 @@ def route_within_source_eval(eval_result: Artifact) -> Artifact:
         # returned untouched (defence in depth — a caller cannot route
         # a non-within_source result through here by mistake).
         return eval_result
-    return route_within_source_result(
-        eval_result, _within_source_effective_item_type(eval_result)
-    )
+    return route_within_source_result(eval_result, "")
 
 
 def _present_nonempty(payload: dict[str, Any], key: str) -> bool:
@@ -377,10 +348,15 @@ def run_tlc_routed_eval(
     """Classify the extraction by type lane, route to the per-lane eval
     set, and return ONE combined ``eval_result``.
 
-    Combined ``status`` is ``fail`` iff any routed sub-eval failed, the
+    Combined ``status`` is ``fail`` iff a hard-block routed sub-eval
+    (``strict_schema``, ``regulatory_verb``, ``nonempty``) failed, the
     payload is not an object, or an unknown content array is present.
+    ``extraction_within_source_required`` is a measurement instrument,
+    not a trust gate: a within_source miss is demoted to a logged warn
+    and NEVER fails the combined result, for any type.
     ``decide_control`` blocks on that ``fail`` exactly as for any other
-    eval — fail-closed and unchanged.
+    eval — fail-closed and unchanged for every gate except the
+    deliberately warn-only within_source.
     """
     payload = artifact.payload
     if not isinstance(payload, dict):
@@ -425,9 +401,12 @@ def run_tlc_routed_eval(
     has_high_stakes = bool(high_stakes_present)
 
     # --- route to the per-lane eval set -------------------------------
-    # strict_schema + within_source apply to BOTH lanes, so they always
-    # run (covers the STANDARD bad-enum block and the HIGH_STAKES
-    # missing-source block). regulatory_verb + nonempty are the
+    # strict_schema + within_source run for BOTH lanes. strict_schema is
+    # a hard block in both lanes (covers the bad-enum block).
+    # within_source also runs for both lanes — it still MEASURES every
+    # miss (for the correction miner) — but it is a measurement
+    # instrument, not a trust gate, so its miss is demoted to a logged
+    # warn and never blocks. regulatory_verb + nonempty are the
     # HIGH_STAKES-only additions to the full set.
     evals_run: list[str] = []
     evals_skipped: list[str] = []
@@ -480,26 +459,29 @@ def run_tlc_routed_eval(
         evals_run.append(label)
         if sub_status != "pass":
             if label == "extraction_within_source_required":
-                # STANDARD-lane within_source miss → demote to a logged
-                # warn, do NOT fail the combined result. A HIGH_STAKES
-                # (or mixed / unparseable) miss is returned unchanged by
-                # route_within_source_eval and falls through to the
-                # hard block below — HIGH_STAKES behaviour is byte
-                # identical to before P-demote.
+                # within_source is a measurement instrument, not a
+                # trust gate: a miss is ALWAYS demoted to a logged warn
+                # for every type and NEVER fails the combined result.
+                # The standalone within_source eval_result (status =
+                # "warn") is the authoritative record decide_control /
+                # eval_history / the correction miner read; these
+                # combined-result fields are its own copy so the
+                # demotion is visible without cross-referencing. The
+                # real trust gates below (strict_schema, regulatory_verb,
+                # nonempty) keep their hard block, unchanged.
                 routed_ws = route_within_source_eval(sub)
                 routed_payload = (
                     routed_ws.payload
                     if isinstance(routed_ws.payload, dict)
                     else {}
                 )
-                if routed_payload.get("status") == "warn":
-                    within_source_demoted = True
-                    within_source_warn_codes = [
-                        c
-                        for c in (routed_payload.get("reason_codes") or [])
-                        if isinstance(c, str)
-                    ]
-                    continue
+                within_source_demoted = True
+                within_source_warn_codes = [
+                    c
+                    for c in (routed_payload.get("reason_codes") or [])
+                    if isinstance(c, str)
+                ]
+                continue
             all_passed = False
             reason_codes.append(f"{TLC_SUBEVAL_FAIL_PREFIX}{label}")
             for rc in sub_reasons:
@@ -515,11 +497,12 @@ def run_tlc_routed_eval(
             "unknown_types": unknown_present,
             "evals_run": evals_run,
             "evals_skipped_standard_only": evals_skipped,
-            # Audit: did a STANDARD-lane within_source miss get demoted
-            # to a warn on this run, and which codes? The authoritative
-            # warn that decide_control / eval_history read comes from
-            # the standalone within_source eval_result (status=warn);
-            # these fields are the combined result's own record so the
+            # Audit: did a within_source miss get demoted to a warn on
+            # this run (any type — demotion is global), and which
+            # codes? The authoritative warn that decide_control /
+            # eval_history / the correction miner read comes from the
+            # standalone within_source eval_result (status=warn); these
+            # fields are the combined result's own record so the
             # demotion is visible without cross-referencing.
             "within_source_demoted": within_source_demoted,
             "within_source_warn_codes": within_source_warn_codes,

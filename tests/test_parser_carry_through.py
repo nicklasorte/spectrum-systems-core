@@ -288,14 +288,13 @@ def test_step4_structured_within_source_happy():
 
 
 def test_step4_commitment_text_not_in_transcript_demotes_to_warn():
-    """``commitments`` is a STANDARD lane type. A commitment_text that
-    is not in the transcript is still DETECTED and RECORDED by the
-    within_source eval, but for the STANDARD lane it is DEMOTED to a
-    logged warn (promote, but record it) instead of hard-blocking —
-    the demote-within-source-warn mission. The eval still runs and the
-    miss is still measured; only the gate outcome changes for STANDARD.
-    The HIGH_STAKES hard block is proven elsewhere
-    (tests/test_within_source_routing.py)."""
+    """A commitment_text that is not in the transcript is still
+    DETECTED and RECORDED by the within_source eval, but is DEMOTED to
+    a logged warn (promote, but record it) instead of hard-blocking.
+    within_source is a measurement instrument, not a trust gate: it is
+    warn-only for EVERY type (proven in
+    tests/test_within_source_routing.py). The eval still runs and the
+    miss is still measured; only the gate outcome is softened."""
     bad_commitment = _grounded_commitment()
     bad_commitment["commitment_text"] = "DoD will colonize the moon by Friday."
     result = run_meeting_minutes_llm_workflow(

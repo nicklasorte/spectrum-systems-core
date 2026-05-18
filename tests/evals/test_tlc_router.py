@@ -11,8 +11,9 @@ Proves the routing contract end-to-end at the eval layer:
   the STANDARD lane).
 * STANDARD item with no verb → combined allow (regulatory_verb not
   applicable / skipped).
-* HIGH_STAKES item not in source → combined block (within_source
-  applies to both lanes).
+* Any item not in source → combined PASS with the miss demoted to a
+  logged warn (within_source is a measurement instrument, not a trust
+  gate — it never blocks, for any type).
 * An unknown content array → combined block (never silently routed).
 * The lane sets are disjoint AND exactly cover every content array the
   meeting_minutes_llm workflow can emit (no-drift gate).
@@ -163,20 +164,28 @@ def test_high_stakes_bad_verb_blocks():
     assert "regulatory_verb" in res["evals_run"]
 
 
-def test_high_stakes_not_in_source_blocks():
-    # within_source applies to BOTH lanes — a HIGH_STAKES decision whose
-    # text is absent from the transcript blocks even with a good verb.
+def test_within_source_miss_warns_not_blocks_combined():
+    # within_source is a measurement instrument, not a trust gate: a
+    # decision whose text is absent from the transcript (good verb, so
+    # regulatory_verb passes) is DEMOTED to a logged warn and the
+    # combined result still PASSES — it never blocks the run, for any
+    # type. The miss is still recorded for the correction miner.
     art = _base(
         decisions=[
             {"text": "A decision that never appears anywhere.", "verb": "adopted"}
         ]
     )
     res = _run(art, transcript="totally unrelated transcript body").payload
-    assert res["status"] == "fail"
+    assert res["status"] == "pass"
     assert (
         f"{TLC_SUBEVAL_FAIL_PREFIX}extraction_within_source_required"
-        in res["reason_codes"]
+        not in res["reason_codes"]
     )
+    # The within_source eval still RAN and the miss was demoted, not
+    # dropped: the combined result records it for the miner.
+    assert "extraction_within_source_required" in res["evals_run"]
+    assert res["within_source_demoted"] is True
+    assert res["within_source_warn_codes"]
 
 
 # ----------------------------------------------------------------------

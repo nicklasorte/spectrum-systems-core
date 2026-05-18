@@ -113,7 +113,10 @@ def test_blocking_items_attributed_to_producing_chunk():
     total = len(chunks)
 
     assert "=== CHUNK DEBUG (meeting_minutes_llm) ===" in report
-    assert not res.promoted  # bad verb + within-source both block
+    # The bad verb hard-blocks (regulatory_verb); the within-source
+    # miss is demoted to a warn but is still rendered in the debug
+    # report so the operator sees every attributed issue.
+    assert not res.promoted
 
     blorp_block = _block(report, _pos(chunks, blorp), total)
     assert '"blorped"' in blorp_block
