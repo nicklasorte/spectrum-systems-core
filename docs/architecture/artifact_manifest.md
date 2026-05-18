@@ -110,6 +110,12 @@ calling `git check-ignore`.
   - New optional arrays: `commitments`, `risks`, `cross_references`,
     `attendees`, `topics`, `regulatory_references`,
     `technical_parameters`, `named_artifacts`, `scheduled_events`.
+    Each `scheduled_events` item requires the `event_id` / `title` /
+    `date` keys, but `date` is typed `["string", "null"]`: a future
+    event mentioned without an explicit date is a faithful extraction
+    (the model must never invent a date), so `date: null` is valid and
+    must not block. The key stays required and a non-string/non-null
+    value is still rejected fail-closed.
   - The live-LLM path now carries ALL of the above through to the
     promoted artifact: `workflows/meeting_minutes_llm._parse_llm_payload`
     preserves the structured object forms verbatim (never coerced to

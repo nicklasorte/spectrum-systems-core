@@ -300,6 +300,50 @@ def test_missing_legacy_required_field_fails():
         validate_artifact(art, ARTIFACT_TYPE)
 
 
+# ---- scheduled_events.date nullability ---------------------------------
+#
+# Trust property: the extraction model correctly returns null for
+# scheduled_events.date when the transcript mentions a future event but
+# states no explicit date (the "never invent" rule). null must validate
+# so a faithful extraction is not blocked; the key stays required and a
+# wrong-typed value is still rejected fail-closed.
+
+
+def test_scheduled_event_null_date_validates():
+    """The exact regression: a scheduled event with no stated date
+    carries date=None and must validate (was: None is not of type
+    'string' at ['scheduled_events', 0, 'date'])."""
+    art = _fully_populated()
+    art["scheduled_events"][0]["date"] = None
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_scheduled_event_string_date_still_validates():
+    """Additivity: a non-null string date still validates unchanged."""
+    art = _fully_populated()
+    art["scheduled_events"][0]["date"] = "2026-06-01"
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_scheduled_event_date_key_still_required():
+    """The date KEY stays required — omitting it entirely still fails
+    (relaxing the type to nullable did not relax presence)."""
+    art = _fully_populated()
+    del art["scheduled_events"][0]["date"]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_scheduled_event_date_wrong_type_fails():
+    """Fail-closed: only string or null is valid — an integer (or any
+    other type) is still rejected, the nullability did not open the
+    field to arbitrary types."""
+    art = _fully_populated()
+    art["scheduled_events"][0]["date"] = 20260601
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
 # ---- Step 6: stakeholders + confidence on a structured decision --------
 
 

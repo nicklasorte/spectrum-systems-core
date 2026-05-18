@@ -289,7 +289,10 @@
         "properties": {
           "event_id": { "type": "string", "minLength": 1 },
           "title": { "type": "string", "minLength": 1 },
-          "date": { "type": "string", "minLength": 1 },
+          "date": {
+            "type": ["string", "null"],
+            "description": "The event date as stated in the transcript. The key is required (the extraction model always emits it) but the value is null when no date was explicitly stated — a scheduled event mentioned without a date is still a real, faithful extraction, so null is valid and must not block (the model must never invent a date)."
+          },
           "time": { "type": ["string", "null"] },
           "location": { "type": ["string", "null"] },
           "purpose": { "type": ["string", "null"] }
