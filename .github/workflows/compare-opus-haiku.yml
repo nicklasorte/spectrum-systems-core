@@ -19,7 +19,30 @@ on:
         required: true
         default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
       dry_run:
-        description: 'Dry run: print the diff, write nothing'
+        description: >-
+          Run the full comparison but do not write the comparison_result
+          artifact to the data-lake. Useful for validating the comparison
+          produces valid output before committing.
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      print_inputs:
+        description: >-
+          Print the haiku and opus artifact paths and item counts before
+          comparison runs. Confirms both artifacts are readable.
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      print_scores:
+        description: >-
+          Print the full comparison_result payload including F1,
+          precision, recall by type after comparison runs. Observe-only.
         required: false
         default: 'false'
         type: choice
@@ -37,6 +60,8 @@ jobs:
     env:
       SOURCE_ID: ${{ github.event.inputs.source_id }}
       DRY_RUN: ${{ github.event.inputs.dry_run }}
+      PRINT_INPUTS: ${{ github.event.inputs.print_inputs }}
+      PRINT_SCORES: ${{ github.event.inputs.print_scores }}
     steps:
       - name: Checkout spectrum-systems-core
         uses: actions/checkout@v4
@@ -83,6 +108,12 @@ jobs:
           ARGS=( --data-lake "${{ github.workspace }}/data-lake" --source-id "$SOURCE_ID" )
           if [ "$DRY_RUN" = "true" ]; then
             ARGS+=( --dry-run )
+          fi
+          if [ "$PRINT_INPUTS" = "true" ]; then
+            ARGS+=( --print-inputs )
+          fi
+          if [ "$PRINT_SCORES" = "true" ]; then
+            ARGS+=( --print-scores )
           fi
           # STDOUT is pure JSON (the script sends the human table to
           # STDERR). Tee STDOUT to a file the summary/threshold steps

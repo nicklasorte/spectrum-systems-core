@@ -168,6 +168,103 @@ def test_subprocess_dry_run_writes_nothing(tmp_path: Path) -> None:
         / "comparisons"
     )
     assert not comp_dir.exists() or not list(comp_dir.glob("*.json"))
+    # The end-of-run dry-run marker goes to STDERR, never STDOUT.
+    assert "DRY RUN — artifact not written" in result.stderr
+    assert "DRY RUN" not in result.stdout
+
+
+def _assert_stdout_pure_json(result) -> dict:
+    """STDOUT must parse as a single JSON object even with debug flags.
+
+    The workflow tees STDOUT to a file the summary/threshold steps
+    json.loads — any debug print leaking onto STDOUT silently breaks
+    the F1 < 0.70 correction-miner gate. This is the property the
+    print flags must never violate.
+    """
+    assert result.returncode == 0, (
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    data = json.loads(result.stdout)
+    assert data["status"] == "success"
+    return data
+
+
+def test_subprocess_print_inputs_to_stderr_stdout_stays_json(
+    tmp_path: Path,
+) -> None:
+    dl = _seed(tmp_path)
+    result = _run(
+        [
+            "--data-lake", str(dl), "--source-id", SOURCE_ID,
+            "--print-inputs",
+        ]
+    )
+    _assert_stdout_pure_json(result)
+    # Paths + counts land on STDERR, confirming both artifacts read.
+    assert "=== print_inputs ===" in result.stderr
+    assert "opus artifact path:" in result.stderr
+    assert "haiku artifact path:" in result.stderr
+    # Opus = 2 decisions + 1 action + 1 question = 4 baseline rows.
+    assert "opus item count:     4" in result.stderr
+    # Haiku reproduced 1 decision + 1 action + 1 question = 3 items.
+    assert "haiku item count:    3" in result.stderr
+    # The debug readout never leaks onto STDOUT (the json.loads in
+    # _assert_stdout_pure_json already proves STDOUT is one clean
+    # object; this pins the specific markers out of it too).
+    assert "=== print_inputs ===" not in result.stdout
+    assert "opus item count:" not in result.stdout
+    # Observe-only: the artifact is still written normally.
+    assert json.loads(
+        _comparison_artifact(dl).read_text(encoding="utf-8")
+    )["summary"]["total_opus_items"] == 4
+
+
+def test_subprocess_print_scores_to_stderr_stdout_stays_json(
+    tmp_path: Path,
+) -> None:
+    dl = _seed(tmp_path)
+    result = _run(
+        [
+            "--data-lake", str(dl), "--source-id", SOURCE_ID,
+            "--print-scores",
+        ]
+    )
+    data = _assert_stdout_pure_json(result)
+    assert "=== print_scores ===" in result.stderr
+    # The full comparison_result payload (summary + by_type) on STDERR.
+    assert '"haiku_f1_vs_opus"' in result.stderr
+    assert '"haiku_precision_vs_opus"' in result.stderr
+    assert '"haiku_recall_vs_opus"' in result.stderr
+    assert '"by_type"' in result.stderr
+    # STDOUT is still exactly the run-summary JSON, nothing more.
+    assert data["summary"]["true_positives"] == 3
+
+
+def test_subprocess_all_debug_flags_stdout_stays_json(
+    tmp_path: Path,
+) -> None:
+    """All three flags together: STDOUT must still be one JSON object
+    and a dry run must still write nothing."""
+    dl = _seed(tmp_path)
+    result = _run(
+        [
+            "--data-lake", str(dl), "--source-id", SOURCE_ID,
+            "--dry-run", "--print-inputs", "--print-scores",
+        ]
+    )
+    _assert_stdout_pure_json(result)
+    assert "=== print_inputs ===" in result.stderr
+    assert "=== print_scores ===" in result.stderr
+    assert "DRY RUN — artifact not written" in result.stderr
+    comp_dir = (
+        dl / "store" / "processed" / "meetings" / SOURCE_ID
+        / "comparisons"
+    )
+    assert not comp_dir.exists() or not list(comp_dir.glob("*.json"))
+    assert not (
+        dl / "store" / "processed" / "meetings" / SOURCE_ID
+        / "eval_history.jsonl"
+    ).exists()
 
 
 def test_subprocess_missing_opus_baseline_halts(tmp_path: Path) -> None:
