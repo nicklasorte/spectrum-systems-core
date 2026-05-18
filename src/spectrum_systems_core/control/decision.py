@@ -92,14 +92,33 @@ def decide_control(
     target_artifact: Artifact, eval_results: list[Artifact]
 ) -> Artifact:
     reason_codes: list[str] = []
+    # within_source warn codes from any eval_result the router demoted
+    # (status == "warn"). These are recorded on the control_decision
+    # (a fresh envelope — no in-place payload edit) so the decision
+    # itself carries the warn provenance, and the workflow can copy
+    # them onto the promoted artifact's provenance and into
+    # eval_history.jsonl for the correction miner.
+    within_source_warnings: list[str] = []
 
     if not eval_results:
         decision = "block"
         reason_codes.append("missing_required_evals")
     else:
+        # Blocking is ``status == "fail"`` ONLY. A demoted within_source
+        # miss carries ``status == "warn"`` — it is logged, never
+        # blocking. ``pass`` is neither. No pre-existing eval emits
+        # "warn", so every pre-existing gate is byte-identical: a real
+        # fail still blocks exactly as before.
         failed = [
             r for r in eval_results if r.payload.get("status") == "fail"
         ]
+        warned = [
+            r for r in eval_results if r.payload.get("status") == "warn"
+        ]
+        for r in warned:
+            for rc in r.payload.get("reason_codes") or []:
+                if isinstance(rc, str):
+                    within_source_warnings.append(rc)
         if failed:
             decision = "block"
             for r in failed:
@@ -125,6 +144,11 @@ def decide_control(
         "target_artifact_id": target_artifact.artifact_id,
         "decision": decision,
         "reason_codes": reason_codes,
+        # Sorted + de-duplicated for determinism (the data-lake
+        # contract requires byte-identical outputs given the same
+        # inputs). Empty list on the common no-warn path so the field
+        # is always present and shape-stable.
+        "within_source_warnings": sorted(set(within_source_warnings)),
         "eval_result_refs": [r.artifact_id for r in eval_results],
     }
     return new_artifact(

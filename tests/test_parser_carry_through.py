@@ -26,6 +26,7 @@ from spectrum_systems_core.evals import (
     SCHEMA_VIOLATION,
     STRICT_SCHEMA_EVAL_TYPE,
     WITHIN_SOURCE_EVAL_TYPE,
+    WITHIN_SOURCE_WARN_PREFIX,
 )
 from spectrum_systems_core.workflows import run_meeting_minutes_llm_workflow
 from tests.llm_stub import (
@@ -286,7 +287,15 @@ def test_step4_structured_within_source_happy():
     assert result.promoted is True
 
 
-def test_step4_rejection_commitment_text_not_in_transcript_blocks():
+def test_step4_commitment_text_not_in_transcript_demotes_to_warn():
+    """``commitments`` is a STANDARD lane type. A commitment_text that
+    is not in the transcript is still DETECTED and RECORDED by the
+    within_source eval, but for the STANDARD lane it is DEMOTED to a
+    logged warn (promote, but record it) instead of hard-blocking —
+    the demote-within-source-warn mission. The eval still runs and the
+    miss is still measured; only the gate outcome changes for STANDARD.
+    The HIGH_STAKES hard block is proven elsewhere
+    (tests/test_within_source_routing.py)."""
     bad_commitment = _grounded_commitment()
     bad_commitment["commitment_text"] = "DoD will colonize the moon by Friday."
     result = run_meeting_minutes_llm_workflow(
@@ -300,15 +309,31 @@ def test_step4_rejection_commitment_text_not_in_transcript_blocks():
         ),
     )
     within = _eval(result, WITHIN_SOURCE_EVAL_TYPE)
-    assert within["status"] == "fail"
+    # The eval still ran and still measured the miss (not silently
+    # dropped) — only the gate outcome is softened for the STANDARD
+    # lane.
+    assert within["status"] == "warn"
     assert within["items_not_in_source"] >= 1
     assert any(
+        rc.startswith(WITHIN_SOURCE_WARN_PREFIX)
+        for rc in within["reason_codes"]
+    )
+    assert any("commitments" in rc for rc in within["reason_codes"])
+    # The block-causing prefix is gone — it is logged, not blocking.
+    assert not any(
         rc.startswith(EXTRACTION_NOT_IN_SOURCE)
         for rc in within["reason_codes"]
     )
-    assert _decision(result) == "block"
-    assert result.promoted is False
-    assert result.meeting_minutes.status == "rejected"
+    assert _decision(result) == "allow"
+    assert result.promoted is True
+    assert result.meeting_minutes.status == "promoted"
+    # The warn is recorded on provenance for the correction miner.
+    warnings = result.meeting_minutes.payload["provenance"][
+        "within_source_warnings"
+    ]
+    assert warnings and all(
+        w.startswith(WITHIN_SOURCE_WARN_PREFIX) for w in warnings
+    )
 
 
 # ---- Step 5 gate: proxy-types nonempty ---------------------------------
