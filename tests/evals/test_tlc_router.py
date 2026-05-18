@@ -303,8 +303,8 @@ def _registry_model_id() -> str:
     return reg["meeting_minutes_extraction"]["model_id"]
 
 
-def test_registry_entry_pins_sonnet():
-    assert _registry_model_id() == "claude-sonnet-4-6"
+def test_registry_entry_pins_haiku():
+    assert _registry_model_id() == "claude-haiku-4-5-20251001"
 
 
 def test_workflow_stamps_registry_model_id_and_promotes():
@@ -333,7 +333,9 @@ def test_workflow_stamps_registry_model_id_and_promotes():
     )
     prov = result.meeting_minutes.payload["provenance"]
     # Gate: model_id in the produced artifact == the registry entry.
-    assert prov["model_id"] == _registry_model_id() == "claude-sonnet-4-6"
+    assert (
+        prov["model_id"] == _registry_model_id() == "claude-haiku-4-5-20251001"
+    )
     assert prov["produced_by"] == "meeting_minutes_llm"
     # Happy path still promotes with the router added (additive).
     assert result.promoted is True
@@ -395,7 +397,9 @@ def test_registry_model_reaches_the_api_call(monkeypatch):
 
     # registry → workflow → API call: the SDK received exactly the
     # registry model string …
-    assert captured["model"] == _registry_model_id() == "claude-sonnet-4-6"
+    assert (
+        captured["model"] == _registry_model_id() == "claude-haiku-4-5-20251001"
+    )
     # … and the same string was stamped into the artifact provenance
     # (promotion on the real-client path needs model-emitted grounding,
     # which this minimal fake SDK does not produce; the json_stub-based
