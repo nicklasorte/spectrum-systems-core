@@ -29,7 +29,7 @@ import re
 import sys
 from pathlib import Path
 
-from ..artifacts import Artifact
+from ..artifacts import Artifact, compute_content_hash
 from ..config import LLMConfigError, preflight_llm_config
 from ..config.taxonomy import UNCLASSIFIED_DECISION_VERB
 from ..data_lake.chunker import chunk_transcript
@@ -39,7 +39,9 @@ from ..evals import (
     STRICT_SCHEMA_EVAL_TYPE,
     VERB_NOT_CLASSIFIED_PREFIX,
     WITHIN_SOURCE_EVAL_TYPE,
+    WITHIN_SOURCE_WARN_PREFIX,
     resolve_decision_verb,
+    route_within_source_eval,
     run_grounding_coverage_eval,
     run_llm_gt_coverage_eval,
     run_llm_nonempty_eval,
@@ -58,6 +60,34 @@ from .llm_client import AnthropicJSONClient, LLMClient, LLMClientError
 from .meeting_minutes import WorkflowResult
 
 PRODUCED_BY = "meeting_minutes_llm"
+
+# Provenance key the demoted-within_source warn codes land on. The
+# meeting_minutes schema's ``provenance`` object permits additional
+# keys (no additionalProperties:false there — same reason model_id is
+# schema-additive), so this is a non-breaking addition the correction
+# miner can read off the promoted artifact.
+WITHIN_SOURCE_WARNINGS_PROVENANCE_KEY = "within_source_warnings"
+
+
+def _routed_within_source_eval(
+    target: Artifact, *, transcript_text: str
+) -> Artifact:
+    """Standalone within_source eval, then route the result.
+
+    ``run_llm_within_source_eval`` is unchanged and still runs for
+    EVERY type (the eval is never removed or skipped). The result is
+    then passed through ``route_within_source_eval``: a HIGH_STAKES (or
+    mixed / unparseable) miss is returned untouched and still blocks; a
+    STANDARD-only miss is demoted to ``status == "warn"`` so
+    ``decide_control`` logs it instead of blocking. The routing lives
+    here (the call site), not inside ``llm_extraction``: ``tlc_router``
+    imports ``llm_extraction``, so importing the router back into
+    ``llm_extraction`` would be an import cycle.
+    """
+    return route_within_source_eval(
+        run_llm_within_source_eval(target, transcript_text)
+    )
+
 
 _PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "meeting_minutes_llm.md"
 
@@ -695,11 +725,15 @@ def _build_chunk_debug_report(
         for p in positions or [0]:
             regverb[p].append(verb)
 
-    # --- within_source: extraction_not_in_source:<key>:<text60> --------
+    # --- within_source: extraction_not_in_source:<key>:<text60> OR the
+    # demoted within_source_warn:<key>:<text60> form (a STANDARD-lane
+    # miss is logged, not blocked — but the operator must still see it
+    # attributed to its producing chunk; observability is never gated).
     ws = _eval_payload(WITHIN_SOURCE_EVAL_TYPE)
     for rc in ws.get("reason_codes", []) or []:
-        if not isinstance(rc, str) or not rc.startswith(
-            EXTRACTION_NOT_IN_SOURCE
+        if not isinstance(rc, str) or not (
+            rc.startswith(EXTRACTION_NOT_IN_SOURCE)
+            or rc.startswith(WITHIN_SOURCE_WARN_PREFIX)
         ):
             continue
         parts = rc.split(":", 2)
@@ -1169,7 +1203,9 @@ def run_meeting_minutes_llm_workflow(
     extra_evals = [
         run_llm_strict_schema_eval,
         functools.partial(run_llm_nonempty_eval, transcript_text=input_text),
-        functools.partial(run_llm_within_source_eval, transcript_text=input_text),
+        functools.partial(
+            _routed_within_source_eval, transcript_text=input_text
+        ),
         functools.partial(
             run_llm_gt_coverage_eval, source_id=source_id, lake_root=lake_root
         ),
@@ -1222,6 +1258,31 @@ def run_meeting_minutes_llm_workflow(
         extra_evals=extra_evals,
         debug_hook=debug_hook,
     )
+
+    if run.promoted:
+        # Step 5: copy the demoted within_source warn codes from the
+        # control_decision (their authoritative source) onto the
+        # promoted artifact's provenance so a consumer reading only the
+        # promoted JSON still sees that STANDARD items were extracted
+        # non-verbatim. This is a post-promotion provenance stamp, not
+        # a content change: it is gated on promotion, deterministic
+        # given the inputs (sorted codes), schema-additive (provenance
+        # permits extra keys), and content_hash is recomputed so the
+        # envelope stays integrity-consistent before the data-lake
+        # writer serialises it. It mirrors the in-place status mutation
+        # promote_if_allowed already performs on the same envelope.
+        warn_codes = list(
+            run.control_decision.payload.get("within_source_warnings") or []
+        )
+        if warn_codes and isinstance(run.target.payload, dict):
+            provenance = run.target.payload.get("provenance")
+            if not isinstance(provenance, dict):
+                provenance = {}
+                run.target.payload["provenance"] = provenance
+            provenance[WITHIN_SOURCE_WARNINGS_PROVENANCE_KEY] = warn_codes
+            run.target.content_hash = compute_content_hash(
+                run.target.payload
+            )
 
     if single_chunk:
         _emit_single_chunk_debug(
