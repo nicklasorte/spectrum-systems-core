@@ -203,15 +203,25 @@ def _meeting_dir(data_lake: Path, source_id: str) -> Path:
     )
 
 
-def load_opus_baseline(
-    data_lake: Path, source_id: str
-) -> List[Dict[str, Any]]:
-    """Read opus_reference_minutes.jsonl, or HALT missing_opus_baseline."""
-    path = (
+def _opus_baseline_path(data_lake: Path, source_id: str) -> Path:
+    """Path to the Opus reference baseline JSONL for one source.
+
+    Single source of truth for the path so the ``--print-inputs`` debug
+    readout cannot drift from the loader that actually reads it. Pure
+    path construction — not comparison logic.
+    """
+    return (
         _meeting_dir(data_lake, source_id)
         / "reference_baselines"
         / "opus_reference_minutes.jsonl"
     )
+
+
+def load_opus_baseline(
+    data_lake: Path, source_id: str
+) -> List[Dict[str, Any]]:
+    """Read opus_reference_minutes.jsonl, or HALT missing_opus_baseline."""
+    path = _opus_baseline_path(data_lake, source_id)
     if not path.is_file():
         raise ComparisonError(
             "missing_opus_baseline",
@@ -716,8 +726,17 @@ def run_comparison(
     data_lake: Path,
     source_id: str,
     dry_run: bool,
+    print_inputs: bool = False,
+    print_scores: bool = False,
 ) -> Dict[str, Any]:
-    """Orchestrate one comparison. Returns a summary dict; raises on halt."""
+    """Orchestrate one comparison. Returns a summary dict; raises on halt.
+
+    ``print_inputs`` / ``print_scores`` are observe-only debug readouts
+    written to STDERR. STDOUT stays pure JSON so the workflow's
+    summary/threshold steps still parse it; neither flag changes the
+    comparison or what is written. ``dry_run`` runs the full comparison
+    but writes no artifact and no eval_history row.
+    """
     types = extraction_types()
     baseline_rows = load_opus_baseline(data_lake, source_id)
     haiku_artifact, haiku_path = find_haiku_artifact(data_lake, source_id)
@@ -728,6 +747,24 @@ def run_comparison(
         )
 
     haiku_payload = haiku_artifact.get("payload") or {}
+
+    if print_inputs:
+        opus_path = _opus_baseline_path(data_lake, source_id)
+        opus_item_count = len(baseline_rows)
+        haiku_item_count = sum(
+            len(v)
+            for v in (haiku_payload.get(t) for t in types)
+            if isinstance(v, list)
+        )
+        print("=== print_inputs ===", file=sys.stderr)
+        print(f"opus artifact path:  {opus_path}", file=sys.stderr)
+        print(f"haiku artifact path: {haiku_path}", file=sys.stderr)
+        print(f"opus item count:     {opus_item_count}", file=sys.stderr)
+        print(
+            f"haiku item count:    {haiku_item_count}", file=sys.stderr
+        )
+        print("=== /print_inputs ===", file=sys.stderr)
+
     metrics = compute_comparison(
         baseline_rows=baseline_rows,
         haiku_payload=haiku_payload,
@@ -745,6 +782,14 @@ def run_comparison(
     # Validate our OWN output before writing it (fail-closed: never
     # write a malformed comparison_result).
     validate_artifact(artifact, COMPARISON_ARTIFACT_TYPE)
+
+    if print_scores:
+        print("=== print_scores ===", file=sys.stderr)
+        print(
+            json.dumps(artifact, indent=2, sort_keys=True),
+            file=sys.stderr,
+        )
+        print("=== /print_scores ===", file=sys.stderr)
 
     table = render_summary_table(metrics, types)
     # Human-readable table to STDERR so STDOUT stays pure JSON (the
@@ -774,6 +819,8 @@ def run_comparison(
                 "comparison_artifact_path": str(out_path),
             },
         )
+    else:
+        print("DRY RUN — artifact not written", file=sys.stderr)
 
     return {
         "status": "success",
@@ -795,6 +842,22 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--dry-run",
         action="store_true",
         help="Print the diff; write no artifact and no eval_history.",
+    )
+    parser.add_argument(
+        "--print-inputs",
+        action="store_true",
+        help=(
+            "Observe-only: print opus/haiku artifact paths and item "
+            "counts to STDERR before comparison runs."
+        ),
+    )
+    parser.add_argument(
+        "--print-scores",
+        action="store_true",
+        help=(
+            "Observe-only: print the full comparison_result payload "
+            "to STDERR after comparison runs."
+        ),
     )
     args = parser.parse_args(argv)
     for attr in vars(args):
@@ -822,6 +885,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             data_lake=data_lake,
             source_id=args.source_id,
             dry_run=args.dry_run,
+            print_inputs=args.print_inputs,
+            print_scores=args.print_scores,
         )
     except ComparisonError as exc:
         print(

@@ -402,3 +402,73 @@ def test_dry_run_writes_nothing(tmp_path: Path) -> None:
         dl / "store" / "processed" / "meetings" / sid
         / "eval_history.jsonl"
     ).exists()
+
+
+# --------------------------------------------------------------------------
+# Debug flags are observe-only: they must not change the result, the
+# metrics, or what is written — only emit extra lines to STDERR.
+# --------------------------------------------------------------------------
+def _seed_llm(dl: Path, sid: str) -> None:
+    _seed_baseline(dl, sid)
+    _write(
+        dl / "store" / "processed" / "meetings" / sid
+        / "meeting_minutes__llm-1.json",
+        _minutes_artifact("meeting_minutes_llm"),
+    )
+
+
+def test_print_flags_do_not_change_result(
+    tmp_path: Path, capsys
+) -> None:
+    base = tmp_path / "base"
+    dbg = tmp_path / "dbg"
+    _seed_llm(base, "src")
+    _seed_llm(dbg, "src")
+
+    plain = cmp.run_comparison(
+        data_lake=base, source_id="src", dry_run=True
+    )
+    capsys.readouterr()
+    debug = cmp.run_comparison(
+        data_lake=dbg,
+        source_id="src",
+        dry_run=True,
+        print_inputs=True,
+        print_scores=True,
+    )
+    captured = capsys.readouterr()
+
+    # Identical summary + metrics regardless of the debug flags.
+    assert plain["summary"] == debug["summary"]
+    assert plain["status"] == debug["status"] == "success"
+    # Debug output is STDERR-only; STDOUT is never touched here
+    # (run_comparison itself prints nothing to STDOUT).
+    assert captured.out == ""
+    assert "=== print_inputs ===" in captured.err
+    assert "opus item count:" in captured.err
+    assert "haiku item count:" in captured.err
+    assert "=== print_scores ===" in captured.err
+    assert '"haiku_f1_vs_opus"' in captured.err
+    assert "DRY RUN — artifact not written" in captured.err
+
+
+def test_print_inputs_then_normal_write_still_happens(
+    tmp_path: Path, capsys
+) -> None:
+    dl = tmp_path / "dl"
+    _seed_llm(dl, "src")
+    res = cmp.run_comparison(
+        data_lake=dl,
+        source_id="src",
+        dry_run=False,
+        print_inputs=True,
+        print_scores=True,
+    )
+    err = capsys.readouterr().err
+    assert "=== print_inputs ===" in err
+    assert "DRY RUN" not in err  # not a dry run — artifact IS written
+    art_path = Path(res["comparison_artifact_path"])
+    assert art_path.is_file()
+    art = json.loads(art_path.read_text(encoding="utf-8"))
+    assert art["artifact_type"] == "comparison_result"
+    assert art["summary"]["haiku_recall_vs_opus"] == 1.0
