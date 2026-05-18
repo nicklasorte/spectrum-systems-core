@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://spectrum-systems-core/src/schemas/correction_candidate.schema.json",
   "title": "correction_candidate",
+  "description": "A proposed correction to the extraction prompt. schema_version 1.0.0 is the original Phase T low-confidence-gate origin; 1.1.0 (Phase Y) adds the optional candidate_source field so a miner- or revert-origin candidate is distinguishable from the gate origin. candidate_source defaults to 'low_confidence_gate' for artifacts written before Phase Y (the field is optional and the legacy low_confidence_* fields are still required for that origin), so old artifacts remain valid unchanged.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -10,15 +11,11 @@
     "correction_candidate_id",
     "source_id",
     "created_at",
-    "expires_at",
-    "low_confidence_decisions",
-    "low_confidence_claims",
-    "low_confidence_rate",
     "status"
   ],
   "properties": {
     "artifact_type": { "const": "correction_candidate" },
-    "schema_version": { "const": "1.0.0" },
+    "schema_version": { "enum": ["1.0.0", "1.1.0"] },
     "correction_candidate_id": { "type": "string", "minLength": 1 },
     "source_id": { "type": "string", "minLength": 1 },
     "created_at": { "type": "string", "minLength": 1 },
@@ -47,6 +44,94 @@
     "review_artifact_id": {
       "type": ["string", "null"],
       "description": "Phase X2.6: human_review_artifact_id of the most recent review on this candidate. Null until reviewed."
+    },
+    "candidate_source": {
+      "type": "string",
+      "enum": ["low_confidence_gate", "miner", "revert"],
+      "description": "Phase Y.5: origin of the candidate. Absent => 'low_confidence_gate' (backward compatible). 'miner' => mined from a false_negative_set cluster. 'revert' => proposes reverting a prior prompt_addition_id."
+    },
+    "target_transcript_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Phase Y.5: transcript the miner cluster was derived from."
+    },
+    "schema_type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Phase Y.5: the schema_type of the false-negative cluster."
+    },
+    "pattern_signature": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Phase Y.5: sha256 of the canonical cluster signature (speaker_role, preceding_marker, length_bucket)."
+    },
+    "cluster_size": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Phase Y.5: number of false negatives in the cluster."
+    },
+    "false_negative_set_artifact_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Phase Y.5: the false_negative_set this candidate was mined from."
+    },
+    "proposed_prompt_addition": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Phase Y.5: the additive prompt fragment Opus proposed (<= 100 words)."
+    },
+    "revert_of_prompt_addition_id": {
+      "type": ["string", "null"],
+      "description": "Phase Y.7: for candidate_source=='revert', the prompt_addition_id this candidate proposes reverting."
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "candidate_source": { "const": "miner" }
+        },
+        "required": ["candidate_source"]
+      },
+      "then": {
+        "required": [
+          "target_transcript_id",
+          "schema_type",
+          "pattern_signature",
+          "cluster_size",
+          "false_negative_set_artifact_id",
+          "proposed_prompt_addition"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "candidate_source": { "const": "revert" }
+        },
+        "required": ["candidate_source"]
+      },
+      "then": {
+        "required": ["revert_of_prompt_addition_id"]
+      }
+    },
+    {
+      "if": {
+        "not": {
+          "properties": {
+            "candidate_source": { "enum": ["miner", "revert"] }
+          },
+          "required": ["candidate_source"]
+        }
+      },
+      "then": {
+        "required": [
+          "expires_at",
+          "low_confidence_decisions",
+          "low_confidence_claims",
+          "low_confidence_rate"
+        ]
+      }
+    }
+  ]
 }

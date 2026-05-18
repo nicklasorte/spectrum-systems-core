@@ -833,6 +833,73 @@ calling `git check-ignore`.
   human cross-meeting analysis instrument, never read back into the
   governed loop and never an eval input.
 
+### opus_ceiling (Phase Y.1)
+
+- **Writer:** `extraction/opus_ceiling_extractor.py::extract_ceiling`
+  (single Opus call; fail-closed — never an empty ceiling).
+- **Path template:** `data-lake/store/processed/meetings/<source_id>/opus_ceiling__<artifact_id>.json`
+- **Schema:** `contracts/schemas/extraction/opus_ceiling.schema.json`
+- **Git-tracked:** NO — the path lives under `processed/`, which the
+  spectrum-systems-core repo gitignores via the `data-lake/` rule;
+  tracking is the data-lake repo's responsibility and
+  `_gitignore_audit.py` only audits `Git-tracked: YES` entries.
+- **Readers:** `evals/extraction_comparison.py` (the comparator);
+  the `ceiling_minimum_counts` eval in `evals/runner.py`.
+
+### extraction_alignment_comparison (Phase Y.2)
+
+- **Writer:** `evals/extraction_comparison.py::compare_extractions`
+  (pure function, no model calls). Named to NOT collide with the
+  pre-existing Phase AB.3 `extraction_comparison` instrument.
+- **Path template:** `data-lake/store/processed/meetings/<source_id>/extraction_alignment_comparison__<artifact_id>.json`
+- **Schema:** `contracts/schemas/extraction/extraction_alignment_comparison.schema.json`
+- **Git-tracked:** NO — same reasoning as `opus_ceiling`.
+- **Readers:** `control/decision.py` (the Y.3 F1 gate);
+  `extraction/false_negative_builder.py`.
+
+### false_negative_set (Phase Y.4)
+
+- **Writer:** `extraction/false_negative_builder.py::build_false_negative_set`
+  (pure derivation from one comparison artifact).
+- **Path template:** `data-lake/store/processed/meetings/<source_id>/false_negative_set__<artifact_id>.json`
+- **Schema:** `contracts/schemas/extraction/false_negative_set.schema.json`
+- **Git-tracked:** NO — same reasoning as `opus_ceiling`.
+- **Readers:** `extraction/correction_miner.py`.
+
+### candidate_evaluation (Phase Y.6)
+
+- **Writer:** `extraction/candidate_evaluator.py::evaluate_candidate`
+  (scored against FROZEN ceilings; never regenerates a ceiling).
+- **Path template:** `data-lake/store/processed/meetings/<source_id>/candidate_evaluation__<artifact_id>.json`
+- **Schema:** `contracts/schemas/extraction/candidate_evaluation.schema.json`
+- **Git-tracked:** NO — same reasoning as `opus_ceiling`.
+- **Readers:** `scripts/check_auto_pr_eligibility.py` (the Y.7
+  workflow's eligibility brain).
+
+### improvement_cycle_result (Phase Y.8)
+
+- **Writer:** `harness/improvement_cycle.py::run_improvement_cycle`
+  (validated against its schema INSIDE the cycle before status is
+  written).
+- **Path template:** `data-lake/store/processed/meetings/<source_id>/improvement_cycle_result__<artifact_id>.json`
+- **Schema:** `contracts/schemas/extraction/improvement_cycle_result.schema.json`
+- **Git-tracked:** NO — same reasoning as `opus_ceiling`.
+- **Readers:** none in-loop; it is the cycle's status record for an
+  operator / a future learning step.
+
+### correction_candidate (schema bumped to 1.1.0 in Phase Y.5)
+
+- **Writer:** `extraction/low_confidence_gate.py` (origin
+  `low_confidence_gate`, schema 1.0.0, unchanged) and
+  `extraction/correction_miner.py` (origin `miner`, schema 1.1.0).
+- **Path template:** `data-lake/store/processed/meetings/<source_id>/correction_candidate__<artifact_id>.json`
+- **Schema:** `src/spectrum_systems_core/schemas/correction_candidate.schema.json`
+  (1.1.0 adds optional `candidate_source`; legacy 1.0.0 artifacts
+  with no `candidate_source` still validate — the
+  low-confidence-gate fields stay required for that origin).
+- **Git-tracked:** NO — same reasoning as `opus_ceiling`.
+- **Readers:** `scripts/submit_review.py`, `extraction/correction_miner.py`.
+
 ## Runtime / debug artifacts (intentionally NOT git-tracked)
 
 These are recorded here for completeness so future authors do not

@@ -1,0 +1,22 @@
+# Phase Y — self-improvement loop configuration.
+#
+# phase_y_holdout_transcript_id pins the SINGLE transcript used by the
+# Y.6 candidate evaluator as the generalization holdout. It is chosen
+# OUT OF BAND (here, by an operator), never at runtime, so a candidate
+# can never be evaluated against a holdout it was mined from.
+#
+# Default value: the second-oldest transcript by date that has a
+# promoted opus_ceiling. The Dec 18 7 GHz Downlink TIG kickoff is the
+# Y.8 target transcript; the Nov 20 NTIA coordination session is the
+# pinned holdout (older, independent, has a frozen ceiling).
+#
+# If this key is absent or blank the Y.6 evaluator fails closed with
+# reason_code = "holdout_not_configured" and produces NO
+# candidate_evaluation artifact. There is intentionally no runtime
+# fallback that would pick a holdout dynamically.
+phase_y_holdout_transcript_id: "m-2025-11-20-ntia-coordination-session"
+
+# The Y.8 driver's target transcript. Documented here so the harness
+# and tests share one source of truth; the CLI --transcript flag
+# overrides it per-invocation.
+phase_y_target_transcript_id: "m-2025-12-18-7ghz-downlink-tig-kickoff"

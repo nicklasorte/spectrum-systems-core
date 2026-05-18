@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/extraction/false_negative_set.schema.json",
+  "title": "false_negative_set",
+  "description": "Phase Y.4 — every ceiling item Haiku missed, derived purely from one extraction_alignment_comparison artifact (no model calls). Sorted by (schema_type, ceiling_item_id) so two runs over the same comparison artifact are byte-identical.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "transcript_id",
+    "comparison_artifact_id",
+    "false_negatives"
+  ],
+  "properties": {
+    "artifact_type": { "const": "false_negative_set" },
+    "schema_version": { "const": "1.0.0" },
+    "transcript_id": { "type": "string", "minLength": 1 },
+    "comparison_artifact_id": { "type": "string", "minLength": 1 },
+    "false_negatives": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema_type",
+          "ceiling_item_id",
+          "source_turn_ids",
+          "source_text",
+          "ceiling_payload"
+        ],
+        "properties": {
+          "schema_type": { "type": "string", "minLength": 1 },
+          "ceiling_item_id": { "type": "string", "minLength": 1 },
+          "source_turn_ids": { "type": "array", "items": { "type": "string" } },
+          "source_text": { "type": "string" },
+          "ceiling_payload": { "type": "object" }
+        }
+      }
+    }
+  }
+}

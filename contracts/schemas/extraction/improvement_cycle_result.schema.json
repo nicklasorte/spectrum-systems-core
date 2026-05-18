@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/extraction/improvement_cycle_result.schema.json",
+  "title": "improvement_cycle_result",
+  "description": "Phase Y.8 — the end-to-end status of one self-improvement cycle over one transcript. overall_status is 'promoted' ONLY when every phase Y_1..Y_7 is 'present'; otherwise 'blocked' with blocking_phase named. Validated INSIDE the cycle before status is written, never only when CI re-loads it (Phase Y red-team Pass 1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "transcript_id",
+    "cycle_id",
+    "phase_status",
+    "overall_status",
+    "blocking_phase",
+    "prior_open_pr_check"
+  ],
+  "properties": {
+    "artifact_type": { "const": "improvement_cycle_result" },
+    "schema_version": { "const": "1.0.0" },
+    "transcript_id": { "type": "string", "minLength": 1 },
+    "cycle_id": { "type": "string", "minLength": 1 },
+    "phase_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Y_1", "Y_2", "Y_3", "Y_4", "Y_5", "Y_6", "Y_7"],
+      "patternProperties": {
+        "^Y_[1-7]$": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "artifact_id_or_none",
+            "started_at",
+            "finished_at",
+            "error_or_none"
+          ],
+          "properties": {
+            "status": {
+              "enum": ["present", "partial", "missing", "unknown"]
+            },
+            "artifact_id_or_none": { "type": ["string", "null"] },
+            "started_at": { "type": ["string", "null"] },
+            "finished_at": { "type": ["string", "null"] },
+            "error_or_none": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "overall_status": { "enum": ["promoted", "blocked"] },
+    "blocking_phase": { "type": ["string", "null"] },
+    "prior_open_pr_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checked", "found_open_pr_id"],
+      "properties": {
+        "checked": { "type": "boolean" },
+        "found_open_pr_id": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

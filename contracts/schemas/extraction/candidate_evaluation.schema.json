@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/extraction/candidate_evaluation.schema.json",
+  "title": "candidate_evaluation",
+  "description": "Phase Y.6 — a correction candidate evaluated against BOTH the transcript it was mined from and a config-pinned holdout, scored against the FROZEN ceilings (ceilings never regenerate). auto_pr_eligible is derived; eligibility_reason lists every failed condition explicitly so a new engineer can read WHY an ineligible candidate was rejected without re-deriving it (Phase Y red-team Pass 1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "candidate_id",
+    "target_transcript_id",
+    "holdout_transcript_id",
+    "baseline_target_f1",
+    "candidate_target_f1",
+    "target_delta_f1",
+    "baseline_holdout_f1",
+    "candidate_holdout_f1",
+    "holdout_delta_f1",
+    "per_type_regressions",
+    "auto_pr_eligible",
+    "eligibility_reason"
+  ],
+  "properties": {
+    "artifact_type": { "const": "candidate_evaluation" },
+    "schema_version": { "const": "1.0.0" },
+    "candidate_id": { "type": "string", "minLength": 1 },
+    "target_transcript_id": { "type": "string", "minLength": 1 },
+    "holdout_transcript_id": { "type": "string", "minLength": 1 },
+    "baseline_target_f1": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "candidate_target_f1": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "target_delta_f1": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+    "baseline_holdout_f1": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "candidate_holdout_f1": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "holdout_delta_f1": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+    "per_type_regressions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "transcript_id",
+          "schema_type",
+          "baseline_f1",
+          "candidate_f1",
+          "delta"
+        ],
+        "properties": {
+          "transcript_id": { "type": "string", "minLength": 1 },
+          "schema_type": { "type": "string", "minLength": 1 },
+          "baseline_f1": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "candidate_f1": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "delta": { "type": "number", "minimum": -1.0, "maximum": 1.0 }
+        }
+      }
+    },
+    "auto_pr_eligible": { "type": "boolean" },
+    "eligibility_reason": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

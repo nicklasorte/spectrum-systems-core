@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/extraction/extraction_alignment_comparison.schema.json",
+  "title": "extraction_alignment_comparison",
+  "description": "Phase Y.2 — recall/precision/F1 of a Haiku extraction against the frozen Opus ceiling, under the binding extraction_alignment contract (IoU >= 0.5 AND TF-IDF cosine >= 0.7 AND same schema_type). Pure function, NO model calls; deterministic for the same inputs + alignment_contract_version. Named extraction_alignment_comparison (NOT extraction_comparison) to avoid colliding with the pre-existing Phase AB.3 instrument of that name (operator decision, Phase Y).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "transcript_id",
+    "ceiling_artifact_id",
+    "haiku_artifact_id",
+    "alignment_contract_version",
+    "per_type_metrics",
+    "total_metrics",
+    "aligned_pairs",
+    "false_negatives"
+  ],
+  "properties": {
+    "artifact_type": { "const": "extraction_alignment_comparison" },
+    "schema_version": { "const": "1.0.0" },
+    "transcript_id": { "type": "string", "minLength": 1 },
+    "ceiling_artifact_id": { "type": "string", "minLength": 1 },
+    "haiku_artifact_id": { "type": "string", "minLength": 1 },
+    "alignment_contract_version": { "type": "string", "minLength": 1 },
+    "per_type_metrics": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "recall",
+          "precision",
+          "f1",
+          "ceiling_count",
+          "haiku_count",
+          "true_positives",
+          "false_negatives",
+          "false_positives"
+        ],
+        "properties": {
+          "recall": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "precision": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "f1": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "ceiling_count": { "type": "integer", "minimum": 0 },
+          "haiku_count": { "type": "integer", "minimum": 0 },
+          "true_positives": { "type": "integer", "minimum": 0 },
+          "false_negatives": { "type": "integer", "minimum": 0 },
+          "false_positives": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "total_metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recall", "precision", "f1"],
+      "properties": {
+        "recall": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "precision": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "f1": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+      }
+    },
+    "aligned_pairs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ceiling_item_id", "haiku_item_id", "iou", "cosine"],
+        "properties": {
+          "ceiling_item_id": { "type": "string", "minLength": 1 },
+          "haiku_item_id": { "type": "string", "minLength": 1 },
+          "iou": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "cosine": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+        }
+      }
+    },
+    "false_negatives": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema_type",
+          "ceiling_item_id",
+          "source_turn_ids",
+          "source_text",
+          "ceiling_payload"
+        ],
+        "properties": {
+          "schema_type": { "type": "string", "minLength": 1 },
+          "ceiling_item_id": { "type": "string", "minLength": 1 },
+          "source_turn_ids": { "type": "array", "items": { "type": "string" } },
+          "source_text": { "type": "string" },
+          "ceiling_payload": { "type": "object" }
+        }
+      }
+    }
+  }
+}

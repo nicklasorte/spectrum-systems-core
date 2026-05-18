@@ -115,6 +115,42 @@ REQUIRED_FIELDS_BY_TYPE: dict[str, dict[str, dict]] = {
             "eval_type": "required_meeting_action_log_fields",
         },
     },
+    # Phase Y.1 — a malformed ceiling (missing the fields the gate and
+    # the comparator read) blocks via the required-fields eval before
+    # ceiling_minimum_counts even runs.
+    "opus_ceiling": {
+        "1.0.0": {
+            "top_level": (
+                "transcript_id",
+                "model_id",
+                "extracted_items",
+                "per_type_counts",
+                "transcript_keyword_hits",
+            ),
+            "per_item_keys": (),
+            "eval_type": "required_opus_ceiling_fields",
+        },
+    },
+    # Phase Y.3 — registering extraction_alignment_comparison as a
+    # required-fields type means a comparison artifact missing
+    # total_metrics / per_type_metrics fails the required-fields eval
+    # (status fail -> decide_control blocks) instead of slipping past
+    # the F1 thresholds because the field it gates on is absent.
+    "extraction_alignment_comparison": {
+        "1.0.0": {
+            "top_level": (
+                "transcript_id",
+                "ceiling_artifact_id",
+                "haiku_artifact_id",
+                "alignment_contract_version",
+                "per_type_metrics",
+                "total_metrics",
+                "aligned_pairs",
+            ),
+            "per_item_keys": (),
+            "eval_type": "required_extraction_alignment_comparison_fields",
+        },
+    },
 }
 
 # Fields that must be present AND non-empty. Presence is already covered by
@@ -227,6 +263,60 @@ def _check_required_fields(
     return _eval_result(eval_type, target, passed=True, reason_codes=[])
 
 
+def _check_ceiling_minimum_counts(target: Artifact) -> Artifact:
+    """Phase Y.1 gate. For every schema_type the transcript visibly
+    discusses (``transcript_keyword_hits[type] is True``), the ceiling
+    must have extracted at least one item of that type. A zero count
+    against a keyword-hit type is a ceiling miss and fails closed with
+    the offending types named in ``failed_types`` so the failure is
+    explainable from the eval_result alone (CLAUDE.md self-review).
+    """
+    payload = target.payload
+    hits = payload.get("transcript_keyword_hits")
+    counts = payload.get("per_type_counts")
+    reason_codes: list[str] = []
+    failed_types: list[str] = []
+    if not isinstance(hits, dict) or not isinstance(counts, dict):
+        # Missing the very inputs the gate reads -> fail closed, never
+        # pass by absence (red-team: bypassable gate via missing input).
+        reason_codes.append("ceiling_missing_gate_inputs")
+        eval_payload = {
+            "eval_type": "ceiling_minimum_counts",
+            "target_artifact_id": target.artifact_id,
+            "status": "fail",
+            "score": 0.0,
+            "reason_codes": reason_codes,
+            "failed_types": [],
+        }
+        return new_artifact(
+            artifact_type="eval_result",
+            payload=eval_payload,
+            trace_id=target.trace_id,
+            status="evaluated",
+            input_refs=[target.artifact_id],
+        )
+    for schema_type, hit in sorted(hits.items()):
+        if hit and int(counts.get(schema_type, 0)) < 1:
+            failed_types.append(schema_type)
+            reason_codes.append(f"ceiling_zero_for_keyword_hit:{schema_type}")
+    passed = not failed_types
+    eval_payload = {
+        "eval_type": "ceiling_minimum_counts",
+        "target_artifact_id": target.artifact_id,
+        "status": "pass" if passed else "fail",
+        "score": 1.0 if passed else 0.0,
+        "reason_codes": reason_codes,
+        "failed_types": failed_types,
+    }
+    return new_artifact(
+        artifact_type="eval_result",
+        payload=eval_payload,
+        trace_id=target.trace_id,
+        status="evaluated",
+        input_refs=[target.artifact_id],
+    )
+
+
 def _lookup_spec(artifact_type: str, schema_version: str) -> dict | None:
     """Single version branch point. Returns the field_spec for the
     requested artifact_type + schema_version, falling back to "1.0.0"
@@ -264,4 +354,9 @@ def run_required_evals(artifact: Artifact) -> list[Artifact]:
     # eval list stays tight for non-decision artifacts.
     if artifact.artifact_type in _VERB_GUARD_TYPES:
         results.append(run_regulatory_verb_eval(artifact))
+    # Phase Y.1 — the ceiling minimum-counts gate runs in addition to
+    # (not instead of) the required-fields eval above, so a ceiling
+    # that is well-formed but empty for a discussed type still blocks.
+    if artifact.artifact_type == "opus_ceiling":
+        results.append(_check_ceiling_minimum_counts(artifact))
     return results
