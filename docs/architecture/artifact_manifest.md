@@ -900,6 +900,63 @@ calling `git check-ignore`.
 - **Git-tracked:** NO — same reasoning as `opus_ceiling`.
 - **Readers:** `scripts/submit_review.py`, `extraction/correction_miner.py`.
 
+### dec18_run_report (Phase Z.1)
+
+- **Writer:** `scripts/run_dec18_loop.py::run_dec18_loop` (the Z.1
+  Dec 18 end-to-end driver). Payload validated against its schema
+  inside the orchestrator before the artifact is returned.
+- **Path template:** `data-lake/store/processed/meetings/<source_id>/dec18_run_report__<artifact_id>.json`
+- **Schema:** `contracts/schemas/extraction/dec18_run_report.schema.json`
+- **Git-tracked:** NO — same reasoning as `opus_ceiling` (run-level
+  status record under `processed/`, never a promoted product).
+- **Readers:** `scripts/loop_dashboard.py` (the Z.2 dashboard).
+
+### chunked_transcript (Phase Z.4)
+
+- **Writer:** `scripts/ingest_corpus.py` via the existing
+  `data_lake.chunker.chunk_transcript` (deterministic speaker-turn
+  chunker — reused, not re-implemented).
+- **Path template:** `data-lake/store/processed/meetings/<source_id>/chunked_transcript__<artifact_id>.json`
+- **Schema:** `contracts/schemas/ingestion/chunked_transcript.schema.json`
+- **Git-tracked:** NO — same reasoning as `opus_ceiling`.
+- **Readers:** none in-loop; the per-transcript ingest record points
+  at its id. Future per-transcript improvement runs consume it.
+
+### transcript_ingest_result (Phase Z.4)
+
+- **Writer:** `scripts/ingest_corpus.py::ingest_one` (one per
+  manifest transcript; validated against its schema before write).
+- **Path template:** `data-lake/store/processed/meetings/<source_id>/transcript_ingest_result__<artifact_id>.json`
+- **Schema:** `contracts/schemas/ingestion/transcript_ingest_result.schema.json`
+- **Git-tracked:** NO — same reasoning as `opus_ceiling`.
+- **Readers:** `scripts/ingest_corpus.py` (roll-up), operators.
+
+### corpus_ingest_summary (Phase Z.4)
+
+- **Writer:** `scripts/ingest_corpus.py::run_corpus_ingest`. Built
+  ONLY after every transcript is processed (no concurrent writer —
+  red-team Pass 1 #4).
+- **Path template:** `data-lake/store/processed/corpus/<corpus_id>/corpus_ingest_summary__<artifact_id>.json`
+  (`<corpus_id>` is the fixed `corpus-main`; corpus-level instruments
+  live under `processed/corpus/`, a sibling of `processed/meetings/`,
+  per the data-lake contract).
+- **Schema:** `contracts/schemas/ingestion/corpus_ingest_summary.schema.json`
+- **Git-tracked:** NO — same reasoning as `opus_ceiling`.
+- **Readers:** the Z.5 multi-transcript improvement cycle pre-flight.
+
+### corpus_improvement_summary (Phase Z.5)
+
+- **Writer:** `harness/improvement_cycle.py::run_corpus_improvement_cycle`
+  (the `spectrum-core improvement-cycle --all-transcripts` path).
+  Payload validated against its schema inside the function before the
+  artifact is returned.
+- **Path template:** `data-lake/store/processed/corpus/<corpus_id>/corpus_improvement_summary__<artifact_id>.json`
+  (`<corpus_id>` is the fixed `corpus-main`).
+- **Schema:** `contracts/schemas/harness/corpus_improvement_summary.schema.json`
+- **Git-tracked:** NO — same reasoning as `opus_ceiling`.
+- **Readers:** none in-loop; the corpus cycle's status record for an
+  operator / a future learning step.
+
 ## Runtime / debug artifacts (intentionally NOT git-tracked)
 
 These are recorded here for completeness so future authors do not

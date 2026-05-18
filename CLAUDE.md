@@ -386,6 +386,8 @@ If the type also needs to flow through the data lake pipeline, extend `_CONTENT_
 
 `artifacts/model.py::Artifact` has these fields and they are shared by every artifact type (target artifacts, `context_bundle`, `eval_result`, `control_decision`, `manifest`, etc.): `artifact_id`, `artifact_type`, `schema_version`, `status`, `created_at`, `trace_id`, `input_refs`, `content_hash`, `payload`. Statuses are restricted to `{draft, evaluated, promoted, rejected}` (`artifacts/validation.py`). State changes are new envelopes or status updates — never edit `payload` in place.
 
+The Phase Y comparator artifact is named `extraction_alignment_comparison` (not `extraction_comparison`) to avoid collision with the pre-existing Phase AB.3 instrument. Use this name in all future phases.
+
 ## Data lake boundary (`data_lake/`)
 
 `docs/contracts/data_lake_contract.md` is binding for everything

@@ -1,0 +1,62 @@
+# Phase Z.4 — corpus ingest manifest.
+#
+# The authoritative list of every transcript in the corpus the
+# multi-transcript improvement cycle (Z.5) runs over.
+# scripts/ingest_corpus.py reads this file, substitutes {data_lake}
+# with the data-lake STORE root ($DATA_LAKE_PATH/store — the dir that
+# holds raw/ and processed/ in this repo's layout), and validates +
+# chunks each transcript.
+#
+# meeting_id rule (data_lake_contract.md §3): each `id` matches
+# ^[a-z0-9][a-z0-9_-]{0,127}$ and follows the m-YYYY-MM-DD-<slug>
+# convention. The Dec 18 kickoff and Nov 20 holdout ids are pinned
+# (config/phase_y.yaml depends on them) and MUST NOT be renamed.
+#
+# raw_path layout is the flat ingest tray
+# {data_lake}/raw/transcripts/<file>.txt -> resolves to
+# $DATA_LAKE_PATH/store/raw/transcripts/<file>.txt (the spec's Z.4
+# ingest input location, distinct from the processed/meetings/<id>/
+# tree the pipeline writes). The operator fills in the actual
+# filenames once the data-lake clone is present — the ids are stable
+# and real.
+
+transcripts:
+  - id: m-2025-12-18-7ghz-downlink-tig-kickoff
+    date: "2025-12-18"
+    raw_path: "{data_lake}/raw/transcripts/dec18_7ghz_downlink_tig.txt"
+  - id: m-2025-11-20-ntia-coordination-session
+    date: "2025-11-20"
+    raw_path: "{data_lake}/raw/transcripts/nov20_ntia_coordination_session.txt"
+  - id: m-2026-04-01-bands
+    date: "2026-04-01"
+    raw_path: "{data_lake}/raw/transcripts/apr01_bands.txt"
+  - id: m-2026-05-09-alpha
+    date: "2026-05-09"
+    raw_path: "{data_lake}/raw/transcripts/may09_alpha.txt"
+  - id: m-2026-05-09-q3
+    date: "2026-05-09"
+    raw_path: "{data_lake}/raw/transcripts/may09_q3.txt"
+  - id: m-2026-01-15-7ghz-downlink-tig-followup
+    date: "2026-01-15"
+    raw_path: "{data_lake}/raw/transcripts/jan15_7ghz_downlink_tig_followup.txt"
+  - id: m-2026-02-12-aggregate-interference-methodology
+    date: "2026-02-12"
+    raw_path: "{data_lake}/raw/transcripts/feb12_aggregate_interference_methodology.txt"
+  - id: m-2026-02-26-coexistence-framework-review
+    date: "2026-02-26"
+    raw_path: "{data_lake}/raw/transcripts/feb26_coexistence_framework_review.txt"
+  - id: m-2026-03-12-erp-threshold-working-session
+    date: "2026-03-12"
+    raw_path: "{data_lake}/raw/transcripts/mar12_erp_threshold_working_session.txt"
+  - id: m-2026-03-26-federal-incumbent-coordination
+    date: "2026-03-26"
+    raw_path: "{data_lake}/raw/transcripts/mar26_federal_incumbent_coordination.txt"
+  - id: m-2026-04-16-out-of-band-emission-limits
+    date: "2026-04-16"
+    raw_path: "{data_lake}/raw/transcripts/apr16_out_of_band_emission_limits.txt"
+  - id: m-2026-04-30-measurement-campaign-planning
+    date: "2026-04-30"
+    raw_path: "{data_lake}/raw/transcripts/apr30_measurement_campaign_planning.txt"
+  - id: m-2026-05-14-draft-report-consolidation
+    date: "2026-05-14"
+    raw_path: "{data_lake}/raw/transcripts/may14_draft_report_consolidation.txt"

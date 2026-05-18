@@ -580,6 +580,255 @@ def make_improvement_cycle_result_artifact(
     )
 
 
+def _scripts_on_path() -> None:
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    scripts_dir = _Path(__file__).resolve().parents[2] / "scripts"
+    if str(scripts_dir) not in _sys.path:
+        _sys.path.insert(0, str(scripts_dir))
+
+
+def _many_ceiling_items(
+    n: int, schema_type: str = "decision"
+) -> list[dict[str, Any]]:
+    return [
+        _ceiling_item(
+            f"c-{i:04d}", schema_type, [f"t{i}"],
+            f"governed item number {i} approved by the working group",
+        )
+        for i in range(n)
+    ]
+
+
+def make_dec18_run_report(
+    *,
+    ceiling_count: int = 60,
+    aligned: int = 60,
+) -> Any:
+    """Produce a ``dec18_run_report`` via the REAL Z.1 orchestrator.
+
+    ``run_dec18_loop`` is run with deterministic injected seams (the
+    same injection seam Phase Y already uses for the Opus call): a real
+    ``extract_ceiling`` over ``ceiling_count`` synthetic items and the
+    real ``compare_extractions`` / ``decide_control`` /
+    ``build_false_negative_set``. No hand-rolled dict — a shape change
+    in the orchestrator or any Y.1..Y.4 primitive breaks this factory
+    (CLAUDE.md integration-test rule)."""
+    import tempfile
+    from pathlib import Path as _Path
+
+    _scripts_on_path()
+    import run_dec18_loop as z1  # type: ignore  # noqa: WPS433
+
+    ceiling_items = _many_ceiling_items(ceiling_count)
+    haiku_items = ceiling_items[:aligned]
+
+    def _ceiling_extractor(_txt: str) -> Any:
+        return make_opus_ceiling_artifact(items=ceiling_items)
+
+    def _haiku_loader(_store: Any) -> Any:
+        return make_opus_ceiling_artifact(items=haiku_items)
+
+    with tempfile.TemporaryDirectory() as td:
+        store = _Path(td) / "store"
+        art, _code = z1.run_dec18_loop(
+            transcript_text="injected — not read (ceiling seam wins)",
+            store=store,
+            api_key_present=True,
+            transcript_present=True,
+            ceiling_extractor=_ceiling_extractor,
+            haiku_loader=_haiku_loader,
+            comparator=z1._default_comparator,
+            open_pr_lookup=lambda _t: [],
+        )
+    return art
+
+
+def make_transcript_ingest_result(
+    *,
+    transcript_id: str = "m-2025-12-18-7ghz-downlink-tig-kickoff",
+    well_formed: bool = True,
+) -> Any:
+    """Produce a ``transcript_ingest_result`` via the REAL Z.4 path.
+
+    Writes a synthetic transcript into a temp data-lake and runs
+    ``ingest_corpus.ingest_one`` (the real validator + chunker +
+    artifact writer), then reads the written envelope back so the
+    factory output is byte-shape identical to a real ingest run."""
+    import tempfile
+    from pathlib import Path as _Path
+
+    _scripts_on_path()
+    import ingest_corpus as z4  # type: ignore  # noqa: WPS433
+    from _phase_z_lake import (  # type: ignore  # noqa: WPS433
+        latest_instrument,
+    )
+
+    if well_formed:
+        turns = "\n".join(
+            f"SPEAKER {chr(ord('A') + i % 5)}: point {i} about the "
+            f"7 GHz downlink threshold and aggregate interference."
+            for i in range(14)
+        )
+        text = "MEETING: 7 GHz Downlink TIG\n" + turns + "\n"
+    else:
+        text = (
+            "MEETING: short\n"
+            "SPEAKER A: only one turn here, far too short.\n"
+        )
+
+    with tempfile.TemporaryDirectory() as td:
+        store = _Path(td) / "store"
+        raw = store.parent / "raw" / "transcripts" / "fixture.txt"
+        raw.parent.mkdir(parents=True, exist_ok=True)
+        raw.write_text(text, encoding="utf-8")
+        z4.ingest_one(
+            entry={
+                "id": transcript_id,
+                "raw_path": "{data_lake}/raw/transcripts/fixture.txt",
+            },
+            lake_dir=str(store.parent),
+            store=store,
+            log=[],
+        )
+        env = latest_instrument(
+            store, transcript_id, "transcript_ingest_result"
+        )
+        assert env is not None, "ingest_one wrote no result"
+    from spectrum_systems_core.artifacts import new_artifact
+
+    return new_artifact(
+        artifact_type="transcript_ingest_result",
+        payload=env["payload"],
+        trace_id=env.get("trace_id", "fixture"),
+        status="draft",
+    )
+
+
+def make_corpus_ingest_summary(
+    *,
+    n_present: int = 2,
+    n_blocked: int = 1,
+) -> Any:
+    """Produce a ``corpus_ingest_summary`` via the REAL Z.4
+    ``run_corpus_ingest`` over a synthetic temp corpus (1 malformed
+    transcript among well-formed ones)."""
+    import tempfile
+    from pathlib import Path as _Path
+
+    _scripts_on_path()
+    import ingest_corpus as z4  # type: ignore  # noqa: WPS433
+    import yaml as _yaml
+    from _phase_z_lake import (  # type: ignore  # noqa: WPS433
+        latest_corpus_instrument,
+    )
+
+    good = "MEETING: ok\n" + "\n".join(
+        f"SPEAKER {chr(ord('A') + i % 4)}: substantive remark number "
+        f"{i} on the coexistence framework and ERP working session."
+        for i in range(16)
+    )
+    bad = "MEETING: bad\nSPEAKER A: too short.\n"
+
+    with tempfile.TemporaryDirectory() as td:
+        store = _Path(td) / "store"
+        raw_dir = store.parent / "raw" / "transcripts"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        entries = []
+        for i in range(n_present):
+            (raw_dir / f"good{i}.txt").write_text(good, encoding="utf-8")
+            entries.append(
+                {
+                    "id": f"m-2026-01-0{i + 1}-good-{i}",
+                    "raw_path": f"{{data_lake}}/raw/transcripts/good{i}.txt",
+                }
+            )
+        for i in range(n_blocked):
+            (raw_dir / f"bad{i}.txt").write_text(bad, encoding="utf-8")
+            entries.append(
+                {
+                    "id": f"m-2026-02-0{i + 1}-bad-{i}",
+                    "raw_path": f"{{data_lake}}/raw/transcripts/bad{i}.txt",
+                }
+            )
+        manifest = store.parent / "corpus_manifest.yaml"
+        manifest.write_text(
+            _yaml.safe_dump({"transcripts": entries}), encoding="utf-8"
+        )
+        z4.run_corpus_ingest(
+            manifest_path=manifest,
+            lake_dir=str(store.parent),
+            store=store,
+            log=[],
+        )
+        env = latest_corpus_instrument(store, "corpus_ingest_summary")
+        assert env is not None
+    from spectrum_systems_core.artifacts import new_artifact
+
+    return new_artifact(
+        artifact_type="corpus_ingest_summary",
+        payload=env["payload"],
+        trace_id=env.get("trace_id", "fixture"),
+        status="draft",
+    )
+
+
+def make_corpus_improvement_summary(
+    *,
+    transcript_ids: list[str] | None = None,
+    blocked_one: bool = True,
+) -> Any:
+    """Produce a ``corpus_improvement_summary`` via the REAL Z.5
+    ``run_corpus_improvement_cycle`` with deterministic per-transcript
+    seams (2 promoted + 1 blocked by default)."""
+    from spectrum_systems_core.harness.improvement_cycle import (
+        run_corpus_improvement_cycle,
+    )
+
+    tids = transcript_ids or [
+        "m-2025-12-18-7ghz-downlink-tig-kickoff",
+        "m-2025-11-20-ntia-coordination-session",
+        "m-2026-04-01-bands",
+    ]
+
+    def _runner(tid: str) -> dict[str, Any]:
+        if blocked_one and tid == tids[-1]:
+            return {
+                "overall_status": "blocked",
+                "total_f1": None,
+                "false_negative_count": None,
+                "correction_candidates_produced": None,
+                "blocking_phase": "Y_3",
+                "error_or_none": None,
+            }
+        return {
+            "overall_status": "promoted",
+            "total_f1": 0.80,
+            "false_negative_count": 2,
+            "correction_candidates_produced": 1,
+            "blocking_phase": None,
+            "error_or_none": None,
+        }
+
+    return run_corpus_improvement_cycle(
+        transcript_ids=tids,
+        corpus_ingest_summary_loader=lambda: {
+            "artifact_type": "corpus_ingest_summary",
+            "schema_version": "1.0.0",
+            "produced_at": "1970-01-01T00:00:00+00:00",
+            "total_transcripts": len(tids),
+            "present": len(tids),
+            "blocked": 0,
+            "blocked_ids": [],
+        },
+        per_transcript_runner=_runner,
+        open_pr_lookup=lambda _t: [],
+        cycle_id="fixture-corpus-0001",
+        clock=lambda: "1970-01-01T00:00:00+00:00",
+    )
+
+
 def make_decision_few_shot_placeholder(
     extraction_type: str = "decision",
 ) -> dict[str, Any]:

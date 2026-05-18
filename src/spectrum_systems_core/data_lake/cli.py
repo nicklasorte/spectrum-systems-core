@@ -650,9 +650,20 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     ic.add_argument(
         "--transcript",
-        required=True,
+        required=False,
+        default=None,
         help="Transcript id the cycle runs over (e.g. "
-        "m-2025-12-18-7ghz-downlink-tig-kickoff).",
+        "m-2025-12-18-7ghz-downlink-tig-kickoff). Required unless "
+        "--all-transcripts is given.",
+    )
+    ic.add_argument(
+        "--all-transcripts",
+        action="store_true",
+        help="Phase Z.5: run the cycle over EVERY transcript in "
+        "config/corpus_manifest.yaml. An all-or-nothing pre-flight "
+        "(corpus_ingest_summary present, zero blocked, no open "
+        "correction/* PR) runs before any transcript; it emits a "
+        "corpus_improvement_summary artifact.",
     )
     ic.add_argument(
         "--lake",
@@ -716,6 +727,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     if args.command == "improvement-cycle":
+        if args.all_transcripts:
+            return _run_corpus_improvement_cycle_cli(
+                lake=args.lake, stream=sys.stdout
+            )
+        if not args.transcript:
+            parser.error(
+                "improvement-cycle requires --transcript unless "
+                "--all-transcripts is given"
+            )
         return _run_improvement_cycle_cli(
             transcript_id=args.transcript,
             lake=args.lake,
@@ -773,6 +793,119 @@ def _run_improvement_cycle_cli(
     )
     stream.write(_json.dumps(result.payload, indent=2, sort_keys=True) + "\n")
     return 0 if result.payload["overall_status"] == "promoted" else 1
+
+
+def _corpus_transcript_ids() -> list[str]:
+    """Transcript ids from config/corpus_manifest.yaml (the single
+    authoritative corpus list)."""
+    import yaml
+
+    repo_root = Path(__file__).resolve().parents[3]
+    manifest_path = repo_root / "config" / "corpus_manifest.yaml"
+    data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    entries = data.get("transcripts", []) if data else []
+    return [str(e["id"]) for e in entries if e.get("id")]
+
+
+def _default_corpus_ingest_summary_loader(
+    lake_root: Path | None,
+) -> "dict | None":
+    """Most recently produced corpus_ingest_summary payload, or None.
+
+    None (no lake / no summary) is the fail-closed signal the harness
+    turns into ``corpus_not_ingested`` — never a silent empty run."""
+    import json as _json
+
+    from .paths import processed_corpus_dir
+
+    if lake_root is None:
+        return None
+    try:
+        corpus_dir = processed_corpus_dir(lake_root, "corpus-main")
+    except ValueError:
+        return None
+    if not corpus_dir.is_dir():
+        return None
+    best: tuple[str, dict] | None = None
+    for path in sorted(
+        corpus_dir.glob("corpus_ingest_summary__*.json")
+    ):
+        try:
+            env = _json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, _json.JSONDecodeError):
+            continue
+        payload = env.get("payload") if isinstance(env, dict) else None
+        if not isinstance(payload, dict):
+            continue
+        key = str(payload.get("produced_at") or "")
+        if best is None or key >= best[0]:
+            best = (key, payload)
+    return best[1] if best is not None else None
+
+
+def _run_corpus_improvement_cycle_cli(
+    *, lake: str | None, stream
+) -> int:
+    """Phase Z.5 — wire the corpus driver to the data-lake and run it.
+
+    Default per-transcript runner is the same fail-closed stub the
+    single-transcript CLI uses (every phase blocks at Y_1 without a
+    populated data-lake — the documented operator live path). The
+    pre-flight gate, isolation, and corpus_f1 aggregation are the
+    REAL tested logic regardless."""
+    import json as _json
+
+    from ..harness.improvement_cycle import (
+        PHASES,
+        ImprovementCycleError,
+        run_corpus_improvement_cycle,
+        run_improvement_cycle,
+    )
+
+    lake_root = Path(lake) if lake else None
+    transcript_ids = _corpus_transcript_ids()
+
+    def _unavailable(phase: str, tid: str):
+        def _f() -> str:
+            raise ImprovementCycleError(
+                f"{phase} inputs unavailable for transcript {tid!r}",
+                reason_code="phase_inputs_unavailable",
+            )
+
+        return _f
+
+    def _per_transcript_runner(tid: str) -> dict:
+        result = run_improvement_cycle(
+            transcript_id=tid,
+            phase_funcs={p: _unavailable(p, tid) for p in PHASES},
+            open_pr_lookup=lambda _t: [],
+        )
+        payload = result.payload
+        return {
+            "overall_status": (
+                "promoted"
+                if payload["overall_status"] == "promoted"
+                else "blocked"
+            ),
+            "total_f1": None,
+            "false_negative_count": None,
+            "correction_candidates_produced": None,
+            "blocking_phase": payload.get("blocking_phase"),
+            "error_or_none": None,
+        }
+
+    result = run_corpus_improvement_cycle(
+        transcript_ids=transcript_ids,
+        corpus_ingest_summary_loader=(
+            lambda: _default_corpus_ingest_summary_loader(lake_root)
+        ),
+        per_transcript_runner=_per_transcript_runner,
+        open_pr_lookup=lambda _tid: [],
+    )
+    stream.write(
+        _json.dumps(result.payload, indent=2, sort_keys=True) + "\n"
+    )
+    return 0 if result.payload["preflight_halt_reason"] is None else 1
 
 
 if __name__ == "__main__":

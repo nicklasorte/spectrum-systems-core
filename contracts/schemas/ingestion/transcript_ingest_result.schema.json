@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/ingestion/transcript_ingest_result.schema.json",
+  "title": "transcript_ingest_result",
+  "description": "Phase Z.4 — the per-transcript outcome of corpus ingest. status='present' only when format validation passed AND speaker-turn chunking produced a chunked_transcript artifact; otherwise status='blocked' with reason='ingest_format_error' and a detail naming which check failed. One bad transcript never blocks the others (corpus-level isolation is enforced by ingest_corpus.py, not this record).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "transcript_id",
+    "produced_at",
+    "status",
+    "speaker_turn_count",
+    "character_count",
+    "chunked_transcript_artifact_id"
+  ],
+  "properties": {
+    "artifact_type": { "const": "transcript_ingest_result" },
+    "schema_version": { "const": "1.0.0" },
+    "transcript_id": { "type": "string", "minLength": 1 },
+    "produced_at": { "type": "string", "format": "date-time" },
+    "status": { "enum": ["present", "blocked"] },
+    "reason": { "type": ["string", "null"] },
+    "detail": { "type": ["string", "null"] },
+    "speaker_turn_count": { "type": ["integer", "null"] },
+    "character_count": { "type": ["integer", "null"] },
+    "chunked_transcript_artifact_id": { "type": ["string", "null"] }
+  }
+}
