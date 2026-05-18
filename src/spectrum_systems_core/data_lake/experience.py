@@ -36,6 +36,34 @@ from .serialize import canonical_json
 EXPERIENCE_HISTORY_FILENAME = "experience_history.jsonl"
 EXPERIENCE_SCHEMA_VERSION = 1
 
+# Phase AA.1 — per-chunk execution trace fields. All are optional and
+# nullable so existing rows (written before AA.1, or with trace capture
+# disabled) remain valid: a reader treats an absent key the same as
+# ``null``. ``data_lake_contract.md`` §6.4 documents these.
+TRACE_FIELD_NAMES: tuple[str, ...] = (
+    "chunk_id",
+    "prompt_sent_preview",
+    "model_output_preview",
+    "schema_type_attempted",
+    "extraction_result",
+    "attribution_check_result",
+    "per_chunk_eval_scores",
+)
+_PREVIEW_MAX_CHARS = 2000
+_PREVIEW_FIELDS = frozenset(
+    {"prompt_sent_preview", "model_output_preview"}
+)
+
+
+def _coerce_trace_value(field_name: str, value: Any) -> Any:
+    """Truncate preview fields to the 2000-char contract; pass others."""
+    if value is None:
+        return None
+    if field_name in _PREVIEW_FIELDS:
+        text = value if isinstance(value, str) else str(value)
+        return text[:_PREVIEW_MAX_CHARS]
+    return value
+
 
 def experience_history_path(lake_root: Path | str, meeting_id: str) -> Path:
     return (
@@ -91,7 +119,28 @@ def _human_readable_summary(result: PipelineResult) -> str:
     )
 
 
-def build_experience_record(result: PipelineResult) -> dict[str, Any]:
+def build_experience_record(
+    result: PipelineResult,
+    *,
+    chunk_trace: dict[str, Any] | None = None,
+    trace_enabled: bool = True,
+) -> dict[str, Any]:
+    """Build one ``experience_history.jsonl`` row.
+
+    Backward compatible: with no kwargs the output is byte-identical to
+    the pre-AA.1 record (no trace fields). The Phase AA.1 trace fields
+    are added ONLY when ``trace_enabled`` is true AND a ``chunk_trace``
+    dict is supplied. When trace capture is disabled the new fields are
+    omitted entirely (``data_lake_contract.md`` §6.4: an absent key is
+    read the same as ``null``), so an existing row is never invalidated
+    and ``TRACE_CAPTURE_ENABLED=false`` is a clean rollback.
+
+    ``chunk_trace`` carries a subset of :data:`TRACE_FIELD_NAMES`; any
+    field it omits is written as ``null`` (the row still proves a chunk
+    was traced via a non-null ``chunk_id``). Preview fields are
+    truncated to the 2000-char contract here, at the writer, so a
+    caller cannot accidentally persist an unbounded prompt/output blob.
+    """
     record: dict[str, Any] = {
         "schema_version": EXPERIENCE_SCHEMA_VERSION,
         "experience_id": _experience_id_for(result),
@@ -108,6 +157,11 @@ def build_experience_record(result: PipelineResult) -> dict[str, Any]:
         "artifact_id": result.target.artifact_id,
         "human_readable_summary": _human_readable_summary(result),
     }
+    if trace_enabled and chunk_trace is not None:
+        for field_name in TRACE_FIELD_NAMES:
+            record[field_name] = _coerce_trace_value(
+                field_name, chunk_trace.get(field_name)
+            )
     return record
 
 

@@ -859,3 +859,187 @@ def make_decision_few_shot_placeholder(
             },
         ],
     }
+
+
+def _proposer_context(
+    *,
+    transcript_id: str = "m-2025-12-18-7ghz-downlink-tig-kickoff",
+    trial_id: str = "trial-fixture-0001",
+    prior_trial_ids: list[str] | None = None,
+) -> Any:
+    from spectrum_systems_core.harness.proposer import ProposerContext
+
+    summaries = [
+        {"trial_id": t, "total_f1": 0.60 + 0.05 * i}
+        for i, t in enumerate(prior_trial_ids or ["trial-a", "trial-b"])
+    ]
+    return ProposerContext(
+        transcript_id=transcript_id,
+        current_trial_id=trial_id,
+        score_summaries=summaries,
+        experience_rows=[],
+        harness_snapshot_paths=[],
+        current_harness_files={},
+        false_negative_set={},
+        pareto_frontier=[],
+    )
+
+
+def make_harness_code_candidate_artifact(
+    *,
+    transcript_id: str = "m-2025-12-18-7ghz-downlink-tig-kickoff",
+    proposed_diff: str | None = None,
+    valid: bool = True,
+) -> Any:
+    """Produce a ``harness_code_candidate`` via the REAL proposer
+    builder + the REAL allowlist validator (no hand-rolled dict).
+
+    The diff is run through ``validate_diff`` exactly as the AA.7
+    driver does, and the resulting validation dict is embedded — so a
+    shape change in the proposer builder or the validator breaks this
+    factory (CLAUDE.md integration-test rule)."""
+    from spectrum_systems_core.harness.harness_mutation_validator import (
+        validate_diff,
+    )
+    from spectrum_systems_core.harness.proposer import (
+        ProposerProposal,
+        build_harness_code_candidate,
+    )
+
+    if proposed_diff is None:
+        proposed_diff = (
+            "diff --git a/src/spectrum_systems_core/extraction/chunker.py "
+            "b/src/spectrum_systems_core/extraction/chunker.py\n"
+            "--- a/src/spectrum_systems_core/extraction/chunker.py\n"
+            "+++ b/src/spectrum_systems_core/extraction/chunker.py\n"
+            "@@ -1 +1 @@\n"
+            "-# old\n+# new chunking heuristic\n"
+        )
+    proposal = ProposerProposal(
+        candidate_type="B",
+        trial_ids_read=["trial-a", "trial-b"],
+        proposer_reasoning="prior trials missed deferred decisions in "
+        "long chunks",
+        hypothesis="splitting chunks at speaker turns recovers the FN set",
+        predicted_improvement="target F1 +0.08, no holdout regression",
+        proposed_diff=proposed_diff,
+    )
+    ctx = _proposer_context(transcript_id=transcript_id)
+    result = validate_diff(proposed_diff)
+    return build_harness_code_candidate(
+        proposal,
+        ctx,
+        allowlist_validation_result={
+            "valid": result.valid,
+            "reason": result.reason,
+            "rejected_paths": list(result.rejected_paths),
+            "touched_paths": list(result.touched_paths),
+        },
+        clock=lambda: "1970-01-01T00:00:00+00:00",
+    )
+
+
+def make_harness_code_candidate_evaluation_artifact(
+    *,
+    target_transcript_id: str = "m-2025-12-18-7ghz-downlink-tig-kickoff",
+    holdout_transcript_id: str = "m-2025-11-20-ntia-coordination-session",
+    eligible: bool = True,
+) -> Any:
+    """Produce a ``harness_code_candidate_evaluation`` via the REAL
+    AA.5 evaluator over a REAL allowlisted diff, with deterministic
+    ceiling/baseline/patched seams chosen so the real comparator yields
+    an eligible (or ineligible) verdict."""
+    from spectrum_systems_core.evals.extraction_comparison import (
+        contract_version,
+    )
+    from spectrum_systems_core.harness.code_candidate_evaluator import (
+        evaluate_code_candidate,
+    )
+
+    diff = (
+        "diff --git a/src/spectrum_systems_core/extraction/chunker.py "
+        "b/src/spectrum_systems_core/extraction/chunker.py\n"
+        "--- a/src/spectrum_systems_core/extraction/chunker.py\n"
+        "+++ b/src/spectrum_systems_core/extraction/chunker.py\n"
+        "@@ -1 +1 @@\n-# old\n+# improved\n"
+    )
+    candidate = make_harness_code_candidate_artifact(
+        transcript_id=target_transcript_id, proposed_diff=diff
+    )
+
+    def _ceiling(tid: str) -> Any:
+        return make_opus_ceiling_artifact(
+            transcript_id=tid,
+            items=[
+                _ceiling_item("c-1", "decision", ["t1"], "alpha decision"),
+                _ceiling_item("c-2", "decision", ["t2"], "beta decision"),
+            ],
+        )
+
+    def _haiku(f1: float, tid: str) -> Any:
+        if f1 >= 0.99:
+            items = [
+                _ceiling_item("h-1", "decision", ["t1"], "alpha decision"),
+                _ceiling_item("h-2", "decision", ["t2"], "beta decision"),
+            ]
+        else:
+            items = [
+                _ceiling_item("h-x", "decision", ["t9"], "unrelated"),
+            ]
+        return make_opus_ceiling_artifact(transcript_id=tid, items=items)
+
+    # eligible: baseline 0.0, candidate 1.0 on both -> +1.0 deltas.
+    # ineligible: baseline 1.0, candidate 0.0 -> holdout regression.
+    base_f1 = 0.0 if eligible else 1.0
+    cand_f1 = 1.0 if eligible else 0.0
+
+    def _apply_diff(_diff_text: str, _dest: Any) -> None:
+        return None  # real apply is exercised in the AA.5 contract test
+
+    return evaluate_code_candidate(
+        candidate=candidate,
+        target_transcript_id=target_transcript_id,
+        ceiling_loader=_ceiling,
+        baseline_loader=lambda tid: _haiku(base_f1, tid),
+        patched_runner=lambda tid, _d: _haiku(cand_f1, tid),
+        holdout_transcript_id=holdout_transcript_id,
+        alignment_contract_version=contract_version(),
+        apply_diff=_apply_diff,
+    )
+
+
+def make_harness_search_result_artifact(
+    *,
+    transcript_id: str = "m-2025-12-18-7ghz-downlink-tig-kickoff",
+    preflight_ok: bool = False,
+) -> Any:
+    """Produce a ``harness_search_result`` via the REAL AA.7 driver.
+
+    Default is the clean pre-flight halt (the sandbox-expected result):
+    a valid artifact with iterations_completed: 0 and halt_reason:
+    preflight_failed."""
+    from spectrum_systems_core.harness.harness_search import (
+        run_harness_search,
+    )
+
+    def _preflight() -> tuple[bool, str | None]:
+        if preflight_ok:
+            return (True, None)
+        return (False, "no_trace_data_available — run the governed loop first")
+
+    def _unreached(*_a, **_k):
+        raise AssertionError("post-preflight seam should not be reached")
+
+    return run_harness_search(
+        transcript_id=transcript_id,
+        iterations=1,
+        preflight=_preflight,
+        propose=_unreached,
+        context_for=_unreached,
+        evaluate_code=_unreached,
+        route_prompt=_unreached,
+        trigger_pr=_unreached,
+        update_frontier=_unreached,
+        search_id="search-fixture-0001",
+        clock=lambda: "1970-01-01T00:00:00+00:00",
+    )

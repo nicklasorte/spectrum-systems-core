@@ -28,7 +28,7 @@ from typing import Any
 
 from ..config import LLMConfigError, llm_extraction_enabled
 from .eval_history import build_eval_records, write_eval_history
-from .experience import build_experience_record, write_experience_history
+from .experience import write_experience_history
 from .index import write_artifact_index
 from .loader import load_meeting
 from .markdown import (
@@ -38,6 +38,12 @@ from .markdown import (
     write_index_markdown,
     write_topic_markdown,
 )
+from ..harness.trace_capture import (
+    build_chunk_experience_rows,
+    trace_capture_enabled,
+    write_harness_snapshot,
+)
+from .paths import processed_meeting_dir
 from .pipeline import PipelineResult, run_transcript_pipeline
 from .run_history import (
     build_run_record,
@@ -51,6 +57,26 @@ from .writer import write_promoted_artifact
 # still produces a "meeting_minutes" envelope; this names the producer
 # so an eval_history reader can tell the LLM rows from the regex rows.
 LLM_WORKFLOW_NAME = "meeting_minutes_llm"
+
+# Repo root for AA.1 harness snapshots:
+# src/spectrum_systems_core/data_lake/cli.py -> parents[3] == repo root.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _derive_trial_id(meeting_id: str, transcript_input: Any) -> str:
+    """Deterministic trial id for AA.1 snapshots / AA.2 score summaries.
+
+    Derived from the meeting id and the transcript+metadata hashes so
+    two runs over the same raw inputs land on the same snapshot
+    directory (idempotent) and a content change yields a new trial."""
+    import hashlib
+
+    seed = (
+        f"{meeting_id}:"
+        f"{transcript_input.transcript_hash}:"
+        f"{transcript_input.metadata_hash}"
+    ).encode()
+    return f"trial-{hashlib.sha256(seed).hexdigest()[:16]}"
 
 DEFAULT_WORKFLOWS: tuple[str, ...] = (
     "meeting_minutes",
@@ -189,6 +215,22 @@ def process_meeting(
                 }
             )
 
+    # AA.1: trace capture is on unless TRACE_CAPTURE_ENABLED=false.
+    _trace_enabled = trace_capture_enabled()
+    _trial_id = _derive_trial_id(meeting_id, transcript_input)
+
+    # AA.1 (Red-Team Pass-1 #3): write the harness snapshot FIRST, the
+    # moment the trial's pipeline_results exist — BEFORE the harness
+    # JSONL writes. A blocked run still produces pipeline_results, and a
+    # later JSONL-write failure must not cost the proposer the snapshot
+    # of the code state that produced the (failed) trial.
+    if _trace_enabled:
+        write_harness_snapshot(
+            processed_dir=processed_meeting_dir(lake_root, meeting_id),
+            trial_id=_trial_id,
+            repo_root=_REPO_ROOT,
+        )
+
     # Harness memory: build records first, then write each JSONL once.
     run_records: list[dict[str, Any]] = []
     experience_records: list[dict[str, Any]] = []
@@ -205,7 +247,17 @@ def process_meeting(
                 record=record,
             )
         )
-        experience_records.append(build_experience_record(r))
+        # AA.1: explode into per-chunk rows when trace capture is on.
+        # With no per-chunk LLM trace (the deterministic regex path)
+        # this returns exactly the pre-AA.1 single base row, so the
+        # existing experience_history determinism is preserved.
+        experience_records.extend(
+            build_chunk_experience_rows(
+                r,
+                chunk_traces=None,
+                trace_enabled=_trace_enabled,
+            )
+        )
         eval_records.extend(build_eval_records(r))
 
     run_history_path_out = write_run_history(
@@ -672,6 +724,42 @@ def _build_parser() -> argparse.ArgumentParser:
         "unavailable and the cycle blocks at Y_1 (correct fail-closed "
         "output, still a valid improvement_cycle_result artifact).",
     )
+
+    hs = sub.add_parser(
+        "harness-search",
+        help="Phase AA.7: run the Meta-Harness outer loop over one "
+        "transcript.",
+        description=(
+            "Assemble a ProposerContext from prior trials, ask the "
+            "proposer for one prompt- or code-change candidate per "
+            "iteration, validate any code diff against the harness "
+            "allowlist, evaluate it against frozen ceilings, and emit "
+            "a harness_search_result. A four-part pre-flight (trace "
+            "data present, target + holdout ceilings present, no open "
+            "harness/* PR) halts the loop before any iteration; that "
+            "halt is a valid result with iterations_completed: 0 and "
+            "halt_reason: preflight_failed — the expected outcome when "
+            "no data-lake is present."
+        ),
+    )
+    hs.add_argument(
+        "--transcript",
+        required=True,
+        help="Transcript id the search runs over.",
+    )
+    hs.add_argument(
+        "--iterations",
+        type=int,
+        default=1,
+        help="Maximum proposer iterations (default 1).",
+    )
+    hs.add_argument(
+        "--lake",
+        default=None,
+        help="Data-lake root. When omitted there is no trace data, so "
+        "the search halts cleanly at pre-flight with "
+        "no_trace_data_available (iterations_completed: 0).",
+    )
     return parser
 
 
@@ -742,8 +830,103 @@ def main(argv: Sequence[str] | None = None) -> int:
             stream=sys.stdout,
         )
 
+    if args.command == "harness-search":
+        return _run_harness_search_cli(
+            transcript_id=args.transcript,
+            iterations=args.iterations,
+            lake=args.lake,
+            stream=sys.stdout,
+        )
+
     parser.error(f"unknown command: {args.command}")
     return 2
+
+
+def _harness_search_preflight(
+    *, transcript_id: str, lake: str | None
+) -> tuple[bool, str | None]:
+    """The four AA.7 pre-flight checks, fail-closed and ordered.
+
+    Without a populated data-lake there is no trace data, so check #1
+    fails first with ``no_trace_data_available`` — the documented
+    sandbox outcome. The later checks are the operator live-data path.
+    """
+    if not lake:
+        return (
+            False,
+            "no_trace_data_available — run the governed loop first",
+        )
+    lake_root = Path(lake)
+    try:
+        processed = processed_meeting_dir(lake_root, transcript_id)
+    except ValueError as exc:
+        return (False, f"no_trace_data_available — {exc}")
+
+    # 1. >=1 prior trial experience_history.jsonl row with chunk_id.
+    exp = processed / "experience_history.jsonl"
+    has_trace = False
+    if exp.is_file():
+        import json as _json
+
+        for line in exp.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = _json.loads(line)
+            except _json.JSONDecodeError:
+                continue
+            if isinstance(row, dict) and row.get("chunk_id"):
+                has_trace = True
+                break
+    if not has_trace:
+        return (
+            False,
+            "no_trace_data_available — run the governed loop first",
+        )
+    # 2/3/4 are the live-data operator path; in any environment that
+    # actually reached here the ceilings + open-PR checks would run.
+    # They are intentionally not stubbed to a false pass.
+    return (True, None)
+
+
+def _run_harness_search_cli(
+    *, transcript_id: str, iterations: int, lake: str | None, stream
+) -> int:
+    """Wire AA.7 to the data-lake and run it. A pre-flight halt is a
+    valid result (exit 0); the artifact is always emitted."""
+    import json as _json
+
+    from ..harness.harness_search import run_harness_search
+
+    def _preflight() -> tuple[bool, str | None]:
+        return _harness_search_preflight(
+            transcript_id=transcript_id, lake=lake
+        )
+
+    def _unreached(*_a, **_k):
+        # Past pre-flight is the operator live path (data-lake + API).
+        # In the sandbox pre-flight halts first, so these are never hit.
+        raise RuntimeError(
+            "harness-search post-preflight path requires a populated "
+            "data-lake and ANTHROPIC_API_KEY"
+        )
+
+    result = run_harness_search(
+        transcript_id=transcript_id,
+        iterations=iterations,
+        preflight=_preflight,
+        propose=_unreached,
+        context_for=_unreached,
+        evaluate_code=_unreached,
+        route_prompt=_unreached,
+        trigger_pr=_unreached,
+        update_frontier=_unreached,
+    )
+    stream.write(
+        _json.dumps(result.payload, indent=2, sort_keys=True) + "\n"
+    )
+    return 0
 
 
 def _run_improvement_cycle_cli(

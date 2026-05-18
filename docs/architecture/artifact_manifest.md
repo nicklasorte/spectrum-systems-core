@@ -957,6 +957,42 @@ calling `git check-ignore`.
 - **Readers:** none in-loop; the corpus cycle's status record for an
   operator / a future learning step.
 
+### harness_code_candidate (Phase AA.4)
+
+- **Writer:** `harness/proposer.py::build_harness_code_candidate`
+  (called by the AA.7 driver ONLY after it validates the diff and
+  passes the allowlist result in — the proposer never self-validates).
+  Payload validated against its schema inside the builder.
+- **Path template:** `data-lake/store/processed/meetings/<meeting_id>/harness_code_candidate__<artifact_id>.json`
+- **Schema:** `contracts/schemas/harness/harness_code_candidate.schema.json`
+- **Git-tracked:** NO — same reasoning as `opus_ceiling`.
+- **Readers:** `harness/code_candidate_evaluator.py` (AA.5),
+  `.github/workflows/harness-code-candidate-pr.yml` (PR body).
+
+### harness_code_candidate_evaluation (Phase AA.5)
+
+- **Writer:** `harness/code_candidate_evaluator.py::evaluate_code_candidate`.
+  A defense-in-depth allowlist recheck on the actual `proposed_diff`
+  runs BEFORE evaluation; on failure the function halts with
+  `allowlist_recheck_failed` and emits NO artifact. Payload validated
+  against its schema before return.
+- **Path template:** `data-lake/store/processed/meetings/<meeting_id>/harness_code_candidate_evaluation__<artifact_id>.json`
+- **Schema:** `contracts/schemas/harness/harness_code_candidate_evaluation.schema.json`
+- **Git-tracked:** NO — same reasoning as `opus_ceiling`.
+- **Readers:** `scripts/check_harness_code_pr_eligibility.py`,
+  `.github/workflows/harness-code-candidate-pr.yml`.
+
+### harness_search_result (Phase AA.7)
+
+- **Writer:** `harness/harness_search.py::run_harness_search`
+  (the `spectrum-core harness-search` path). Payload validated against
+  its schema inside the function before the artifact is returned.
+- **Path template:** `data-lake/store/processed/meetings/<meeting_id>/harness_search_result__<artifact_id>.json`
+- **Schema:** `contracts/schemas/harness/harness_search_result.schema.json`
+- **Git-tracked:** NO — same reasoning as `opus_ceiling`.
+- **Readers:** none in-loop; the outer-loop's status record for an
+  operator / a future learning step.
+
 ## Runtime / debug artifacts (intentionally NOT git-tracked)
 
 These are recorded here for completeness so future authors do not
@@ -1059,6 +1095,47 @@ debug or runtime state and live under `data-lake/` only when
 - Writer: `workflows/llm_eval_history.py` (shape-identical to
   `data_lake/eval_history.py`; written only for the LLM workflow when
   a `lake_root` is supplied, for GT-coverage threshold auditability).
+- Git-tracked: NO — harness memory, not authority (data-lake contract
+  §6.4). Covered by the `**/processed/**` ignore.
+
+### harness_snapshot (Phase AA.1, non-governed)
+- Path: `data-lake/store/processed/meetings/<meeting_id>/harness_snapshot__<run_id>/`
+  (contains `typed_extraction_runner.py`, `chunker.py`,
+  `bundle_builder.py` when present, `prompts/`, `commit_sha.txt`)
+- Writer: `harness/trace_capture.py::write_harness_snapshot`, called by
+  `data_lake/cli.py::process_meeting` on EVERY run (including blocked
+  ones) unless `TRACE_CAPTURE_ENABLED=false`.
+- Git-tracked: NO (in spectrum-systems-core — covered by the
+  `data-lake/` rule). It is a point-in-time copy of source files, NOT
+  a governed artifact, NOT in the artifact index. Re-derivable: YES
+  (deterministic copy at a given commit).
+
+### score_summary (Phase AA.2, non-governed)
+- Path: `data-lake/store/processed/meetings/<meeting_id>/score_summary__<run_id>.json`
+- Writer: `harness/score_summary_writer.py::write_score_summary`. Halts
+  with `commit_sha_mismatch` if its `harness_snapshot_commit_sha` does
+  not match the AA.1 snapshot's `commit_sha.txt`.
+- Git-tracked: NO — lightweight proposer-readable score file, like
+  `debug__<run_id>.json`. NOT a governed envelope, NOT in the index.
+  Re-derivable: YES (from the run's comparison + snapshot).
+
+### pareto_frontier (Phase AA.6, non-governed)
+- Path: `data-lake/store/processed/meetings/<meeting_id>/pareto_frontier.json`
+- Writer: `harness/pareto_frontier.py::update_pareto_frontier`. Append-
+  only and re-derivable: every update rebuilds the frontier from all
+  `score_summary__*.json` files; a missing/corrupt file is re-derived,
+  never a halt.
+- Git-tracked: NO — derived index, NOT a governed artifact, NOT in the
+  artifact index. Re-derivable: YES (the file is a cache).
+
+### experience_history.jsonl per-chunk trace fields (Phase AA.1)
+- Path: `data-lake/store/processed/meetings/<meeting_id>/experience_history.jsonl`
+- Phase AA.1 adds seven optional, nullable fields to each row
+  (`chunk_id`, `prompt_sent_preview`, `model_output_preview`,
+  `schema_type_attempted`, `extraction_result`,
+  `attribution_check_result`, `per_chunk_eval_scores`). Absent ==
+  null, so pre-AA.1 rows stay valid and `TRACE_CAPTURE_ENABLED=false`
+  is a byte-clean rollback (fields omitted entirely).
 - Git-tracked: NO — harness memory, not authority (data-lake contract
   §6.4). Covered by the `**/processed/**` ignore.
 

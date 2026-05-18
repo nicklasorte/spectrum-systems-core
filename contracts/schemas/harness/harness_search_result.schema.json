@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/harness/harness_search_result.schema.json",
+  "title": "harness_search_result",
+  "description": "Phase AA.7 — the record of one outer-loop harness search over a transcript. halt_reason is one of iterations_exhausted, convergence_halt, preflight_failed, proposer_error. A clean pre-flight halt (no trace data, missing ceiling, open harness PR) produces iterations_completed: 0 and halt_reason: preflight_failed — a valid result, not a crash.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "search_id",
+    "transcript_id",
+    "iterations_requested",
+    "iterations_completed",
+    "halt_reason",
+    "best_f1_achieved",
+    "best_candidate_id",
+    "per_iteration",
+    "pareto_frontier_final"
+  ],
+  "properties": {
+    "artifact_type": { "const": "harness_search_result" },
+    "schema_version": { "const": "1.0.0" },
+    "search_id": { "type": "string", "minLength": 1 },
+    "transcript_id": { "type": "string", "minLength": 1 },
+    "iterations_requested": { "type": "integer", "minimum": 0 },
+    "iterations_completed": { "type": "integer", "minimum": 0 },
+    "halt_reason": {
+      "type": "string",
+      "enum": [
+        "iterations_exhausted",
+        "convergence_halt",
+        "preflight_failed",
+        "proposer_error"
+      ]
+    },
+    "preflight_halt_detail": { "type": ["string", "null"] },
+    "convergence_detail": {
+      "type": ["object", "null"],
+      "description": "when halt_reason == convergence_halt: {consecutive_flat_iterations, current_best_f1}"
+    },
+    "best_f1_achieved": { "type": ["number", "null"] },
+    "best_candidate_id": { "type": ["string", "null"] },
+    "per_iteration": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "iteration",
+          "candidate_type",
+          "candidate_id",
+          "delta_f1",
+          "pr_opened",
+          "outcome"
+        ],
+        "properties": {
+          "iteration": { "type": "integer", "minimum": 0 },
+          "candidate_type": {
+            "type": "string",
+            "enum": ["prompt", "code", "rejected"]
+          },
+          "candidate_id": { "type": ["string", "null"] },
+          "delta_f1": { "type": ["number", "null"] },
+          "pr_opened": { "type": "boolean" },
+          "outcome": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "pareto_frontier_final": { "type": "array" }
+  }
+}
