@@ -17,6 +17,7 @@ on:
       source_id:
         description: "Source ID (slug) to run meeting-minutes-llm for"
         required: true
+        default: "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218"
       max_chunks:
         description: >-
           DEBUG ONLY. Integer cap on transcript chunks (leave empty for
