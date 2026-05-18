@@ -34,6 +34,7 @@ from spectrum_systems_core.control import decide_control
 from spectrum_systems_core.evals import (
     EXTRACTION_NOT_IN_SOURCE,
     HIGH_STAKES_TYPES,
+    STANDARD_TYPES,
     WITHIN_SOURCE_EVAL_TYPE,
     WITHIN_SOURCE_HARD_BLOCK_TYPES,
     WITHIN_SOURCE_WARN_PREFIX,
@@ -271,6 +272,101 @@ def test_warn_appears_in_eval_history(tmp_path):
 
 def test_hard_block_types_equals_high_stakes_types():
     assert WITHIN_SOURCE_HARD_BLOCK_TYPES == HIGH_STAKES_TYPES
+
+
+# ---------------------------------------------------------------------
+# risks demoted HIGH_STAKES → STANDARD (analytical, not binding)
+# ---------------------------------------------------------------------
+
+
+def test_risks_demoted_to_warn():
+    """A risk (now STANDARD) whose text is not verbatim in the
+    transcript routes to ``warn``: a risk is an analytical observation,
+    not a binding commitment, so a paraphrase is logged not blocked.
+
+    ``risks`` is a Step-4 structured array (text field ``risk_text``),
+    so the within_source eval picks it up only as an object item — the
+    same shape the real meeting_minutes_llm extraction emits.
+    """
+    art = _mk(
+        _base_payload(
+            risks=[
+                {"risk_text": "A risk that never appears in the body at all."}
+            ]
+        )
+    )
+    res = run_llm_within_source_eval(art, "totally unrelated transcript body")
+    assert res.payload["status"] == "fail"
+    # Sanity: the miss is tagged with the ``risks`` array key so lane
+    # derivation can route it.
+    assert any(
+        rc.startswith(f"{EXTRACTION_NOT_IN_SOURCE}:risks:")
+        for rc in res.payload["reason_codes"]
+    )
+
+    # Spec primitive with the explicit item_type.
+    routed = route_within_source_result(res, "risks")
+    assert routed.payload["status"] == "warn"
+    assert any(
+        rc.startswith(WITHIN_SOURCE_WARN_PREFIX)
+        for rc in routed.payload["reason_codes"]
+    )
+    # The block-causing prefix is gone (logged, not blocking).
+    assert not any(
+        rc.startswith(EXTRACTION_NOT_IN_SOURCE)
+        for rc in routed.payload["reason_codes"]
+    )
+    # A new envelope — the original failed result is not mutated.
+    assert res.payload["status"] == "fail"
+    assert routed.artifact_id != res.artifact_id
+
+    # The real pipeline path (lane derived from the result's own codes,
+    # not an explicit item_type) also demotes — this is what unblocks
+    # the full 138-chunk run.
+    derived = route_within_source_eval(res)
+    assert derived.payload["status"] == "warn"
+
+
+def test_decisions_still_hard_blocks():
+    """A decision (still HIGH_STAKES) whose text is not verbatim in the
+    transcript routes UNCHANGED: status stays ``fail``. The decisions
+    hard block is preserved exactly — demoting risks must not weaken
+    it."""
+    art = _mk(
+        _base_payload(
+            decisions=["A decision that never appears verbatim anywhere."]
+        )
+    )
+    res = run_llm_within_source_eval(art, "totally unrelated transcript body")
+    assert res.payload["status"] == "fail"
+
+    routed = route_within_source_result(res, "decisions")
+    assert routed.payload["status"] == "fail"
+    # Original block-causing code preserved verbatim (NOT rewritten).
+    assert any(
+        rc.startswith(EXTRACTION_NOT_IN_SOURCE)
+        for rc in routed.payload["reason_codes"]
+    )
+    assert not any(
+        rc.startswith(WITHIN_SOURCE_WARN_PREFIX)
+        for rc in routed.payload["reason_codes"]
+    )
+    # The derived-lane path also keeps the block.
+    derived = route_within_source_eval(res)
+    assert derived.payload["status"] == "fail"
+
+
+def test_high_stakes_set_no_longer_contains_risks():
+    """The type classification moved: risks left HIGH_STAKES for
+    STANDARD; decisions stayed HIGH_STAKES; and the hard-block set
+    (derived from HIGH_STAKES) therefore no longer contains risks."""
+    assert "risks" not in HIGH_STAKES_TYPES
+    assert "risks" in STANDARD_TYPES
+    assert "decisions" in HIGH_STAKES_TYPES
+    # The hard-block set is HIGH_STAKES verbatim, so it dropped risks
+    # too while keeping decisions.
+    assert "risks" not in WITHIN_SOURCE_HARD_BLOCK_TYPES
+    assert "decisions" in WITHIN_SOURCE_HARD_BLOCK_TYPES
 
 
 # ---------------------------------------------------------------------
