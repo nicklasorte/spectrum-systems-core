@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -157,13 +158,39 @@ def _eval_result(
     )
 
 
+# Invisible / zero-width format characters (Unicode category Cf and the
+# soft hyphen). They carry NO visible meaning but break a naive
+# substring check: a transcription or copy-paste pipeline can splice one
+# between words — notably between stutter-repeated words like
+# ``that<ZWSP>that`` / ``our<ZWSP>our`` — so text that is verbatim to a
+# human reader is not a byte substring of the raw transcript. ``\s``
+# does NOT match these (they are format chars, not whitespace), so the
+# whitespace collapse below cannot remove them; strip them explicitly.
+#   U+00AD SOFT HYPHEN          U+200B ZERO WIDTH SPACE
+#   U+200C ZERO WIDTH NON-JOINER  U+200D ZERO WIDTH JOINER
+#   U+2060 WORD JOINER          U+FEFF ZERO WIDTH NO-BREAK SPACE (BOM)
+_ZERO_WIDTH_RE = re.compile("[\u00ad\u200b\u200c\u200d\u2060\ufeff]")
+
+
 def _normalize(text: str) -> str:
-    """Lowercase, collapse all whitespace runs to a single space, strip.
+    """Lowercase, drop invisible zero-width chars, collapse all
+    whitespace runs to a single space, strip.
 
     This is THE match algorithm for both the within-source eval and the
     GT-coverage eval. Defined once so the two cannot drift.
+
+    Hardening (non-weakening): Unicode NFKC folds compatibility-
+    equivalent forms (non-breaking / narrow spaces, full-width digits,
+    ligatures) to their canonical form, then zero-width / soft-hyphen
+    format characters are deleted. Both steps only neutralise characters
+    a human reading the transcript treats as identical. Neither lets a
+    semantically different (paraphrased) extraction pass: a dropped
+    word, substituted token, or dropped punctuation still fails the
+    substring check, so the within-source gate keeps its full strength.
     """
-    return re.sub(r"\s+", " ", (text or "")).strip().lower()
+    folded = unicodedata.normalize("NFKC", text or "")
+    folded = _ZERO_WIDTH_RE.sub("", folded)
+    return re.sub(r"\s+", " ", folded).strip().lower()
 
 
 def _has_speaker_turns(transcript_text: str) -> bool:

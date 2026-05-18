@@ -453,6 +453,96 @@ def test_block2_verbatim_decision_text_passes_within_source():
     assert ws["items_not_in_source"] == 0
 
 
+# ---- _normalize: invisible-char hardening (binding match algorithm) ----
+#
+# Regression for chunk-67 (t0066): a transcription / copy-paste pipeline
+# splices an invisible zero-width / soft-hyphen / BOM character next to
+# the space between stutter-repeated words ("that <ZWSP>that",
+# "our<SHY> our"). The extracted text is verbatim to a human reader but
+# was not a normalized substring of the raw transcript, so
+# extraction_within_source_required failed. _normalize now NFKC-folds
+# compatibility forms and deletes invisible format chars. These tests
+# pin the fix AND that it does not weaken the gate. Invisible / compat
+# code points are spelled with \u escapes so the source stays ASCII and
+# editor-safe.
+
+ZWSP = "\u200b"  # zero width space
+SHY = "\u00ad"  # soft hyphen
+BOM = "\ufeff"  # zero width no-break space (BOM)
+NBSP = "\u00a0"  # non-breaking space
+LIGATURE_FI = "\ufb01"  # 'fi' compatibility ligature
+FULLWIDTH_5 = "\uff15"  # full-width digit five
+
+
+def test_normalize_strips_invisible_chars_so_verbatim_text_matches():
+    from spectrum_systems_core.evals.llm_extraction import _normalize
+
+    transcript = (
+        "Kerry and I will be collaborating to make sure that "
+        f"{ZWSP}that we have the data that we needed.{BOM} "
+        f"And we will share our{SHY} our code for doing the analysis."
+    )
+    hay = _normalize(transcript)
+    assert (
+        _normalize(
+            "Kerry and I will be collaborating to make sure that that "
+            "we have the data that we needed"
+        )
+        in hay
+    )
+    assert (
+        _normalize("we will share our our code for doing the analysis")
+        in hay
+    )
+
+
+def test_normalize_folds_compatibility_forms():
+    from spectrum_systems_core.evals.llm_extraction import _normalize
+
+    # NBSP -> space, ligature 'fi' -> "fi", full-width '5' -> "5".
+    assert _normalize(f"a{NBSP}b c") == "a b c"
+    assert _normalize(f"{BOM}{LIGATURE_FI}le {FULLWIDTH_5}G") == "file 5g"
+
+
+def test_normalize_does_not_weaken_gate_genuine_diffs_still_fail():
+    from spectrum_systems_core.evals.llm_extraction import _normalize
+
+    hay = _normalize(
+        "we will share our our code for doing the analysis, so we have "
+        "some consistent answers"
+    )
+    # Paraphrase, a dropped word, a dropped comma, and a swapped token
+    # must all remain non-substrings: invisible-char folding must never
+    # let a non-verbatim extraction through.
+    paraphrase = "we will share our code so answers stay consistent"
+    dropped_word = (
+        "we will share our our code for the analysis, so we have some "
+        "consistent answers"
+    )
+    dropped_comma = (
+        "we will share our our code for doing the analysis so we have "
+        "some consistent answers"
+    )
+    swapped_token = (
+        "we will share our our script for doing the analysis, so we "
+        "have some consistent answers"
+    )
+    for bad in (paraphrase, dropped_word, dropped_comma, swapped_token):
+        assert _normalize(bad) not in hay
+
+
+def test_normalize_is_idempotent_and_stable():
+    from spectrum_systems_core.evals.llm_extraction import _normalize
+
+    for s in [
+        f"X{ZWSP}{BOM}{SHY}Y",
+        f"{BOM}{LIGATURE_FI}le {FULLWIDTH_5}G",
+        "Kerry and I will be collaborating",
+        "",
+    ]:
+        assert _normalize(_normalize(s)) == _normalize(s)
+        assert _normalize(s) == _normalize(s)
+
 # ---- Full-transcript output-truncation regression ----------------------
 #
 # At full-transcript scale the schema_version 1.3.0 extraction (~24
