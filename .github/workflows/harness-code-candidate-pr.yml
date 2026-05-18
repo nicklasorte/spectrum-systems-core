@@ -1,0 +1,207 @@
+name: harness-code-candidate-pr
+
+# Phase AA.5 — open a PR for a harness_code_candidate ONLY when its
+# harness_code_candidate_evaluation says it is eligible (all four
+# conditions). ALL eligibility logic lives in
+# scripts/check_harness_code_pr_eligibility.py (which imports
+# spectrum_systems_core.harness.code_pr_eligibility); this YAML carries
+# no decision logic of its own. Rollback: set HARNESS_CODE_PR_ENABLED
+# to false to disable PR opening without disabling evaluation.
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_id:
+        description: "harness_code_candidate candidate_id to evaluate for auto-PR"
+        required: true
+        type: string
+  repository_dispatch:
+    types: [harness_code_candidate_evaluated]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  HARNESS_CODE_PR_ENABLED: ${{ vars.HARNESS_CODE_PR_ENABLED || 'true' }}
+
+jobs:
+  harness-code-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Resolve candidate_id
+        id: cid
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "candidate_id=${{ github.event.client_payload.candidate_id }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "candidate_id=${{ github.event.inputs.candidate_id }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rollback flag check
+        id: rollback
+        run: |
+          if [ "${HARNESS_CODE_PR_ENABLED}" = "false" ]; then
+            echo "::notice::HARNESS_CODE_PR_ENABLED=false — PR opening disabled (evaluation unaffected)."
+            echo "disabled=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "disabled=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        if: steps.rollback.outputs.disabled != '1'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        if: steps.rollback.outputs.disabled != '1'
+        run: pip install -e ".[dev]"
+
+      - name: Clone data lake
+        if: steps.rollback.outputs.disabled != '1'
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data-lake-token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      - name: Locate evaluation + candidate artifacts
+        if: steps.rollback.outputs.disabled != '1'
+        id: locate
+        run: |
+          CID="${{ steps.cid.outputs.candidate_id }}"
+          EVAL=$(grep -rl "\"candidate_id\": *\"${CID}\"" data-lake 2>/dev/null \
+            | grep -E 'harness_code_candidate_evaluation.*\.json$' | head -n1 || true)
+          CAND=$(grep -rl "\"candidate_id\": *\"${CID}\"" data-lake 2>/dev/null \
+            | grep -E 'harness_code_candidate[^_].*\.json$' | head -n1 || true)
+          if [ -z "$EVAL" ]; then
+            echo "::error::no harness_code_candidate_evaluation for ${CID}"
+            exit 1
+          fi
+          echo "evaluation=$EVAL" >> "$GITHUB_OUTPUT"
+          echo "candidate=$CAND" >> "$GITHUB_OUTPUT"
+
+      - name: Check eligibility
+        if: steps.rollback.outputs.disabled != '1'
+        id: elig
+        continue-on-error: true
+        run: |
+          set +e
+          OUT=$(python scripts/check_harness_code_pr_eligibility.py \
+            "${{ steps.locate.outputs.evaluation }}")
+          CODE=$?
+          echo "$OUT" > eligibility.json
+          echo "rc=$CODE" >> "$GITHUB_OUTPUT"
+          cat eligibility.json
+
+      - name: Not eligible — explain and stop
+        if: steps.rollback.outputs.disabled != '1' && steps.elig.outputs.rc != '0'
+        run: |
+          {
+            echo "## Harness code auto-PR NOT opened"
+            echo ""
+            echo "Candidate: \`${{ steps.cid.outputs.candidate_id }}\`"
+            echo ""
+            echo "Reason:"
+            python - <<'PY'
+          import json
+          d = json.load(open("eligibility.json"))
+          print(f"- `{d.get('reason', 'unknown')}`")
+          PY
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Assemble PR body
+        if: steps.rollback.outputs.disabled != '1' && steps.elig.outputs.rc == '0'
+        run: |
+          EVAL="${{ steps.locate.outputs.evaluation }}"
+          CAND="${{ steps.locate.outputs.candidate }}"
+          CID="${{ steps.cid.outputs.candidate_id }}"
+          python - "$EVAL" "$CAND" "$CID" <<'PY' > pr_body.md
+          import json, sys
+
+          def norm(doc, t):
+              if doc.get("artifact_type") == t:
+                  return doc
+              p = doc.get("payload")
+              if isinstance(p, dict) and p.get("artifact_type") == t:
+                  return p
+              return doc
+
+          ev = norm(json.load(open(sys.argv[1])),
+                    "harness_code_candidate_evaluation")
+          cid = sys.argv[3]
+          try:
+              cd = norm(json.load(open(sys.argv[2])),
+                        "harness_code_candidate")
+          except Exception:
+              cd = {}
+          regs = ev.get("per_type_regressions") or []
+          print("## Automated harness code candidate")
+          print()
+          print(f"harness_code_candidate_id: `{cid}`")
+          print(f"allowlist_recheck_passed: "
+                f"`{ev.get('allowlist_recheck_passed')}`")
+          print()
+          print("### Hypothesis")
+          print()
+          print(cd.get("hypothesis", "(see harness_code_candidate)"))
+          print()
+          print("### Proposer reasoning")
+          print()
+          print(cd.get("proposer_reasoning", "(see harness_code_candidate)"))
+          print()
+          print("### Deltas")
+          print()
+          print(f"- target `{ev.get('target_transcript_id')}`: "
+                f"target_delta_f1 = {ev.get('target_delta_f1')} "
+                f"({ev.get('baseline_target_f1')} -> "
+                f"{ev.get('candidate_target_f1')})")
+          print(f"- holdout `{ev.get('holdout_transcript_id')}`: "
+                f"holdout_delta_f1 = {ev.get('holdout_delta_f1')} "
+                f"({ev.get('baseline_holdout_f1')} -> "
+                f"{ev.get('candidate_holdout_f1')})")
+          print()
+          print("### Per-type regressions")
+          print()
+          if not regs:
+              print("no per-type regressions")
+          else:
+              for r in regs:
+                  print(f"- `{r['transcript_id']}` / `{r['schema_type']}`: "
+                        f"{r['baseline_f1']} -> {r['candidate_f1']} "
+                        f"(delta {r['delta']})")
+          print()
+          print(f"### trial_ids_read")
+          print()
+          for t in cd.get("trial_ids_read", []) or ["(none recorded)"]:
+              print(f"- `{t}`")
+          print()
+          print("### Proposed diff (verbatim)")
+          print()
+          print("```diff")
+          print(cd.get("proposed_diff", "(see harness_code_candidate)"))
+          print("```")
+          print()
+          print(f"Rollback: revert this PR; the candidate id "
+                f"`{cid}` anchors a future revert.")
+          PY
+          cat pr_body.md
+
+      - name: Open PR
+        if: steps.rollback.outputs.disabled != '1' && steps.elig.outputs.rc == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CID="${{ steps.cid.outputs.candidate_id }}"
+          BRANCH="harness/${CID}"
+          TITLE="Harness code candidate ${CID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git commit --allow-empty -m "$TITLE" \
+            -m "harness_code_candidate_id ${CID}"
+          git push -u origin "$BRANCH"
+          gh pr create --draft --title "$TITLE" --body-file pr_body.md \
+            --head "$BRANCH" --base main

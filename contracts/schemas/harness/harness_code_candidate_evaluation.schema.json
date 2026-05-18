@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/harness/harness_code_candidate_evaluation.schema.json",
+  "title": "harness_code_candidate_evaluation",
+  "description": "Phase AA.5 — a harness_code_candidate evaluated by applying its diff to a temp copy of the harness and running the governed extraction loop against BOTH the target and a holdout transcript, scored against the FROZEN ceilings. auto_pr_eligible requires all four of: target_delta_f1 >= 0.05, holdout_delta_f1 >= 0, per_type_regressions == [], allowlist_recheck_passed == true. eligibility_reason lists every failed condition explicitly, or 'all conditions met'.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "candidate_id",
+    "target_transcript_id",
+    "holdout_transcript_id",
+    "baseline_target_f1",
+    "candidate_target_f1",
+    "target_delta_f1",
+    "baseline_holdout_f1",
+    "candidate_holdout_f1",
+    "holdout_delta_f1",
+    "per_type_regressions",
+    "allowlist_recheck_passed",
+    "auto_pr_eligible",
+    "eligibility_reason"
+  ],
+  "properties": {
+    "artifact_type": { "const": "harness_code_candidate_evaluation" },
+    "schema_version": { "const": "1.0.0" },
+    "candidate_id": { "type": "string", "minLength": 1 },
+    "target_transcript_id": { "type": "string", "minLength": 1 },
+    "holdout_transcript_id": { "type": "string", "minLength": 1 },
+    "baseline_target_f1": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "candidate_target_f1": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "target_delta_f1": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+    "baseline_holdout_f1": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "candidate_holdout_f1": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "holdout_delta_f1": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+    "per_type_regressions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "transcript_id",
+          "schema_type",
+          "baseline_f1",
+          "candidate_f1",
+          "delta"
+        ],
+        "properties": {
+          "transcript_id": { "type": "string", "minLength": 1 },
+          "schema_type": { "type": "string", "minLength": 1 },
+          "baseline_f1": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "candidate_f1": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+          "delta": { "type": "number", "minimum": -1.0, "maximum": 1.0 }
+        }
+      }
+    },
+    "allowlist_recheck_passed": { "type": "boolean" },
+    "auto_pr_eligible": { "type": "boolean" },
+    "eligibility_reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "lists every failed condition explicitly, or 'all conditions met'"
+    }
+  }
+}

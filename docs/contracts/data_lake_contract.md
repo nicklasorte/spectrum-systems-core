@@ -226,6 +226,42 @@ Rules:
 - A future learning-loop step (constitution §10) MUST read JSON, not
   these JSONL files, when making governed decisions.
 
+Phase AA.1 extension (binding for Phase AA onward):
+
+- Each `experience_history.jsonl` row MAY additionally carry seven
+  optional, nullable per-chunk execution-trace fields: `chunk_id`,
+  `prompt_sent_preview` (first 2000 chars), `model_output_preview`
+  (first 2000 chars), `schema_type_attempted`, `extraction_result`
+  (`extracted` | `empty` | `schema_invalid` | `attribution_failed`),
+  `attribution_check_result` (`pass` | `fail` | `skipped`), and
+  `per_chunk_eval_scores` (object). An absent key is read identically
+  to `null`, so rows written before Phase AA — and any row written
+  with `TRACE_CAPTURE_ENABLED=false` — remain valid unchanged. When
+  trace capture explodes a run into per-chunk rows, each row's
+  `experience_id` is suffixed with its chunk so the existing
+  `(workflow_name, experience_id)` sort stays total and deterministic.
+- Two new per-trial filesystem artifacts accompany the harness memory
+  (both non-product, never in `indexes/meetings/artifact_index.jsonl`,
+  never promoted):
+  - `processed/meetings/<meeting_id>/harness_snapshot__<trial_id>/` —
+    a point-in-time copy of the allowlisted harness source files,
+    `prompts/`, and `commit_sha.txt`. Written on EVERY governed-loop
+    run, including blocked ones. Disabled by `TRACE_CAPTURE_ENABLED=false`.
+  - `processed/meetings/<meeting_id>/score_summary__<trial_id>.json` —
+    a lightweight, proposer-readable score file (like
+    `debug__<run_id>.json`). Its `harness_snapshot_commit_sha` MUST
+    equal the snapshot's `commit_sha.txt`; on divergence the writer
+    halts with `commit_sha_mismatch` and writes nothing.
+  - `processed/meetings/<meeting_id>/pareto_frontier.json` — the
+    append-only, always-re-derivable Pareto frontier over all
+    `score_summary__*.json` files for the transcript. A missing or
+    corrupt file is re-derived, never a halt.
+  These artifacts are read-only filesystem records: they carry no
+  authority, the control function and promotion gate are unaffected,
+  and a future learning-loop step MUST read JSON (the score summaries),
+  not re-interpret the snapshot directories, when making governed
+  decisions.
+
 ---
 
 ## 6A. Learning Artifacts

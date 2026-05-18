@@ -47,8 +47,8 @@
     },
     "candidate_source": {
       "type": "string",
-      "enum": ["low_confidence_gate", "miner", "revert"],
-      "description": "Phase Y.5: origin of the candidate. Absent => 'low_confidence_gate' (backward compatible). 'miner' => mined from a false_negative_set cluster. 'revert' => proposes reverting a prior prompt_addition_id."
+      "enum": ["low_confidence_gate", "miner", "revert", "proposer"],
+      "description": "Phase Y.5: origin of the candidate. Absent => 'low_confidence_gate' (backward compatible). 'miner' => mined from a false_negative_set cluster. 'revert' => proposes reverting a prior prompt_addition_id. Phase AA.4: 'proposer' => a Meta-Harness proposer Type-A (prompt/context) candidate; carries target_transcript_id, schema_type, proposed_prompt_addition like a miner candidate but is NOT tied to a false_negative_set."
     },
     "target_transcript_id": {
       "type": "string",
@@ -117,9 +117,24 @@
     },
     {
       "if": {
+        "properties": {
+          "candidate_source": { "const": "proposer" }
+        },
+        "required": ["candidate_source"]
+      },
+      "then": {
+        "required": [
+          "target_transcript_id",
+          "schema_type",
+          "proposed_prompt_addition"
+        ]
+      }
+    },
+    {
+      "if": {
         "not": {
           "properties": {
-            "candidate_source": { "enum": ["miner", "revert"] }
+            "candidate_source": { "enum": ["miner", "revert", "proposer"] }
           },
           "required": ["candidate_source"]
         }

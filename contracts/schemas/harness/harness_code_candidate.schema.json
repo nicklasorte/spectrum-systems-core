@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/harness/harness_code_candidate.schema.json",
+  "title": "harness_code_candidate",
+  "description": "Phase AA.4 — a Meta-Harness proposer Type-B (code change) candidate. The proposed_diff touches ONLY harness-allowlisted files. allowlist_validation_result is populated by the outer-loop driver (AA.7) BEFORE the candidate is written; the proposer never self-validates. A candidate whose allowlist_validation_result.valid is false is never written — the driver emits proposer_rejected_invalid_diff instead.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "candidate_id",
+    "produced_at",
+    "transcript_id",
+    "trial_ids_read",
+    "proposed_diff",
+    "proposer_reasoning",
+    "hypothesis",
+    "predicted_improvement"
+  ],
+  "properties": {
+    "artifact_type": { "const": "harness_code_candidate" },
+    "schema_version": { "const": "1.0.0" },
+    "candidate_id": { "type": "string", "minLength": 1 },
+    "produced_at": { "type": "string", "format": "date-time" },
+    "transcript_id": { "type": "string", "minLength": 1 },
+    "trial_ids_read": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "IDs of all prior trials the proposer inspected"
+    },
+    "proposed_diff": {
+      "type": "string",
+      "minLength": 1,
+      "description": "unified diff format"
+    },
+    "proposer_reasoning": {
+      "type": "string",
+      "minLength": 1,
+      "description": "proposer's causal analysis of why prior trials failed"
+    },
+    "hypothesis": {
+      "type": "string",
+      "minLength": 1,
+      "description": "specific falsifiable hypothesis this diff tests"
+    },
+    "predicted_improvement": {
+      "type": "string",
+      "minLength": 1,
+      "description": "what the proposer expects to change in F1 and why"
+    },
+    "allowlist_validation_result": {
+      "type": "object",
+      "description": "output of harness_mutation_validator.validate_diff, stamped by the AA.7 driver before the candidate is written"
+    }
+  }
+}
