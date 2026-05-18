@@ -163,6 +163,24 @@ speaker said it imperfectly, copy the imperfection. The mechanical
 substring check will reject the clean version and accept the verbatim
 one.
 
+## decisions: verbatim copy required
+
+For decisions: the text field MUST be copied verbatim from the
+transcript — the exact words spoken, including false starts,
+repetitions, and informal speech. Do not summarize or paraphrase.
+The text must appear word-for-word in the transcript. If you cannot
+find verbatim text for a decision, do not extract it.
+
+This applies to BOTH forms of a `decisions` item: the plain-string
+form and the object form's `text` field. The mechanical
+normalized-substring gate (`extraction_within_source_required`)
+checks `decisions` exactly as it checks `action_items` — a
+paraphrased or summarized decision fails the gate and blocks the
+entire artifact from promotion, even on a HIGH_STAKES item. A
+decision like "we are moving forward because because at the study
+level, ..." that condenses or restates what was said will fail;
+copy the speaker's exact span instead.
+
 Apply this strict word-for-word rule to EVERY one of these fields:
 
 - `decisions` items — the plain-string form AND the object form's
