@@ -295,10 +295,59 @@ def test_valid_transcript_writes_correct_fields(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------
-# 4. Missing source_record.json -> halt, no partial output
+# 4. Missing source_record.json -> deterministic Stage-1 self-heal
+#    (LLM-free) produces it, then the baseline is written. The unstated
+#    "transcript must be pre-ingested" precondition no longer halts the
+#    run on every invocation.
 # --------------------------------------------------------------------------
-def test_missing_source_record_halts_no_partial(tmp_path: Path) -> None:
+def test_missing_source_record_auto_ingests(tmp_path: Path) -> None:
     dl = _seed(tmp_path, with_source_record=False)
+    sr_path = (
+        dl / "store" / "processed" / "meetings" / SOURCE_ID
+        / "source_record.json"
+    )
+    assert not sr_path.exists(), "precondition: no source_record yet"
+
+    result = cob.create_baselines(
+        data_lake=dl,
+        source_id=None,
+        dry_run=False,
+        skip_existing=True,
+        model=MODEL,
+        client=SpyClient(_VALID_RESPONSE),
+    )
+
+    assert result["status"] == "success"
+    # The reused SourceLoader (the real writer) produced the record.
+    assert sr_path.is_file(), "Stage-1 ingestion must create the record"
+    record = json.loads(sr_path.read_text(encoding="utf-8"))
+    aid = record["artifact_id"]
+    assert uuid.UUID(aid)  # valid UUID, as the pipeline writes it
+
+    out = _out_path(dl)
+    assert out.is_file(), "baseline must be written after self-heal"
+    lines = [
+        json.loads(ln)
+        for ln in out.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    assert lines, "non-empty baseline expected"
+    for r in lines:
+        assert r["source_artifact_id"] == aid
+
+
+def test_present_but_invalid_source_record_still_halts(
+    tmp_path: Path,
+) -> None:
+    """Fail-closed NOT weakened: a *present* source_record with no
+    artifact_id still halts ``invalid_source_record`` — the self-heal
+    only runs when the record is ABSENT, never over a corrupt one."""
+    dl = _seed(tmp_path, with_source_record=False)
+    proc = dl / "store" / "processed" / "meetings" / SOURCE_ID
+    proc.mkdir(parents=True)
+    (proc / "source_record.json").write_text(
+        json.dumps({"source_id": SOURCE_ID}), encoding="utf-8"
+    )
     with pytest.raises(cob.ReferenceBaselineError) as ei:
         cob.create_baselines(
             data_lake=dl,
@@ -308,7 +357,7 @@ def test_missing_source_record_halts_no_partial(tmp_path: Path) -> None:
             model=MODEL,
             client=SpyClient(_VALID_RESPONSE),
         )
-    assert ei.value.reason == "missing_source_record"
+    assert ei.value.reason == "invalid_source_record"
     assert not _out_path(dl).exists()
 
 
