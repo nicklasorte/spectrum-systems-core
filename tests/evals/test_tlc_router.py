@@ -75,10 +75,13 @@ def _run(payload: dict, transcript: str = "short"):
 
 
 def test_lane_sets_match_mission_spec():
+    # ``risks`` was demoted from HIGH_STAKES to STANDARD: a risk is an
+    # analytical observation, not a binding commitment, so a
+    # within_source miss there is a logged WARN, not a hard block.
+    # ``decisions`` stays HIGH_STAKES with its verbatim hard block.
     assert HIGH_STAKES_TYPES == frozenset(
         {
             "decisions",
-            "risks",
             "regulatory_references",
             "technical_parameters",
             "issue_registry_entry",
@@ -88,6 +91,7 @@ def test_lane_sets_match_mission_spec():
             "external_stakeholder_input",
         }
     )
+    assert "risks" not in HIGH_STAKES_TYPES
     assert STANDARD_TYPES == frozenset(
         {
             "action_items",
@@ -104,6 +108,7 @@ def test_lane_sets_match_mission_spec():
             "agenda_item",
             "meeting_phases",
             "sentiment_indicators",
+            "risks",
         }
     )
 

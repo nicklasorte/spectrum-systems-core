@@ -10,11 +10,14 @@ result unchanged — it only ever inspects ``payload["status"]``.
 Lanes
 -----
 
-* ``HIGH_STAKES_TYPES`` — decisions, risks, regulatory_references,
-  technical_parameters and the four cross-meeting accountability arrays.
+* ``HIGH_STAKES_TYPES`` — decisions, regulatory_references,
+  technical_parameters and the cross-meeting accountability arrays.
   Run the FULL eval set: ``regulatory_verb`` + ``within_source`` +
   ``strict_schema`` + ``nonempty``. Same-or-stricter than before.
-* ``STANDARD_TYPES`` — high-volume descriptive arrays. Run
+* ``STANDARD_TYPES`` — high-volume descriptive arrays (including
+  ``risks``, which is an analytical artifact, not a binding
+  commitment: a paraphrased risk is still useful, so a within_source
+  miss there is a logged WARN, not a hard block). Run
   ``within_source`` + ``strict_schema`` only. ``regulatory_verb`` is
   skipped because it is decision-governing-verb specific and not
   applicable to these types; ``nonempty`` is the HIGH_STAKES content
@@ -86,7 +89,6 @@ WITHIN_SOURCE_WARN_PREFIX = "within_source_warn"
 HIGH_STAKES_TYPES: frozenset[str] = frozenset(
     {
         "decisions",
-        "risks",
         "regulatory_references",
         "technical_parameters",
         "issue_registry_entry",
@@ -99,6 +101,14 @@ HIGH_STAKES_TYPES: frozenset[str] = frozenset(
 
 # STANDARD — within_source + strict_schema only. High-volume descriptive
 # arrays for which the decision-verb gate is not applicable.
+#
+# ``risks`` lives here, not in HIGH_STAKES: a risk is an analytical
+# observation, not a binding commitment. A paraphrased risk is still a
+# useful risk, whereas a paraphrased decision has accountability
+# implications. So a within_source miss on ``risks`` is demoted to a
+# logged WARN (correction-miner readable) instead of hard-blocking the
+# whole 138-chunk run. ``decisions`` stays HIGH_STAKES and keeps its
+# verbatim hard block.
 STANDARD_TYPES: frozenset[str] = frozenset(
     {
         "action_items",
@@ -115,6 +125,7 @@ STANDARD_TYPES: frozenset[str] = frozenset(
         "agenda_item",
         "meeting_phases",
         "sentiment_indicators",
+        "risks",
     }
 )
 
