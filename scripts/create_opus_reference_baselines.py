@@ -20,11 +20,21 @@ written):
 * The canonical prompt file cannot be read  -> ``missing_extraction_prompt``
   (checked BEFORE any model call — a missing prompt can never reach the
   transport).
-* ``source_record.json`` missing -> ``missing_source_record``; present
-  but unreadable JSON, not a JSON object, or lacking a valid-UUID
-  ``artifact_id`` -> ``invalid_source_record``. The UUID is never
-  inferred. ``source_id`` is taken from ``--source-id`` / the
-  transcript slug and is deliberately NOT required on the record.
+* ``source_record.json`` missing -> the deterministic, LLM-free
+  Stage-1 ingestion (the EXACT pipeline functions
+  ``_stage_transcript_into_meetings`` + ``SourceLoader.load``, never
+  reimplemented) is run in-process to produce it, so the canonical
+  source UUID this baseline needs is satisfied as a precondition
+  instead of being an unstated external requirement. This is NOT a
+  weakening of the gate: ingestion is deterministic and LLM-free, a
+  present source_record is left untouched, and if ingestion cannot
+  produce a record the run HALTs ``source_record_ingest_failed``.
+  A source_record that is *present* but unreadable JSON, not a JSON
+  object, or lacking a valid-UUID ``artifact_id`` still ->
+  ``invalid_source_record`` (never silently re-ingested over). The
+  UUID is never inferred. ``source_id`` is taken from ``--source-id``
+  / the transcript slug and is deliberately NOT required on the
+  record.
 * The model transport fails -> ``llm_transport_error`` (no fallback to a
   weaker model, no partial file).
 * The model returns non-JSON / a non-object / a content key whose value
@@ -87,8 +97,12 @@ from typing import Any, Callable, Dict, List, Optional
 from spectrum_systems_core.ingestion.docx_extractor import (  # noqa: E402
     DocxExtractor,
 )
+from spectrum_systems_core.ingestion.source_loader import (  # noqa: E402
+    SourceLoader,
+)
 from spectrum_systems_core.orchestration.pipeline_orchestrator import (  # noqa: E402
     _slugify,
+    _stage_transcript_into_meetings,
 )
 from spectrum_systems_core.workflows import (  # noqa: E402
     meeting_minutes_llm as _mm_llm,
@@ -300,6 +314,93 @@ def extraction_types() -> List[str]:
                 )
             types.append(key)
     return types
+
+
+def _ensure_source_record(
+    data_lake: Path, source_id: str, transcript_text: str
+) -> None:
+    """Make the canonical ingestion record exist before resolution.
+
+    The Opus reference baseline is independent of the Haiku *extraction*
+    pipeline, but it still needs the stable transcript UUID the
+    *ingestion* stage stamps into ``source_record.json``. When the
+    data-lake holds the raw transcript but no source_record yet (the
+    transcript was never run through the pipeline — the exact
+    ``missing_source_record`` halt that made this workflow fail on every
+    run before any Opus call), run ONLY the deterministic, LLM-free
+    Stage-1 ingestion so the precondition is satisfied in-process.
+
+    The pipeline functions are REUSED verbatim, never reimplemented:
+    ``_stage_transcript_into_meetings`` (raw transcript text ->
+    ``raw/meetings/<sid>/source.txt`` + ``metadata.json``) then
+    ``SourceLoader.load`` (-> ``processed/meetings/<sid>/
+    source_record.json`` with a fresh valid-UUID ``artifact_id``).
+    Neither calls a model, so the Opus baseline stays independent of
+    the Haiku extraction path.
+
+    Fail-closed is preserved, not weakened:
+
+    * An already-present source_record is left UNTOUCHED — a present but
+      corrupt record must still trip ``invalid_source_record`` in
+      :func:`_resolve_source_artifact_id`, never be silently
+      overwritten.
+    * If staging or ingestion fails, the run HALTs
+      ``source_record_ingest_failed`` (no partial output) and the
+      unchanged resolver still HALTs on a missing/invalid UUID.
+    """
+    sr_path = (
+        data_lake
+        / "store"
+        / "processed"
+        / "meetings"
+        / source_id
+        / "source_record.json"
+    )
+    if sr_path.is_file():
+        return  # present -> resolver/validator owns it (gate unchanged)
+
+    store_root = data_lake / "store"
+    with tempfile.TemporaryDirectory() as td:
+        txt_path = Path(td) / f"{source_id}.txt"
+        txt_path.write_text(transcript_text, encoding="utf-8")
+        stage = _stage_transcript_into_meetings(
+            txt_path=txt_path,
+            source_id=source_id,
+            store_root=store_root,
+        )
+    if stage.get("status") != "success":
+        raise ReferenceBaselineError(
+            "source_record_ingest_failed",
+            f"could not stage {source_id!r} into raw/meetings for "
+            f"Stage-1 ingestion: {stage.get('reason')!r}",
+        )
+
+    # SourceLoader resolves the data-lake from DATA_LAKE_PATH; point it
+    # at the SAME tree the script operates on (--data-lake is
+    # authoritative) and restore the prior value afterwards.
+    prev = os.environ.get("DATA_LAKE_PATH")
+    os.environ["DATA_LAKE_PATH"] = str(data_lake)
+    try:
+        result = SourceLoader().load(source_id, str(store_root))
+    finally:
+        if prev is None:
+            os.environ.pop("DATA_LAKE_PATH", None)
+        else:
+            os.environ["DATA_LAKE_PATH"] = prev
+
+    if result.get("status") != "success":
+        raise ReferenceBaselineError(
+            "source_record_ingest_failed",
+            f"Stage-1 ingestion failed for {source_id!r}: "
+            f"{result.get('reason')!r} — no source_record produced, "
+            f"no partial file written",
+        )
+    if not sr_path.is_file():
+        raise ReferenceBaselineError(
+            "source_record_ingest_failed",
+            f"Stage-1 ingestion reported success for {source_id!r} but "
+            f"wrote no source_record.json at {sr_path}",
+        )
 
 
 def _resolve_source_artifact_id(data_lake: Path, source_id: str) -> str:
@@ -936,9 +1037,14 @@ def create_baselines(
             )
             continue
 
-        source_artifact_id = _resolve_source_artifact_id(data_lake, sid)
         transcript_text = _read_transcript_text(docx_path)
         meeting_date = _meeting_date_from_header(transcript_text)
+        # Self-heal the unstated precondition: a transcript present in
+        # the data-lake but never ingested has no source_record.json.
+        # Produce it deterministically (LLM-free Stage-1) before
+        # resolving the stable UUID, instead of halting on every run.
+        _ensure_source_record(data_lake, sid, transcript_text)
+        source_artifact_id = _resolve_source_artifact_id(data_lake, sid)
 
         try:
             raw = active_client(system=prompt, user=transcript_text)

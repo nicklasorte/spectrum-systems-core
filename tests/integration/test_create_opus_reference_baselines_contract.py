@@ -167,14 +167,45 @@ def test_subprocess_dry_run_writes_nothing(tmp_path: Path) -> None:
     assert summary["per_transcript"][0]["status"] == "dry_run"
 
 
-def test_subprocess_missing_source_record_halts(tmp_path: Path) -> None:
+def test_subprocess_missing_source_record_auto_ingests(
+    tmp_path: Path,
+) -> None:
+    """Root-cause fix (subprocess): a transcript present in the
+    data-lake but never ingested (no source_record.json — the gate
+    that made this workflow exit 2 on every run before any Opus call)
+    is self-healed by the deterministic, LLM-free Stage-1 ingestion,
+    then the baseline is written. The source_record on disk is shaped
+    by the REAL writer (``SourceLoader``), the strongest possible
+    real-writer guarantee.
+    """
     dl = _seed(tmp_path, with_source_record=False)
+    sr_path = (
+        dl / "store" / "processed" / "meetings" / SOURCE_ID
+        / "source_record.json"
+    )
+    assert not sr_path.exists(), "precondition: no source_record yet"
+
     result = _run(
         ["--data-lake", str(dl), "--model", MODEL, "--no-skip-existing"]
     )
-    assert result.returncode != 0
-    assert "missing_source_record" in result.stdout
-    assert not _out(dl).exists()
+    assert result.returncode == 0, (
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+
+    assert sr_path.is_file(), "Stage-1 ingestion must create the record"
+    aid = json.loads(sr_path.read_text(encoding="utf-8"))["artifact_id"]
+    assert uuid.UUID(aid)
+
+    out = _out(dl)
+    assert out.is_file(), "baseline JSONL not written after self-heal"
+    lines = [
+        json.loads(ln)
+        for ln in out.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    assert lines
+    for r in lines:
+        assert r["source_artifact_id"] == aid
 
 
 def test_subprocess_only_artifact_id_source_record_passes(
