@@ -2,9 +2,13 @@
 
 This is the first workflow in the repo that makes a live model call.
 The constitution defers live calls; this workflow scopes exactly ONE
-in, behind a default-off feature flag, reusing the existing governed
-loop, envelope, control function and promotion gate. No new module,
-no second control model, no second envelope.
+live-call SITE in, behind a default-off feature flag, reusing the
+existing governed loop, envelope, control function and promotion gate.
+No new module, no second control model, no second envelope. On the
+grounded path a transcript larger than one token-budget-safe call is
+processed as deterministic contiguous chunk batches (one call per
+batch) whose parsed payloads are aggregated into ONE payload the
+unchanged evals judge — still one workflow, one loop, one gate.
 
 Shape parity with the regex ``meeting_minutes`` workflow is deliberate:
 the payload is ``{title, summary, decisions[], action_items[],
@@ -345,6 +349,43 @@ _MEETING_MINUTES_TYPE = "meeting_minutes"
 # exactly as before. Bounded so a persistently-bad model cannot loop.
 _MAX_LLM_ATTEMPTS = 2
 
+# Deterministic chunk-batch size for the grounded extraction path.
+#
+# Root cause this addresses: the workflow used to make ONE model call
+# over the WHOLE transcript. ``bbdaf4d`` / the model_registry note
+# proved ``max_tokens=16384`` non-truncating only at ~34-chunk
+# full-transcript scale. A 138-chunk single call's response exceeds
+# that budget; ``AnthropicJSONClient`` raises
+# ``llm_output_truncated:max_tokens`` and the producer returns a
+# no-arrays base payload, so ``required_meeting_minutes_fields`` +
+# ``regulatory_verb`` block the whole run. Splitting the ordered chunk
+# list into contiguous batches of at most ``_CHUNKS_PER_BATCH`` keeps
+# every batch's model OUTPUT (the truncation axis) well under the
+# proven-safe 34-chunk ceiling, then the per-batch parsed payloads are
+# aggregated into one payload the UNCHANGED evals judge. Same input ->
+# same contiguous batches -> replay-stable. An empty batch is valid: it
+# contributes empty arrays to the aggregate, never a block.
+_CHUNKS_PER_BATCH = 25
+
+
+def _slice_transcript_for_batch(
+    transcript_lines: list[str], batch: list[dict]
+) -> str:
+    """Verbatim transcript slice covering ``batch``'s line span.
+
+    The model is shown only this slice (plus the batch's turn block) so
+    its output stays bounded. ``line_start`` / ``line_end`` are 1-based
+    inclusive (the chunker contract); the slice is a faithful verbatim
+    substring of the full transcript, so every item the model extracts
+    from it is still a verbatim substring of the full ``input_text`` the
+    within-source / nonempty evals bind to. Mirrors the ``max_chunks``
+    truncation idiom already used in the workflow."""
+    if not batch:
+        return ""
+    start = batch[0].get("line_start", 1)
+    end = batch[-1].get("line_end", len(transcript_lines))
+    return "\n".join(transcript_lines[max(0, start - 1):end])
+
 _PARSE_FAIL_REASON = (
     "the response was not a single JSON object carrying the three "
     "required arrays decisions, action_items, open_questions"
@@ -514,12 +555,12 @@ def _fill_unclassified_decision_verbs(decisions: list) -> list:
 
 # --- Per-chunk debug report (observe-only; --debug-chunks) --------------
 #
-# The meeting_minutes_llm workflow makes ONE model call over the whole
-# transcript; the chunker's turn-chunks are how every extracted item is
-# attributed back to a span of the transcript (the model emits a
-# top-level ``grounding`` array of
-# ``{"kind","text","source_turns":[turn_id,...]}``). The 34-chunk run
-# blocks while a 3-chunk run promotes, so the operator needs to see
+# The meeting_minutes_llm workflow makes one model call per chunk
+# batch and aggregates the parsed payloads; the chunker's turn-chunks
+# are how every extracted item is attributed back to a span of the
+# transcript (the model emits a top-level ``grounding`` array of
+# ``{"kind","text","source_turns":[turn_id,...]}``). The aggregated
+# payload is judged by the evals once, so the operator needs to see
 # WHICH chunk produced each blocking item. This builder decomposes the
 # already-computed eval_results back onto the chunks the items cite.
 #
@@ -887,26 +928,27 @@ def _make_extract(
             payload["meeting_id"] = meeting_id
         return payload
 
-    def _extract(
-        input_text: str, chunks: list[dict] | None = None
-    ) -> dict:
-        title = _derive_title(input_text)
-        grounded = bool(chunks)
+    def _run_batch(
+        *, system: str, base_user: str, title: str, grounded: bool
+    ) -> tuple[dict, bool]:
+        """One model call (plus the bounded corrective retry) for a
+        single batch's user message.
 
-        # The user turn now carries the explicit extraction directive
-        # (the request belongs here, not only in the system prompt),
-        # then the raw transcript FIRST (verbatim evals bind to it),
-        # then the turn-segmented block so the model can cite turn_ids.
-        # Same chunks → same base user message (replay-stable).
-        base_user = _build_user_message(input_text, chunks, grounded)
-        system = _system_prompt()
+        Returns ``(candidate, ok)``. ``ok`` is ``True`` only when the
+        response parsed AND passed the producer-side schema pre-check
+        for this batch; ``candidate`` is then the schema-valid parsed
+        payload whose arrays the caller aggregates. ``ok`` is ``False``
+        on a transport failure (no retry — unchanged) or an exhausted,
+        still-malformed response; ``candidate`` is then the diagnostic
+        base / last payload (carrying ``_llm_error`` / ``_llm_raw``)
+        that the caller returns AS-IS so the governed loop's unchanged
+        fail-closed evals block the whole run with the cause visible.
 
-        # Bounded re-prompt loop. Attempt 1 uses the base prompt and is
-        # byte-identical to the pre-retry happy path. A parse miss or a
-        # schema violation triggers ONE corrective retry with the precise
-        # reason fed back. The gate is never weakened: an exhausted,
-        # still-malformed run returns the last candidate and the governed
-        # loop's fail-closed evals block it exactly as before.
+        The loop body is byte-identical to the pre-batching single-call
+        logic — only the early returns now carry an explicit ``ok``
+        flag so the caller can distinguish "mergeable" from "fail the
+        whole run".
+        """
         candidate = _base_payload(title, grounded)
         user = base_user
         for attempt in range(_MAX_LLM_ATTEMPTS):
@@ -919,7 +961,7 @@ def _make_extract(
                 # (extra key, ignored by every eval).
                 p = _base_payload(title, grounded)
                 p["_llm_error"] = str(exc)
-                return p
+                return p, False
 
             parsed = _parse_llm_payload(raw)
             if parsed is None:
@@ -949,7 +991,7 @@ def _make_extract(
                     # Schema-valid on this attempt — done. No extra keys
                     # added, so a first-attempt success is byte-identical
                     # to the pre-retry behaviour (same content_hash).
-                    return candidate
+                    return candidate, True
 
             # Malformed. Re-ask once with the precise reason fed back,
             # only while attempts remain (bounded by _MAX_LLM_ATTEMPTS).
@@ -959,7 +1001,73 @@ def _make_extract(
         # Retry budget exhausted and still malformed: return the last
         # candidate UNCHANGED. Promotion is decided solely by the
         # governed loop's evals + control gate, which block it.
-        return candidate
+        return candidate, False
+
+    def _extract(
+        input_text: str, chunks: list[dict] | None = None
+    ) -> dict:
+        title = _derive_title(input_text)
+        grounded = bool(chunks)
+        system = _system_prompt()
+
+        if not grounded or len(chunks) <= _CHUNKS_PER_BATCH:
+            # Single pass: ungrounded, OR a chunk count that already fits
+            # the proven-safe token budget. The user message and the one
+            # model call are byte-identical to the pre-batching path
+            # (same content_hash), so small runs and the existing hermetic
+            # suite are completely unaffected by batching.
+            base_user = _build_user_message(input_text, chunks, grounded)
+            candidate, _ = _run_batch(
+                system=system,
+                base_user=base_user,
+                title=title,
+                grounded=grounded,
+            )
+            return candidate
+
+        # Grounded AND over the single-call budget: split the ordered
+        # chunk list into contiguous batches, one model call per batch,
+        # and aggregate the parsed arrays into ONE payload. The governed
+        # loop runs every (unchanged) eval ONCE on this aggregated
+        # payload — so required_meeting_minutes_fields / regulatory_verb
+        # judge the whole-transcript aggregate, never a per-batch
+        # response, and an empty batch is valid (it contributes nothing).
+        transcript_lines = input_text.splitlines()
+        aggregated = _base_payload(title, grounded)
+        for key in (*_LEGACY_ARRAYS, *_STRUCTURED_ARRAYS):
+            aggregated[key] = []
+        aggregated["grounding"] = []
+
+        for start in range(0, len(chunks), _CHUNKS_PER_BATCH):
+            batch = chunks[start:start + _CHUNKS_PER_BATCH]
+            batch_text = _slice_transcript_for_batch(
+                transcript_lines, batch
+            )
+            base_user = _build_user_message(batch_text, batch, True)
+            candidate, ok = _run_batch(
+                system=system,
+                base_user=base_user,
+                title=title,
+                grounded=True,
+            )
+            if not ok:
+                # Fail closed for the WHOLE run, exactly as the
+                # single-call path does today: return this batch's
+                # diagnostic candidate (carrying _llm_error / _llm_raw
+                # or the schema-invalid content) so the governed loop's
+                # unchanged evals block it and the cause is visible. A
+                # partial aggregation is NEVER promoted as if it were
+                # the whole transcript.
+                return candidate
+            # ok is True ⇒ _schema_reject_reason passed ⇒ every carried
+            # array is a valid list per meeting_minutes.schema.json.
+            # _run_batch already stamped the verb sentinel per batch, so
+            # the aggregate inherits it. Contiguous, non-overlapping
+            # batches over disjoint slices ⇒ no cross-batch duplication.
+            for key in (*_LEGACY_ARRAYS, *_STRUCTURED_ARRAYS, "grounding"):
+                aggregated[key].extend(candidate.get(key, []))
+
+        return aggregated
 
     return _extract
 
@@ -1195,9 +1303,10 @@ def run_meeting_minutes_llm_workflow(
         input_text = "\n".join(input_text.splitlines()[:last_line])
     grounded = bool(chunks)
     if _raw_printer is not None:
-        # The workflow makes ONE whole-transcript call; record the
-        # post-truncation chunk count so the printed banner is honest
-        # about the chunk scope the single call covers.
+        # Record the post-truncation chunk count so the printed banner
+        # is honest about the chunk scope the run covers (the grounded
+        # path now makes one call per chunk batch; the raw printer
+        # prints each batch response in order).
         _raw_printer.total_chunks = len(chunks)
 
     extra_evals = [
