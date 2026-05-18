@@ -43,13 +43,102 @@ def test_primary_text_map_matches_baseline_producer() -> None:
     """The Haiku text reader must mirror the Opus baseline producer.
 
     An asymmetric reader would make the diff lie. Importing the baseline
-    producer here (in a test, never in the script) proves the two maps
-    are identical so they cannot drift.
+    producer here (in a test, never in the script) proves the two
+    readers are identical so they cannot drift. The behavioral check
+    below is the real trust property: the vestigial per-type maps stayed
+    byte-equal while ``_item_text`` had silently drifted from the
+    producer (it dropped object-form ``decisions`` as ``''`` because the
+    producer stopped consulting ``_LEGACY_OBJECT_TEXT_FIELD`` and started
+    using the tolerant priority list) — which read 0 Haiku items off a
+    real, fully-grounded artifact.
     """
     import create_opus_reference_baselines as crb  # noqa: WPS433
 
+    # Vestigial cross-script mirror — still defined identically.
     assert cmp._PRIMARY_TEXT_FIELD == crb._PRIMARY_TEXT_FIELD
     assert cmp._LEGACY_OBJECT_TEXT_FIELD == crb._LEGACY_OBJECT_TEXT_FIELD
+    # The resolver the script actually uses must be byte-identical to
+    # the producer's, and its OUTPUT must match for every item shape the
+    # canonical extraction prompt can return.
+    assert cmp._GROUND_TRUTH_TEXT_FIELDS == crb._GROUND_TRUTH_TEXT_FIELDS
+    representative = [
+        ("decisions", "a verbatim decision string"),
+        ("decisions", {"text": "obj decision", "verb": "approved"}),
+        ("decisions", {"text": "d", "verb": "x", "stakeholders": ["A"],
+                       "confidence": 0.9, "rationale": "because"}),
+        ("action_items", {"action": "submit ERP", "status": "open"}),
+        ("open_questions",
+         {"question_id": "q1", "question_text": "what distance?"}),
+        ("commitments",
+         {"commitment_id": "c1", "owner": "X",
+          "commitment_text": "I will file", "source_speaker": "X"}),
+        ("risks", {"risk_id": "r1", "risk_text": "interference",
+                   "raised_by": "Y"}),
+        ("technical_parameters",
+         {"param_id": "p1", "parameter_name": "ERP", "value": "30 dBW"}),
+        ("dissent_or_objection",
+         {"dissent_id": "d1", "objector": "Z", "agency": "A",
+          "objection_text": "object to scope", "objection_topic": "scope"}),
+        ("topics", {"topic_id": "t1", "title": "interference"}),
+    ]
+    for etype, item in representative:
+        assert cmp._item_text(etype, item) == crb.extract_ground_truth_text(
+            item, etype
+        ), (etype, item)
+
+
+def test_object_form_decisions_are_read_not_dropped() -> None:
+    """Regression: object-form ``decisions`` must produce items > 0.
+
+    The real Haiku/LLM artifact returns object-form decisions (the
+    prompt encourages the object form and the workflow stamps a ``verb``
+    onto every object decision). Before the fix ``_item_text`` returned
+    ``''`` for them, so ``compute_comparison`` reported 0 Haiku items and
+    0.0 recall against an Opus baseline built from the SAME items — a
+    lying diff on a real, promoted, fully-grounded artifact.
+    """
+    obj_decision = {
+        "text": "The group approved the 7 GHz downlink threshold.",
+        "verb": "approved",
+        "stakeholders": ["DoD"],
+        "confidence": 0.9,
+    }
+    assert cmp._item_text("decisions", obj_decision) == obj_decision["text"]
+
+    import create_opus_reference_baselines as crb  # noqa: WPS433
+
+    baseline = [
+        {
+            "extraction_type": "decisions",
+            "ground_truth_text": crb.extract_ground_truth_text(
+                obj_decision, "decisions"
+            ),
+            "model_id": "claude-opus-4-6",
+        }
+    ]
+    haiku_payload = {
+        "decisions": [obj_decision],
+        "action_items": [],
+        "open_questions": [],
+        # A populated grounding array is the operator-visible signal the
+        # artifact really did extract content (the real run had 178).
+        "grounding": [
+            {
+                "kind": "decision",
+                "text": obj_decision["text"],
+                "source_turns": ["t0001"],
+            }
+        ],
+    }
+    s = cmp.compute_comparison(
+        baseline_rows=baseline,
+        haiku_payload=haiku_payload,
+        gt_pairs=None,
+        types=cmp.extraction_types(),
+    )["summary"]
+    assert s["total_haiku_items"] == 1, s
+    assert s["true_positives"] == 1, s
+    assert s["haiku_recall_vs_opus"] == 1.0, s
 
 
 # --------------------------------------------------------------------------

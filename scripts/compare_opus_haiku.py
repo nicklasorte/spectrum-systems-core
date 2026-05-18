@@ -59,16 +59,48 @@ COMPARISON_ARTIFACT_TYPE = "comparison_result"
 COMPARISON_SCHEMA_VERSION = "1.0.0"
 HAIKU_LLM_PROVENANCE = "meeting_minutes_llm"
 
-# Primary text field per extraction type — the field whose value is the
-# comparable string. ``None`` means a plain-string item (the three
-# legacy arrays). This MIRRORS
-# ``scripts/create_opus_reference_baselines._PRIMARY_TEXT_FIELD`` so
-# Haiku items are read into text the EXACT same way the Opus baseline's
-# ``ground_truth_text`` was produced — an asymmetric reader would make
-# the diff lie. ``tests/test_compare_opus_haiku.py`` asserts this map
-# stays identical to the baseline producer's, so the two cannot drift.
-# It is kept LOCAL (not imported) so this module never transitively
-# imports the LLM client and the zero-LLM property is a static fact.
+# Text fields tried, in priority order, when a Haiku payload item is a
+# structured object. This is a LOCAL, byte-identical copy of
+# ``scripts/create_opus_reference_baselines._GROUND_TRUTH_TEXT_FIELDS``
+# so ``_item_text`` resolves a structured item to the EXACT same string
+# the Opus baseline producer's ``extract_ground_truth_text`` resolved it
+# to — an asymmetric reader would make the Haiku-vs-Opus diff lie (the
+# exact bug that read 0 Haiku items off an artifact whose object-form
+# ``decisions`` had been extracted and grounded). The canonical
+# extraction prompt lets the model return a structured object for ANY
+# type (``decisions`` in particular arrive as
+# ``{"text","verb","stakeholders","confidence","rationale"}``), so the
+# reader must NOT be keyed on a per-type field. Kept LOCAL (never
+# imported) so this module never transitively imports the LLM client and
+# the zero-LLM property stays a static fact;
+# ``tests/test_compare_opus_haiku.py`` asserts this tuple stays
+# byte-identical to the producer's so they cannot drift.
+_GROUND_TRUTH_TEXT_FIELDS = (
+    "text",
+    "question_text",
+    "commitment_text",
+    "risk_text",
+    "reference_text",
+    "parameter_name",
+    "position_text",
+    "objection_text",
+    "input_text",
+    "ruling_text",
+    "term",
+    "name",
+    "title",
+    "phase_name",
+    "reference",
+)
+
+# Per-type maps retained ONLY as the documented cross-script mirror that
+# ``tests/test_compare_opus_haiku.py`` asserts stays in sync with
+# ``create_opus_reference_baselines``. They are NOT the text-resolution
+# authority any more: ``_item_text`` reads structured items through the
+# shared tolerant ``_GROUND_TRUTH_TEXT_FIELDS`` resolver above, exactly
+# as the baseline producer's ``extract_ground_truth_text`` does, so the
+# two readers are symmetric by construction. The producer treats its own
+# ``_LEGACY_OBJECT_TEXT_FIELD`` the same way (retained-but-unused).
 _PRIMARY_TEXT_FIELD: Dict[str, Optional[str]] = {
     "decisions": None,
     "action_items": None,
@@ -98,8 +130,9 @@ _PRIMARY_TEXT_FIELD: Dict[str, Optional[str]] = {
     "procedural_ruling": "ruling_text",
 }
 
-# Object-form fallbacks for the legacy string arrays (the schema allows
-# a structured object as well as a string for these).
+# Vestigial cross-script mirror (see the block comment above
+# ``_PRIMARY_TEXT_FIELD``): kept byte-equal to the producer's map so the
+# sync assertion holds; no longer consulted by ``_item_text``.
 _LEGACY_OBJECT_TEXT_FIELD: Dict[str, str] = {
     "action_items": "action",
     "open_questions": "question_text",
@@ -169,29 +202,42 @@ def extraction_types() -> List[str]:
 
 
 def _item_text(etype: str, item: Any) -> str:
-    """Comparable string for one Haiku payload item, or '' if unreadable.
+    """Comparable string for one Haiku payload item.
 
-    Lenient (returns '' rather than halting) because a malformed Haiku
-    item is a real signal the comparison should surface as a miss/noise,
-    not a reason to abort the whole diff — the Opus baseline producer is
-    the strict one. Uses the SAME field map the baseline used.
+    Mirrors ``create_opus_reference_baselines.extract_ground_truth_text``
+    EXACTLY (type-agnostic tolerant resolution) so the Haiku reader and
+    the Opus baseline producer can never read the same item differently
+    — an asymmetric reader makes the diff lie. Resolution order:
+
+    1. A plain string is returned as-is (whitespace-stripped; the Opus
+       side is stripped by ``opus_items_by_type`` and ``text_match``
+       whitespace-normalizes, so the strip is immaterial to matching).
+    2. For a dict, the first present, non-empty *string* field from
+       ``_GROUND_TRUTH_TEXT_FIELDS`` (priority order) wins — so an
+       object-form ``decisions`` item resolves on ``text`` exactly like
+       the producer, instead of being dropped as ``''``.
+    3. Else the first non-empty string value anywhere in the dict.
+    4. Else (no string content / a non-dict, non-string item) ``str()``
+       of the item — the producer's never-drop fallback; mirrored so a
+       pathological item is read identically on both sides rather than
+       being silently dropped on only the Haiku side (which would itself
+       be the asymmetry this fix removes).
+
+    ``etype`` is accepted for call-site symmetry and a future per-type
+    override seam; the resolution is deliberately type-agnostic because
+    the canonical extraction prompt's object form is.
     """
-    field = _PRIMARY_TEXT_FIELD.get(etype)
-    if field is None:
-        if isinstance(item, str):
-            return item.strip()
-        if isinstance(item, dict):
-            fb = _LEGACY_OBJECT_TEXT_FIELD.get(etype)
-            if fb is not None:
-                val = item.get(fb)
-                if isinstance(val, str):
-                    return val.strip()
-        return ""
+    if isinstance(item, str):
+        return item.strip()
     if isinstance(item, dict):
-        val = item.get(field)
-        if isinstance(val, str):
-            return val.strip()
-    return ""
+        for field in _GROUND_TRUTH_TEXT_FIELDS:
+            val = item.get(field)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        for val in item.values():
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+    return str(item).strip()
 
 
 # --------------------------------------------------------------------------

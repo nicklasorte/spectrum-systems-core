@@ -282,3 +282,113 @@ def test_subprocess_no_llm_artifact_halts(tmp_path: Path) -> None:
     result = _run(["--data-lake", str(dl), "--source-id", SOURCE_ID])
     assert result.returncode == 1
     assert "missing_haiku_llm_output" in result.stdout
+
+
+# Object-form decision text (each value is in OBJ_TRANSCRIPT verbatim so
+# the within-source gate passes and the artifact actually promotes).
+OBJ_DECISIONS = [
+    {
+        "text": "The group approved the 7 GHz downlink threshold.",
+        "verb": "approved",
+        "stakeholders": ["DoD"],
+        "confidence": 0.9,
+    },
+    {
+        "text": "The group deferred the aggregate interference methodology.",
+        "verb": "deferred",
+    },
+]
+OBJ_TRANSCRIPT = (
+    "7 GHz Downlink TIG kickoff\n"
+    + "\n".join(
+        [d["text"] for d in OBJ_DECISIONS] + ACTION_ITEMS + OPEN_QUESTIONS
+    )
+    + "\n"
+)
+
+
+def _seed_object_decisions(tmp_path: Path) -> Path:
+    """Seed an Opus baseline + a promoted Haiku artifact whose
+    ``decisions`` are OBJECT-form — the shape the real LLM workflow
+    writes (the prompt encourages the object form and the workflow
+    stamps a ``verb`` onto every object decision). Both sides are built
+    from the SAME items via the real builders/writer."""
+    dl = tmp_path / "data-lake"
+    store = dl / "store"
+    sid_dir = store / "processed" / "meetings" / SOURCE_ID
+    sid_dir.mkdir(parents=True)
+    source_artifact_id = str(uuid.uuid4())
+    (sid_dir / "source_record.json").write_text(
+        json.dumps(make_source_record(SOURCE_ID, source_artifact_id)),
+        encoding="utf-8",
+    )
+
+    make_opus_reference_baseline(
+        data_lake_root=dl,
+        source_id=SOURCE_ID,
+        source_artifact_id=source_artifact_id,
+        model=OPUS_MODEL,
+        items_by_type={
+            "decisions": OBJ_DECISIONS,
+            "action_items": ACTION_ITEMS,
+            "open_questions": OPEN_QUESTIONS,
+        },
+    )
+
+    path = make_promoted_meeting_minutes_artifact(
+        lake_root=store,
+        source_id=SOURCE_ID,
+        decisions=OBJ_DECISIONS,
+        action_items=ACTION_ITEMS,
+        open_questions=OPEN_QUESTIONS,
+        transcript_text=OBJ_TRANSCRIPT,
+    )
+    assert path.name.startswith("meeting_minutes__")
+    art = json.loads(path.read_text(encoding="utf-8"))
+    # Precondition: the artifact really is the real shape — object-form
+    # decisions plus a populated grounding array (the operator-visible
+    # signal that content WAS extracted, even when the comparison reads
+    # 0). If this drifts the regression below is meaningless.
+    assert isinstance(art["payload"]["decisions"][0], dict)
+    assert len(art["payload"].get("grounding", [])) > 0
+    return dl
+
+
+def test_subprocess_object_form_decisions_are_compared(
+    tmp_path: Path,
+) -> None:
+    """Regression: object-form ``decisions`` written by the real
+    workflow must be READ by the comparison.
+
+    Before the fix ``compare_opus_haiku._item_text`` resolved an
+    object-form decision to ``''`` (it consulted a per-type map that no
+    longer matched the Opus baseline producer, which had switched to a
+    tolerant priority-field reader). The script then reported
+    ``decisions.haiku_count == 0`` and 0.0 recall against an Opus
+    baseline built from the SAME items — a lying diff on a real,
+    promoted, fully-grounded artifact. This asserts the on-disk
+    comparison artifact now reflects the decisions.
+    """
+    dl = _seed_object_decisions(tmp_path)
+    result = _run(["--data-lake", str(dl), "--source-id", SOURCE_ID])
+    assert result.returncode == 0, (
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    art = json.loads(
+        _comparison_artifact(dl).read_text(encoding="utf-8")
+    )
+    s = art["summary"]
+    by_type = art["by_type"]
+    # The precise regression assertion: object-form decisions are read.
+    # Pre-fix these were 0; post-fix they are 2.
+    assert by_type["decisions"]["haiku_count"] == 2, by_type["decisions"]
+    assert by_type["decisions"]["true_positives"] == 2, by_type[
+        "decisions"
+    ]
+    # Opus = 2 decisions + 1 action + 1 question = 4; Haiku reproduced
+    # all 4 verbatim. Pre-fix total_haiku_items was 2 (decisions
+    # dropped) and recall 0.5 — both caught here too.
+    assert s["total_opus_items"] == 4, s
+    assert s["total_haiku_items"] == 4, s
+    assert s["true_positives"] == 4, s
+    assert s["haiku_recall_vs_opus"] == 1.0, s
