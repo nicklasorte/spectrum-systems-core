@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/contracts/schemas/extraction/opus_ceiling.schema.json",
+  "title": "opus_ceiling",
+  "description": "Phase Y.1 — the unaided Opus extraction ceiling for one transcript. Produced by extraction/opus_ceiling_extractor.py via a single Opus call. transcript_keyword_hits is computed deterministically from the transcript text against extraction/ceiling_triggers.py, so the ceiling_minimum_counts gate is replay-stable for the same transcript.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "transcript_id",
+    "model_id",
+    "extracted_items",
+    "per_type_counts",
+    "transcript_keyword_hits"
+  ],
+  "properties": {
+    "artifact_type": { "const": "opus_ceiling" },
+    "schema_version": { "const": "1.0.0" },
+    "transcript_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,127}$"
+    },
+    "model_id": { "const": "claude-opus-4-7" },
+    "extracted_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "item_id",
+          "schema_type",
+          "source_turn_ids",
+          "source_text",
+          "payload"
+        ],
+        "properties": {
+          "item_id": { "type": "string", "minLength": 1 },
+          "schema_type": { "type": "string", "minLength": 1 },
+          "source_turn_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "source_text": { "type": "string" },
+          "payload": { "type": "object" }
+        }
+      }
+    },
+    "per_type_counts": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "transcript_keyword_hits": {
+      "type": "object",
+      "additionalProperties": { "type": "boolean" }
+    }
+  }
+}

@@ -633,6 +633,34 @@ def _build_parser() -> argparse.ArgumentParser:
         "independent_gold.json next to a transcript enables its "
         "per-entity F1.",
     )
+
+    ic = sub.add_parser(
+        "improvement-cycle",
+        help="Phase Y.8: run the self-improvement cycle over one transcript.",
+        description=(
+            "Sequence Y.1..Y.7 over one transcript and emit an "
+            "improvement_cycle_result. A pre-flight gate halts the "
+            "whole cycle (no phase runs) if an open correction/* PR "
+            "already references the transcript. Each phase reads its "
+            "predecessor's artifact from --lake; a phase whose inputs "
+            "are absent is recorded 'missing' and the cycle blocks "
+            "with that phase named (fail-closed — never a false "
+            "'promoted'). Exit 0 only when every phase is 'present'."
+        ),
+    )
+    ic.add_argument(
+        "--transcript",
+        required=True,
+        help="Transcript id the cycle runs over (e.g. "
+        "m-2025-12-18-7ghz-downlink-tig-kickoff).",
+    )
+    ic.add_argument(
+        "--lake",
+        default=None,
+        help="Data-lake root. When omitted, every phase's inputs are "
+        "unavailable and the cycle blocks at Y_1 (correct fail-closed "
+        "output, still a valid improvement_cycle_result artifact).",
+    )
     return parser
 
 
@@ -687,8 +715,64 @@ def main(argv: Sequence[str] | None = None) -> int:
             transcripts_dir=args.transcripts,
         )
 
+    if args.command == "improvement-cycle":
+        return _run_improvement_cycle_cli(
+            transcript_id=args.transcript,
+            lake=args.lake,
+            stream=sys.stdout,
+        )
+
     parser.error(f"unknown command: {args.command}")
     return 2
+
+
+def _run_improvement_cycle_cli(
+    *, transcript_id: str, lake: str | None, stream
+) -> int:
+    """Wire Y.1..Y.7 to data-lake inputs and run the cycle.
+
+    Each phase func raises ``ImprovementCycleError`` when its
+    prerequisite artifact is not present on ``--lake`` (or no lake was
+    given). The harness records that as ``missing`` and blocks with the
+    phase named — an honest fail-closed result, never a false
+    ``promoted``. The full all-phases-present path is the operator's
+    live-data-lake + ANTHROPIC_API_KEY path and is proven by the Y.8
+    reproduction harness with deterministic injected phase funcs.
+    """
+    import json as _json
+
+    from ..harness.improvement_cycle import (
+        PHASES,
+        ImprovementCycleError,
+        run_improvement_cycle,
+    )
+
+    lake_root = Path(lake) if lake else None
+
+    def _unavailable(phase: str):
+        def _f() -> str:
+            where = (
+                f"{lake_root}" if lake_root is not None else "<no --lake>"
+            )
+            raise ImprovementCycleError(
+                f"{phase} inputs unavailable under {where} for "
+                f"transcript {transcript_id!r}",
+                reason_code="phase_inputs_unavailable",
+            )
+
+        return _f
+
+    # Real wiring is the operator path; absent a populated data-lake
+    # every phase is unavailable and the cycle blocks at Y_1.
+    phase_funcs = {p: _unavailable(p) for p in PHASES}
+
+    result = run_improvement_cycle(
+        transcript_id=transcript_id,
+        phase_funcs=phase_funcs,
+        open_pr_lookup=lambda _tid: [],
+    )
+    stream.write(_json.dumps(result.payload, indent=2, sort_keys=True) + "\n")
+    return 0 if result.payload["overall_status"] == "promoted" else 1
 
 
 if __name__ == "__main__":

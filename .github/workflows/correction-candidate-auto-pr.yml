@@ -1,0 +1,179 @@
+name: correction-candidate-auto-pr
+
+# Phase Y.7 — open a PR for a correction candidate ONLY when its
+# candidate_evaluation says it is eligible. All eligibility logic lives
+# in scripts/check_auto_pr_eligibility.py (which imports
+# spectrum_systems_core.extraction.auto_pr_eligibility); this YAML
+# contains no decision logic of its own — it only wires inputs to that
+# script and renders the PR body from the artifact.
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_id:
+        description: "correction_candidate_id to evaluate for auto-PR"
+        required: true
+        type: string
+  repository_dispatch:
+    types: [candidate_evaluated]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Resolve candidate_id
+        id: cid
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "candidate_id=${{ github.event.client_payload.candidate_id }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "candidate_id=${{ github.event.inputs.candidate_id }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: pip install -e ".[dev]"
+
+      - name: Clone data lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data-lake-token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      - name: Locate candidate_evaluation artifact
+        id: locate
+        run: |
+          CID="${{ steps.cid.outputs.candidate_id }}"
+          # candidate_evaluation artifacts are written under the
+          # data-lake processed tree; match by candidate_id.
+          ART=$(grep -rl "\"candidate_id\": *\"${CID}\"" \
+            data-lake/store 2>/dev/null \
+            | grep -E 'candidate_evaluation.*\.json$' | head -n1 || true)
+          if [ -z "$ART" ]; then
+            echo "::error::no candidate_evaluation artifact for ${CID}"
+            exit 1
+          fi
+          echo "artifact=$ART" >> "$GITHUB_OUTPUT"
+
+      - name: Check eligibility
+        id: elig
+        continue-on-error: true
+        run: |
+          set +e
+          OUT=$(python scripts/check_auto_pr_eligibility.py \
+            "${{ steps.locate.outputs.artifact }}")
+          CODE=$?
+          echo "$OUT" > eligibility.json
+          echo "rc=$CODE" >> "$GITHUB_OUTPUT"
+          cat eligibility.json
+
+      - name: Not eligible — explain and stop
+        if: steps.elig.outputs.rc != '0'
+        run: |
+          {
+            echo "## Auto-PR NOT opened"
+            echo ""
+            echo "Candidate: \`${{ steps.cid.outputs.candidate_id }}\`"
+            echo ""
+            echo "Failed eligibility conditions:"
+            python - <<'PY'
+          import json
+          d = json.load(open("eligibility.json"))
+          for r in d.get("reasons", ["unknown"]):
+              print(f"- `{r}`")
+          PY
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Assemble PR body
+        if: steps.elig.outputs.rc == '0'
+        id: body
+        run: |
+          ART="${{ steps.locate.outputs.artifact }}"
+          PROMPT_ADDITION_ID=$(python -c "import uuid; print(uuid.uuid4())")
+          echo "prompt_addition_id=$PROMPT_ADDITION_ID" >> "$GITHUB_OUTPUT"
+          CID="${{ steps.cid.outputs.candidate_id }}"
+          # candidate_source decides product PR vs revert PR.
+          SRC=$(python -c "import json,sys;print(json.load(open('$ART')).get('candidate_source') or 'low_confidence_gate')")
+          echo "candidate_source=$SRC" >> "$GITHUB_OUTPUT"
+          python - "$ART" "$PROMPT_ADDITION_ID" <<'PY' > pr_body.md
+          import json, sys
+          art = json.load(open(sys.argv[1]))
+          pa_id = sys.argv[2]
+          regs = art.get("per_type_regressions") or []
+          print("## Automated correction candidate")
+          print()
+          print(f"Candidate: `{art.get('candidate_id')}`")
+          print(f"Source: `{art.get('candidate_source') or 'low_confidence_gate'}`")
+          print(f"prompt_addition_id: `{pa_id}`")
+          print()
+          print("### Proposed prompt addition (verbatim)")
+          print()
+          print("```")
+          print(art.get("proposed_prompt_addition", "(see correction_candidate artifact)"))
+          print("```")
+          print()
+          print("### Deltas")
+          print()
+          print(f"- target `{art.get('target_transcript_id')}`: "
+                f"target_delta_f1 = {art.get('target_delta_f1')}")
+          print(f"- holdout `{art.get('holdout_transcript_id')}`: "
+                f"holdout_delta_f1 = {art.get('holdout_delta_f1')}")
+          print()
+          print("### Per-type regressions")
+          print()
+          if not regs:
+              print("no per-type regressions")
+          else:
+              for r in regs:
+                  print(f"- `{r['transcript_id']}` / `{r['schema_type']}`: "
+                        f"{r['baseline_f1']} -> {r['candidate_f1']} "
+                        f"(delta {r['delta']})")
+          print()
+          print(f"Artifact: `{sys.argv[1]}`")
+          PY
+
+      - name: Write prompt-addition source file (revert reference anchor)
+        if: steps.elig.outputs.rc == '0' && steps.body.outputs.candidate_source != 'revert'
+        run: |
+          CID="${{ steps.cid.outputs.candidate_id }}"
+          PA_ID="${{ steps.body.outputs.prompt_addition_id }}"
+          mkdir -p corrections
+          {
+            echo "# prompt_addition_id: ${PA_ID}"
+            echo "# candidate_id: ${CID}"
+            echo "# A future cycle reverts this by emitting a correction_candidate"
+            echo "# with candidate_source: revert and revert_of_prompt_addition_id: ${PA_ID}"
+            python -c "import json;print(json.load(open('${{ steps.locate.outputs.artifact }}')).get('proposed_prompt_addition',''))"
+          } > "corrections/${PA_ID}.prompt_addition.txt"
+
+      - name: Open PR
+        if: steps.elig.outputs.rc == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CID="${{ steps.cid.outputs.candidate_id }}"
+          SRC="${{ steps.body.outputs.candidate_source }}"
+          BRANCH="correction/${CID}"
+          if [ "$SRC" = "revert" ]; then
+            TITLE="Revert prompt addition (candidate ${CID})"
+          else
+            TITLE="Correction candidate ${CID}"
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add corrections 2>/dev/null || true
+          git commit --allow-empty -m "$TITLE" -m "prompt_addition_id ${{ steps.body.outputs.prompt_addition_id }}"
+          git push -u origin "$BRANCH"
+          gh pr create --draft --title "$TITLE" --body-file pr_body.md \
+            --head "$BRANCH" --base main

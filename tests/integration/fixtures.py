@@ -373,6 +373,213 @@ def make_opus_reference_baseline(
     return out
 
 
+def _ceiling_item(
+    item_id: str,
+    schema_type: str,
+    turns: list[str],
+    text: str,
+) -> dict[str, Any]:
+    return {
+        "item_id": item_id,
+        "schema_type": schema_type,
+        "source_turn_ids": turns,
+        "source_text": text,
+        "payload": {"text": text},
+    }
+
+
+def make_opus_ceiling_artifact(
+    *,
+    transcript_id: str = "m-2025-12-18-7ghz-downlink-tig-kickoff",
+    transcript_text: str = (
+        "t0001 DECISION: the group approved the 7 GHz downlink "
+        "threshold.\nt0002 ACTION: DoD will follow up with revised ERP."
+    ),
+    items: list[dict[str, Any]] | None = None,
+) -> Any:
+    """Produce an ``opus_ceiling`` via the REAL ``extract_ceiling``.
+
+    The Opus call is injected (deterministic) so the artifact is
+    byte-stable, but every other field — per_type_counts,
+    transcript_keyword_hits, item normalisation/sorting — is produced
+    by the real extractor, so a shape change there breaks this factory
+    (CLAUDE.md integration-test rule: call the real writer).
+    """
+    from spectrum_systems_core.extraction.opus_ceiling_extractor import (
+        extract_ceiling,
+    )
+
+    default_items = items if items is not None else [
+        _ceiling_item("c-001", "decision", ["t0001"],
+                      "the group approved the 7 GHz downlink threshold"),
+        _ceiling_item("c-002", "action_item", ["t0002"],
+                      "DoD will follow up with revised ERP"),
+    ]
+    return extract_ceiling(
+        transcript_text,
+        transcript_id,
+        opus_call=lambda _t: list(default_items),
+    )
+
+
+def make_extraction_alignment_comparison_artifact(
+    *,
+    ceiling_items: list[dict[str, Any]] | None = None,
+    haiku_items: list[dict[str, Any]] | None = None,
+    transcript_id: str = "m-2025-12-18-7ghz-downlink-tig-kickoff",
+) -> Any:
+    """Produce an ``extraction_alignment_comparison`` via the REAL
+    comparator over two real ``opus_ceiling`` artifacts."""
+    from spectrum_systems_core.evals.extraction_comparison import (
+        compare_extractions,
+        contract_version,
+    )
+
+    ceiling = make_opus_ceiling_artifact(
+        transcript_id=transcript_id,
+        items=ceiling_items if ceiling_items is not None else [
+            _ceiling_item("c-001", "decision", ["t1"], "approved the threshold"),
+        ],
+    )
+    haiku = make_opus_ceiling_artifact(
+        transcript_id=transcript_id,
+        items=haiku_items if haiku_items is not None else [
+            _ceiling_item("h-001", "decision", ["t1"], "approved the threshold"),
+        ],
+    )
+    return compare_extractions(
+        ceiling_artifact=ceiling,
+        haiku_artifact=haiku,
+        alignment_contract_version=contract_version(),
+    )
+
+
+def make_false_negative_set_artifact(
+    *,
+    ceiling_items: list[dict[str, Any]] | None = None,
+    haiku_items: list[dict[str, Any]] | None = None,
+) -> Any:
+    """Produce a ``false_negative_set`` via the REAL builder over a
+    REAL comparison artifact."""
+    from spectrum_systems_core.extraction.false_negative_builder import (
+        build_false_negative_set,
+    )
+
+    comparison = make_extraction_alignment_comparison_artifact(
+        ceiling_items=ceiling_items if ceiling_items is not None else [
+            _ceiling_item("c-001", "decision", ["t1"], "approved the threshold"),
+            _ceiling_item("c-002", "decision", ["t9"], "deferred the methodology"),
+        ],
+        haiku_items=haiku_items if haiku_items is not None else [
+            _ceiling_item("h-001", "decision", ["t1"], "approved the threshold"),
+        ],
+    )
+    return build_false_negative_set(comparison)
+
+
+def make_candidate_evaluation_artifact(
+    *,
+    candidate_id: str = "cand-fixture-001",
+    target_transcript_id: str = "m-2025-12-18-7ghz-downlink-tig-kickoff",
+    holdout_transcript_id: str = "m-2025-11-20-ntia-coordination-session",
+    target_baseline_f1: float = 0.65,
+    target_candidate_f1: float = 0.72,
+    holdout_baseline_f1: float = 0.70,
+    holdout_candidate_f1: float = 0.71,
+) -> Any:
+    """Produce a ``candidate_evaluation`` via the REAL
+    ``evaluate_candidate`` writer.
+
+    The ceiling/baseline/candidate artifacts are constructed so the
+    real comparator yields the requested total F1 values, then the
+    real evaluator computes deltas, regressions, and the eligibility
+    stamp — no hand-rolled candidate_evaluation dict.
+    """
+    from spectrum_systems_core.evals.extraction_comparison import (
+        contract_version,
+    )
+    from spectrum_systems_core.extraction.candidate_evaluator import (
+        evaluate_candidate,
+    )
+
+    version = contract_version()
+
+    def _ceiling(tid: str) -> Any:
+        return make_opus_ceiling_artifact(
+            transcript_id=tid,
+            items=[
+                _ceiling_item("c-1", "decision", ["t1"], "alpha decision text"),
+                _ceiling_item("c-2", "decision", ["t2"], "beta decision text"),
+            ],
+        )
+
+    # Two haiku shapes: one matching 0 of 2 (f1 0.0) and one matching
+    # both (f1 1.0). The comparator is real; we pick which to return so
+    # the per-transcript total F1 lands on the requested value set.
+    def _haiku_for(f1: float, tid: str) -> Any:
+        if f1 >= 0.99:
+            items = [
+                _ceiling_item("h-1", "decision", ["t1"], "alpha decision text"),
+                _ceiling_item("h-2", "decision", ["t2"], "beta decision text"),
+            ]
+        elif f1 <= 0.01:
+            items = [
+                _ceiling_item("h-x", "decision", ["t99"], "unrelated content"),
+            ]
+        else:  # one of two -> f1 = 2*(1/1 * 1/2)? handled via 1 match
+            items = [
+                _ceiling_item("h-1", "decision", ["t1"], "alpha decision text"),
+            ]
+        return make_opus_ceiling_artifact(transcript_id=tid, items=items)
+
+    plan = {
+        target_transcript_id: (target_baseline_f1, target_candidate_f1),
+        holdout_transcript_id: (holdout_baseline_f1, holdout_candidate_f1),
+    }
+
+    def baseline_loader(tid: str) -> Any:
+        return _haiku_for(plan[tid][0], tid)
+
+    def haiku_runner(tid: str, _prompt: str) -> Any:
+        return _haiku_for(plan[tid][1], tid)
+
+    return evaluate_candidate(
+        candidate_id=candidate_id,
+        candidate_prompt="add: extract deferred decisions explicitly",
+        target_transcript_id=target_transcript_id,
+        ceiling_loader=_ceiling,
+        baseline_loader=baseline_loader,
+        haiku_runner=haiku_runner,
+        holdout_transcript_id=holdout_transcript_id,
+        alignment_contract_version=version,
+    )
+
+
+def make_improvement_cycle_result_artifact(
+    *,
+    transcript_id: str = "m-2025-12-18-7ghz-downlink-tig-kickoff",
+    all_present: bool = True,
+) -> Any:
+    """Produce an ``improvement_cycle_result`` via the REAL harness."""
+    from spectrum_systems_core.harness.improvement_cycle import (
+        PHASES,
+        run_improvement_cycle,
+    )
+
+    if all_present:
+        funcs = {p: (lambda p=p: f"art-{p}") for p in PHASES}
+    else:
+        funcs = {p: (lambda p=p: f"art-{p}") for p in PHASES}
+        funcs["Y_5"] = lambda: (_ for _ in ()).throw(RuntimeError("Y_5 boom"))
+    return run_improvement_cycle(
+        transcript_id=transcript_id,
+        phase_funcs=funcs,
+        open_pr_lookup=lambda _t: [],
+        cycle_id="fixture-cycle-0001",
+        clock=lambda: "1970-01-01T00:00:00+00:00",
+    )
+
+
 def make_decision_few_shot_placeholder(
     extraction_type: str = "decision",
 ) -> dict[str, Any]:
