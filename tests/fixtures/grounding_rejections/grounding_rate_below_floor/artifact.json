@@ -1,0 +1,70 @@
+{
+  "artifact_type": "meeting_minutes",
+  "schema_version": "1.4.0",
+  "title": "grounding_rate_below_floor fixture",
+  "summary": "Three real verbatim items (grounded) plus seven hallucinated ones (ungrounded) -> rate 0.3, below the 0.60 floor. The whole artifact must be blocked.",
+  "decisions": [
+    {
+      "text": "We will be posting Nick's paper for review next week.",
+      "grounding_mode": "verbatim",
+      "source_quote": "We will be posting Nick's paper for review next week.",
+      "quote_offset_normalized": 25
+    },
+    {
+      "text": "That settles it.",
+      "grounding_mode": "verbatim",
+      "source_quote": "That settles it.",
+      "quote_offset_normalized": 100
+    },
+    {
+      "text": "Meeting adjourned.",
+      "grounding_mode": "verbatim",
+      "source_quote": "Meeting adjourned.",
+      "quote_offset_normalized": 116
+    },
+    {
+      "text": "Hallucinated decision 1.",
+      "grounding_mode": "verbatim",
+      "source_quote": "Hallucinated decision 1 — not present.",
+      "quote_offset_normalized": 0
+    },
+    {
+      "text": "Hallucinated decision 2.",
+      "grounding_mode": "verbatim",
+      "source_quote": "The DoD endorsed the proposal.",
+      "quote_offset_normalized": 0
+    },
+    {
+      "text": "Hallucinated decision 3.",
+      "grounding_mode": "verbatim",
+      "source_quote": "NTIA will publish the report tomorrow.",
+      "quote_offset_normalized": 0
+    },
+    {
+      "text": "Hallucinated decision 4.",
+      "grounding_mode": "verbatim",
+      "source_quote": "The committee approved the budget.",
+      "quote_offset_normalized": 0
+    },
+    {
+      "text": "Hallucinated decision 5.",
+      "grounding_mode": "verbatim",
+      "source_quote": "Voted to defer the action.",
+      "quote_offset_normalized": 0
+    },
+    {
+      "text": "Hallucinated decision 6.",
+      "grounding_mode": "verbatim",
+      "source_quote": "Sue will lead the working group.",
+      "quote_offset_normalized": 0
+    },
+    {
+      "text": "Hallucinated decision 7.",
+      "grounding_mode": "verbatim",
+      "source_quote": "Decision document version 4 was approved.",
+      "quote_offset_normalized": 0
+    }
+  ],
+  "action_items": [],
+  "open_questions": []
+}

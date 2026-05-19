@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/grounding_rejection_report.schema.json",
+  "title": "grounding_rejection_report",
+  "description": "Phase 1 (verbatim span grounding) diagnostic artifact. Written to `processed/meetings/<source_id>/diagnostics/` for every promotion-gated meeting_minutes run that had at least one rejection, AND for every run blocked by `grounding_rate_below_floor`. Lifecycle mirrors `debug__<run_id>.json`: never promoted, never indexed, never product. The correction miner reads these to surface hallucination patterns as their own failure category.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "target_artifact_id",
+    "target_artifact_type",
+    "trace_id",
+    "grounding_rate",
+    "accepted_count",
+    "rejected_count",
+    "artifact_blocked",
+    "rejected_items"
+  ],
+  "properties": {
+    "artifact_type": { "const": "grounding_rejection_report" },
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0"]
+    },
+    "target_artifact_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "artifact_id of the meeting_minutes artifact this report explains."
+    },
+    "target_artifact_type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "artifact_type of the target — always `meeting_minutes` in Phase 1 but kept explicit so the writer can attach to other types in later phases without a schema bump."
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_id": {
+      "type": ["string", "null"],
+      "description": "Optional. meeting_id / source_id this run was for."
+    },
+    "run_id": {
+      "type": ["string", "null"],
+      "description": "Optional. The governed-loop run that produced this report."
+    },
+    "grounding_rate": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "len(accepted) / (len(accepted) + len(rejected)). 1.0 for a vacuous pass (no items)."
+    },
+    "accepted_count": { "type": "integer", "minimum": 0 },
+    "rejected_count": { "type": "integer", "minimum": 0 },
+    "artifact_blocked": {
+      "type": "boolean",
+      "description": "True when the WHOLE target artifact was blocked (transcript_unreadable or grounding_rate_below_floor)."
+    },
+    "block_reason_code": {
+      "type": ["string", "null"],
+      "description": "Set only when artifact_blocked is true. One of: transcript_unreadable, grounding_rate_below_floor."
+    },
+    "rejected_items": {
+      "type": "array",
+      "description": "One entry per rejected item, with full audit detail. Each entry MUST carry the item, the reason_code, and (for verbatim items) the expected_quote_normalized / actual_at_offset_normalized / offset_checked triple so a reviewer can explain the rejection without reading the gate code.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item_type", "item", "reason_code", "detail"],
+        "properties": {
+          "item_type": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Which payload key the item came from (e.g. `decisions`, `attendees`)."
+          },
+          "item": {
+            "description": "The original rejected item (may be an object, a list, or a bare value — bare values are themselves a grounding violation)."
+          },
+          "reason_code": {
+            "enum": [
+              "grounding_missing_field",
+              "grounding_offset_mismatch",
+              "grounding_exact_text_not_in_transcript",
+              "grounding_unknown_turn_id"
+            ],
+            "description": "One of the four documented rejection reasons."
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Human-readable detail explaining the rejection."
+          },
+          "expected_quote_normalized": {
+            "type": ["string", "null"],
+            "description": "For verbatim rejections: the normalized form of the source_quote the gate tried to match. Null for turn_aggregate / missing-field rejections."
+          },
+          "actual_at_offset_normalized": {
+            "type": ["string", "null"],
+            "description": "For offset-mismatch rejections: the normalized substring that was actually present at the declared offset."
+          },
+          "offset_checked": {
+            "type": ["integer", "null"],
+            "description": "For verbatim rejections: the quote_offset_normalized that was checked. Null for turn_aggregate / missing-field rejections."
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "artifact_type": "meeting_minutes",
+  "schema_version": "1.4.0",
+  "title": "missing_field fixture",
+  "summary": "Verbatim decision item is missing source_quote.",
+  "decisions": [
+    {
+      "text": "We will be posting Nick's paper for review next week.",
+      "grounding_mode": "verbatim",
+      "quote_offset_normalized": 0
+    }
+  ],
+  "action_items": [],
+  "open_questions": []
+}

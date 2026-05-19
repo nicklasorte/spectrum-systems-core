@@ -1,0 +1,17 @@
+{
+  "artifact_type": "meeting_minutes",
+  "schema_version": "1.4.0",
+  "title": "unknown_turn_id fixture",
+  "summary": "turn_aggregate item references a turn_id that does not exist in the transcript turn index.",
+  "decisions": [],
+  "action_items": [],
+  "open_questions": [],
+  "attendees": [
+    {
+      "name": "Chair",
+      "agency": "NTIA",
+      "grounding_mode": "turn_aggregate",
+      "source_turn_ids": [9999]
+    }
+  ]
+}

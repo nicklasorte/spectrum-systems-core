@@ -1,0 +1,16 @@
+{
+  "artifact_type": "meeting_minutes",
+  "schema_version": "1.4.0",
+  "title": "offset_mismatch fixture",
+  "summary": "Source quote text IS present in transcript but the declared offset points elsewhere.",
+  "decisions": [
+    {
+      "text": "We will be posting Nick's paper for review next week.",
+      "grounding_mode": "verbatim",
+      "source_quote": "We will be posting Nick's paper for review next week.",
+      "quote_offset_normalized": 0
+    }
+  ],
+  "action_items": [],
+  "open_questions": []
+}

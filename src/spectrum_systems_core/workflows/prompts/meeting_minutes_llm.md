@@ -557,6 +557,32 @@ by a speaker IN THIS MEETING. Scope language QUOTED from a charter,
 study plan, or other document is background context, not a new
 decision — treat it as a `precedent_reference` instead.
 
+# Verbatim Span Grounding (additive — schema_version 1.4.0)
+
+Every item you extract MUST include:
+
+For verbatim types (decisions, action_items, commitments, claims, risks,
+position_statement, procedural_ruling, dissent_or_objection,
+external_stakeholder_input, precedent_reference, regulatory_references,
+technical_parameters, issue_registry_entry, glossary_definition,
+sentiment_indicators):
+  - source_quote: the exact substring of the transcript that supports this
+    item. Copy character-for-character including speech errors, repetitions,
+    and disfluencies. Do not paraphrase, summarize, or clean up the text.
+  - quote_offset_original: the byte offset of source_quote in the transcript
+    (0-indexed). If you are unsure of the exact offset, emit your best
+    estimate; the gate verifies against the normalized transcript.
+
+For turn_aggregate types (attendees, topics, agenda_item, meeting_phases,
+cross_references, named_artifacts, scheduled_events, open_questions):
+  - source_turn_ids: a list of integers identifying which transcript turns
+    this item aggregates. Use the turn IDs shown in the chunk context.
+
+Hallucination defense: if you cannot find a verbatim span in the transcript
+that supports an item, OMIT THE ITEM. Do not invent quotes. Do not paraphrase
+and call it a quote. The gate will reject ungrounded items and your output
+will be penalized.
+
 ## Modal verb policy
 
 Different modal verbs route to different artifact types:

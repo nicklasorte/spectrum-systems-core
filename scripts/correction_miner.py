@@ -136,6 +136,40 @@ PATTERN_TYPES: Dict[str, str] = {
         "deferral mistaken for no-decision; the deferral itself is the "
         "decision"
     ),
+    # Phase 1 — surfaced from grounding_rejection_report artifacts. The
+    # miner reads these and attributes each rejected item to one of the
+    # four reason codes the gate emits.
+    "hallucination_paraphrase": (
+        "the model emitted a source_quote that is a paraphrase or "
+        "fabrication of a real transcript span — the canonical "
+        "hallucination signal (reason_code "
+        "grounding_exact_text_not_in_transcript)"
+    ),
+    "hallucination_offset_drift": (
+        "the model emitted a real transcript quote with a wrong byte "
+        "offset (reason_code grounding_offset_mismatch); the gate "
+        "rejects because the offset assertion is part of the contract"
+    ),
+    "hallucination_missing_field": (
+        "the model emitted an item without the required source_quote / "
+        "quote_offset_normalized / source_turn_ids field (reason_code "
+        "grounding_missing_field); the item cannot be grounded at all"
+    ),
+    "hallucination_unknown_turn": (
+        "the model emitted a turn_aggregate item referencing a "
+        "turn_id that is not in the transcript turn index (reason_code "
+        "grounding_unknown_turn_id)"
+    ),
+}
+
+# Map from grounding gate reason_code -> miner pattern_type. Used to
+# fold grounding_rejection_report artifacts into the same failure
+# pattern bucket the rest of the miner already understands.
+_GROUNDING_REASON_TO_PATTERN: Dict[str, str] = {
+    "grounding_exact_text_not_in_transcript": "hallucination_paraphrase",
+    "grounding_offset_mismatch": "hallucination_offset_drift",
+    "grounding_missing_field": "hallucination_missing_field",
+    "grounding_unknown_turn_id": "hallucination_unknown_turn",
 }
 
 _GENERATION_INSTRUCTION = (
@@ -339,11 +373,17 @@ def classify_false_negative(text: str, extraction_type: str) -> str:
 
 def analyze_failure_patterns(
     comparison_results: List[Dict[str, Any]],
+    grounding_rejections: Optional[List[Dict[str, Any]]] = None,
 ) -> List[FailurePattern]:
     """Classify every false_negative across all comparisons.
 
     Pure: no I/O, no model. Returns patterns sorted by frequency
     (desc), then pattern_type (asc) for a stable order.
+
+    Phase 1: when ``grounding_rejections`` is supplied, each rejected
+    item is folded into a ``hallucination_*`` pattern keyed by its
+    gate ``reason_code``. The grounded-rejection counts add to the
+    total denominator so the percentage_of_fns figure stays meaningful.
     """
     buckets: Dict[str, List[Dict[str, Any]]] = {
         p: [] for p in PATTERN_TYPES
@@ -365,6 +405,29 @@ def analyze_failure_patterns(
                 }
             )
             total += 1
+    for report in grounding_rejections or []:
+        for rejection in report.get("rejected_items") or []:
+            reason = rejection.get("reason_code", "")
+            ptype = _GROUNDING_REASON_TO_PATTERN.get(reason)
+            if ptype is None:
+                # Unknown reason — skip rather than mis-classify.
+                continue
+            quote = (
+                rejection.get("expected_quote_normalized")
+                or (
+                    rejection.get("item", {}).get("source_quote", "")
+                    if isinstance(rejection.get("item"), dict)
+                    else ""
+                )
+            )
+            buckets[ptype].append(
+                {
+                    "text_preview": str(quote)[:200],
+                    "extraction_type": rejection.get("item_type", ""),
+                    "reason_code": reason,
+                }
+            )
+            total += 1
     patterns: List[FailurePattern] = []
     for ptype, items in buckets.items():
         if not items:
@@ -381,6 +444,47 @@ def analyze_failure_patterns(
         )
     patterns.sort(key=lambda p: (-p.frequency, p.pattern_type))
     return patterns
+
+
+def load_grounding_rejection_reports(
+    data_lake: Path, source_id: str
+) -> List[Dict[str, Any]]:
+    """Read every grounding_rejection_report__*.json under the source's
+    diagnostics directory.
+
+    A missing diagnostics directory is NOT an error: pre-Phase-1
+    artifacts simply have no such reports. The miner falls back to the
+    legacy comparison-only pattern analysis.
+
+    The schema is validated before any field is read (read-path
+    co-requirement).
+    """
+    diag_dir = (
+        data_lake
+        / "store"
+        / "processed"
+        / "meetings"
+        / source_id
+        / "diagnostics"
+    )
+    if not diag_dir.is_dir():
+        return []
+    out: List[Dict[str, Any]] = []
+    for path in sorted(
+        diag_dir.glob("grounding_rejection_report__*.json")
+    ):
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        try:
+            validate_artifact(
+                doc, "grounding_rejection_report", str(path)
+            )
+        except ArtifactValidationError:
+            continue
+        out.append(doc)
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -1215,7 +1319,12 @@ def run_correction_miner(
 ) -> Dict[str, Any]:
     registry = load_model_registry(registry_path)
     comparisons = load_comparison_results(data_lake, source_id)
-    patterns = analyze_failure_patterns(comparisons)
+    grounding_rejections = load_grounding_rejection_reports(
+        data_lake, source_id
+    )
+    patterns = analyze_failure_patterns(
+        comparisons, grounding_rejections=grounding_rejections
+    )
     pattern_report = [dataclasses.asdict(p) for p in patterns]
 
     candidates = generate_candidates(
