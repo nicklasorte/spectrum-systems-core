@@ -282,6 +282,54 @@ def test_pre_1_4_haiku_skips_re_verification(tmp_path: Path):
     assert res["re_verification"]["reason"] == "grounding_pre_1_4"
 
 
+def test_pre_1_4_mixed_schema_does_not_halt(tmp_path: Path):
+    """No-weakening regression test (PR Failure Protocol): a pre-1.4
+    Haiku (e.g. 1.1.0) compared against a pre-1.4 baseline (e.g.
+    1.0.0) must NOT halt with schema_version_mixed. Neither side
+    carries grounding so the mismatch is cosmetic, and the legacy
+    integration-contract suite depends on this exact case still
+    working. The halt is scoped to 1.4.0+ Haiku artifacts."""
+    dl = tmp_path / "dl"
+    sid = "src"
+    _seed_transcript(dl, sid, "CHAIR: approved.")
+    _seed_baseline(dl, sid, schema_version="1.0.0", text="approved")
+    _write(
+        dl / "store" / "processed" / "meetings" / sid
+        / "meeting_minutes__llm-1.json",
+        _haiku_artifact(
+            schema_version="1.1.0",
+            decisions=["approved"],
+        ),
+    )
+    # MUST NOT raise.
+    res = cmp.run_comparison(
+        data_lake=dl, source_id=sid, dry_run=True
+    )
+    assert res["status"] == "success"
+    assert res["haiku_schema_version"] == "1.1.0"
+    assert res["baseline_schema_version"] == "1.0.0"
+
+
+def test_legacy_1_0_haiku_vs_1_0_baseline_does_not_halt(tmp_path: Path):
+    """The most common pre-Phase-1 scenario: both sides at 1.0.0."""
+    dl = tmp_path / "dl"
+    sid = "src"
+    _seed_transcript(dl, sid, "CHAIR: approved.")
+    _seed_baseline(dl, sid, schema_version="1.0.0", text="approved")
+    _write(
+        dl / "store" / "processed" / "meetings" / sid
+        / "meeting_minutes__llm-1.json",
+        _haiku_artifact(
+            schema_version="1.0.0",
+            decisions=["approved"],
+        ),
+    )
+    res = cmp.run_comparison(
+        data_lake=dl, source_id=sid, dry_run=True
+    )
+    assert res["status"] == "success"
+
+
 def test_grounding_rate_field_is_present_in_output(tmp_path: Path):
     """Red-team Pass 3 #4: the grounding_rate value must surface in the
     comparison output for downstream consumers — without it, no caller

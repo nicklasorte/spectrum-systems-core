@@ -1390,12 +1390,23 @@ def run_comparison(
     # e.g. 1.4.0 Haiku with grounding fields against a 1.0.0 baseline
     # that has none. Fail closed unless --allow-mixed-schema is set.
     # The flag is CLI-only: it is never read from env / config.
+    #
+    # SCOPING: the check ONLY fires when the Haiku artifact is at the
+    # grounding-binding version (1.4.0+). Pre-1.4 mixed-schema
+    # comparisons (e.g. legacy 1.1.0 Haiku vs 1.0.0 baseline) are
+    # legitimate — neither side carries grounding, so the mismatch is
+    # cosmetic and the legacy comparison behaviour must be preserved
+    # so the existing integration-contract suite stays passing. The
+    # halt's purpose is to catch the SPECIFIC foot-gun where a 1.4.0
+    # producer is silently diffed against an ungated baseline; pre-1.4
+    # mismatches are out of scope for the halt.
     haiku_schema_version = _artifact_schema_version(haiku_artifact)
     baseline_schema_version = _baseline_schema_version(baseline_rows)
     if (
         baseline_schema_version is not None
         and haiku_schema_version is not None
         and haiku_schema_version != baseline_schema_version
+        and haiku_schema_version >= _GROUNDING_BINDING_SCHEMA_VERSION
         and not allow_mixed_schema
     ):
         raise ComparisonError(
