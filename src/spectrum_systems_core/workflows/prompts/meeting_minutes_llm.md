@@ -450,3 +450,25 @@ always safe, but an out-of-list value blocks the entire artifact:
 - `procedural_ruling.ruling_type`: scope_boundary | process_rule | meeting_procedure | participation_rule | classification_handling | other  (use `other` if unsure)
 
 Output the JSON object now.
+
+<!-- correction-miner addition: procedural_commitment (2026-05-19T21:04:10+00:00) — ADDITIVE, do not edit above -->
+# Procedural and next-step commitments ARE action_items
+
+A statement of "what the group will do next" — even when phrased as
+procedure, scheduling, or a routine next step — IS an `action_item`
+when it commits the group to a future act. Do not skip it because it
+sounds procedural, administrative, or like a calendar note.
+
+Treat these as action_items (copy verbatim):
+
+- "we will be posting to the Kitework site Nick's paper for review and comment"
+- "we will be having our first industry coordination call on the 12th of January"
+- "our next downlink tag will be January 22nd"
+
+7 GHz downlink example: if a speaker says "we will circulate the
+revised ERP table to the TIG before the next session," emit that
+verbatim as an `action_item` with grounding to its turn_id.
+
+Hallucination defense: only emit if the statement appears
+word-for-word in the transcript. If the group's next step is not
+explicitly stated, omit — never infer a procedural commitment.

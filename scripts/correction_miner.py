@@ -999,11 +999,16 @@ def _repo_rel(p: Path) -> str:
 
 
 def _backup_prompt(prompt_path: Path, timestamp: str) -> Path:
+    # Backups land in a gitignored ``backups/`` sibling of the prompt,
+    # never in the prompt source directory itself. The source tree is
+    # canonical; backups are ephemeral rollback artifacts. The
+    # ``backups/`` directory and the bare backup-file pattern are both
+    # gitignored at ``src/spectrum_systems_core/workflows/prompts/.gitignore``
+    # so a stray ``git add`` cannot re-commit them.
     safe_ts = timestamp.replace(":", "").replace("+", "")
-    backup = (
-        prompt_path.parent
-        / f"meeting_minutes_llm_backup_{safe_ts}.md"
-    )
+    backup_dir = prompt_path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup = backup_dir / f"meeting_minutes_llm_backup_{safe_ts}.md"
     backup.write_text(
         prompt_path.read_text(encoding="utf-8"), encoding="utf-8"
     )
@@ -1083,14 +1088,14 @@ def promote_best_candidate(
         f"(+{best.delta_f1:.1%} F1 vs Opus)"
     )
     body = _pr_body(best, candidates, prompt, backup_path)
+    # Only the prompt change is committed. The backup is an out-of-tree
+    # rollback artifact (see ``_backup_prompt``); committing it would
+    # leak runner state into source control.
     pr_result = opener(
         branch=branch,
         title=title,
         body=body,
-        files=[
-            _repo_rel(current_prompt_path),
-            _repo_rel(backup_path),
-        ],
+        files=[_repo_rel(current_prompt_path)],
     )
     return {
         "promoted": True,

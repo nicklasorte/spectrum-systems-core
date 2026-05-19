@@ -335,9 +335,21 @@ def test_delta_006_promotes_backup_prompt_pr(tmp_path: Path) -> None:
     assert order["prompt_still_original"] is True  # backup BEFORE write
     # After: prompt rewritten with the additive full_prompt.
     assert prompt.read_text(encoding="utf-8") == "ORIGINAL\n\nADDITION BLOCK\n"
-    backups = list(tmp_path.glob("meeting_minutes_llm_backup_*.md"))
+    # Backups land in a ``backups/`` sibling, never the prompt dir.
+    assert not list(
+        tmp_path.glob("meeting_minutes_llm_backup_*.md")
+    ), "backup leaked into the prompt source directory"
+    backups = list(
+        (tmp_path / "backups").glob("meeting_minutes_llm_backup_*.md")
+    )
     assert len(backups) == 1
     assert backups[0].read_text(encoding="utf-8") == "ORIGINAL PROMPT\n"
+    # PR commit includes ONLY the prompt change, not the backup —
+    # backups are out-of-tree rollback artifacts.
+    assert len(spy.kwargs["files"]) == 1
+    committed = Path(spy.kwargs["files"][0]).name
+    assert committed == "meeting_minutes_llm.md"
+    assert "backup" not in committed
     assert spy.called is True
     assert spy.kwargs["title"].startswith("prompt(correction):")
     assert "cp " in spy.kwargs["body"]  # rollback instructions
@@ -460,8 +472,13 @@ def test_promotion_eval_history_is_append_only(
     assert temp_prompt.read_text(encoding="utf-8").startswith(
         "CANONICAL PROMPT BODY"
     )
-    temp_backups = list(
+    # Backup lives in a ``backups/`` sibling of the (temp) prompt, never
+    # in the prompt dir itself.
+    assert not list(
         tmp_path.glob("meeting_minutes_llm_backup_*.md")
+    ), "backup leaked into the (temp) prompt directory"
+    temp_backups = list(
+        (tmp_path / "backups").glob("meeting_minutes_llm_backup_*.md")
     )
     assert len(temp_backups) == 1
     real_prompt_dir = cm._REPO_ROOT / (
@@ -470,6 +487,11 @@ def test_promotion_eval_history_is_append_only(
     assert not list(
         real_prompt_dir.glob("meeting_minutes_llm_backup_*.md")
     ), "promotion leaked a backup into the real source tree"
+    assert not list(
+        (real_prompt_dir / "backups").glob(
+            "meeting_minutes_llm_backup_*.md"
+        )
+    ), "promotion wrote a backup into the real backups dir"
 
 
 def test_dry_run_no_eval_no_pr(monkeypatch, tmp_path: Path) -> None:
