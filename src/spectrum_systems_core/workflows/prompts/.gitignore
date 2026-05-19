@@ -1,0 +1,8 @@
+# Backup files written by scripts/correction_miner.py during prompt
+# promotion. The miner copies the existing prompt into a sibling
+# ``backups/`` directory before overwriting; these are ephemeral
+# rollback artifacts and must never enter source control. The bare
+# filename pattern is kept as defense-in-depth in case a future change
+# accidentally re-targets the prompts directory itself.
+backups/
+meeting_minutes_llm_backup_*.md
