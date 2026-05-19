@@ -315,23 +315,58 @@ def load_opus_baseline(
     return rows
 
 
+def _haiku_recency_key(path: Path) -> Tuple[float, str]:
+    """Order Haiku candidates oldest → newest (``max()`` picks newest).
+
+    The selector must NOT order by filename: the on-disk filename is
+    ``meeting_minutes__<artifact_id>.json`` and ``artifact_id`` is a
+    content hash, so a stale all-empty run from an earlier extraction
+    can sort BEFORE the current real one — the exact bug, where a
+    0-array artifact named ``...67ccaa13dda9.json`` shadowed the real
+    ``...eecbe9e2de04.json`` and halted the comparison at
+    ``haiku_item_count == 0``. The envelope ``created_at`` is no help
+    either: ``data_lake/pipeline.py`` freezes it to
+    ``1970-01-01T00:00:00+00:00`` for determinism, and the
+    meeting_minutes schema's ``provenance`` object declares only
+    ``produced_by`` / ``phase`` (no ``created_at``), so the file's
+    modification time is the only recency signal actually present.
+
+    Key: ``(st_mtime, filename)`` — the most recently written artifact
+    wins; the filename is the final, deterministic tiebreaker so two
+    artifacts sharing an mtime tick still order total-deterministically
+    rather than by glob/dict iteration order.
+    """
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    return (mtime, path.name)
+
+
 def find_haiku_artifact(
     data_lake: Path, source_id: str
 ) -> Tuple[Dict[str, Any], Path]:
     """Locate the promoted Haiku ``meeting_minutes`` artifact.
 
     Scans ``meeting_minutes__*.json`` for the source and returns the
-    FIRST whose ``payload.provenance.produced_by`` is
-    ``meeting_minutes_llm``. A regex-extractor artifact
-    (``produced_by == "meeting_minutes"``) is NOT comparable against an
-    Opus baseline, so its presence does not satisfy the requirement —
-    if no LLM artifact exists the script halts ``missing_haiku_llm_output``.
-    The envelope is validated against the meeting_minutes schema before
-    any field is read (CLAUDE.md read-path co-requirement).
+    NEWEST artifact (latest file modification time — see
+    ``_haiku_recency_key``) whose ``payload.provenance.produced_by`` is
+    ``meeting_minutes_llm``. Selecting by recency rather than filename
+    order is the fix for a stale all-empty earlier run shadowing the
+    current real extraction.
+    A regex-extractor artifact (``produced_by == "meeting_minutes"``) is
+    NOT comparable against an Opus baseline, so its presence does not
+    satisfy the requirement — if no LLM artifact exists the script halts
+    ``missing_haiku_llm_output``. The SELECTED envelope is validated
+    against the meeting_minutes schema before any field is read
+    (CLAUDE.md read-path co-requirement).
     """
     mdir = _meeting_dir(data_lake, source_id)
     candidates = sorted(mdir.glob("meeting_minutes__*.json"))
     saw_non_llm = False
+    llm_candidates: List[
+        Tuple[Tuple[float, str], Dict[str, Any], Path]
+    ] = []
     for path in candidates:
         try:
             artifact = json.loads(path.read_text(encoding="utf-8"))
@@ -354,6 +389,17 @@ def find_haiku_artifact(
         if produced_by != HAIKU_LLM_PROVENANCE:
             saw_non_llm = True
             continue
+        llm_candidates.append(
+            (_haiku_recency_key(path), artifact, path)
+        )
+
+    if llm_candidates:
+        # max() over (mtime, filename) picks the NEWEST LLM artifact.
+        # Only the selected artifact is validated: a stale earlier run
+        # must never be able to block the current real extraction by
+        # failing schema.
+        _key, artifact, path = max(llm_candidates, key=lambda c: c[0])
+        payload = artifact["payload"]
         # meeting_minutes.schema.json describes the FLAT
         # ``{"artifact_type": "meeting_minutes", **payload}`` shape
         # (the exact object the in-loop strict-schema eval validates),
@@ -371,6 +417,7 @@ def find_haiku_artifact(
                 f"{exc}",
             ) from exc
         return artifact, path
+
     detail = (
         f"no promoted meeting_minutes artifact with "
         f"provenance.produced_by == {HAIKU_LLM_PROVENANCE!r} under "

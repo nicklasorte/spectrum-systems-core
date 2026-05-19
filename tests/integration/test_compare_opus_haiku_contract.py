@@ -392,3 +392,100 @@ def test_subprocess_object_form_decisions_are_compared(
     assert s["total_haiku_items"] == 4, s
     assert s["true_positives"] == 4, s
     assert s["haiku_recall_vs_opus"] == 1.0, s
+
+
+STALE_DECISIONS = ["A stale decision from an earlier discarded run."]
+
+
+def test_subprocess_selects_newest_when_two_artifacts_exist(
+    tmp_path: Path,
+) -> None:
+    """Regression: two promoted LLM ``meeting_minutes`` artifacts for
+    one source — the script must compare the NEWEST, not whichever
+    sorts first by filename.
+
+    Both artifacts are produced through the real workflow + writer
+    (``make_promoted_meeting_minutes_artifact``); their filenames are
+    ``meeting_minutes__<content-hash>.json``, so which one sorts first
+    is content-dependent and unrelated to recency. The stale artifact
+    (decisions NOT in the Opus baseline) is forced strictly OLDER on
+    disk; the fresh artifact's decisions match the baseline. Pre-fix
+    ``find_haiku_artifact`` returned the filename-first artifact and the
+    comparison halted/lied at ``haiku_item_count == 0`` when that was
+    the stale run. Post-fix it selects by recency, so the on-disk
+    comparison must reflect the FRESH artifact.
+    """
+    dl = tmp_path / "data-lake"
+    store = dl / "store"
+    sid_dir = store / "processed" / "meetings" / SOURCE_ID
+    sid_dir.mkdir(parents=True)
+    source_artifact_id = str(uuid.uuid4())
+    (sid_dir / "source_record.json").write_text(
+        json.dumps(make_source_record(SOURCE_ID, source_artifact_id)),
+        encoding="utf-8",
+    )
+
+    # Opus baseline = the FRESH items only.
+    make_opus_reference_baseline(
+        data_lake_root=dl,
+        source_id=SOURCE_ID,
+        source_artifact_id=source_artifact_id,
+        model=OPUS_MODEL,
+        items_by_type={
+            "decisions": DECISIONS,
+            "action_items": ACTION_ITEMS,
+            "open_questions": OPEN_QUESTIONS,
+        },
+    )
+
+    # Stale earlier run: real promoted artifact whose decision is NOT in
+    # the baseline (so selecting it would tank recall and be detectable).
+    stale_path = make_promoted_meeting_minutes_artifact(
+        lake_root=store,
+        source_id=SOURCE_ID,
+        decisions=STALE_DECISIONS,
+        action_items=ACTION_ITEMS,
+        open_questions=OPEN_QUESTIONS,
+    )
+    # Fresh current run: real promoted artifact matching the baseline.
+    fresh_path = make_promoted_meeting_minutes_artifact(
+        lake_root=store,
+        source_id=SOURCE_ID,
+        decisions=DECISIONS,
+        action_items=ACTION_ITEMS,
+        open_questions=OPEN_QUESTIONS,
+    )
+    assert stale_path != fresh_path, (
+        "factory must write distinct files for distinct content"
+    )
+
+    # Force the stale artifact strictly OLDER than the fresh one so the
+    # recency ordering is unambiguous regardless of write timing /
+    # filesystem mtime granularity.
+    os.utime(stale_path, (1_000_000, 1_000_000))
+    os.utime(fresh_path, (2_000_000, 2_000_000))
+
+    result = _run(["--data-lake", str(dl), "--source-id", SOURCE_ID])
+    assert result.returncode == 0, (
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    data = json.loads(result.stdout)
+    # Direct assertion: the script selected the FRESH artifact.
+    assert data["haiku_artifact_path"] == str(fresh_path), data
+
+    art = json.loads(
+        _comparison_artifact(dl).read_text(encoding="utf-8")
+    )
+    s = art["summary"]
+    by_type = art["by_type"]
+    # Fresh decision is in the baseline → it matches. The stale
+    # decision string is not present anywhere, so had the stale
+    # artifact been (wrongly) selected this would be 0.
+    assert by_type["decisions"]["haiku_count"] == 1, by_type["decisions"]
+    assert by_type["decisions"]["true_positives"] == 1, by_type[
+        "decisions"
+    ]
+    assert s["total_opus_items"] == 3, s
+    assert s["total_haiku_items"] == 3, s
+    assert s["true_positives"] == 3, s
+    assert s["haiku_recall_vs_opus"] == 1.0, s
