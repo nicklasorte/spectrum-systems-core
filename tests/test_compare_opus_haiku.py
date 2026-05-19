@@ -8,6 +8,7 @@ and append-only eval_history.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -444,6 +445,58 @@ def test_llm_provenance_accepted_and_artifact_validates(
     assert "artifact_kind" not in json.dumps(art)
     assert art["schema_version"] == "1.0.0"
     assert art["summary"]["haiku_recall_vs_opus"] == 1.0
+
+
+def test_selector_returns_newest_by_mtime_not_filename(
+    tmp_path: Path,
+) -> None:
+    """Regression: two LLM ``meeting_minutes`` artifacts for one source.
+
+    ``find_haiku_artifact`` must return the NEWEST artifact, not the
+    first in filename-sorted order. The on-disk filename is
+    ``meeting_minutes__<artifact_id>.json`` and ``artifact_id`` is a
+    content hash, so a stale all-empty earlier run can sort BEFORE the
+    current real one — the exact bug (``...67ccaa13dda9.json`` shadowed
+    ``...eecbe9e2de04.json``, halting at ``haiku_item_count == 0``).
+    Here the stale all-empty artifact's filename is forced to sort
+    FIRST and its mtime is forced OLDER; the selector must still return
+    the newer, populated artifact.
+    """
+    dl = tmp_path / "dl"
+    sid = "src"
+    _seed_baseline(dl, sid)
+    mdir = dl / "store" / "processed" / "meetings" / sid
+
+    # OLD: every extraction array empty; filename sorts FIRST so the
+    # pre-fix ``sorted(...)[first-match]`` logic would pick it.
+    old = _minutes_artifact("meeting_minutes_llm")
+    old["artifact_id"] = "0" * 12
+    old["payload"]["decisions"] = []
+    old_path = mdir / f"meeting_minutes__{'0' * 12}.json"
+    _write(old_path, old)
+
+    # NEW: real extraction; filename sorts AFTER the stale one.
+    new = _minutes_artifact("meeting_minutes_llm")
+    new["artifact_id"] = "f" * 12
+    new["payload"]["decisions"] = ["approved the threshold"]
+    new_path = mdir / f"meeting_minutes__{'f' * 12}.json"
+    _write(new_path, new)
+
+    # Force OLD strictly older than NEW so mtime ordering is
+    # unambiguous regardless of write/filesystem-granularity timing.
+    os.utime(old_path, (1_000_000, 1_000_000))
+    os.utime(new_path, (2_000_000, 2_000_000))
+
+    artifact, path = cmp.find_haiku_artifact(dl, sid)
+    assert path == new_path, path
+    assert artifact["payload"]["decisions"] == ["approved the threshold"]
+
+    # End-to-end through run_comparison: the comparison must read the
+    # NEW artifact's items, not halt at 0 like it did on the stale one.
+    res = cmp.run_comparison(data_lake=dl, source_id=sid, dry_run=True)
+    assert res["haiku_artifact_path"] == str(new_path)
+    assert res["summary"]["total_haiku_items"] == 1
+    assert res["summary"]["true_positives"] == 1
 
 
 def test_eval_history_append_is_additive(tmp_path: Path) -> None:
