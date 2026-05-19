@@ -472,3 +472,135 @@ verbatim as an `action_item` with grounding to its turn_id.
 Hallucination defense: only emit if the statement appears
 word-for-word in the transcript. If the group's next step is not
 explicitly stated, omit — never infer a procedural commitment.
+
+<!-- phase-1.4 addition: implicit_decision_taxonomy (2026-05-19) — ADDITIVE, do not edit above -->
+# Implicit Decision Trigger Taxonomy (NTIA/DoD TIG — additive, 1.4.0)
+
+This taxonomy complements the procedural-commitment section above. It
+is the classification authority for implicit decisions: decisions
+phrased as guidance, direction, or group commitment without one of
+the explicit decision verbs listed in "Category definitions". The
+procedural-commitment rule still binds — scheduling and "what we
+will do next" statements remain `action_items`, never `decisions`.
+
+The four sub-types below are drawn from the decision-detection
+literature on meeting transcripts (Fernández, Frampton, Dowding,
+Adukuzhiyil, Hockey, Ehlen, Peters, Niekrasz, Bratt — SIGDIAL 2008;
+Hsueh & Moore — NAACL 2007). Recognize an implicit decision when
+ANY of the four surface-form patterns appears in the transcript AND
+the context shows the GROUP is committing, not a single speaker
+musing aloud.
+
+## Sub-type 1: Issue identification
+
+The group names a problem that requires resolution. Recognize these
+trigger phrases (extract verbatim if present):
+
+- "the issue is..."
+- "the question before us is..."
+- "we need to address..."
+- "the challenge here is..."
+- "this is a concern for..."
+
+Extract only when the group is naming a problem to be resolved in
+this forum, not idly observing a difficulty elsewhere.
+
+## Sub-type 2: Proposal / Direction
+
+A speaker states the group's intended course. Recognize these
+trigger phrases (extract verbatim if present):
+
+- "our guidance is..."
+- "the direction is..."
+- "we would [verb]..."
+- "we are going to..."
+- "I think the right path is..."
+- "the approach should be..."
+- "we need to [verb]..."
+- "let's go with..."
+- "we are aligned on..."
+
+Anti-over-extraction qualifier: "we need to [verb]" and "we are
+going to" fire ONLY when the statement names a specific course the
+group is committing to. A general expression of need ("we need to
+be careful here") is NOT a decision — extract only when the verb
+names the action and the context shows group commitment, not
+aspiration or planning chatter.
+
+## Sub-type 3: Resolution / Agreement
+
+The group reaches closure. Recognize these trigger phrases (extract
+verbatim if present):
+
+- "we've agreed..."
+- "we are aligned..."
+- "the consensus is..."
+- "let's go with..."
+- "that's the decision..."
+- "we will proceed with..."
+- "we are committed to..."
+
+## Sub-type 4: Scope / Boundary ruling
+
+The group defines what is in or out of scope. Recognize these
+trigger phrases (extract verbatim if present):
+
+- "this study will cover..."
+- "we need to address all..."
+- "our scope includes..."
+- "we will not address..."
+- "this is out of scope for..."
+- "we are limiting this to..."
+
+Anti-over-extraction qualifier: only extract scope statements made
+by a speaker IN THIS MEETING. Scope language QUOTED from a charter,
+study plan, or other document is background context, not a new
+decision — treat it as a `precedent_reference` instead.
+
+## Modal verb policy
+
+Different modal verbs route to different artifact types:
+
+- "shall" → binding obligation → extract as a `decisions` item with
+  `verb: "directed"`. Qualifier: quoted regulatory text using
+  "shall" (e.g. standard ITU language a speaker is reading aloud
+  from a published document) is NOT a new decision — only extract
+  "shall" statements made by speakers about the group's OWN actions.
+- "will" → group commitment → extract as an `action_items` item if
+  assigned to a named party; extract as a `decisions` item if the
+  GROUP is committing to a direction.
+- "should" → recommendation → extract as an `action_items` item
+  with `priority: "medium"` if actionable; note as guidance if
+  directional.
+- "may" → permissive → do NOT extract as a decision; extract only
+  if it represents a boundary ruling (e.g. "participants may submit
+  comments by..." remains an `action_items` procedural commitment
+  per the section above).
+- "would" → group direction stated in conditional or deliberative
+  form → extract as a `decisions` item with `verb: "unclassified"`
+  if the context makes clear the group is stating its intended
+  course.
+
+## Hallucination defense
+
+Hallucination defense: extract ONLY if the trigger phrase appears
+verbatim in the transcript. If the implicit decision is your
+inference from context rather than a speaker's actual words, OMIT
+IT. Copy the speaker's exact words including speech errors; do not
+paraphrase.
+
+## Domain notes (NTIA/DoD TIG)
+
+1. Regulatory recaps are NOT new decisions. If a speaker is
+   summarizing a prior meeting's decision, extract it as a
+   `precedent_reference`, not a `decisions` item.
+2. Procedural commitments are `action_items`. "We will post X",
+   "our next meeting is Y", "comments are due Z" remain
+   `action_items`, not `decisions` — this is already covered by the
+   procedural_commitment section above, and the taxonomy here does
+   not override it.
+3. "I think / I believe" from a single speaker is NOT a group
+   decision unless followed by group agreement (silence followed by
+   the chair moving on, "yes", "agreed", "that's right"). A single
+   speaker's unaffirmed opinion is a `position_statement`, not a
+   `decisions` item.
