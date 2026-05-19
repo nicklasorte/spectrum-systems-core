@@ -499,6 +499,151 @@ def test_selector_returns_newest_by_mtime_not_filename(
     assert res["summary"]["true_positives"] == 1
 
 
+def _empty_minutes(artifact_id: str) -> dict:
+    """An LLM ``meeting_minutes`` envelope with EVERY extraction array
+    empty — the exact shape of the stale ``...67ccaa13dda9.json`` file
+    that shadowed the real run in the data-lake. Valid envelope, valid
+    schema (empty arrays validate), zero extracted content."""
+    art = _minutes_artifact("meeting_minutes_llm")
+    art["artifact_id"] = artifact_id
+    art["payload"]["decisions"] = []
+    art["payload"]["action_items"] = []
+    art["payload"]["open_questions"] = []
+    return art
+
+
+def _populated_minutes(artifact_id: str) -> dict:
+    art = _minutes_artifact("meeting_minutes_llm")
+    art["artifact_id"] = artifact_id
+    art["payload"]["decisions"] = ["approved the threshold"]
+    return art
+
+
+def test_selector_skips_empty_when_mtimes_collide_after_git_clone(
+    tmp_path: Path,
+) -> None:
+    """Regression for the PR #183 follow-up bug.
+
+    #183 selected by ``(st_mtime, filename)`` so a stale all-empty run
+    could not shadow the real one. But the workflow reaches the selector
+    only via ``clone-data-lake`` (``git clone``), and git stamps EVERY
+    checked-out file's mtime with the single clone time. With mtimes
+    EQUAL the tuple ties and ``max()`` falls back to the content-blind
+    filename (``artifact_id`` is a content hash). The real data-lake
+    held two files for the Dec-18 source: an all-empty
+    ``...67ccaa13dda9.json`` and the real 467-item
+    ``...4138e10ad104.json``. ``67cc...`` sorts AFTER ``4138...``
+    (``'6' > '4'``) so the pre-fix ``max()`` deterministically picked
+    the EMPTY one — comparison produced no output, push step skipped.
+
+    This test reproduces that exactly: identical mtimes, the empty
+    file's name sorting larger. It FAILS pre-fix (selector returns the
+    ``67cc`` empty file) and PASSES post-fix (content check skips it).
+    """
+    dl = tmp_path / "dl"
+    sid = "src"
+    _seed_baseline(dl, sid)
+    mdir = dl / "store" / "processed" / "meetings" / sid
+
+    empty_path = mdir / "meeting_minutes__67ccaa13dda9.json"
+    _write(empty_path, _empty_minutes("67ccaa13dda9"))
+    populated_path = mdir / "meeting_minutes__4138e10ad104.json"
+    _write(populated_path, _populated_minutes("4138e10ad104"))
+
+    # The empty file's name sorts strictly AFTER the populated one, so
+    # the pre-fix max((mtime, name)) deterministically picks the empty
+    # file once the mtimes tie.
+    assert empty_path.name > populated_path.name
+
+    # Simulate git clone: BOTH files get the identical clone timestamp.
+    clone_ts = 1_700_000_000
+    os.utime(empty_path, (clone_ts, clone_ts))
+    os.utime(populated_path, (clone_ts, clone_ts))
+    assert (
+        empty_path.stat().st_mtime == populated_path.stat().st_mtime
+    )
+
+    artifact, path = cmp.find_haiku_artifact(dl, sid)
+    assert path == populated_path, (
+        f"selector returned {path.name}, expected "
+        f"{populated_path.name} (empty file must not shadow it)"
+    )
+    assert artifact["payload"]["decisions"] == ["approved the threshold"]
+
+    # End-to-end: the comparison must read the populated artifact's
+    # item, not halt/lie at 0 like it did on the stale empty one.
+    res = cmp.run_comparison(data_lake=dl, source_id=sid, dry_run=True)
+    assert res["haiku_artifact_path"] == str(populated_path)
+    assert res["summary"]["total_haiku_items"] == 1
+    assert res["summary"]["true_positives"] == 1
+
+
+def test_selector_fail_closed_when_all_artifacts_empty(
+    tmp_path: Path,
+) -> None:
+    """Attack: every LLM artifact for the source is all-empty.
+
+    The selector must HALT ``empty_haiku_artifact`` — never silently
+    return an empty artifact (that would emit a lying 0.0-recall diff
+    and overwrite eval_history with a false signal)."""
+    dl = tmp_path / "dl"
+    sid = "src"
+    _seed_baseline(dl, sid)
+    mdir = dl / "store" / "processed" / "meetings" / sid
+
+    a = mdir / "meeting_minutes__aaaaaaaaaaaa.json"
+    b = mdir / "meeting_minutes__bbbbbbbbbbbb.json"
+    _write(a, _empty_minutes("aaaaaaaaaaaa"))
+    _write(b, _empty_minutes("bbbbbbbbbbbb"))
+    clone_ts = 1_700_000_000
+    os.utime(a, (clone_ts, clone_ts))
+    os.utime(b, (clone_ts, clone_ts))
+
+    with pytest.raises(cmp.ComparisonError) as ei:
+        cmp.find_haiku_artifact(dl, sid)
+    assert ei.value.reason == "empty_haiku_artifact"
+    # Fail-closed end to end too: run_comparison must propagate the halt
+    # and write nothing.
+    with pytest.raises(cmp.ComparisonError) as ei2:
+        cmp.run_comparison(data_lake=dl, source_id=sid, dry_run=True)
+    assert ei2.value.reason == "empty_haiku_artifact"
+
+
+def test_selector_fail_closed_when_only_artifact_is_empty(
+    tmp_path: Path,
+) -> None:
+    """Attack: only one file exists and it is empty → HALT, not a
+    silent 0-item diff."""
+    dl = tmp_path / "dl"
+    sid = "src"
+    _seed_baseline(dl, sid)
+    mdir = dl / "store" / "processed" / "meetings" / sid
+    only = mdir / "meeting_minutes__deadbeefdead.json"
+    _write(only, _empty_minutes("deadbeefdead"))
+
+    with pytest.raises(cmp.ComparisonError) as ei:
+        cmp.find_haiku_artifact(dl, sid)
+    assert ei.value.reason == "empty_haiku_artifact"
+
+
+def test_selector_no_files_still_missing_haiku_llm_output(
+    tmp_path: Path,
+) -> None:
+    """Attack: the glob finds no ``meeting_minutes__*.json`` at all.
+
+    Behavior must be UNCHANGED from before the fix:
+    ``missing_haiku_llm_output`` (not the new empty halt)."""
+    dl = tmp_path / "dl"
+    sid = "src"
+    _seed_baseline(dl, sid)
+    (dl / "store" / "processed" / "meetings" / sid).mkdir(
+        parents=True, exist_ok=True
+    )
+    with pytest.raises(cmp.ComparisonError) as ei:
+        cmp.find_haiku_artifact(dl, sid)
+    assert ei.value.reason == "missing_haiku_llm_output"
+
+
 def test_eval_history_append_is_additive(tmp_path: Path) -> None:
     dl = tmp_path / "dl"
     sid = "src"

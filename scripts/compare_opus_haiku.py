@@ -21,6 +21,10 @@ Fail-closed reason codes:
 * ``missing_haiku_llm_output``    — no promoted meeting_minutes artifact
                                     with provenance produced_by ==
                                     "meeting_minutes_llm"
+* ``empty_haiku_artifact``        — every LLM meeting_minutes artifact
+                                    for the source has all extraction
+                                    arrays empty (would emit a lying
+                                    0-item diff)
 * ``invalid_haiku_artifact``      — artifact present but fails the
                                     meeting_minutes schema
 * ``data_lake_not_a_directory``   — --data-lake is not a directory
@@ -343,23 +347,66 @@ def _haiku_recency_key(path: Path) -> Tuple[float, str]:
     return (mtime, path.name)
 
 
+def _extracted_item_count(
+    artifact: Dict[str, Any], types: List[str]
+) -> int:
+    """Total items across the arrays ``compute_comparison`` reads.
+
+    ``types`` is ``extraction_types()`` (``grounding`` excluded).
+    Keying the populated-ness test to the SAME arrays the diff consumes
+    means the selector's "this run extracted something" signal can never
+    drift from what the comparison measures: a stale all-empty run
+    returns 0 here even if it still carries a non-empty ``grounding``
+    array (grounding is Phase-Y meta, never compared), and a real run
+    returns its true item count. Pure and deterministic — the artifact
+    is already parsed in ``llm_candidates``, so no re-read / no second
+    failure surface.
+    """
+    payload = artifact.get("payload")
+    if not isinstance(payload, dict):
+        return 0
+    total = 0
+    for etype in types:
+        value = payload.get(etype)
+        if isinstance(value, list):
+            total += len(value)
+    return total
+
+
 def find_haiku_artifact(
     data_lake: Path, source_id: str
 ) -> Tuple[Dict[str, Any], Path]:
     """Locate the promoted Haiku ``meeting_minutes`` artifact.
 
-    Scans ``meeting_minutes__*.json`` for the source and returns the
-    NEWEST artifact (latest file modification time — see
-    ``_haiku_recency_key``) whose ``payload.provenance.produced_by`` is
-    ``meeting_minutes_llm``. Selecting by recency rather than filename
-    order is the fix for a stale all-empty earlier run shadowing the
-    current real extraction.
-    A regex-extractor artifact (``produced_by == "meeting_minutes"``) is
-    NOT comparable against an Opus baseline, so its presence does not
-    satisfy the requirement — if no LLM artifact exists the script halts
-    ``missing_haiku_llm_output``. The SELECTED envelope is validated
-    against the meeting_minutes schema before any field is read
-    (CLAUDE.md read-path co-requirement).
+    Scans ``meeting_minutes__*.json`` for the source whose
+    ``payload.provenance.produced_by`` is ``meeting_minutes_llm``.
+    Recency (file mtime — see ``_haiku_recency_key``) only ORDERS the
+    candidates; a CONTENT check picks the winner. Walking newest →
+    oldest, the first artifact that actually extracted something (≥1
+    item across the arrays ``compute_comparison`` reads) is selected.
+
+    Why content, not pure recency: PR #183 made selection mtime-based
+    so a stale all-empty earlier run could not shadow the real
+    extraction. But the runner reaches this code only via
+    ``clone-data-lake`` (``git clone``), and git stamps EVERY
+    checked-out file's mtime with the single clone time. Both artifacts
+    then share an mtime, the ``(st_mtime, filename)`` key ties, and
+    selection collapses onto the content-blind filename
+    (``artifact_id`` is a content hash) — re-introducing the exact
+    pre-#183 bug, picking the stale empty file. The content check makes
+    the selection robust regardless of mtime collisions.
+
+    Fail-closed: if EVERY LLM artifact for the source is all-empty the
+    script halts ``empty_haiku_artifact`` rather than silently emitting
+    a meaningless 0.0-recall diff. A regex-extractor artifact
+    (``produced_by == "meeting_minutes"``) is NOT comparable against an
+    Opus baseline, so its presence does not satisfy the requirement —
+    if no LLM artifact exists at all the script halts
+    ``missing_haiku_llm_output``. Only the SELECTED envelope is
+    validated against the meeting_minutes schema before any field is
+    read (CLAUDE.md read-path co-requirement); a stale earlier run must
+    never be able to block the current real extraction by failing
+    schema.
     """
     mdir = _meeting_dir(data_lake, source_id)
     candidates = sorted(mdir.glob("meeting_minutes__*.json"))
@@ -394,11 +441,34 @@ def find_haiku_artifact(
         )
 
     if llm_candidates:
-        # max() over (mtime, filename) picks the NEWEST LLM artifact.
-        # Only the selected artifact is validated: a stale earlier run
-        # must never be able to block the current real extraction by
-        # failing schema.
-        _key, artifact, path = max(llm_candidates, key=lambda c: c[0])
+        # Recency only ORDERS; a content check picks the winner. mtime
+        # ties under git clone (every file gets the clone timestamp),
+        # so picking purely by the (mtime, filename) key would collapse
+        # back onto the content-blind filename and re-pick a stale
+        # all-empty run. Walk newest → oldest, take the first artifact
+        # that actually extracted something.
+        types = extraction_types()
+        ordered = sorted(
+            llm_candidates, key=lambda c: c[0], reverse=True
+        )
+        selected: Optional[Tuple[Dict[str, Any], Path]] = None
+        for _key, candidate_art, candidate_path in ordered:
+            if _extracted_item_count(candidate_art, types) > 0:
+                selected = (candidate_art, candidate_path)
+                break
+        if selected is None:
+            # Every LLM artifact for this source is all-empty. Returning
+            # one would emit a meaningless 0.0-recall diff AND overwrite
+            # eval_history.jsonl with a false signal (and spuriously
+            # trip the F1<0.70 correction-miner dispatch). Fail closed.
+            newest_path = ordered[0][2]
+            raise ComparisonError(
+                "empty_haiku_artifact",
+                f"every meeting_minutes LLM artifact under {mdir} has "
+                f"all {len(types)} extraction arrays empty (newest: "
+                f"{newest_path}); refusing to emit a 0-item comparison",
+            )
+        artifact, path = selected
         payload = artifact["payload"]
         # meeting_minutes.schema.json describes the FLAT
         # ``{"artifact_type": "meeting_minutes", **payload}`` shape
