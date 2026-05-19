@@ -712,6 +712,107 @@ def _read_transcript_file(path: Path) -> str:
     return text
 
 
+def _transcript_from_source_record(
+    store: Path, source_id: str
+) -> Optional[Path]:
+    """Resolve the transcript via the AUTHORITATIVE ``source_record.json``.
+
+    ``store/processed/meetings/<source_id>/source_record.json`` is
+    written by the ingestion pipeline (``SourceLoader``) and records the
+    transcript it actually processed in ``payload.raw_path`` — a path
+    relative to the data-lake ``store/`` root (e.g.
+    ``raw/meetings/<source_id>/source.txt``). That is the canonical
+    pointer back to the input; the directory globs that follow are
+    heuristic fallbacks for sources whose record predates this field or
+    is incomplete.
+
+    Non-fatal at every intermediate step (returns ``None`` so the caller
+    falls through, NEVER raises):
+
+    * no ``source_record.json`` on disk;
+    * the file is unreadable or not valid JSON / not an object;
+    * ``payload`` or ``payload.raw_path`` is missing/empty;
+    * the recorded path resolves to nothing on this machine.
+
+    A WARNING is logged on every fall-through so an operator can see why
+    the authoritative pointer was not used. Only when the file the
+    record points to EXISTS is it returned — and then the caller reads
+    it strictly (a corrupt authoritative transcript is a real error the
+    operator must see, exactly as for a processed-dir transcript). No
+    LLM call: pure filesystem + JSON.
+    """
+    record_path = (
+        store / "processed" / "meetings" / source_id / "source_record.json"
+    )
+    if not record_path.is_file():
+        return None
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(
+            f"WARNING: source_record.json at {record_path} is "
+            f"unreadable/not JSON ({exc}); falling through to "
+            f"transcript auto-detection",
+            file=sys.stderr,
+        )
+        return None
+    if not isinstance(record, dict):
+        print(
+            f"WARNING: source_record.json at {record_path} is not a "
+            f"JSON object; falling through to transcript auto-detection",
+            file=sys.stderr,
+        )
+        return None
+    payload = record.get("payload")
+    raw_path = (
+        payload.get("raw_path") if isinstance(payload, dict) else None
+    )
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        print(
+            f"WARNING: source_record.json at {record_path} has no "
+            f"payload.raw_path transcript pointer; falling through to "
+            f"transcript auto-detection",
+            file=sys.stderr,
+        )
+        return None
+    raw_path = raw_path.strip()
+
+    # ``raw_path`` is normally relative to the data-lake ``store/``
+    # root. ``store / rel`` resolves it; if the record stored an
+    # ABSOLUTE path (e.g. written on a different machine), Path-join
+    # keeps it absolute so we try it as-is first, then re-root the
+    # segment after the last ``store`` component under THIS store/ so a
+    # cross-machine but identically-laid-out path still resolves. All
+    # deterministic, no network.
+    candidates: List[Path] = []
+    rp = Path(raw_path)
+    if rp.is_absolute():
+        candidates.append(rp)
+        parts = rp.parts
+        if "store" in parts:
+            last_store = max(
+                i for i, p in enumerate(parts) if p == "store"
+            )
+            tail = parts[last_store + 1:]
+            if tail:
+                candidates.append(store.joinpath(*tail))
+    else:
+        candidates.append(store / rp)
+
+    for cand in candidates:
+        if cand.is_file():
+            return cand
+
+    print(
+        f"WARNING: source_record.json at {record_path} points to "
+        f"{raw_path!r} but no such file exists (checked "
+        f"{[str(c) for c in candidates]}); falling through to "
+        f"transcript auto-detection",
+        file=sys.stderr,
+    )
+    return None
+
+
 def _find_transcript_in_dir(directory: Path) -> Optional[Path]:
     """First transcript-like file directly in ``directory``.
 
@@ -760,13 +861,23 @@ def _load_transcript(
     1. ``transcript_path`` override — when given, the search is skipped
        ENTIRELY and this exact path is read. A missing override fails
        closed immediately, before any model call.
-    2. ``store/processed/meetings/<source_id>/`` — where transcripts
-       actually live, alongside the ``meeting_minutes__*.json`` and
+    2. ``source_record.json`` — the AUTHORITATIVE pointer written by
+       the ingestion pipeline at
+       ``store/processed/meetings/<source_id>/source_record.json``. Its
+       ``payload.raw_path`` records the transcript the pipeline actually
+       processed (relative to the data-lake ``store/`` root). Checked
+       BEFORE the directory globs because transcripts are NOT co-located
+       with the processed artifacts in the common case. A missing
+       record / missing field / dangling path is non-fatal: a WARNING
+       is logged and resolution continues (older records may be
+       incomplete). A file the record DOES point to is read strictly.
+    3. ``store/processed/meetings/<source_id>/`` — glob fallback for
+       transcripts co-located with the ``meeting_minutes__*.json`` and
        ``source_record.json`` product artifacts (both excluded). A
        transcript found here is read strictly: a corrupt/empty file
        raises rather than silently falling through to the raw path.
-    3. ``store/raw/transcripts/`` — the original location, preserved
-       as a fallback for future use (legacy flat ``<source_id>.txt`` /
+    4. ``store/raw/transcripts/`` — the original location, preserved
+       as a fallback (legacy flat ``<source_id>.txt`` /
        ``<source_id>.docx`` names, then a ``<source_id>/`` subdir).
 
     Fail-closed: if no readable transcript is found, raise
@@ -785,6 +896,14 @@ def _load_transcript(
     store = data_lake / "store"
     processed_dir = store / "processed" / "meetings" / source_id
     raw_dir = store / "raw" / "transcripts"
+    record_path = processed_dir / "source_record.json"
+
+    # 2. Authoritative pointer: source_record.json. First match wins;
+    #    a found file is read strictly (corrupt authoritative input is
+    #    a real error, not a reason to silently glob elsewhere).
+    found = _transcript_from_source_record(store, source_id)
+    if found is not None:
+        return _read_transcript_file(found)
 
     found = _find_transcript_in_dir(processed_dir)
     if found is not None:
@@ -811,10 +930,11 @@ def _load_transcript(
     raise CorrectionMinerError(
         "missing_transcript",
         f"no readable transcript for {source_id}; checked "
-        f"processed dir {processed_dir} and raw fallback "
-        f"{raw_dir} (tried {raw_dir / (source_id + '.txt')}, "
+        f"(1) source_record.json {record_path}, "
+        f"(2) processed dir {processed_dir}, "
+        f"(3) raw flat {raw_dir / (source_id + '.txt')} / "
         f"{raw_dir / (source_id + '.docx')}, "
-        f"{raw_dir / source_id}{os.sep})",
+        f"(4) raw subdir {raw_dir / source_id}{os.sep}",
     )
 
 

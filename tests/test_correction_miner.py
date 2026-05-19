@@ -771,6 +771,231 @@ def test_multiple_transcripts_in_processed_first_alpha_no_fail(
     assert "SECOND" not in text
 
 
+# --------------------------------------------------------------------------
+# source_record.json authoritative-pointer resolution (the #187 glob
+# failed because transcripts are NOT co-located with the processed
+# artifacts; source_record.payload.raw_path is the canonical pointer).
+# --------------------------------------------------------------------------
+def _write_source_record(pdir: Path, raw_path: object) -> None:
+    """Write a source_record.json shaped like SourceLoader writes it.
+
+    ``raw_path`` is placed under ``payload.raw_path``. Pass the
+    sentinel ``...`` to omit the field entirely (missing-field case)
+    and ``None`` to write an empty ``payload`` object.
+    """
+    payload: dict = {}
+    if raw_path is not ...:
+        payload["raw_path"] = raw_path
+    pdir.joinpath("source_record.json").write_text(
+        json.dumps(
+            {
+                "artifact_type": "source_record",
+                "schema_version": "1.0.0",
+                "artifact_id": "aid-1",
+                "source_id": SID,
+                "created_at": "1970-01-01T00:00:00+00:00",
+                "payload": payload,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_source_record_relative_raw_path_resolves_step2(
+    tmp_path: Path,
+) -> None:
+    """Case 1: source_record.json with a valid relative raw_path ->
+    resolved from step 2; the directory glob is NEVER consulted."""
+    dl = tmp_path / "dl"
+    pdir = _processed_dir(dl)
+    tx = dl / "store" / "raw" / "meetings" / SID / "source.txt"
+    tx.parent.mkdir(parents=True)
+    tx.write_text(
+        "7 GHz Downlink TIG\nThe group approved it.\n", encoding="utf-8"
+    )
+    _write_source_record(pdir, "raw/meetings/" + SID + "/source.txt")
+
+    import correction_miner as _cm
+
+    called = {"glob": False}
+    orig = _cm._find_transcript_in_dir
+
+    def _spy(directory):  # noqa: ANN001
+        called["glob"] = True
+        return orig(directory)
+
+    _cm._find_transcript_in_dir = _spy
+    try:
+        text = cm._load_transcript(dl, SID)
+    finally:
+        _cm._find_transcript_in_dir = orig
+    assert "approved it" in text
+    assert called["glob"] is False, "step 3 glob ran despite step 2 hit"
+
+
+def test_source_record_absolute_raw_path_resolves(
+    tmp_path: Path,
+) -> None:
+    """An absolute raw_path (record written when paths were absolute)
+    that exists on THIS machine is read as-is."""
+    dl = tmp_path / "dl"
+    pdir = _processed_dir(dl)
+    tx = tmp_path / "abs" / "source.txt"
+    tx.parent.mkdir(parents=True)
+    tx.write_text("absolute path transcript\n", encoding="utf-8")
+    _write_source_record(pdir, str(tx))
+    assert "absolute path" in cm._load_transcript(dl, SID)
+
+
+def test_source_record_cross_machine_absolute_rerooted(
+    tmp_path: Path,
+) -> None:
+    """Attack: raw_path is absolute and from a DIFFERENT machine. The
+    segment after the last ``store`` is re-rooted under this store/
+    so an identically-laid-out lake still resolves."""
+    dl = tmp_path / "dl"
+    pdir = _processed_dir(dl)
+    tx = dl / "store" / "raw" / "meetings" / SID / "source.txt"
+    tx.parent.mkdir(parents=True)
+    tx.write_text("re-rooted transcript\n", encoding="utf-8")
+    foreign = (
+        "/home/someone-else/data-lake/store/raw/meetings/"
+        + SID
+        + "/source.txt"
+    )
+    _write_source_record(pdir, foreign)
+    assert "re-rooted" in cm._load_transcript(dl, SID)
+
+
+def test_source_record_missing_field_warns_falls_through(
+    tmp_path: Path, capsys
+) -> None:
+    """Case 2: source_record.json present but no raw_path field ->
+    WARNING logged, resolution falls through to the glob (step 3)."""
+    dl = tmp_path / "dl"
+    pdir = _processed_dir(dl)
+    _write_source_record(pdir, ...)  # payload present, raw_path absent
+    (pdir / "transcript.txt").write_text(
+        "glob-found transcript\n", encoding="utf-8"
+    )
+    text = cm._load_transcript(dl, SID)
+    assert "glob-found" in text
+    err = capsys.readouterr().err
+    assert "no payload.raw_path" in err
+
+
+def test_source_record_dangling_path_warns_falls_through(
+    tmp_path: Path, capsys
+) -> None:
+    """Case 3: raw_path points at a file that does not exist ->
+    WARNING, fall through to the glob (step 3)."""
+    dl = tmp_path / "dl"
+    pdir = _processed_dir(dl)
+    _write_source_record(pdir, "raw/meetings/" + SID + "/gone.txt")
+    (pdir / "transcript.txt").write_text(
+        "fallback after dangling\n", encoding="utf-8"
+    )
+    text = cm._load_transcript(dl, SID)
+    assert "fallback after dangling" in text
+    err = capsys.readouterr().err
+    assert "no such file exists" in err
+
+
+def test_source_record_malformed_json_warns_falls_through(
+    tmp_path: Path, capsys
+) -> None:
+    """Attack: source_record.json is not valid JSON -> never crash;
+    WARNING + fall through to the glob (step 3)."""
+    dl = tmp_path / "dl"
+    pdir = _processed_dir(dl)
+    (pdir / "source_record.json").write_text(
+        "{ this is not json", encoding="utf-8"
+    )
+    (pdir / "transcript.txt").write_text(
+        "survived bad record\n", encoding="utf-8"
+    )
+    text = cm._load_transcript(dl, SID)
+    assert "survived bad record" in text
+    err = capsys.readouterr().err
+    assert "unreadable/not JSON" in err
+
+
+def test_no_source_record_falls_through_to_raw(
+    tmp_path: Path,
+) -> None:
+    """Case 4: no source_record.json at all -> glob (empty) then raw
+    fallback (step 4) still resolves."""
+    dl = tmp_path / "dl"
+    _processed_dir(dl)  # exists, empty, no source_record.json
+    (_raw_dir(dl) / f"{SID}.txt").write_text(
+        "raw fallback only\n", encoding="utf-8"
+    )
+    assert "raw fallback only" in cm._load_transcript(dl, SID)
+
+
+def test_override_bypasses_source_record(tmp_path: Path) -> None:
+    """Case 5: --transcript-path override is read verbatim even when a
+    perfectly good source_record.json points elsewhere."""
+    dl = tmp_path / "dl"
+    pdir = _processed_dir(dl)
+    decoy = dl / "store" / "raw" / "meetings" / SID / "source.txt"
+    decoy.parent.mkdir(parents=True)
+    decoy.write_text("SOURCE-RECORD decoy\n", encoding="utf-8")
+    _write_source_record(pdir, "raw/meetings/" + SID + "/source.txt")
+    override = tmp_path / "explicit.txt"
+    override.write_text("OVERRIDE wins\n", encoding="utf-8")
+    text = cm._load_transcript(dl, SID, transcript_path=override)
+    assert "OVERRIDE wins" in text
+    assert "decoy" not in text
+
+
+def test_all_four_locations_empty_lists_all_four(
+    tmp_path: Path,
+) -> None:
+    """Case 6: nothing anywhere -> missing_transcript whose detail
+    names ALL FOUR checked locations (source_record, processed glob,
+    raw flat, raw subdir)."""
+    dl = tmp_path / "dl"
+    _processed_dir(dl)
+    _raw_dir(dl)
+    try:
+        cm._load_transcript(dl, SID)
+        raise AssertionError("expected missing_transcript")
+    except cm.CorrectionMinerError as exc:
+        assert exc.reason == "missing_transcript"
+        d = exc.detail
+        assert "source_record.json" in d
+        assert "processed dir" in d
+        assert "raw flat" in d
+        assert "raw subdir" in d
+        assert SID in d
+
+
+def test_source_record_corrupt_pointed_file_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """A source_record that points at an EXISTING but corrupt .docx is
+    the authoritative input: it fails closed with the real path, it
+    does NOT silently glob elsewhere (mirrors the processed-dir rule)."""
+    dl = tmp_path / "dl"
+    pdir = _processed_dir(dl)
+    bad = dl / "store" / "raw" / "meetings" / SID / "source.docx"
+    bad.parent.mkdir(parents=True)
+    bad.write_bytes(b"not a real docx zip")
+    _write_source_record(pdir, "raw/meetings/" + SID + "/source.docx")
+    # A perfectly good glob transcript also exists; it must NOT mask
+    # the corrupt authoritative input.
+    (pdir / "transcript.txt").write_text(
+        "would-be-found\n", encoding="utf-8"
+    )
+    try:
+        cm._load_transcript(dl, SID)
+        raise AssertionError("expected missing_transcript")
+    except cm.CorrectionMinerError as exc:
+        assert exc.reason == "missing_transcript"
+        assert "source.docx" in exc.detail
+
+
 def test_cli_threads_transcript_path(monkeypatch, tmp_path: Path) -> None:
     """The --transcript-path CLI arg reaches run_correction_miner as a
     Path; absent, it is None."""
