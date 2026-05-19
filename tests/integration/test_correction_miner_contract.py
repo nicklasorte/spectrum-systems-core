@@ -91,6 +91,50 @@ def _seed(tmp_path: Path) -> Path:
     return dl
 
 
+def _seed_transcript_in_processed_only(tmp_path: Path) -> Path:
+    """Same as ``_seed`` but the transcript is a real ``.docx`` written
+    into ``processed/meetings/<sid>/`` (where transcripts actually
+    live) and NOTHING is written under ``raw/transcripts/``. Proves the
+    resolver finds the processed-dir transcript end-to-end via the
+    subprocess CLI — the exact failure the fix targets."""
+    dl = tmp_path / "data-lake"
+    store = dl / "store"
+    sid_dir = store / "processed" / "meetings" / SOURCE_ID
+    sid_dir.mkdir(parents=True)
+    source_artifact_id = str(uuid.uuid4())
+    (sid_dir / "source_record.json").write_text(
+        json.dumps(make_source_record(SOURCE_ID, source_artifact_id)),
+        encoding="utf-8",
+    )
+    make_opus_reference_baseline(
+        data_lake_root=dl,
+        source_id=SOURCE_ID,
+        source_artifact_id=source_artifact_id,
+        model=OPUS_MODEL,
+        items_by_type={
+            "decisions": DECISIONS,
+            "action_items": ACTION_ITEMS,
+            "open_questions": [],
+        },
+    )
+    make_promoted_meeting_minutes_artifact(
+        lake_root=store,
+        source_id=SOURCE_ID,
+        decisions=[],
+        action_items=ACTION_ITEMS,
+        open_questions=["placeholder question kept non-empty"],
+    )
+    # Transcript as a real .docx in the processed dir; no raw/ file.
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("7 GHz Downlink TIG")
+    for line in DECISIONS + ACTION_ITEMS:
+        doc.add_paragraph(line)
+    doc.save(str(sid_dir / "transcript.docx"))
+    return dl
+
+
 def _run(script: Path, args: list[str], extra_env: dict | None = None):
     env = dict(os.environ)
     env.pop("ANTHROPIC_API_KEY", None)
@@ -174,6 +218,86 @@ def test_non_promotion_path_opens_no_pr(tmp_path: Path) -> None:
         text=True,
     ).stdout
     assert branches.strip() == ""
+
+
+def test_transcript_resolves_from_processed_meetings_dir(
+    tmp_path: Path,
+) -> None:
+    """End-to-end: with the transcript ONLY in
+    processed/meetings/<sid>/ as a .docx (no raw/ file), the miner
+    resolves it and evaluates the candidate. Before the fix this
+    failed with ``missing_transcript`` because only raw/ was searched.
+    """
+    dl = _seed_transcript_in_processed_only(tmp_path)
+    _make_comparison(dl)
+
+    r = _run(
+        MINER,
+        [
+            "--data-lake", str(dl), "--source-id", SOURCE_ID,
+            "--no-dry-run", "--max-candidates", "1",
+        ],
+        extra_env={
+            "CORRECTION_MINER_OPUS_STUB_RESPONSE": "ADD BLOCK",
+            "CORRECTION_MINER_HAIKU_STUB_RESPONSE": json.dumps(
+                {
+                    "decisions": [],
+                    "action_items": [],
+                    "open_questions": [],
+                }
+            ),
+        },
+    )
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+    assert "missing_transcript" not in r.stdout
+    out = json.loads(r.stdout)
+    # A non-empty scores list proves evaluate_candidate ran, which
+    # only happens if _load_transcript found the processed-dir docx.
+    assert out["scores"], "candidate not evaluated (transcript missing)"
+    assert out["promotion"]["promoted"] is False
+
+
+def test_transcript_path_override_via_cli(tmp_path: Path) -> None:
+    """End-to-end: --transcript-path is honoured by the subprocess CLI
+    and bypasses auto-detection (nothing in raw/, transcript file lives
+    at an arbitrary path outside the data-lake layout)."""
+    dl = _seed_transcript_in_processed_only(tmp_path)
+    # Remove the processed-dir transcript so ONLY the override can
+    # supply the input.
+    (dl / "store" / "processed" / "meetings" / SOURCE_ID
+     / "transcript.docx").unlink()
+    _make_comparison(dl)
+
+    explicit = tmp_path / "elsewhere" / "explicit_transcript.txt"
+    explicit.parent.mkdir(parents=True)
+    explicit.write_text(
+        "7 GHz Downlink TIG\n" + "\n".join(DECISIONS + ACTION_ITEMS)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    r = _run(
+        MINER,
+        [
+            "--data-lake", str(dl), "--source-id", SOURCE_ID,
+            "--no-dry-run", "--max-candidates", "1",
+            "--transcript-path", str(explicit),
+        ],
+        extra_env={
+            "CORRECTION_MINER_OPUS_STUB_RESPONSE": "ADD BLOCK",
+            "CORRECTION_MINER_HAIKU_STUB_RESPONSE": json.dumps(
+                {
+                    "decisions": [],
+                    "action_items": [],
+                    "open_questions": [],
+                }
+            ),
+        },
+    )
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+    assert "missing_transcript" not in r.stdout
+    out = json.loads(r.stdout)
+    assert out["scores"], "override transcript not used"
 
 
 def test_no_comparisons_halts(tmp_path: Path) -> None:
