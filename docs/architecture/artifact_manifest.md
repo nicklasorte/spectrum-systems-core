@@ -1175,6 +1175,23 @@ debug or runtime state and live under `data-lake/` only when
 - Git-tracked: NO — harness memory, not authority (data-lake contract
   §6.4). Covered by the `**/processed/**` ignore.
 
+### grounding_rejection_report (Phase 1, diagnostic)
+- Path: `data-lake/store/processed/meetings/<source_id>/diagnostics/grounding_rejection_report__<run_id>.json`
+- Writer: `src/spectrum_systems_core/promotion/gate.py::grounding_rejection_report_payload`
+  builds the payload; the orchestrator that runs `verify_grounding`
+  writes it to disk via canonical_json. Written on EVERY run that had
+  at least one rejected item OR was blocked by `grounding_rate_below_floor`.
+- Schema: `src/spectrum_systems_core/schemas/grounding_rejection_report.schema.json`
+- Lifecycle: NOT a product artifact. Never promoted. Never indexed in
+  `artifact_index.jsonl`. Same lifecycle as `debug__<run_id>.json`:
+  the run produced it to explain itself, and a future reviewer reads
+  it without it influencing control or promotion.
+- Reader: the correction miner (`scripts/correction_miner.py`) reads
+  these to surface hallucination patterns as their own failure
+  category alongside the existing keyword-classified patterns.
+- Git-tracked: NO — diagnostic state under `processed/`, covered by
+  the `**/processed/**` ignore.
+
 ## Gitignore Audit Rule
 
 Every path listed above as **Git-tracked: YES** must satisfy:

@@ -14,416 +14,1113 @@
     "open_questions"
   ],
   "properties": {
-    "artifact_type": { "const": "meeting_minutes" },
+    "artifact_type": {
+      "const": "meeting_minutes"
+    },
     "schema_version": {
       "type": "string",
-      "enum": ["1.0.0", "1.1.0", "1.2.0", "1.3.0"],
-      "description": "Payload schema_version. 1.0.0 = legacy ungrounded; 1.1.0 = Phase Y grounded (PR #128 source_turns contract — unchanged here); 1.2.0 = additionally permits the optional rationale (decisions) / claims with external_references + evidence_in_transcript / follow_up_required (action_items) / word_level_timestamps / sentiment_indicators / meeting_phases fields; 1.3.0 = additionally permits eight new optional cross-meeting arrays (issue_registry_entry, position_statement, dissent_or_objection, agenda_item, precedent_reference, external_stakeholder_input, glossary_definition, procedural_ruling) plus the optional claim_complexity field on claims items. Additivity: every 1.2.0 AND 1.3.0 field is optional, so a legacy 1.0.0 / 1.1.0 / 1.2.0 artifact validates unchanged on the 1.3.0 schema, and an artifact may declare 1.3.0 without carrying any new field."
+      "enum": [
+        "1.0.0",
+        "1.1.0",
+        "1.2.0",
+        "1.3.0",
+        "1.4.0"
+      ],
+      "description": "Payload schema_version. 1.0.0 = legacy ungrounded; 1.1.0 = Phase Y grounded (PR #128 source_turns contract \u2014 unchanged here); 1.2.0 = additionally permits the optional rationale (decisions) / claims with external_references + evidence_in_transcript / follow_up_required (action_items) / word_level_timestamps / sentiment_indicators / meeting_phases fields; 1.3.0 = additionally permits eight new optional cross-meeting arrays (issue_registry_entry, position_statement, dissent_or_objection, agenda_item, precedent_reference, external_stakeholder_input, glossary_definition, procedural_ruling) plus the optional claim_complexity field on claims items; 1.4.0 = Phase 1 verbatim span grounding: every item-type sub-schema declares a `grounding_mode` discriminator and adds the optional grounding fields (verbatim items add source_quote / quote_offset_normalized / quote_offset_original, turn_aggregate items add source_turn_ids). The new fields are OPTIONAL at the JSON-Schema layer so pre-1.4 artifacts validate unchanged; the promotion gate (`promotion/gate.py`) is what enforces that 1.4.0 artifacts carry them. Additivity: every 1.2.0 / 1.3.0 / 1.4.0 field is optional in the schema, so legacy artifacts validate unchanged and an artifact may declare 1.4.0 without carrying any new field."
     },
-    "title": { "type": "string", "minLength": 1 },
-    "summary": { "type": "string" },
-
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "summary": {
+      "type": "string"
+    },
     "decisions": {
       "type": "array",
       "description": "Additive (schema-version-agnostic): an item may be a legacy verbatim decision STRING or a structured object. The string branch keeps every existing regex / LLM artifact and the legacy LLM strict-schema path valid. The object branch carries the canonical typed-decision shape (`text`, optional `verb`) plus the two optional architecture-review fields `stakeholders` and `confidence`. `text`/`verb` match what evals/regulatory_verb.py reads so an object-form decision is still verb-classified, not silently bypassed.",
       "items": {
         "oneOf": [
-          { "type": "string" },
+          {
+            "type": "string"
+          },
           {
             "type": "object",
             "additionalProperties": false,
-            "required": ["text"],
+            "required": [
+              "text"
+            ],
             "properties": {
-              "text": { "type": "string", "minLength": 1 },
-              "verb": { "type": "string" },
+              "text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "verb": {
+                "type": "string"
+              },
               "stakeholders": {
                 "type": "array",
                 "description": "Optional, default []. Names of stakeholders affected by or responsible for this decision. Empty array when the transcript does not make it clear (default applied by the producer/model, not enforced by JSON Schema).",
-                "items": { "type": "string" }
+                "items": {
+                  "type": "string"
+                }
               },
               "confidence": {
-                "type": ["number", "null"],
+                "type": [
+                  "number",
+                  "null"
+                ],
                 "minimum": 0.0,
                 "maximum": 1.0,
                 "description": "Optional. Model confidence 0.0-1.0 that this is a real decision vs. discussion. Null or omitted when uncertain; any number outside [0.0, 1.0] fails the gate."
               },
               "rationale": {
-                "type": ["string", "null"],
-                "description": "Optional (schema_version 1.2.0+). The stated reason or justification WHY this decision was made, as expressed in the transcript — the explicit 'why', distinct from background decision context. Null or omitted when no rationale was stated; legacy 1.0.0 / 1.1.0 decisions omit it entirely (additivity)."
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Optional (schema_version 1.2.0+). The stated reason or justification WHY this decision was made, as expressed in the transcript \u2014 the explicit 'why', distinct from background decision context. Null or omitted when no rationale was stated; legacy 1.0.0 / 1.1.0 decisions omit it entirely (additivity)."
+              },
+              "grounding_mode": {
+                "const": "verbatim",
+                "description": "Phase 1 (schema_version 1.4.0). Discriminator: decisions are a VERBATIM item type. Optional at the JSON-Schema layer for additivity (legacy 1.0.0 / 1.1.0 / 1.2.0 / 1.3.0 artifacts omit it). The promotion gate (`promotion/gate.py`) enforces that 1.4.0 artifacts carry it together with source_quote / quote_offset_normalized / quote_offset_original."
+              },
+              "source_quote": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Phase 1 (schema_version 1.4.0). The verbatim substring of the transcript that supports this decision. Copy character-for-character including speech errors. Optional in schema (legacy artifacts omit it); the promotion gate enforces presence and byte-match."
+              },
+              "quote_offset_normalized": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Phase 1 (schema_version 1.4.0). Byte offset of source_quote against the normalized transcript. Optional in schema; the gate enforces presence and verifies the byte-match at this offset."
+              },
+              "quote_offset_original": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Phase 1 (schema_version 1.4.0). Byte offset against the ORIGINAL transcript. Computed by the gate from quote_offset_normalized via the normalization position map; producers may emit a best estimate, the gate re-derives the authoritative value."
               }
             }
           }
         ]
       }
     },
-
     "action_items": {
       "type": "array",
       "description": "Additive: items may be a legacy string OR a structured object carrying the new optional `status` field. The string branch keeps every existing artifact and the LLM strict-schema eval (list[str]) passing.",
       "items": {
         "oneOf": [
-          { "type": "string" },
+          {
+            "type": "string"
+          },
           {
             "type": "object",
             "additionalProperties": false,
-            "required": ["action"],
+            "required": [
+              "action"
+            ],
             "properties": {
-              "action": { "type": "string", "minLength": 1 },
-              "status": {
-                "enum": ["open", "in_progress", "completed"],
-                "description": "Optional. Default \"open\" when absent (default applied by the producer, not enforced by JSON Schema). Only these three values are valid — e.g. \"done\" fails the gate."
+              "action": {
+                "type": "string",
+                "minLength": 1
               },
-              "owner": { "type": ["string", "null"] },
-              "due": { "type": ["string", "null"] },
+              "status": {
+                "enum": [
+                  "open",
+                  "in_progress",
+                  "completed"
+                ],
+                "description": "Optional. Default \"open\" when absent (default applied by the producer, not enforced by JSON Schema). Only these three values are valid \u2014 e.g. \"done\" fails the gate."
+              },
+              "owner": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "due": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "follow_up_required": {
                 "type": "boolean",
                 "description": "Optional (schema_version 1.2.0+). Default true (applied by the producer, not enforced by JSON Schema): true when a human must take action before the next meeting, false for completed or informational items. Legacy action_item objects omit it (additivity)."
+              },
+              "grounding_mode": {
+                "const": "verbatim",
+                "description": "Phase 1 (schema_version 1.4.0). Discriminator: action_items are a VERBATIM item type. Optional in schema (legacy artifacts omit it); the gate enforces presence and byte-match."
+              },
+              "source_quote": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Phase 1 (schema_version 1.4.0). Verbatim transcript substring supporting this action_item."
+              },
+              "quote_offset_normalized": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Phase 1 (schema_version 1.4.0). Byte offset against the normalized transcript."
+              },
+              "quote_offset_original": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate)."
               }
             }
           }
         ]
       }
     },
-
     "open_questions": {
       "type": "array",
       "description": "Additive: items may be a legacy string OR a structured Q&A-log object. The string branch preserves existing artifacts and the LLM strict-schema eval.",
       "items": {
         "oneOf": [
-          { "type": "string" },
+          {
+            "type": "string"
+          },
           {
             "type": "object",
             "additionalProperties": false,
-            "required": ["question_id", "question_text"],
+            "required": [
+              "question_id",
+              "question_text"
+            ],
             "properties": {
-              "question_id": { "type": "string", "minLength": 1 },
-              "question_text": { "type": "string", "minLength": 1 },
-              "asked_by": { "type": "string" },
-              "category": { "type": "string" },
-              "initial_response": { "type": ["string", "null"] },
-              "follow_up_action": { "type": ["string", "null"] },
-              "resolved": { "type": "boolean" }
+              "question_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "question_text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "asked_by": {
+                "type": "string"
+              },
+              "category": {
+                "type": "string"
+              },
+              "initial_response": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "follow_up_action": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "resolved": {
+                "type": "boolean"
+              },
+              "grounding_mode": {
+                "const": "turn_aggregate",
+                "description": "Phase 1 (schema_version 1.4.0). Discriminator: open_questions aggregate across turns (Q&A flow). Optional in schema; the gate enforces presence together with source_turn_ids for 1.4.0 artifacts."
+              },
+              "source_turn_ids": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "integer"
+                },
+                "description": "Phase 1 (schema_version 1.4.0). Turn IDs this Q&A spans. Optional in schema; the gate enforces every id exists in the transcript turn index."
+              }
             }
           }
         ]
       }
     },
-
     "commitments": {
       "type": "array",
       "description": "Optional, default []. Individual \"I will do X\" statements distinct from group action_items.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["commitment_id", "owner", "commitment_text", "source_speaker"],
+        "required": [
+          "commitment_id",
+          "owner",
+          "commitment_text",
+          "source_speaker"
+        ],
         "properties": {
-          "commitment_id": { "type": "string", "minLength": 1 },
-          "owner": { "type": "string", "minLength": 1 },
-          "commitment_text": { "type": "string", "minLength": 1 },
-          "due": { "type": ["string", "null"] },
-          "source_speaker": { "type": "string", "minLength": 1 }
+          "commitment_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1
+          },
+          "commitment_text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "due": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_speaker": {
+            "type": "string",
+            "minLength": 1
+          },
+          "grounding_mode": {
+            "const": "verbatim",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type is VERBATIM and carries a source_quote anchored by byte offset. Optional in schema (legacy artifacts omit it); the gate enforces presence + byte-match for 1.4.0 artifacts."
+          },
+          "source_quote": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 1 (schema_version 1.4.0). Verbatim transcript substring supporting this item. Optional in schema; the gate enforces presence."
+          },
+          "quote_offset_normalized": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset of source_quote against the normalized transcript. Optional in schema; the gate enforces presence and byte-match at this offset."
+          },
+          "quote_offset_original": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
+          }
         }
       }
     },
-
     "risks": {
       "type": "array",
       "description": "Optional, default []. Things a speaker flagged as a potential problem.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["risk_id", "risk_text", "raised_by"],
+        "required": [
+          "risk_id",
+          "risk_text",
+          "raised_by"
+        ],
         "properties": {
-          "risk_id": { "type": "string", "minLength": 1 },
-          "risk_text": { "type": "string", "minLength": 1 },
-          "raised_by": { "type": "string", "minLength": 1 },
+          "risk_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "risk_text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "raised_by": {
+            "type": "string",
+            "minLength": 1
+          },
           "severity": {
-            "enum": ["low", "medium", "high", null],
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              null
+            ],
             "description": "Optional severity. Null when the transcript does not state one. Any value outside low/medium/high (and null) fails the gate."
           },
-          "mitigation_mentioned": { "type": ["string", "null"] }
+          "mitigation_mentioned": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "grounding_mode": {
+            "const": "verbatim",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type is VERBATIM and carries a source_quote anchored by byte offset. Optional in schema (legacy artifacts omit it); the gate enforces presence + byte-match for 1.4.0 artifacts."
+          },
+          "source_quote": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 1 (schema_version 1.4.0). Verbatim transcript substring supporting this item. Optional in schema; the gate enforces presence."
+          },
+          "quote_offset_normalized": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset of source_quote against the normalized transcript. Optional in schema; the gate enforces presence and byte-match at this offset."
+          },
+          "quote_offset_original": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
+          }
         }
       }
     },
-
     "claims": {
       "type": "array",
       "description": "Optional, default []. Factual or analytical assertions made in the meeting, distinct from `decisions` (which commit the group) and `risks` (flagged problems). Legacy 1.0.0 / 1.1.0 artifacts omit this array entirely (additivity).",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["claim_id", "claim_text"],
+        "required": [
+          "claim_id",
+          "claim_text"
+        ],
         "properties": {
-          "claim_id": { "type": "string", "minLength": 1 },
-          "claim_text": { "type": "string", "minLength": 1 },
-          "speaker": { "type": ["string", "null"] },
+          "claim_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "claim_text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "speaker": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "external_references": {
             "type": "array",
             "description": "Optional (schema_version 1.2.0+), default [] (applied by the producer/model, not enforced by JSON Schema). External documents, ITU articles, CFR sections, or other sources cited as evidence for this claim. E.g. [\"ITU Article 21\", \"47 CFR 96.41\", \"OB3 Section 4.2\"]. Empty array when none cited.",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           },
           "evidence_in_transcript": {
             "type": "array",
-            "description": "Optional (schema_version 1.2.0+), default [] (applied by the producer/model). turn_ids that provide evidence SUPPORTING this claim — deliberately distinct from the PR #128 grounding/source_turns contract, which records where the claim was STATED. A claim may be stated in one turn but supported by evidence across multiple turns. This field does NOT alter or re-pin the grounding contract.",
-            "items": { "type": "string" }
+            "description": "Optional (schema_version 1.2.0+), default [] (applied by the producer/model). turn_ids that provide evidence SUPPORTING this claim \u2014 deliberately distinct from the PR #128 grounding/source_turns contract, which records where the claim was STATED. A claim may be stated in one turn but supported by evidence across multiple turns. This field does NOT alter or re-pin the grounding contract.",
+            "items": {
+              "type": "string"
+            }
           },
           "claim_complexity": {
-            "enum": ["atomic", "compound"],
-            "description": "Optional (schema_version 1.3.0+). atomic = single independently verifiable fact; compound = bundles multiple facts that should be split. Default \"atomic\" (applied by the producer/model, not enforced by JSON Schema): the key is OPTIONAL so every legacy 1.0.0 / 1.1.0 / 1.2.0 claim — and any claim that simply omits it — validates unchanged. Only these two values are valid; any other (e.g. \"wrong\") fails the gate."
+            "enum": [
+              "atomic",
+              "compound"
+            ],
+            "description": "Optional (schema_version 1.3.0+). atomic = single independently verifiable fact; compound = bundles multiple facts that should be split. Default \"atomic\" (applied by the producer/model, not enforced by JSON Schema): the key is OPTIONAL so every legacy 1.0.0 / 1.1.0 / 1.2.0 claim \u2014 and any claim that simply omits it \u2014 validates unchanged. Only these two values are valid; any other (e.g. \"wrong\") fails the gate."
+          },
+          "grounding_mode": {
+            "const": "verbatim",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type is VERBATIM and carries a source_quote anchored by byte offset. Optional in schema (legacy artifacts omit it); the gate enforces presence + byte-match for 1.4.0 artifacts."
+          },
+          "source_quote": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 1 (schema_version 1.4.0). Verbatim transcript substring supporting this item. Optional in schema; the gate enforces presence."
+          },
+          "quote_offset_normalized": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset of source_quote against the normalized transcript. Optional in schema; the gate enforces presence and byte-match at this offset."
+          },
+          "quote_offset_original": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
           }
         }
       }
     },
-
     "cross_references": {
       "type": "array",
       "description": "Optional, default []. References to other meetings or documents.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["ref_id", "ref_type", "ref_text"],
+        "required": [
+          "ref_id",
+          "ref_type",
+          "ref_text"
+        ],
         "properties": {
-          "ref_id": { "type": "string", "minLength": 1 },
-          "ref_type": { "enum": ["meeting", "document", "report", "artifact"] },
-          "ref_text": { "type": "string", "minLength": 1 },
-          "ref_date": { "type": ["string", "null"] },
-          "ref_url": { "type": ["string", "null"] }
+          "ref_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ref_type": {
+            "enum": [
+              "meeting",
+              "document",
+              "report",
+              "artifact"
+            ]
+          },
+          "ref_text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ref_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "grounding_mode": {
+            "const": "turn_aggregate",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type AGGREGATES across multiple transcript turns rather than pointing to one quote. Optional in schema; the gate enforces presence + every source_turn_ids entry exists in the transcript turn index."
+          },
+          "source_turn_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "integer"
+            },
+            "description": "Phase 1 (schema_version 1.4.0). Turn IDs this aggregate spans. Optional in schema; the gate enforces every id exists in the transcript turn index for 1.4.0 artifacts."
+          }
         }
       }
     },
-
     "attendees": {
       "type": "array",
       "description": "Optional, default []. Roster with name, agency, role.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "agency"],
+        "required": [
+          "name",
+          "agency"
+        ],
         "properties": {
-          "name": { "type": "string", "minLength": 1 },
-          "agency": {
-            "type": ["string", "null"],
-            "minLength": 1,
-            "description": "The attendee's agency as stated in the transcript. The key is required (the extraction model always emits it) but the value is null when the transcript names a participant without stating their agency — a named attendee with no stated agency is still a real, faithful extraction (the model must never invent an agency), so agency: null is valid and must not block. minLength still applies to the string branch so an empty-string agency stays rejected; a non-string/non-null value is still rejected fail-closed."
+          "name": {
+            "type": "string",
+            "minLength": 1
           },
-          "role": { "type": ["string", "null"] },
+          "agency": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "description": "The attendee's agency as stated in the transcript. The key is required (the extraction model always emits it) but the value is null when the transcript names a participant without stating their agency \u2014 a named attendee with no stated agency is still a real, faithful extraction (the model must never invent an agency), so agency: null is valid and must not block. minLength still applies to the string branch so an empty-string agency stays rejected; a non-string/non-null value is still rejected fail-closed."
+          },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "present": {
             "type": "boolean",
             "description": "Optional. Default true when absent (default applied by the producer)."
+          },
+          "grounding_mode": {
+            "const": "turn_aggregate",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type AGGREGATES across multiple transcript turns rather than pointing to one quote. Optional in schema; the gate enforces presence + every source_turn_ids entry exists in the transcript turn index."
+          },
+          "source_turn_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "integer"
+            },
+            "description": "Phase 1 (schema_version 1.4.0). Turn IDs this aggregate spans. Optional in schema; the gate enforces every id exists in the transcript turn index for 1.4.0 artifacts."
           }
         }
       }
     },
-
     "topics": {
       "type": "array",
       "description": "Optional, default []. Agenda-item segmentation.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["topic_id", "title"],
+        "required": [
+          "topic_id",
+          "title"
+        ],
         "properties": {
-          "topic_id": { "type": "string", "minLength": 1 },
-          "title": { "type": "string", "minLength": 1 },
-          "start_timestamp": { "type": ["string", "null"] },
-          "end_timestamp": { "type": ["string", "null"] },
-          "summary": { "type": ["string", "null"] }
+          "topic_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "start_timestamp": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "end_timestamp": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "grounding_mode": {
+            "const": "turn_aggregate",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type AGGREGATES across multiple transcript turns rather than pointing to one quote. Optional in schema; the gate enforces presence + every source_turn_ids entry exists in the transcript turn index."
+          },
+          "source_turn_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "integer"
+            },
+            "description": "Phase 1 (schema_version 1.4.0). Turn IDs this aggregate spans. Optional in schema; the gate enforces every id exists in the transcript turn index for 1.4.0 artifacts."
+          }
         }
       }
     },
-
     "regulatory_references": {
       "type": "array",
       "description": "Optional, default []. OB3, statutory citations, rule references.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["ref_id", "reference_text", "context", "speaker"],
+        "required": [
+          "ref_id",
+          "reference_text",
+          "context",
+          "speaker"
+        ],
         "properties": {
-          "ref_id": { "type": "string", "minLength": 1 },
-          "reference_text": { "type": "string", "minLength": 1 },
-          "context": { "type": "string", "minLength": 1 },
-          "speaker": { "type": "string", "minLength": 1 }
+          "ref_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reference_text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "context": {
+            "type": "string",
+            "minLength": 1
+          },
+          "speaker": {
+            "type": "string",
+            "minLength": 1
+          },
+          "grounding_mode": {
+            "const": "verbatim",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type is VERBATIM and carries a source_quote anchored by byte offset. Optional in schema (legacy artifacts omit it); the gate enforces presence + byte-match for 1.4.0 artifacts."
+          },
+          "source_quote": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 1 (schema_version 1.4.0). Verbatim transcript substring supporting this item. Optional in schema; the gate enforces presence."
+          },
+          "quote_offset_normalized": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset of source_quote against the normalized transcript. Optional in schema; the gate enforces presence and byte-match at this offset."
+          },
+          "quote_offset_original": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
+          }
         }
       }
     },
-
     "technical_parameters": {
       "type": "array",
       "description": "Optional, default []. Exact numeric values (frequencies, bands, thresholds) stated verbatim.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["param_id", "parameter_name", "value"],
+        "required": [
+          "param_id",
+          "parameter_name",
+          "value"
+        ],
         "properties": {
-          "param_id": { "type": "string", "minLength": 1 },
-          "parameter_name": { "type": "string", "minLength": 1 },
-          "value": { "type": "string", "minLength": 1 },
-          "unit": { "type": ["string", "null"] },
-          "context": { "type": "string" },
-          "speaker": { "type": "string" }
+          "param_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "parameter_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "context": {
+            "type": "string"
+          },
+          "speaker": {
+            "type": "string"
+          },
+          "grounding_mode": {
+            "const": "verbatim",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type is VERBATIM and carries a source_quote anchored by byte offset. Optional in schema (legacy artifacts omit it); the gate enforces presence + byte-match for 1.4.0 artifacts."
+          },
+          "source_quote": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 1 (schema_version 1.4.0). Verbatim transcript substring supporting this item. Optional in schema; the gate enforces presence."
+          },
+          "quote_offset_normalized": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset of source_quote against the normalized transcript. Optional in schema; the gate enforces presence and byte-match at this offset."
+          },
+          "quote_offset_original": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
+          }
         }
       }
     },
-
     "named_artifacts": {
       "type": "array",
       "description": "Optional, default []. Documents, folders, reports mentioned by name.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["artifact_id", "name", "artifact_type_description"],
+        "required": [
+          "artifact_id",
+          "name",
+          "artifact_type_description"
+        ],
         "properties": {
-          "artifact_id": { "type": "string", "minLength": 1 },
-          "name": { "type": "string", "minLength": 1 },
-          "artifact_type_description": { "type": "string", "minLength": 1 },
-          "url": { "type": ["string", "null"] },
-          "mentioned_by": { "type": "string" }
+          "artifact_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "artifact_type_description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mentioned_by": {
+            "type": "string"
+          },
+          "grounding_mode": {
+            "const": "turn_aggregate",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type AGGREGATES across multiple transcript turns rather than pointing to one quote. Optional in schema; the gate enforces presence + every source_turn_ids entry exists in the transcript turn index."
+          },
+          "source_turn_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "integer"
+            },
+            "description": "Phase 1 (schema_version 1.4.0). Turn IDs this aggregate spans. Optional in schema; the gate enforces every id exists in the transcript turn index for 1.4.0 artifacts."
+          }
         }
       }
     },
-
     "scheduled_events": {
       "type": "array",
       "description": "Optional, default []. Future meetings/events with dates and purposes.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["event_id", "title", "date"],
+        "required": [
+          "event_id",
+          "title",
+          "date"
+        ],
         "properties": {
-          "event_id": { "type": "string", "minLength": 1 },
-          "title": { "type": "string", "minLength": 1 },
-          "date": {
-            "type": ["string", "null"],
-            "description": "The event date as stated in the transcript. The key is required (the extraction model always emits it) but the value is null when no date was explicitly stated — a scheduled event mentioned without a date is still a real, faithful extraction, so null is valid and must not block (the model must never invent a date)."
+          "event_id": {
+            "type": "string",
+            "minLength": 1
           },
-          "time": { "type": ["string", "null"] },
-          "location": { "type": ["string", "null"] },
-          "purpose": { "type": ["string", "null"] }
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The event date as stated in the transcript. The key is required (the extraction model always emits it) but the value is null when no date was explicitly stated \u2014 a scheduled event mentioned without a date is still a real, faithful extraction, so null is valid and must not block (the model must never invent a date)."
+          },
+          "time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "purpose": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "grounding_mode": {
+            "const": "turn_aggregate",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type AGGREGATES across multiple transcript turns rather than pointing to one quote. Optional in schema; the gate enforces presence + every source_turn_ids entry exists in the transcript turn index."
+          },
+          "source_turn_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "integer"
+            },
+            "description": "Phase 1 (schema_version 1.4.0). Turn IDs this aggregate spans. Optional in schema; the gate enforces every id exists in the transcript turn index for 1.4.0 artifacts."
+          }
         }
       }
     },
-
     "word_level_timestamps": {
       "type": "boolean",
       "description": "Optional (schema_version 1.2.0+), default false. Whether the chunks.jsonl for this transcript carries word-level timestamps. Set by the chunker at ingestion time, NEVER by the extraction model. False for the current docx inputs (no word-level timing data); infrastructure for future diarized transcripts. Legacy artifacts omit it (additivity)."
     },
-
     "sentiment_indicators": {
       "type": "array",
-      "description": "Optional (schema_version 1.2.0+), default []. Speaker turns flagged for notable sentiment. Only populated when a speaker expresses clear disagreement, concern, strong endorsement, uncertainty, or frustration — not routine discussion. Legacy artifacts omit it (additivity).",
+      "description": "Optional (schema_version 1.2.0+), default []. Speaker turns flagged for notable sentiment. Only populated when a speaker expresses clear disagreement, concern, strong endorsement, uncertainty, or frustration \u2014 not routine discussion. Legacy artifacts omit it (additivity).",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["turn_id", "speaker", "sentiment", "text_preview"],
+        "required": [
+          "turn_id",
+          "speaker",
+          "sentiment",
+          "text_preview"
+        ],
         "properties": {
-          "turn_id": { "type": "string", "minLength": 1 },
-          "speaker": { "type": "string" },
+          "turn_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "speaker": {
+            "type": "string"
+          },
           "sentiment": {
-            "enum": ["disagreement", "concern", "strong_endorsement", "uncertainty", "frustration"],
+            "enum": [
+              "disagreement",
+              "concern",
+              "strong_endorsement",
+              "uncertainty",
+              "frustration"
+            ],
             "description": "Exactly one of the five approved sentiment signals. Any other value (e.g. \"annoyed\") fails the gate."
           },
-          "text_preview": { "type": "string", "minLength": 1 }
+          "text_preview": {
+            "type": "string",
+            "minLength": 1
+          },
+          "grounding_mode": {
+            "const": "verbatim",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type is VERBATIM and carries a source_quote anchored by byte offset. Optional in schema (legacy artifacts omit it); the gate enforces presence + byte-match for 1.4.0 artifacts."
+          },
+          "source_quote": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 1 (schema_version 1.4.0). Verbatim transcript substring supporting this item. Optional in schema; the gate enforces presence."
+          },
+          "quote_offset_normalized": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset of source_quote against the normalized transcript. Optional in schema; the gate enforces presence and byte-match at this offset."
+          },
+          "quote_offset_original": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
+          }
         }
       }
     },
-
     "meeting_phases": {
       "type": "array",
       "description": "Optional (schema_version 1.2.0+), default []. High-level phases of the meeting in sequence. Legacy artifacts omit it (additivity).",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["phase_id", "phase_name"],
+        "required": [
+          "phase_id",
+          "phase_name"
+        ],
         "properties": {
-          "phase_id": { "type": "string", "minLength": 1 },
+          "phase_id": {
+            "type": "string",
+            "minLength": 1
+          },
           "phase_name": {
-            "enum": ["opening", "working_session", "q_and_a", "wrap_up", "other"],
+            "enum": [
+              "opening",
+              "working_session",
+              "q_and_a",
+              "wrap_up",
+              "other"
+            ],
             "description": "Exactly one of the five approved phase names. Any other value (e.g. \"lunch\") fails the gate."
           },
-          "start_turn_id": { "type": ["string", "null"] },
-          "end_turn_id": { "type": ["string", "null"] },
-          "summary": { "type": ["string", "null"] }
+          "start_turn_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "end_turn_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "grounding_mode": {
+            "const": "turn_aggregate",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type AGGREGATES across multiple transcript turns rather than pointing to one quote. Optional in schema; the gate enforces presence + every source_turn_ids entry exists in the transcript turn index."
+          },
+          "source_turn_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "integer"
+            },
+            "description": "Phase 1 (schema_version 1.4.0). Turn IDs this aggregate spans. Optional in schema; the gate enforces every id exists in the transcript turn index for 1.4.0 artifacts."
+          }
         }
       }
     },
-
     "issue_registry_entry": {
       "type": "array",
-      "description": "Optional (schema_version 1.3.0+), default []. Substantive technical or policy problems being worked across multiple meetings; an issue persists until resolved. DISTINCT from `open_questions` (a procedural question raised in one meeting) and `decisions` (a resolution). Legacy 1.0.0 / 1.1.0 / 1.2.0 artifacts omit it entirely (additivity — the array is optional, so absence validates).",
+      "description": "Optional (schema_version 1.3.0+), default []. Substantive technical or policy problems being worked across multiple meetings; an issue persists until resolved. DISTINCT from `open_questions` (a procedural question raised in one meeting) and `decisions` (a resolution). Legacy 1.0.0 / 1.1.0 / 1.2.0 artifacts omit it entirely (additivity \u2014 the array is optional, so absence validates).",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["issue_id", "title", "description", "issue_type", "raised_by", "status"],
+        "required": [
+          "issue_id",
+          "title",
+          "description",
+          "issue_type",
+          "raised_by",
+          "status"
+        ],
         "properties": {
-          "issue_id": { "type": "string", "minLength": 1 },
-          "title": { "type": "string", "minLength": 1 },
-          "description": { "type": "string", "minLength": 1 },
+          "issue_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
           "issue_type": {
-            "enum": ["technical", "policy", "procedural", "regulatory", "coordination"],
+            "enum": [
+              "technical",
+              "policy",
+              "procedural",
+              "regulatory",
+              "coordination"
+            ],
             "description": "Exactly one of the five approved issue types. Any other value fails the gate."
           },
-          "raised_by": { "type": "string", "minLength": 1 },
+          "raised_by": {
+            "type": "string",
+            "minLength": 1
+          },
           "status": {
-            "enum": ["open", "in_progress", "resolved", "deferred"],
+            "enum": [
+              "open",
+              "in_progress",
+              "resolved",
+              "deferred"
+            ],
             "description": "Exactly one of the four approved statuses. Any other value (e.g. \"done\") fails the gate."
           },
-          "resolution_summary": { "type": ["string", "null"] },
+          "resolution_summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "related_decisions": {
             "type": "array",
             "description": "Optional, default []. Decision text or ids this issue is related to.",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           },
           "source_turns": {
             "type": "array",
             "description": "Optional, default []. turn_ids supporting this entry.",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
+          },
+          "grounding_mode": {
+            "const": "verbatim",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type is VERBATIM and carries a source_quote anchored by byte offset. Optional in schema (legacy artifacts omit it); the gate enforces presence + byte-match for 1.4.0 artifacts."
+          },
+          "source_quote": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 1 (schema_version 1.4.0). Verbatim transcript substring supporting this item. Optional in schema; the gate enforces presence."
+          },
+          "quote_offset_normalized": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset of source_quote against the normalized transcript. Optional in schema; the gate enforces presence and byte-match at this offset."
+          },
+          "quote_offset_original": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
           }
         }
       }
     },
-
     "position_statement": {
       "type": "array",
-      "description": "Optional (schema_version 1.3.0+), default []. An agency's or participant's stated stance on a topic that may recur or evolve across meetings — a declared position, NOT a decision (a stance, not a resolution). Legacy artifacts omit it (additivity).",
+      "description": "Optional (schema_version 1.3.0+), default []. An agency's or participant's stated stance on a topic that may recur or evolve across meetings \u2014 a declared position, NOT a decision (a stance, not a resolution). Legacy artifacts omit it (additivity).",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["position_id", "agency", "speaker", "topic", "position_text", "position_type"],
+        "required": [
+          "position_id",
+          "agency",
+          "speaker",
+          "topic",
+          "position_text",
+          "position_type"
+        ],
         "properties": {
-          "position_id": { "type": "string", "minLength": 1 },
-          "agency": { "type": "string", "minLength": 1 },
-          "speaker": { "type": "string", "minLength": 1 },
-          "topic": { "type": "string", "minLength": 1 },
-          "position_text": { "type": "string", "minLength": 1 },
+          "position_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agency": {
+            "type": "string",
+            "minLength": 1
+          },
+          "speaker": {
+            "type": "string",
+            "minLength": 1
+          },
+          "topic": {
+            "type": "string",
+            "minLength": 1
+          },
+          "position_text": {
+            "type": "string",
+            "minLength": 1
+          },
           "position_type": {
-            "enum": ["support", "opposition", "conditional", "neutral", "unclear"],
+            "enum": [
+              "support",
+              "opposition",
+              "conditional",
+              "neutral",
+              "unclear"
+            ],
             "description": "Exactly one of the five approved position types. Any other value fails the gate."
           },
-          "caveats": { "type": ["string", "null"] },
+          "caveats": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "source_turns": {
             "type": "array",
             "description": "Optional, default []. turn_ids supporting this statement.",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
+          },
+          "grounding_mode": {
+            "const": "verbatim",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type is VERBATIM and carries a source_quote anchored by byte offset. Optional in schema (legacy artifacts omit it); the gate enforces presence + byte-match for 1.4.0 artifacts."
+          },
+          "source_quote": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 1 (schema_version 1.4.0). Verbatim transcript substring supporting this item. Optional in schema; the gate enforces presence."
+          },
+          "quote_offset_normalized": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset of source_quote against the normalized transcript. Optional in schema; the gate enforces presence and byte-match at this offset."
+          },
+          "quote_offset_original": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
           }
         }
       }
     },
-
     "dissent_or_objection": {
       "type": "array",
       "description": "Optional (schema_version 1.3.0+), default []. A formal disagreement explicitly registered on the record by a participant. DISTINCT from `risks` (a flagged potential problem) and `sentiment_indicators` (tone). Legacy artifacts omit it (additivity).",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["dissent_id", "objector", "agency", "objection_text", "objection_topic"],
+        "required": [
+          "dissent_id",
+          "objector",
+          "agency",
+          "objection_text",
+          "objection_topic"
+        ],
         "properties": {
-          "dissent_id": { "type": "string", "minLength": 1 },
-          "objector": { "type": "string", "minLength": 1 },
-          "agency": { "type": "string", "minLength": 1 },
-          "objection_text": { "type": "string", "minLength": 1 },
-          "objection_topic": { "type": "string", "minLength": 1 },
-          "resolution": { "type": ["string", "null"] },
+          "dissent_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "objector": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agency": {
+            "type": "string",
+            "minLength": 1
+          },
+          "objection_text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "objection_topic": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resolution": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "resolved": {
             "type": "boolean",
             "description": "Optional. Default false (applied by the producer/model, not enforced by JSON Schema)."
@@ -431,97 +1128,289 @@
           "source_turns": {
             "type": "array",
             "description": "Optional, default []. turn_ids supporting this objection.",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
+          },
+          "grounding_mode": {
+            "const": "verbatim",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type is VERBATIM and carries a source_quote anchored by byte offset. Optional in schema (legacy artifacts omit it); the gate enforces presence + byte-match for 1.4.0 artifacts."
+          },
+          "source_quote": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 1 (schema_version 1.4.0). Verbatim transcript substring supporting this item. Optional in schema; the gate enforces presence."
+          },
+          "quote_offset_normalized": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset of source_quote against the normalized transcript. Optional in schema; the gate enforces presence and byte-match at this offset."
+          },
+          "quote_offset_original": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
           }
         }
       }
     },
-
     "agenda_item": {
       "type": "array",
-      "description": "Optional (schema_version 1.3.0+), default []. Formal agenda structure recoverable from the transcript (numbered or titled sections) — the organizational spine for cross-meeting document structure, NOT the substantive content (that stays in `topics` / `decisions`). Legacy artifacts omit it (additivity).",
+      "description": "Optional (schema_version 1.3.0+), default []. Formal agenda structure recoverable from the transcript (numbered or titled sections) \u2014 the organizational spine for cross-meeting document structure, NOT the substantive content (that stays in `topics` / `decisions`). Legacy artifacts omit it (additivity).",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["item_id", "title"],
+        "required": [
+          "item_id",
+          "title"
+        ],
         "properties": {
-          "item_id": { "type": "string", "minLength": 1 },
-          "item_number": { "type": ["string", "null"] },
-          "title": { "type": "string", "minLength": 1 },
-          "presenter": { "type": ["string", "null"] },
-          "allocated_minutes": { "type": ["integer", "null"] },
-          "start_turn_id": { "type": ["string", "null"] },
-          "end_turn_id": { "type": ["string", "null"] },
-          "outcome": { "type": ["string", "null"] }
+          "item_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "item_number": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "presenter": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "allocated_minutes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "start_turn_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "end_turn_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "grounding_mode": {
+            "const": "turn_aggregate",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type AGGREGATES across multiple transcript turns rather than pointing to one quote. Optional in schema; the gate enforces presence + every source_turn_ids entry exists in the transcript turn index."
+          },
+          "source_turn_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "integer"
+            },
+            "description": "Phase 1 (schema_version 1.4.0). Turn IDs this aggregate spans. Optional in schema; the gate enforces every id exists in the transcript turn index for 1.4.0 artifacts."
+          }
         }
       }
     },
-
     "precedent_reference": {
       "type": "array",
       "description": "Optional (schema_version 1.3.0+), default []. A speaker's reference to a prior meeting, prior decision, or prior study used as justification for a current position or direction. At scale these form a citation graph across the TIG process. Legacy artifacts omit it (additivity).",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["ref_id", "speaker", "reference_text", "purpose"],
+        "required": [
+          "ref_id",
+          "speaker",
+          "reference_text",
+          "purpose"
+        ],
         "properties": {
-          "ref_id": { "type": "string", "minLength": 1 },
-          "speaker": { "type": "string", "minLength": 1 },
-          "reference_text": { "type": "string", "minLength": 1 },
-          "referenced_meeting_date": { "type": ["string", "null"] },
-          "referenced_decision_or_study": { "type": ["string", "null"] },
+          "ref_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "speaker": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reference_text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "referenced_meeting_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "referenced_decision_or_study": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "purpose": {
-            "enum": ["justification", "contrast", "correction", "context", "unknown"],
+            "enum": [
+              "justification",
+              "contrast",
+              "correction",
+              "context",
+              "unknown"
+            ],
             "description": "Exactly one of the five approved purposes. Any other value fails the gate."
           },
           "source_turns": {
             "type": "array",
             "description": "Optional, default []. turn_ids supporting this reference.",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
+          },
+          "grounding_mode": {
+            "const": "verbatim",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type is VERBATIM and carries a source_quote anchored by byte offset. Optional in schema (legacy artifacts omit it); the gate enforces presence + byte-match for 1.4.0 artifacts."
+          },
+          "source_quote": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 1 (schema_version 1.4.0). Verbatim transcript substring supporting this item. Optional in schema; the gate enforces presence."
+          },
+          "quote_offset_normalized": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset of source_quote against the normalized transcript. Optional in schema; the gate enforces presence and byte-match at this offset."
+          },
+          "quote_offset_original": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
           }
         }
       }
     },
-
     "external_stakeholder_input": {
       "type": "array",
-      "description": "Optional (schema_version 1.3.0+), default []. Input relayed from parties NOT present in the meeting (industry associations, ITU, congressional offices, OSD). Only when a speaker explicitly relays it — a bare document mention with no relayed content is NOT stakeholder input. Legacy artifacts omit it (additivity).",
+      "description": "Optional (schema_version 1.3.0+), default []. Input relayed from parties NOT present in the meeting (industry associations, ITU, congressional offices, OSD). Only when a speaker explicitly relays it \u2014 a bare document mention with no relayed content is NOT stakeholder input. Legacy artifacts omit it (additivity).",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["input_id", "stakeholder", "relayed_by", "input_text", "input_type"],
+        "required": [
+          "input_id",
+          "stakeholder",
+          "relayed_by",
+          "input_text",
+          "input_type"
+        ],
         "properties": {
-          "input_id": { "type": "string", "minLength": 1 },
-          "stakeholder": { "type": "string", "minLength": 1 },
-          "relayed_by": { "type": "string", "minLength": 1 },
-          "input_text": { "type": "string", "minLength": 1 },
+          "input_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stakeholder": {
+            "type": "string",
+            "minLength": 1
+          },
+          "relayed_by": {
+            "type": "string",
+            "minLength": 1
+          },
+          "input_text": {
+            "type": "string",
+            "minLength": 1
+          },
           "input_type": {
-            "enum": ["industry_comment", "itu_submission", "congressional_direction", "agency_guidance", "public_comment", "other"],
+            "enum": [
+              "industry_comment",
+              "itu_submission",
+              "congressional_direction",
+              "agency_guidance",
+              "public_comment",
+              "other"
+            ],
             "description": "Exactly one of the six approved input types. Any other value fails the gate."
           },
-          "document_reference": { "type": ["string", "null"] },
+          "document_reference": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "source_turns": {
             "type": "array",
             "description": "Optional, default []. turn_ids where the input was relayed.",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
+          },
+          "grounding_mode": {
+            "const": "verbatim",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type is VERBATIM and carries a source_quote anchored by byte offset. Optional in schema (legacy artifacts omit it); the gate enforces presence + byte-match for 1.4.0 artifacts."
+          },
+          "source_quote": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 1 (schema_version 1.4.0). Verbatim transcript substring supporting this item. Optional in schema; the gate enforces presence."
+          },
+          "quote_offset_normalized": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset of source_quote against the normalized transcript. Optional in schema; the gate enforces presence and byte-match at this offset."
+          },
+          "quote_offset_original": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
           }
         }
       }
     },
-
     "glossary_definition": {
       "type": "array",
       "description": "Optional (schema_version 1.3.0+), default []. A term formally defined or clarified for the purpose of this study. At scale this builds a living domain glossary from the TIG process. Legacy artifacts omit it (additivity).",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["definition_id", "term", "definition", "defined_by"],
+        "required": [
+          "definition_id",
+          "term",
+          "definition",
+          "defined_by"
+        ],
         "properties": {
-          "definition_id": { "type": "string", "minLength": 1 },
-          "term": { "type": "string", "minLength": 1 },
-          "definition": { "type": "string", "minLength": 1 },
-          "defined_by": { "type": "string", "minLength": 1 },
-          "context": { "type": ["string", "null"] },
+          "definition_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "term": {
+            "type": "string",
+            "minLength": 1
+          },
+          "definition": {
+            "type": "string",
+            "minLength": 1
+          },
+          "defined_by": {
+            "type": "string",
+            "minLength": 1
+          },
+          "context": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "authoritative": {
             "type": "boolean",
             "description": "Optional. Default false (applied by the producer/model, not enforced by JSON Schema); true only when the speaker indicated this is the official/working definition for the study."
@@ -529,25 +1418,66 @@
           "source_turns": {
             "type": "array",
             "description": "Optional, default []. turn_ids where the term was defined.",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
+          },
+          "grounding_mode": {
+            "const": "verbatim",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type is VERBATIM and carries a source_quote anchored by byte offset. Optional in schema (legacy artifacts omit it); the gate enforces presence + byte-match for 1.4.0 artifacts."
+          },
+          "source_quote": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 1 (schema_version 1.4.0). Verbatim transcript substring supporting this item. Optional in schema; the gate enforces presence."
+          },
+          "quote_offset_normalized": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset of source_quote against the normalized transcript. Optional in schema; the gate enforces presence and byte-match at this offset."
+          },
+          "quote_offset_original": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
           }
         }
       }
     },
-
     "procedural_ruling": {
       "type": "array",
-      "description": "Optional (schema_version 1.3.0+), default []. A chair / co-lead ruling on meeting procedure, scope boundaries, or process — DISTINCT from a `decisions` item (substantive). Establishes the governance framework. Legacy artifacts omit it (additivity).",
+      "description": "Optional (schema_version 1.3.0+), default []. A chair / co-lead ruling on meeting procedure, scope boundaries, or process \u2014 DISTINCT from a `decisions` item (substantive). Establishes the governance framework. Legacy artifacts omit it (additivity).",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["ruling_id", "ruling_text", "ruled_by", "ruling_type"],
+        "required": [
+          "ruling_id",
+          "ruling_text",
+          "ruled_by",
+          "ruling_type"
+        ],
         "properties": {
-          "ruling_id": { "type": "string", "minLength": 1 },
-          "ruling_text": { "type": "string", "minLength": 1 },
-          "ruled_by": { "type": "string", "minLength": 1 },
+          "ruling_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ruling_text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ruled_by": {
+            "type": "string",
+            "minLength": 1
+          },
           "ruling_type": {
-            "enum": ["scope_boundary", "process_rule", "meeting_procedure", "participation_rule", "classification_handling", "other"],
+            "enum": [
+              "scope_boundary",
+              "process_rule",
+              "meeting_procedure",
+              "participation_rule",
+              "classification_handling",
+              "other"
+            ],
             "description": "Exactly one of the six approved ruling types. Any other value fails the gate."
           },
           "binding": {
@@ -557,27 +1487,63 @@
           "source_turns": {
             "type": "array",
             "description": "Optional, default []. turn_ids supporting this ruling.",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
+          },
+          "grounding_mode": {
+            "const": "verbatim",
+            "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type is VERBATIM and carries a source_quote anchored by byte offset. Optional in schema (legacy artifacts omit it); the gate enforces presence + byte-match for 1.4.0 artifacts."
+          },
+          "source_quote": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 1 (schema_version 1.4.0). Verbatim transcript substring supporting this item. Optional in schema; the gate enforces presence."
+          },
+          "quote_offset_normalized": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset of source_quote against the normalized transcript. Optional in schema; the gate enforces presence and byte-match at this offset."
+          },
+          "quote_offset_original": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
           }
         }
       }
     },
-
     "grounding": {
       "type": "array",
       "description": "Phase Y (schema_version 1.1.0): one entry per extracted item with its source_turns. Shape left loose here so the additive change does not re-pin the Phase Y grounding contract.",
-      "items": { "type": "object" }
+      "items": {
+        "type": "object"
+      }
     },
     "provenance": {
       "type": "object",
-      "required": ["produced_by"],
+      "required": [
+        "produced_by"
+      ],
       "properties": {
-        "produced_by": { "type": "string", "minLength": 1 },
-        "phase": { "type": "string" }
+        "produced_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phase": {
+          "type": "string"
+        }
       }
     },
-    "meeting_id": { "type": "string", "minLength": 1 },
-    "_llm_error": { "type": "string" },
-    "_llm_raw": { "type": "string" }
+    "meeting_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "_llm_error": {
+      "type": "string"
+    },
+    "_llm_raw": {
+      "type": "string"
+    }
   }
 }

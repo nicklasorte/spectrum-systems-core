@@ -1,0 +1,16 @@
+{
+  "artifact_type": "meeting_minutes",
+  "schema_version": "1.4.0",
+  "title": "exact_text_not_in_transcript fixture",
+  "summary": "Source quote does not appear anywhere in the transcript — pure fabrication.",
+  "decisions": [
+    {
+      "text": "The committee approved the new band plan and authorized publication.",
+      "grounding_mode": "verbatim",
+      "source_quote": "The committee approved the new band plan and authorized publication.",
+      "quote_offset_normalized": 0
+    }
+  ],
+  "action_items": [],
+  "open_questions": []
+}

@@ -1,0 +1,16 @@
+{
+  "artifact_type": "meeting_minutes",
+  "schema_version": "1.4.0",
+  "title": "paraphrase_near_miss fixture",
+  "summary": "Source quote is a paraphrase of a real transcript span (dropped 'Nick's', say 'the paper' instead). The gate rejects this as the canonical hallucination signal.",
+  "decisions": [
+    {
+      "text": "We will be posting the paper for review next week.",
+      "grounding_mode": "verbatim",
+      "source_quote": "We will be posting the paper for review next week.",
+      "quote_offset_normalized": 25
+    }
+  ],
+  "action_items": [],
+  "open_questions": []
+}

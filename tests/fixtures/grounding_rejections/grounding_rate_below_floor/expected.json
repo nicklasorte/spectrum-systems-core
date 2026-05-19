@@ -1,0 +1,6 @@
+{
+  "reason_code": "grounding_rate_below_floor",
+  "rejected_count": 7,
+  "accepted_count": 3,
+  "artifact_blocked": true
+}

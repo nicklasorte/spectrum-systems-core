@@ -1,0 +1,6 @@
+{
+  "reason_code": "grounding_unknown_turn_id",
+  "rejected_count": 1,
+  "accepted_count": 0,
+  "transcript_turn_ids": [0, 1, 2]
+}

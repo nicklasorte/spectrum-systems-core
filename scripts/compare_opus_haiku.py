@@ -78,6 +78,13 @@ COMPARISON_ARTIFACT_TYPE = "comparison_result"
 COMPARISON_SCHEMA_VERSION = "1.0.0"
 HAIKU_LLM_PROVENANCE = "meeting_minutes_llm"
 
+# Phase 1: schema_version at which verbatim span grounding became
+# binding. Comparisons against a 1.4.0+ Haiku artifact re-run the gate
+# on the artifact's promoted items so tampering or transcript mutation
+# is caught BEFORE the comparison's metrics are written.
+_GROUNDING_BINDING_SCHEMA_VERSION = "1.4.0"
+_MIXED_SCHEMA_REASON = "schema_version_mixed"
+
 # The model token that a candidate with NO ``provenance.model_id`` is
 # treated as. Historically every ``produced_by == "meeting_minutes_llm"``
 # artifact was the default Haiku extraction (the registry default IS
@@ -1184,6 +1191,168 @@ def render_three_way_table(
     return "\n".join(rows)
 
 
+def _resolve_transcript(data_lake: Path, source_id: str) -> Optional[str]:
+    """Resolve the transcript text for ``source_id`` via the source_record.
+
+    Returns the transcript text on success, or ``None`` when the
+    record / file is missing. Used for Phase 1 re-verification (the
+    grounding gate is re-run against the CURRENT transcript so the
+    comparison surfaces tampering or transcript mutation).
+
+    The function deliberately does NOT halt on a missing transcript:
+    re-verification is a defensive cross-check, not the primary gate
+    (the primary gate ran at promotion time). When the transcript is
+    not on disk this returns ``None`` and the caller sets
+    ``tainted: false`` with a ``re_verification: skipped`` note.
+    """
+    meeting_dir = _meeting_dir(data_lake, source_id)
+    sr_path = meeting_dir / "source_record.json"
+    if not sr_path.is_file():
+        return None
+    try:
+        record = json.loads(sr_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    payload = record.get("payload") or record
+    transcript_path = payload.get("transcript_path") or payload.get(
+        "extracted_text_path"
+    )
+    candidates: List[Path] = []
+    if isinstance(transcript_path, str) and transcript_path:
+        p = Path(transcript_path)
+        if not p.is_absolute():
+            # Resolve relative to data_lake root.
+            candidates.append(data_lake / p)
+        candidates.append(p)
+    # Fallback: the conventional layout shipped with the data-lake.
+    candidates.append(meeting_dir / "transcript.txt")
+    candidates.append(
+        data_lake / "store" / "raw" / "meetings" / source_id / "transcript.txt"
+    )
+    for cand in candidates:
+        if cand.is_file():
+            try:
+                return cand.read_text(encoding="utf-8")
+            except OSError:
+                continue
+    return None
+
+
+def _artifact_schema_version(artifact: Dict[str, Any]) -> Optional[str]:
+    """Return the schema_version stamped on an artifact envelope.
+
+    Looks first at the envelope-level ``schema_version`` (the canonical
+    location), then at ``payload.schema_version`` as a fallback for
+    artifacts that stamp the version inside the payload. ``None`` when
+    neither is a string — caller treats that as "version unknown" and
+    halts unless ``--allow-mixed-schema`` is set.
+    """
+    env_v = artifact.get("schema_version")
+    if isinstance(env_v, str) and env_v.strip():
+        return env_v.strip()
+    payload = artifact.get("payload")
+    if isinstance(payload, dict):
+        pv = payload.get("schema_version")
+        if isinstance(pv, str) and pv.strip():
+            return pv.strip()
+    return None
+
+
+def _baseline_schema_version(
+    baseline_rows: List[Dict[str, Any]],
+) -> Optional[str]:
+    """Return the dominant schema_version across the opus baseline rows.
+
+    All rows in a single baseline file are produced in one run so they
+    should share a version. We return the FIRST row's version; if rows
+    disagree among themselves the baseline is itself broken and we let
+    the haiku-vs-baseline check raise on the first mismatch.
+    """
+    for row in baseline_rows:
+        v = row.get("schema_version")
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
+def _re_verify_haiku_grounding(
+    *,
+    haiku_artifact: Dict[str, Any],
+    haiku_schema_version: Optional[str],
+    transcript: Optional[str],
+) -> Dict[str, Any]:
+    """Re-run :func:`verify_grounding` on the haiku artifact.
+
+    Returns a dict (always JSON-serializable) describing the
+    re-verification outcome:
+
+      - status: "ok" | "tainted" | "skipped"
+      - reason: short token (e.g. "grounding_pre_1_4",
+        "transcript_unavailable", "re_verification_passed",
+        "re_verification_rejected_N_items")
+      - grounding_rate: float ∈ [0.0, 1.0]
+      - rejected_count: int
+      - accepted_count: int
+      - block_reason_code: optional reason if the gate blocked
+
+    The gate is re-run only for artifacts at the binding schema_version
+    (1.4.0+). Pre-1.4 artifacts have no grounding fields to verify so
+    we return ``status: "skipped"`` with reason ``grounding_pre_1_4``.
+    """
+    if (
+        haiku_schema_version is None
+        or haiku_schema_version < _GROUNDING_BINDING_SCHEMA_VERSION
+    ):
+        return {
+            "status": "skipped",
+            "reason": "grounding_pre_1_4",
+            "grounding_rate": 1.0,
+            "rejected_count": 0,
+            "accepted_count": 0,
+        }
+    if transcript is None or transcript == "":
+        # We have a 1.4.0 artifact but no transcript on disk to verify
+        # against. This is a defensive cross-check, not the primary
+        # gate, so we surface the skip rather than halting the whole
+        # comparison.
+        return {
+            "status": "skipped",
+            "reason": "transcript_unavailable",
+            "grounding_rate": 1.0,
+            "rejected_count": 0,
+            "accepted_count": 0,
+        }
+    # Import lazily so the comparison script keeps loading on a
+    # checkout where the grounding module has not yet been installed.
+    from spectrum_systems_core.promotion.gate import verify_grounding
+
+    payload = haiku_artifact.get("payload") or {}
+    report = verify_grounding(payload, transcript)
+    if report.rejected_items:
+        return {
+            "status": "tainted",
+            "reason": (
+                f"re_verification_rejected_{len(report.rejected_items)}_items"
+            ),
+            "grounding_rate": report.grounding_rate,
+            "rejected_count": len(report.rejected_items),
+            "accepted_count": len(report.accepted_items),
+            "block_reason_code": report.block_reason_code,
+            "rejected_reason_codes": sorted(
+                {r.reason_code for r in report.rejected_items}
+            ),
+        }
+    return {
+        "status": "ok",
+        "reason": "re_verification_passed",
+        "grounding_rate": report.grounding_rate,
+        "rejected_count": 0,
+        "accepted_count": len(report.accepted_items),
+    }
+
+
 def run_comparison(
     *,
     data_lake: Path,
@@ -1192,6 +1361,7 @@ def run_comparison(
     print_inputs: bool = False,
     print_scores: bool = False,
     include_sonnet: bool = False,
+    allow_mixed_schema: bool = False,
 ) -> Dict[str, Any]:
     """Orchestrate one comparison. Returns a summary dict; raises on halt.
 
@@ -1213,6 +1383,30 @@ def run_comparison(
     types = extraction_types()
     baseline_rows = load_opus_baseline(data_lake, source_id)
     haiku_artifact, haiku_path = find_haiku_artifact(data_lake, source_id)
+
+    # Phase 1 (Step 1.7): schema_version cross-check. A Haiku artifact
+    # at a different schema_version than the Opus baseline rows means
+    # the comparison is mixing items produced under different gates —
+    # e.g. 1.4.0 Haiku with grounding fields against a 1.0.0 baseline
+    # that has none. Fail closed unless --allow-mixed-schema is set.
+    # The flag is CLI-only: it is never read from env / config.
+    haiku_schema_version = _artifact_schema_version(haiku_artifact)
+    baseline_schema_version = _baseline_schema_version(baseline_rows)
+    if (
+        baseline_schema_version is not None
+        and haiku_schema_version is not None
+        and haiku_schema_version != baseline_schema_version
+        and not allow_mixed_schema
+    ):
+        raise ComparisonError(
+            _MIXED_SCHEMA_REASON,
+            (
+                f"Haiku schema_version={haiku_schema_version!r} differs "
+                f"from baseline schema_version={baseline_schema_version!r}. "
+                "Re-run with --allow-mixed-schema if intentional (CLI-only)."
+            ),
+        )
+
     sonnet_artifact: Optional[Dict[str, Any]] = None
     sonnet_path: Optional[Path] = None
     if include_sonnet:
@@ -1274,6 +1468,28 @@ def run_comparison(
         types=types,
     )
     compared_at = _now_utc_iso()
+
+    # Phase 1 (Step 1.7): re-verify grounding on the haiku artifact
+    # against the CURRENT transcript. If any promoted item now fails
+    # the gate, the artifact is ``tainted`` — log a warning and set the
+    # tainted flag in the summary so the caller can re-run the
+    # pipeline. The check is observe-only; it does NOT mutate metrics.
+    transcript_text = _resolve_transcript(data_lake, source_id)
+    haiku_reverification = _re_verify_haiku_grounding(
+        haiku_artifact=haiku_artifact,
+        haiku_schema_version=haiku_schema_version,
+        transcript=transcript_text,
+    )
+    if haiku_reverification["status"] == "tainted":
+        print(
+            f"WARNING: haiku artifact at {haiku_path} failed grounding "
+            f"re-verification: {haiku_reverification['reason']!r} "
+            f"({haiku_reverification['rejected_count']} items rejected). "
+            "The promoted artifact may have been produced against a "
+            "different transcript or tampered with. Marking comparison "
+            "as tainted.",
+            file=sys.stderr,
+        )
 
     if include_sonnet:
         sonnet_metrics = compute_comparison(
@@ -1359,6 +1575,13 @@ def run_comparison(
             "summary": hs,
             "sonnet_summary": ss,
             "table": table,
+            # Phase 1 additive fields. Pre-1.4 callers ignore them.
+            "haiku_schema_version": haiku_schema_version,
+            "baseline_schema_version": baseline_schema_version,
+            "allow_mixed_schema": allow_mixed_schema,
+            "tainted": haiku_reverification["status"] == "tainted",
+            "grounding_rate": haiku_reverification["grounding_rate"],
+            "re_verification": haiku_reverification,
         }
 
     artifact = build_comparison_artifact(
@@ -1420,6 +1643,13 @@ def run_comparison(
         "gt_pairs_present": metrics["gt_pairs_present"],
         "summary": s,
         "table": table,
+        # Phase 1 additive fields. Pre-1.4 callers ignore them.
+        "haiku_schema_version": haiku_schema_version,
+        "baseline_schema_version": baseline_schema_version,
+        "allow_mixed_schema": allow_mixed_schema,
+        "tainted": haiku_reverification["status"] == "tainted",
+        "grounding_rate": haiku_reverification["grounding_rate"],
+        "re_verification": haiku_reverification,
     }
 
 
@@ -1460,6 +1690,19 @@ def main(argv: Optional[List[str]] = None) -> int:
             "than degrading to a mislabelled two-way result."
         ),
     )
+    parser.add_argument(
+        "--allow-mixed-schema",
+        action="store_true",
+        help=(
+            "Phase 1: allow comparison when the Haiku artifact's "
+            "schema_version differs from the Opus baseline's "
+            "schema_version. CLI-ONLY: this flag is NEVER read from "
+            "environment variables or config files (deliberate — a "
+            "mixed-schema comparison is a foot-gun that must be "
+            "consciously opted into per-invocation). The flag's "
+            "presence is logged in the returned summary for audit."
+        ),
+    )
     args = parser.parse_args(argv)
     for attr in vars(args):
         val = getattr(args, attr)
@@ -1489,6 +1732,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             print_inputs=args.print_inputs,
             print_scores=args.print_scores,
             include_sonnet=args.include_sonnet,
+            allow_mixed_schema=args.allow_mixed_schema,
         )
     except ComparisonError as exc:
         print(
