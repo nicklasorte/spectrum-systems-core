@@ -213,3 +213,95 @@ def test_single_batch_transcript_is_one_call_single_pass():
     assert result.promoted is True
     assert _decision(result) == "allow"
     assert len(result.meeting_minutes.payload["decisions"]) == 1
+
+
+class _NullAgencyAttendeeStub(_BatchAwareStub):
+    """A faithful per-batch model that, in addition to the well-behaved
+    decision / technical_parameter the base stub emits, extracts an
+    attendee NAMED in the transcript whose AGENCY the transcript never
+    states — so it correctly returns ``agency: null`` (the "never
+    invent" rule) instead of fabricating an agency.
+
+    This is the mission's exact failure shape: the 7 GHz Downlink TIG
+    transcript names participants (DiFrancisco, LaSorte, Bhatt, Nolen)
+    without stating their agencies. Before the schema fix, the strict
+    -schema eval blocked the full 138-chunk run with
+    ``None is not of type 'string' at ['attendees', N, 'agency']`` and
+    ``tlc_routed_extraction`` (which re-runs strict_schema) failed too,
+    while a single small chunk that triggered no roster extraction
+    passed — the single-chunk-passes / full-run-blocks split.
+    """
+
+    def __call__(self, *, system: str, user: str) -> str:  # noqa: ARG002
+        base = json.loads(super().__call__(system=system, user=user))
+        turn_ids = list(dict.fromkeys(_TURN_RE.findall(user)))
+        st = [turn_ids[0]] if turn_ids else []
+        base["attendees"] = [
+            {
+                "name": "Working group member",
+                "agency": None,
+                "role": None,
+                "present": True,
+            }
+        ]
+        base["grounding"].append(
+            {
+                "kind": "attendees",
+                "text": "Working group member",
+                "source_turns": st,
+            }
+        )
+        return json.dumps(base)
+
+
+def test_multi_batch_faithful_null_agency_attendee_promotes():
+    """The mission's exact failure case, end-to-end through the REAL
+    governed loop. A 138-turn (multi-batch) run where every batch
+    faithfully extracts a NAMED attendee whose agency the transcript
+    never states (``agency: null``) must now PROMOTE — a faithful
+    roster extraction is no longer blocked by the strict-schema gate.
+
+    Pre-fix this run blocked with ``failed:llm_extraction_strict_schema``
+    + ``failed:tlc_routed_extraction`` (the exact mission reason codes).
+    """
+    n = 138  # the mission's scale; > _CHUNKS_PER_BATCH so batching fires
+    stub = _NullAgencyAttendeeStub()
+    result = run_meeting_minutes_llm_workflow(
+        _transcript(n), client=stub, meeting_id="m138-null-agency"
+    )
+    n_batches = _expected_batches(n)
+    assert stub.calls == n_batches, (stub.calls, n_batches)
+
+    ev = _evals(result)
+    # The two evals the mission reported as failing now PASS on the
+    # aggregated payload that carries the null-agency attendees.
+    assert ev["llm_extraction_strict_schema"][0] == "pass", ev
+    assert ev["tlc_routed_extraction"][0] == "pass", ev
+
+    payload = result.meeting_minutes.payload
+    # Every batch's faithful null-agency attendee survived aggregation.
+    assert len(payload["attendees"]) == n_batches, payload["attendees"]
+    assert all(a["agency"] is None for a in payload["attendees"]), payload[
+        "attendees"
+    ]
+    assert result.promoted is True
+    assert _decision(result) == "allow"
+
+
+def test_null_agency_attendee_single_batch_also_promotes():
+    """The same faithful extraction on a single-batch (single-pass) run
+    promotes too — proving the fix is in the schema gate, not the
+    batching path, so the single-chunk and full-run behaviours converge
+    instead of diverging."""
+    n = _CHUNKS_PER_BATCH  # one batch -> single-pass path
+    stub = _NullAgencyAttendeeStub()
+    result = run_meeting_minutes_llm_workflow(
+        _transcript(n), client=stub, meeting_id="msmall-null-agency"
+    )
+    assert stub.calls == 1, stub.calls
+    ev = _evals(result)
+    assert ev["llm_extraction_strict_schema"][0] == "pass", ev
+    assert ev["tlc_routed_extraction"][0] == "pass", ev
+    assert result.promoted is True
+    assert _decision(result) == "allow"
+    assert result.meeting_minutes.payload["attendees"][0]["agency"] is None
