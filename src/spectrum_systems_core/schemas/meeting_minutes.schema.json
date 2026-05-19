@@ -78,6 +78,11 @@
               "follow_up_required": {
                 "type": "boolean",
                 "description": "Optional (schema_version 1.2.0+). Default true (applied by the producer, not enforced by JSON Schema): true when a human must take action before the next meeting, false for completed or informational items. Legacy action_item objects omit it (additivity)."
+              },
+              "priority": {
+                "type": "string",
+                "enum": ["low", "medium", "high"],
+                "description": "Optional. Derived from the modal verb policy in workflows/prompts/meeting_minutes_llm.md (PR #190): 'shall'/'will' → high, 'should' → medium, 'may' → low. Omit the key entirely when no modal-verb signal is present (additivity: legacy action_item objects validate unchanged). Only these three values are valid; any other (e.g. \"urgent\") fails the gate, and null is rejected."
               }
             }
           }

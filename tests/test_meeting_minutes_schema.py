@@ -635,6 +635,62 @@ def test_action_item_follow_up_required_not_boolean_fails():
         validate_artifact(art, ARTIFACT_TYPE)
 
 
+# action_items.priority -------------------------------------------------
+#
+# Trust property (PR #190 follow-up): the modal verb policy in
+# meeting_minutes_llm.md instructs Haiku to emit a `priority` value on
+# action_items derived from modal verbs (shall/will → high, should →
+# medium, may → low). The field is OPTIONAL — every legacy
+# action_item object that omits it validates unchanged (additivity) —
+# but a present value must be one of the three approved strings.
+
+
+@pytest.mark.parametrize("value", ["low", "medium", "high"])
+def test_action_item_priority_each_enum_value_validates(value):
+    art = _fully_populated()
+    art["action_items"][1]["priority"] = value
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_action_item_priority_absent_validates():
+    """priority is OPTIONAL — an action_item object that omits the key
+    (every legacy artifact produced before PR #190) validates unchanged."""
+    art = _fully_populated()
+    assert "priority" not in art["action_items"][1]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_action_item_priority_outside_enum_fails():
+    """Fail-closed: a value outside {low, medium, high} (e.g. "urgent")
+    is rejected — the enum binds tightly."""
+    art = _fully_populated()
+    art["action_items"][1]["priority"] = "urgent"
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_action_item_priority_null_fails():
+    """Fail-closed: priority is a string enum, not nullable. If the
+    field is present it must be one of the three values; null is
+    rejected (omit the key instead when no modal-verb signal applies)."""
+    art = _fully_populated()
+    art["action_items"][1]["priority"] = None
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_action_item_unknown_key_still_fails_with_priority_added():
+    """No-weakening: additionalProperties: false still binds the
+    action_item object after `priority` was added — an unknown sibling
+    key is still rejected (the gate is not weakened by the additive
+    field)."""
+    art = _fully_populated()
+    art["action_items"][1]["priority"] = "medium"
+    art["action_items"][1]["smuggled"] = "x"
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
 # sentiment_indicators (top-level) --------------------------------------
 
 
