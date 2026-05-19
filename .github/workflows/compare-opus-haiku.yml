@@ -101,6 +101,24 @@ jobs:
           add_rule '!**/processed/**/eval_history.jsonl'
           echo "Ensured comparison_result + eval_history negation in data-lake .gitignore"
 
+      - name: Debug — print haiku artifact payload structure
+        continue-on-error: true
+        run: |
+          python - <<'EOF'
+          import json, pathlib, glob, sys
+          lake = "data-lake/store/processed/meetings/7-ghz-downlink-tig-meeting-kickoff---transcript-20251218"
+          files = sorted(glob.glob(f"{lake}/meeting_minutes__*.json"))
+          for f in files:
+              d = json.loads(pathlib.Path(f).read_text())
+              prov = d.get("payload", {}).get("provenance", {})
+              payload = d.get("payload") or {}
+              counts = {k: len(v) for k, v in payload.items() if isinstance(v, list)}
+              print(f"FILE: {f}", file=sys.stderr)
+              print(f"  provenance.produced_by: {prov.get('produced_by')}", file=sys.stderr)
+              print(f"  payload present: {'payload' in d}", file=sys.stderr)
+              print(f"  array counts: {counts}", file=sys.stderr)
+          EOF
+
       - name: Run comparison
         id: compare
         run: |
