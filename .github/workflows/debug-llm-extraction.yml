@@ -2,12 +2,29 @@ name: Debug LLM extraction (isolated)
 
 # Minimal one-shot debug workflow. Runs ONLY the meeting-minutes-llm CLI
 # step against an already-staged transcript — no run-pipeline, no
-# extract-typed, no GT-pair generation, no baseline, no comparison, no
-# push back to nicklasorte/data-lake. The deterministic pipeline must
-# have already staged
+# extract-typed, no GT-pair generation, no baseline, no comparison. The
+# deterministic pipeline must have already staged
 # <data-lake>/store/raw/meetings/<source_id>/source.txt (the CLI HALTS
 # with exit 2 if it has not). Cutting the deterministic stages out drops
 # the schema-gate iteration loop from ~10 minutes to under 2.
+#
+# Data-lake persistence (was missing — the bug this workflow had):
+# the CLI writes the promoted artifact to the LOCAL data-lake clone at
+# store/processed/meetings/<source_id>/meeting_minutes__<slug>.json and
+# prints "... OK ... written=<path>" (exit 0), but the runner is
+# ephemeral. Without a commit+push the file died with the runner — the
+# job reported success while the data-lake never received the artifact.
+# A FULL promotion run now negates the data-lake .gitignore (mirroring
+# the !**/processed/**/source_record.json precedent), commits + pushes
+# the artifact to nicklasorte/data-lake via the push-data-lake composite
+# action, then VERIFIES the file exists in the freshly fetched
+# origin/main before the job is allowed to pass.
+#
+# Fast-iteration / diagnostic modes (max_chunks, single_chunk,
+# print_raw_response, minimal_repro, diff_vs_opus, test_parser_only)
+# intentionally do NOT push: their artifact is truncated or never
+# written, and the data-lake is append-only — a partial debug artifact
+# must never pollute it.
 #
 # Trigger manually from the Actions tab with workflow_dispatch.
 
@@ -107,6 +124,7 @@ jobs:
         run: pip install -e .
 
       - name: Run meeting-minutes-llm in isolation
+        id: run_llm
         run: |
           set +e
           MAX_CHUNKS_ARG=()
@@ -143,7 +161,43 @@ jobs:
           cat stdout.log
           cat stderr.log >&2
           if [ "${rc}" -eq 0 ]; then
-            echo "## PROMOTED OK" >> "${GITHUB_STEP_SUMMARY}"
+            # The CLI prints the absolute artifact path on the success
+            # line ("... OK produced_by=... written=<path>") ONLY when
+            # a promoted artifact was actually written
+            # (cli.py:3074-3082). Observe-only / blocked / halted runs
+            # never emit a ``written=`` token, so an empty match is the
+            # precise "nothing to push" signal.
+            WRITTEN_PATH="$(grep -oE 'written=[^[:space:]]+' stdout.log \
+              | tail -n1 | sed 's/^written=//')"
+            # Push ONLY a full, non-diagnostic promotion. max_chunks /
+            # single_chunk produce a truncated artifact; pushing it
+            # would mutate the meaning of the append-only data-lake
+            # (a partial meeting_minutes downstream consumers would
+            # treat as real). Diagnostic modes write no artifact at all.
+            SHOULD_PUSH=false
+            if [ -n "${WRITTEN_PATH}" ] \
+               && [ -z "${MAX_CHUNKS}" ] \
+               && [ "${SINGLE_CHUNK}" != "true" ] \
+               && [ "${PRINT_RAW_RESPONSE}" != "true" ] \
+               && [ "${MINIMAL_REPRO}" != "true" ] \
+               && [ "${DIFF_VS_OPUS}" != "true" ] \
+               && [ "${TEST_PARSER_ONLY}" != "true" ]; then
+              SHOULD_PUSH=true
+            fi
+            {
+              echo "written_path=${WRITTEN_PATH}"
+              echo "should_push=${SHOULD_PUSH}"
+            } >> "${GITHUB_OUTPUT}"
+            {
+              echo "## PROMOTED OK"
+              echo ""
+              echo "- written: \`${WRITTEN_PATH:-(no artifact written)}\`"
+              echo "- push to data-lake: \`${SHOULD_PUSH}\`"
+              if [ "${SHOULD_PUSH}" != "true" ] && [ -n "${WRITTEN_PATH}" ]; then
+                echo "- (debug/partial mode — artifact intentionally" \
+                     "NOT pushed to the append-only data-lake)"
+              fi
+            } >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
           {
@@ -164,3 +218,90 @@ jobs:
             echo '```'
           } >> "${GITHUB_STEP_SUMMARY}"
           exit 1
+
+      # ------------------------------------------------------------------
+      # The missing persistence path. nicklasorte/data-lake bulk-ignores
+      # ``processed/``; ``git add`` of a path under it is a SILENT no-op
+      # unless the directory chain AND the file are re-included first.
+      # This mirrors the established
+      # ``!**/processed/**/source_record.json`` precedent and the
+      # identical step in validate-and-baseline.yml. Idempotent.
+      # ------------------------------------------------------------------
+      - name: Ensure data-lake .gitignore negates the meeting_minutes artifact
+        if: ${{ steps.run_llm.outputs.should_push == 'true' }}
+        env:
+          CLONE_PATH: ${{ github.workspace }}/data-lake
+        run: |
+          set -euo pipefail
+          GI="$CLONE_PATH/.gitignore"
+          touch "$GI"
+          add_rule() {
+            grep -qxF "$1" "$GI" || printf '%s\n' "$1" >> "$GI"
+          }
+          add_rule '!**/processed/**/'
+          add_rule '!**/processed/**/meeting_minutes__*.json'
+          echo "Ensured meeting_minutes__*.json negation in data-lake .gitignore"
+
+      # ------------------------------------------------------------------
+      # Commit + push the promoted artifact to nicklasorte/data-lake via
+      # the shared composite action (retry-with-backoff, never pushes to
+      # spectrum-systems-core). The literal skip-ci marker in the commit
+      # message is the data-lake commit's marker and MUST appear here in
+      # the calling workflow per the push-data-lake action contract.
+      # ------------------------------------------------------------------
+      - name: Push meeting_minutes_llm artifact to nicklasorte/data-lake
+        if: ${{ steps.run_llm.outputs.should_push == 'true' }}
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            feat(llm-extraction): meeting_minutes_llm artifact for ${{ env.SOURCE_ID }} (debug-llm-extraction) [skip ci]
+          add_paths: |
+            .gitignore
+            store/processed/meetings/${{ env.SOURCE_ID }}/meeting_minutes__*.json
+
+      # ------------------------------------------------------------------
+      # Verification (non-negotiable): re-fetch origin/main AFTER the
+      # push and assert the exact artifact path the CLI reported is a
+      # real blob in the pushed remote ref. This reads the remote, not
+      # the runner's working tree, so it catches a silently-skipped
+      # ``git add`` (the original failure mode) instead of reporting a
+      # false success. Fail-closed: a missing blob fails the job.
+      # ------------------------------------------------------------------
+      - name: Verify artifact landed in remote data-lake
+        if: ${{ steps.run_llm.outputs.should_push == 'true' }}
+        env:
+          CLONE_PATH: ${{ github.workspace }}/data-lake
+          WRITTEN_PATH: ${{ steps.run_llm.outputs.written_path }}
+        run: |
+          set -euo pipefail
+          cd "$CLONE_PATH"
+          REL="${WRITTEN_PATH#${CLONE_PATH}/}"
+          if [ "$REL" = "$WRITTEN_PATH" ] || [ -z "$REL" ]; then
+            echo "::error::could not derive a data-lake-relative path from" \
+                 "WRITTEN_PATH='${WRITTEN_PATH}' (clone='${CLONE_PATH}')"
+            exit 1
+          fi
+          echo "Verifying remote path: $REL"
+          git fetch origin main
+          REMOTE_SHA="$(git rev-parse origin/main)"
+          if ! git cat-file -e "origin/main:${REL}" 2>/dev/null; then
+            echo "::error::artifact NOT found in nicklasorte/data-lake" \
+                 "origin/main at ${REL} (commit ${REMOTE_SHA}). The push" \
+                 "did not persist the promoted artifact."
+            exit 1
+          fi
+          BYTES="$(git cat-file -s "origin/main:${REL}")"
+          if [ "${BYTES}" -le 0 ]; then
+            echo "::error::artifact ${REL} present but empty in" \
+                 "origin/main (commit ${REMOTE_SHA})"
+            exit 1
+          fi
+          echo "OK: ${REL} present in nicklasorte/data-lake @ ${REMOTE_SHA} (${BYTES} bytes)"
+          {
+            echo "## Data-lake push verified"
+            echo ""
+            echo "- path: \`${REL}\`"
+            echo "- remote commit: \`${REMOTE_SHA}\`"
+            echo "- size: ${BYTES} bytes"
+          } >> "${GITHUB_STEP_SUMMARY}"
