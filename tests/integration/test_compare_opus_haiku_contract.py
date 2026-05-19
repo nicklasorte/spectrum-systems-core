@@ -489,3 +489,111 @@ def test_subprocess_selects_newest_when_two_artifacts_exist(
     assert s["total_haiku_items"] == 3, s
     assert s["true_positives"] == 3, s
     assert s["haiku_recall_vs_opus"] == 1.0, s
+
+
+def test_subprocess_empty_artifact_does_not_shadow_on_mtime_collision(
+    tmp_path: Path,
+) -> None:
+    """End-to-end regression for the PR #183 follow-up bug.
+
+    The runner reaches the selector only via ``clone-data-lake``
+    (``git clone``), which stamps EVERY checked-out file's mtime with
+    the single clone timestamp. With mtimes EQUAL the ``(st_mtime,
+    filename)`` key ties and the pre-fix ``max()`` falls back to the
+    content-blind filename — so a stale all-empty LLM run could
+    deterministically shadow the real extraction (the data-lake's
+    ``...67ccaa13dda9.json`` empty file sorted AFTER, hence over, the
+    real ``...4138e10ad104.json``). The comparison then produced no
+    real output and the push step was skipped.
+
+    The compared/populated artifact is produced through the REAL
+    factory + writer (CLAUDE.md integration rule). The stale shadow is
+    the SAME factory envelope shape with its extraction arrays nulled —
+    exactly the real ``67cc`` file (valid LLM envelope, zero content) —
+    renamed so it sorts strictly AFTER the fresh one and given an
+    IDENTICAL mtime. Pre-fix: subprocess selects the empty file
+    (``total_haiku_items == 0``). Post-fix: the content check skips it
+    and the on-disk comparison reflects the fresh artifact.
+    """
+    dl = tmp_path / "data-lake"
+    store = dl / "store"
+    sid_dir = store / "processed" / "meetings" / SOURCE_ID
+    sid_dir.mkdir(parents=True)
+    source_artifact_id = str(uuid.uuid4())
+    (sid_dir / "source_record.json").write_text(
+        json.dumps(make_source_record(SOURCE_ID, source_artifact_id)),
+        encoding="utf-8",
+    )
+
+    make_opus_reference_baseline(
+        data_lake_root=dl,
+        source_id=SOURCE_ID,
+        source_artifact_id=source_artifact_id,
+        model=OPUS_MODEL,
+        items_by_type={
+            "decisions": DECISIONS,
+            "action_items": ACTION_ITEMS,
+            "open_questions": OPEN_QUESTIONS,
+        },
+    )
+
+    # Fresh, real, promoted artifact — matches the Opus baseline.
+    fresh_path = make_promoted_meeting_minutes_artifact(
+        lake_root=store,
+        source_id=SOURCE_ID,
+        decisions=DECISIONS,
+        action_items=ACTION_ITEMS,
+        open_questions=OPEN_QUESTIONS,
+    )
+
+    # Stale shadow: build a real factory artifact, then null every
+    # extraction array to reproduce the real ``67cc`` empty LLM file.
+    # The factory shape is preserved; only the content is emptied.
+    seed_stale = make_promoted_meeting_minutes_artifact(
+        lake_root=store,
+        source_id=SOURCE_ID,
+        decisions=STALE_DECISIONS,
+        action_items=ACTION_ITEMS,
+        open_questions=OPEN_QUESTIONS,
+    )
+    stale_doc = json.loads(seed_stale.read_text(encoding="utf-8"))
+    for key, val in list(stale_doc["payload"].items()):
+        if isinstance(val, list):
+            stale_doc["payload"][key] = []
+    seed_stale.unlink()  # remove the populated seed; keep only 2 files
+    # Name it so it sorts strictly AFTER the fresh file: the pre-fix
+    # max((mtime, name)) then deterministically picks this empty file
+    # once the mtimes tie.
+    empty_path = sid_dir / "meeting_minutes__zzzzzzzzzzzzzzzz.json"
+    empty_path.write_text(json.dumps(stale_doc), encoding="utf-8")
+    assert empty_path.name > fresh_path.name, (
+        empty_path.name,
+        fresh_path.name,
+    )
+
+    # Simulate git clone: BOTH files get the IDENTICAL clone timestamp.
+    clone_ts = 1_700_000_000
+    os.utime(fresh_path, (clone_ts, clone_ts))
+    os.utime(empty_path, (clone_ts, clone_ts))
+    assert (
+        fresh_path.stat().st_mtime == empty_path.stat().st_mtime
+    )
+
+    result = _run(["--data-lake", str(dl), "--source-id", SOURCE_ID])
+    assert result.returncode == 0, (
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    data = json.loads(result.stdout)
+    # The script must have selected the FRESH artifact, not the empty
+    # shadow — this is the exact pre/post discriminator.
+    assert data["haiku_artifact_path"] == str(fresh_path), data
+    assert data["summary"]["total_haiku_items"] == 3, data["summary"]
+
+    art = json.loads(
+        _comparison_artifact(dl).read_text(encoding="utf-8")
+    )
+    s = art["summary"]
+    assert s["total_opus_items"] == 3, s
+    assert s["total_haiku_items"] == 3, s
+    assert s["true_positives"] == 3, s
+    assert s["haiku_recall_vs_opus"] == 1.0, s
