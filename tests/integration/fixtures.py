@@ -122,7 +122,12 @@ def make_meeting_extraction_artifact(
     )
 
 
-def make_source_record(source_id: str, artifact_id: str) -> dict[str, Any]:
+def make_source_record(
+    source_id: str,
+    artifact_id: str,
+    *,
+    raw_path: str | None = None,
+) -> dict[str, Any]:
     """Produce a source_record.json in the format the pipeline writes.
 
     The runner's resolver reads ``artifact_id`` from this file and uses
@@ -133,14 +138,27 @@ def make_source_record(source_id: str, artifact_id: str) -> dict[str, Any]:
 
     Conforms to ``schemas/source_record.schema.json`` (additionalProperties
     is false, so we include only declared fields).
+
+    ``raw_path`` (keyword-only, optional): when given, a ``payload``
+    object is emitted carrying ``raw_path`` — mirroring the
+    ``payload.raw_path`` the ingestion ``SourceLoader`` records as the
+    authoritative pointer back to the processed transcript. The
+    correction miner resolves the transcript from this field, so the
+    integration contract test seeds it via this factory rather than a
+    hand-rolled dict. When omitted the record is byte-identical to the
+    historical shape (no ``payload`` key) so every existing caller is
+    unaffected.
     """
-    return {
+    record: dict[str, Any] = {
         "artifact_type": "source_record",
         "schema_version": "1.0.0",
         "artifact_id": artifact_id,
         "source_id": source_id,
         "created_at": _now_iso(),
     }
+    if raw_path is not None:
+        record["payload"] = {"raw_path": raw_path}
+    return record
 
 
 def make_ground_truth_pair_from_decision(

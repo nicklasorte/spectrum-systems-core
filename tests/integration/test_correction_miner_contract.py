@@ -135,6 +135,57 @@ def _seed_transcript_in_processed_only(tmp_path: Path) -> Path:
     return dl
 
 
+def _seed_transcript_via_source_record(tmp_path: Path) -> Path:
+    """The transcript lives ONLY at ``store/raw/meetings/<sid>/source.txt``
+    — NOT co-located with the processed artifacts and NOT under
+    ``raw/transcripts/``. ``source_record.json`` (built by the real
+    ``make_source_record`` factory) carries ``payload.raw_path``
+    pointing at it, relative to the data-lake ``store/`` root. This is
+    the exact production layout the #187 glob could not resolve; only
+    the source_record step can find the transcript here."""
+    dl = tmp_path / "data-lake"
+    store = dl / "store"
+    sid_dir = store / "processed" / "meetings" / SOURCE_ID
+    sid_dir.mkdir(parents=True)
+    source_artifact_id = str(uuid.uuid4())
+    rel_raw_path = f"raw/meetings/{SOURCE_ID}/source.txt"
+    (sid_dir / "source_record.json").write_text(
+        json.dumps(
+            make_source_record(
+                SOURCE_ID, source_artifact_id, raw_path=rel_raw_path
+            )
+        ),
+        encoding="utf-8",
+    )
+    make_opus_reference_baseline(
+        data_lake_root=dl,
+        source_id=SOURCE_ID,
+        source_artifact_id=source_artifact_id,
+        model=OPUS_MODEL,
+        items_by_type={
+            "decisions": DECISIONS,
+            "action_items": ACTION_ITEMS,
+            "open_questions": [],
+        },
+    )
+    make_promoted_meeting_minutes_artifact(
+        lake_root=store,
+        source_id=SOURCE_ID,
+        decisions=[],
+        action_items=ACTION_ITEMS,
+        open_questions=["placeholder question kept non-empty"],
+    )
+    transcript = store / "raw" / "meetings" / SOURCE_ID / "source.txt"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text(
+        "7 GHz Downlink TIG\n"
+        + "\n".join(DECISIONS + ACTION_ITEMS)
+        + "\n",
+        encoding="utf-8",
+    )
+    return dl
+
+
 def _run(script: Path, args: list[str], extra_env: dict | None = None):
     env = dict(os.environ)
     env.pop("ANTHROPIC_API_KEY", None)
@@ -254,6 +305,45 @@ def test_transcript_resolves_from_processed_meetings_dir(
     # A non-empty scores list proves evaluate_candidate ran, which
     # only happens if _load_transcript found the processed-dir docx.
     assert out["scores"], "candidate not evaluated (transcript missing)"
+    assert out["promotion"]["promoted"] is False
+
+
+def test_transcript_resolves_via_source_record_raw_path(
+    tmp_path: Path,
+) -> None:
+    """End-to-end: the transcript is ONLY at the location recorded in
+    ``source_record.json::payload.raw_path`` (not co-located with the
+    processed artifacts, not in raw/transcripts/). The miner subprocess
+    must resolve it via the authoritative source_record step and
+    evaluate the candidate. Before the fix this failed with
+    ``missing_transcript`` because only the glob/raw paths were tried.
+    """
+    dl = _seed_transcript_via_source_record(tmp_path)
+    _make_comparison(dl)
+
+    r = _run(
+        MINER,
+        [
+            "--data-lake", str(dl), "--source-id", SOURCE_ID,
+            "--no-dry-run", "--max-candidates", "1",
+        ],
+        extra_env={
+            "CORRECTION_MINER_OPUS_STUB_RESPONSE": "ADD BLOCK",
+            "CORRECTION_MINER_HAIKU_STUB_RESPONSE": json.dumps(
+                {
+                    "decisions": [],
+                    "action_items": [],
+                    "open_questions": [],
+                }
+            ),
+        },
+    )
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+    assert "missing_transcript" not in r.stdout
+    out = json.loads(r.stdout)
+    # Non-empty scores prove evaluate_candidate ran, which only happens
+    # if _load_transcript resolved the transcript via source_record.
+    assert out["scores"], "transcript not resolved via source_record"
     assert out["promotion"]["promoted"] is False
 
 
