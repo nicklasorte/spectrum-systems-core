@@ -344,6 +344,65 @@ def test_scheduled_event_date_wrong_type_fails():
         validate_artifact(art, ARTIFACT_TYPE)
 
 
+# ---- attendees.agency nullability --------------------------------------
+#
+# Same bug class as scheduled_events.date (commit 9af66b9): a faithful
+# extraction of a real entity whose one sub-field is genuinely absent
+# from the transcript must not be blocked. The 7 GHz Downlink TIG
+# transcript names participants (DiFrancisco, LaSorte, Bhatt, Nolen)
+# without stating any agency; the model correctly returns agency=null
+# (the "never invent" rule) rather than fabricating an agency. null must
+# validate so a faithful roster extraction is not blocked; the key stays
+# required, an empty-string agency stays rejected (minLength on the
+# string branch), and a wrong-typed value is still rejected fail-closed.
+
+
+def test_attendee_null_agency_validates():
+    """The exact regression: an attendee named in the transcript with no
+    stated agency carries agency=None and must validate (was: None is
+    not of type 'string' at ['attendees', 0, 'agency'])."""
+    art = _fully_populated()
+    art["attendees"][0]["agency"] = None
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_attendee_string_agency_still_validates():
+    """Additivity: a non-null string agency still validates unchanged."""
+    art = _fully_populated()
+    art["attendees"][0]["agency"] = "NTIA"
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_attendee_agency_key_still_required():
+    """The agency KEY stays required — omitting it entirely still fails
+    (relaxing the type to nullable did not relax presence; the model
+    must consciously emit null, never silently drop attribution)."""
+    art = _fully_populated()
+    del art["attendees"][0]["agency"]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_attendee_empty_string_agency_still_fails():
+    """No-weakening: minLength still binds the string branch — an
+    empty-string agency stays rejected. null is the faithful "not
+    stated" signal; "" is never a valid agency."""
+    art = _fully_populated()
+    art["attendees"][0]["agency"] = ""
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_attendee_agency_wrong_type_fails():
+    """Fail-closed: only a non-empty string or null is valid — a number
+    (or any other type) is still rejected; nullability did not open the
+    field to arbitrary types."""
+    art = _fully_populated()
+    art["attendees"][0]["agency"] = 123
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
+
+
 # ---- Step 6: stakeholders + confidence on a structured decision --------
 
 

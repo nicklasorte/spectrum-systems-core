@@ -115,7 +115,16 @@ calling `git check-ignore`.
     event mentioned without an explicit date is a faithful extraction
     (the model must never invent a date), so `date: null` is valid and
     must not block. The key stays required and a non-string/non-null
-    value is still rejected fail-closed.
+    value is still rejected fail-closed. Each `attendees` item requires
+    the `name` / `agency` keys, but `agency` is typed
+    `["string", "null"]` with `minLength: 1` on the string branch: a
+    participant named in the transcript without a stated agency is a
+    faithful extraction (the model must never invent an agency), so
+    `agency: null` is valid and must not block. The key stays required
+    (the model emits `null`, never silently dropping attribution), an
+    empty-string agency stays rejected (minLength), and a
+    non-string/non-null value is still rejected fail-closed — the same
+    bug class and fix pattern as `scheduled_events.date`.
   - The live-LLM path now carries ALL of the above through to the
     promoted artifact: `workflows/meeting_minutes_llm._parse_llm_payload`
     preserves the structured object forms verbatim (never coerced to

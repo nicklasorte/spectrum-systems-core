@@ -201,7 +201,11 @@
         "required": ["name", "agency"],
         "properties": {
           "name": { "type": "string", "minLength": 1 },
-          "agency": { "type": "string", "minLength": 1 },
+          "agency": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "description": "The attendee's agency as stated in the transcript. The key is required (the extraction model always emits it) but the value is null when the transcript names a participant without stating their agency — a named attendee with no stated agency is still a real, faithful extraction (the model must never invent an agency), so agency: null is valid and must not block. minLength still applies to the string branch so an empty-string agency stays rejected; a non-string/non-null value is still rejected fail-closed."
+          },
           "role": { "type": ["string", "null"] },
           "present": {
             "type": "boolean",
