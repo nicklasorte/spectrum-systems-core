@@ -27,7 +27,22 @@ Fail-closed reason codes:
                                     0-item diff)
 * ``invalid_haiku_artifact``      — artifact present but fails the
                                     meeting_minutes schema
+* ``missing_candidate_artifact``  — three-way mode: no populated LLM
+                                    meeting_minutes artifact whose
+                                    provenance.model_id contains the
+                                    requested model token (e.g. Sonnet)
+* ``empty_candidate_artifact``    — three-way mode: every matching
+                                    candidate artifact is all-empty
 * ``data_lake_not_a_directory``   — --data-lake is not a directory
+
+Three-way mode (``--include-sonnet``): a second candidate
+(``meeting_minutes`` produced by ``meeting_minutes_llm`` whose
+``provenance.model_id`` contains ``"sonnet"``) is diffed against the
+SAME Opus baseline as Haiku and both results are merged into one
+``comparison_result`` with ``comparison_mode == "three_way"``. It is
+written to a DISTINCT path (``comparisons/three_way_<ts>.json``) so the
+two-way artifact is never overwritten. Default (no ``--include-sonnet``)
+output is byte-for-byte the legacy two-way shape.
 """
 from __future__ import annotations
 
@@ -62,6 +77,18 @@ _MEETING_MINUTES_SCHEMA = (
 COMPARISON_ARTIFACT_TYPE = "comparison_result"
 COMPARISON_SCHEMA_VERSION = "1.0.0"
 HAIKU_LLM_PROVENANCE = "meeting_minutes_llm"
+
+# The model token that a candidate with NO ``provenance.model_id`` is
+# treated as. Historically every ``produced_by == "meeting_minutes_llm"``
+# artifact was the default Haiku extraction (the registry default IS
+# Haiku) and legacy artifacts did not stamp ``provenance.model_id``.
+# ``find_candidate_artifact(..., "haiku")`` must therefore still accept
+# such an artifact so the refactor changes NO existing behaviour. A
+# Sonnet (or any non-default) run, by contrast, ALWAYS stamps an
+# explicit ``provenance.model_id`` (the real workflow resolves it from
+# the registry), so absence-of-model_id never silently counts as a
+# non-default model — selecting Sonnet is fail-closed.
+_DEFAULT_CANDIDATE_MODEL_TOKEN = "haiku"
 
 # Text fields tried, in priority order, when a Haiku payload item is a
 # structured object. This is a LOCAL, byte-identical copy of
@@ -373,17 +400,63 @@ def _extracted_item_count(
     return total
 
 
-def find_haiku_artifact(
-    data_lake: Path, source_id: str
+def _candidate_model_matches(
+    payload: Dict[str, Any], model_id_substring: str
+) -> bool:
+    """True when this artifact's model identity matches the token.
+
+    Match rule (case-insensitive ``contains``):
+
+    * ``provenance.model_id`` is present and non-empty → match iff the
+      substring is in it. The real workflow ALWAYS stamps
+      ``provenance.model_id`` from the registry, so a Haiku run carries
+      ``claude-haiku-…`` and a Sonnet run carries ``claude-sonnet-…`` —
+      ``"haiku"`` / ``"sonnet"`` discriminate them cleanly. Selecting
+      Sonnet is fail-closed: a Haiku-model artifact never matches
+      ``"sonnet"``.
+    * ``provenance.model_id`` absent/blank → fall back to
+      ``provenance.produced_by``; if the substring is still not found,
+      treat the artifact as the DEFAULT model (Haiku) — see
+      ``_DEFAULT_CANDIDATE_MODEL_TOKEN``. This is the clause that keeps
+      every legacy / synthetic ``meeting_minutes_llm`` artifact (no
+      stamped model_id) selectable by ``find_haiku_artifact`` so the
+      refactor changes NO existing behaviour. Absence never counts as a
+      non-default model.
+    """
+    sub = (model_id_substring or "").strip().lower()
+    if not sub:
+        return False
+    prov = payload.get("provenance")
+    prov = prov if isinstance(prov, dict) else {}
+    model_id = prov.get("model_id")
+    if isinstance(model_id, str) and model_id.strip():
+        return sub in model_id.lower()
+    produced_by = prov.get("produced_by")
+    if isinstance(produced_by, str) and sub in produced_by.lower():
+        return True
+    # No explicit model_id: the artifact is the default (Haiku) run.
+    return sub == _DEFAULT_CANDIDATE_MODEL_TOKEN
+
+
+def find_candidate_artifact(
+    data_lake: Path,
+    source_id: str,
+    model_id_substring: str,
+    *,
+    missing_reason: str = "missing_candidate_artifact",
+    empty_reason: str = "empty_candidate_artifact",
+    invalid_reason: str = "invalid_candidate_artifact",
 ) -> Tuple[Dict[str, Any], Path]:
-    """Locate the promoted Haiku ``meeting_minutes`` artifact.
+    """Locate the promoted LLM ``meeting_minutes`` artifact for a model.
 
     Scans ``meeting_minutes__*.json`` for the source whose
-    ``payload.provenance.produced_by`` is ``meeting_minutes_llm``.
-    Recency (file mtime — see ``_haiku_recency_key``) only ORDERS the
-    candidates; a CONTENT check picks the winner. Walking newest →
-    oldest, the first artifact that actually extracted something (≥1
-    item across the arrays ``compute_comparison`` reads) is selected.
+    ``payload.provenance.produced_by`` is ``meeting_minutes_llm`` AND
+    whose model identity contains ``model_id_substring`` (see
+    ``_candidate_model_matches``). Recency (file mtime — see
+    ``_haiku_recency_key``) only ORDERS the candidates; a CONTENT check
+    picks the winner. Walking newest → oldest, the first artifact that
+    actually extracted something (≥1 item across the arrays
+    ``compute_comparison`` reads) is selected.
 
     Why content, not pure recency: PR #183 made selection mtime-based
     so a stale all-empty earlier run could not shadow the real
@@ -396,13 +469,17 @@ def find_haiku_artifact(
     pre-#183 bug, picking the stale empty file. The content check makes
     the selection robust regardless of mtime collisions.
 
-    Fail-closed: if EVERY LLM artifact for the source is all-empty the
-    script halts ``empty_haiku_artifact`` rather than silently emitting
-    a meaningless 0.0-recall diff. A regex-extractor artifact
+    Fail-closed: if EVERY matching LLM artifact for the source is
+    all-empty the script halts ``empty_reason`` rather than silently
+    emitting a meaningless 0.0-recall diff. A regex-extractor artifact
     (``produced_by == "meeting_minutes"``) is NOT comparable against an
     Opus baseline, so its presence does not satisfy the requirement —
-    if no LLM artifact exists at all the script halts
-    ``missing_haiku_llm_output``. Only the SELECTED envelope is
+    if no matching LLM artifact exists at all the script halts
+    ``missing_reason``. The reason codes are parameterised so the
+    Haiku call keeps emitting the legacy ``missing_haiku_llm_output`` /
+    ``empty_haiku_artifact`` / ``invalid_haiku_artifact`` codes (no
+    behavioural change) while the Sonnet call emits the
+    ``*_candidate_artifact`` codes. Only the SELECTED envelope is
     validated against the meeting_minutes schema before any field is
     read (CLAUDE.md read-path co-requirement); a stale earlier run must
     never be able to block the current real extraction by failing
@@ -411,6 +488,7 @@ def find_haiku_artifact(
     mdir = _meeting_dir(data_lake, source_id)
     candidates = sorted(mdir.glob("meeting_minutes__*.json"))
     saw_non_llm = False
+    saw_other_model = False
     llm_candidates: List[
         Tuple[Tuple[float, str], Dict[str, Any], Path]
     ] = []
@@ -419,7 +497,7 @@ def find_haiku_artifact(
             artifact = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise ComparisonError(
-                "invalid_haiku_artifact",
+                invalid_reason,
                 f"meeting_minutes artifact at {path} unreadable/!json: "
                 f"{exc}",
             ) from exc
@@ -435,6 +513,13 @@ def find_haiku_artifact(
         )
         if produced_by != HAIKU_LLM_PROVENANCE:
             saw_non_llm = True
+            continue
+        if not _candidate_model_matches(payload, model_id_substring):
+            # An LLM artifact for a DIFFERENT model. Not an error by
+            # itself (the other model's artifact legitimately lives in
+            # the same directory); it just does not satisfy THIS
+            # selector. Tracked only to make the halt detail precise.
+            saw_other_model = True
             continue
         llm_candidates.append(
             (_haiku_recency_key(path), artifact, path)
@@ -457,15 +542,17 @@ def find_haiku_artifact(
                 selected = (candidate_art, candidate_path)
                 break
         if selected is None:
-            # Every LLM artifact for this source is all-empty. Returning
-            # one would emit a meaningless 0.0-recall diff AND overwrite
-            # eval_history.jsonl with a false signal (and spuriously
-            # trip the F1<0.70 correction-miner dispatch). Fail closed.
+            # Every matching LLM artifact for this source is all-empty.
+            # Returning one would emit a meaningless 0.0-recall diff AND
+            # overwrite eval_history.jsonl with a false signal (and
+            # spuriously trip the F1<0.70 correction-miner dispatch).
+            # Fail closed.
             newest_path = ordered[0][2]
             raise ComparisonError(
-                "empty_haiku_artifact",
-                f"every meeting_minutes LLM artifact under {mdir} has "
-                f"all {len(types)} extraction arrays empty (newest: "
+                empty_reason,
+                f"every meeting_minutes LLM artifact under {mdir} "
+                f"matching model token {model_id_substring!r} has all "
+                f"{len(types)} extraction arrays empty (newest: "
                 f"{newest_path}); refusing to emit a 0-item comparison",
             )
         artifact, path = selected
@@ -482,7 +569,7 @@ def find_haiku_artifact(
             validate_artifact(flat, "meeting_minutes", str(path))
         except ArtifactValidationError as exc:
             raise ComparisonError(
-                "invalid_haiku_artifact",
+                invalid_reason,
                 f"meeting_minutes artifact at {path} failed schema: "
                 f"{exc}",
             ) from exc
@@ -490,15 +577,46 @@ def find_haiku_artifact(
 
     detail = (
         f"no promoted meeting_minutes artifact with "
-        f"provenance.produced_by == {HAIKU_LLM_PROVENANCE!r} under "
-        f"{mdir}"
+        f"provenance.produced_by == {HAIKU_LLM_PROVENANCE!r} and model "
+        f"token {model_id_substring!r} under {mdir}"
     )
+    if saw_other_model:
+        detail += (
+            " (a meeting_minutes_llm artifact for a different model "
+            "was found but its provenance.model_id does not contain "
+            f"{model_id_substring!r})"
+        )
     if saw_non_llm:
         detail += (
             " (a regex-extractor meeting_minutes artifact was found "
             "but comparing it against the Opus baseline is meaningless)"
         )
-    raise ComparisonError("missing_haiku_llm_output", detail)
+    raise ComparisonError(missing_reason, detail)
+
+
+def find_haiku_artifact(
+    data_lake: Path, source_id: str
+) -> Tuple[Dict[str, Any], Path]:
+    """Locate the promoted Haiku ``meeting_minutes`` artifact.
+
+    Thin wrapper over :func:`find_candidate_artifact` with the default
+    Haiku model token and the LEGACY reason codes, so every existing
+    caller / test sees byte-identical behaviour and the same
+    ``missing_haiku_llm_output`` / ``empty_haiku_artifact`` /
+    ``invalid_haiku_artifact`` halts. A ``meeting_minutes_llm`` artifact
+    with no stamped ``provenance.model_id`` (legacy / synthetic) still
+    matches ``"haiku"`` via the default-token clause in
+    ``_candidate_model_matches`` — that is what preserves the prior
+    contract exactly.
+    """
+    return find_candidate_artifact(
+        data_lake,
+        source_id,
+        _DEFAULT_CANDIDATE_MODEL_TOKEN,
+        missing_reason="missing_haiku_llm_output",
+        empty_reason="empty_haiku_artifact",
+        invalid_reason="invalid_haiku_artifact",
+    )
 
 
 def load_gt_pairs(
@@ -752,7 +870,13 @@ def compute_comparison(
 # --------------------------------------------------------------------------
 # Artifact + eval_history + summary table.
 # --------------------------------------------------------------------------
-def _haiku_run_id(artifact: Dict[str, Any]) -> str:
+def _run_id_of(artifact: Dict[str, Any]) -> str:
+    """Stable run id for one ``meeting_minutes`` artifact.
+
+    Model-agnostic: the same resolution order works for the Haiku and
+    the Sonnet candidate (provenance.run_id → provenance.trace_id →
+    envelope.trace_id → "").
+    """
     payload = artifact.get("payload") or {}
     prov = payload.get("provenance") or {}
     for key in ("run_id", "trace_id"):
@@ -763,6 +887,18 @@ def _haiku_run_id(artifact: Dict[str, Any]) -> str:
     return v if isinstance(v, str) and v else ""
 
 
+def _haiku_run_id(artifact: Dict[str, Any]) -> str:
+    return _run_id_of(artifact)
+
+
+def _opus_model_id(baseline_rows: List[Dict[str, Any]]) -> str:
+    for rec in baseline_rows:
+        mid = rec.get("model_id")
+        if isinstance(mid, str) and mid:
+            return mid
+    return ""
+
+
 def build_comparison_artifact(
     *,
     source_id: str,
@@ -771,18 +907,12 @@ def build_comparison_artifact(
     metrics: Dict[str, Any],
     compared_at: str,
 ) -> Dict[str, Any]:
-    opus_model_id = ""
-    for rec in baseline_rows:
-        mid = rec.get("model_id")
-        if isinstance(mid, str) and mid:
-            opus_model_id = mid
-            break
     return {
         "artifact_type": COMPARISON_ARTIFACT_TYPE,
         "schema_version": COMPARISON_SCHEMA_VERSION,
         "source_id": source_id,
         "haiku_run_id": _haiku_run_id(haiku_artifact),
-        "opus_model_id": opus_model_id,
+        "opus_model_id": _opus_model_id(baseline_rows),
         "compared_at": compared_at,
         "gt_pairs_present": metrics["gt_pairs_present"],
         "summary": metrics["summary"],
@@ -790,6 +920,81 @@ def build_comparison_artifact(
         "false_negatives": metrics["false_negatives"],
         "haiku_only_items": metrics["haiku_only_items"],
         "gt_missed": metrics["gt_missed"],
+    }
+
+
+def _merge_three_way_by_type(
+    haiku_metrics: Dict[str, Any], sonnet_metrics: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Merge the two per-type diffs into the three-way ``by_type`` shape.
+
+    ``opus_count`` is taken from the Haiku result (both diffs run
+    against the SAME Opus baseline, so the per-type Opus count is
+    identical; asserting equality would only add a failure surface for
+    a value that cannot diverge by construction). Every per-type key is
+    unioned across both results so a type present in only one side
+    still appears with zeroed counts on the other.
+    """
+    h_by = haiku_metrics["by_type"]
+    s_by = sonnet_metrics["by_type"]
+    merged: Dict[str, Any] = {}
+    for etype in dict.fromkeys(list(h_by) + list(s_by)):
+        h = h_by.get(etype) or {}
+        s = s_by.get(etype) or {}
+        merged[etype] = {
+            "opus_count": h.get("opus_count", s.get("opus_count", 0)),
+            "haiku_count": h.get("haiku_count", 0),
+            "haiku_tp": h.get("true_positives", 0),
+            "haiku_fn": h.get("false_negatives", []),
+            "haiku_only": h.get("haiku_only", []),
+            "sonnet_count": s.get("haiku_count", 0),
+            "sonnet_tp": s.get("true_positives", 0),
+            "sonnet_fn": s.get("false_negatives", []),
+            "sonnet_only": s.get("haiku_only", []),
+        }
+    return merged
+
+
+def build_three_way_comparison_artifact(
+    *,
+    source_id: str,
+    haiku_artifact: Dict[str, Any],
+    sonnet_artifact: Dict[str, Any],
+    baseline_rows: List[Dict[str, Any]],
+    haiku_metrics: Dict[str, Any],
+    sonnet_metrics: Dict[str, Any],
+    compared_at: str,
+) -> Dict[str, Any]:
+    """Merge the Haiku and Sonnet diffs into one three-way artifact.
+
+    ``haiku_summary`` / ``sonnet_summary`` reuse the exact summary
+    field names ``compute_comparison`` emits (``haiku_*`` keys) — the
+    distinction is the TOP-LEVEL key, not the inner field names — so the
+    pure comparison core is reused verbatim with zero logic
+    duplication. The two-way top-level keys (``summary``,
+    ``false_negatives``, ``haiku_only_items``, ``gt_missed``) are
+    deliberately ABSENT: the comparison_result schema's ``three_way``
+    branch forbids them so a three-way artifact can never be misread as
+    a two-way one (and vice versa).
+    """
+    return {
+        "artifact_type": COMPARISON_ARTIFACT_TYPE,
+        "schema_version": COMPARISON_SCHEMA_VERSION,
+        "comparison_mode": "three_way",
+        "source_id": source_id,
+        "haiku_run_id": _run_id_of(haiku_artifact),
+        "sonnet_run_id": _run_id_of(sonnet_artifact),
+        "opus_model_id": _opus_model_id(baseline_rows),
+        "compared_at": compared_at,
+        "gt_pairs_present": (
+            haiku_metrics["gt_pairs_present"]
+            or sonnet_metrics["gt_pairs_present"]
+        ),
+        "haiku_summary": haiku_metrics["summary"],
+        "sonnet_summary": sonnet_metrics["summary"],
+        "by_type": _merge_three_way_by_type(
+            haiku_metrics, sonnet_metrics
+        ),
     }
 
 
@@ -801,6 +1006,26 @@ def _comparison_out_path(
         _meeting_dir(data_lake, source_id)
         / "comparisons"
         / f"haiku_vs_opus_{safe_ts}.json"
+    )
+
+
+def _three_way_out_path(
+    data_lake: Path, source_id: str, timestamp: str
+) -> Path:
+    """DISTINCT path for the three-way artifact.
+
+    A different filename prefix in the SAME ``comparisons/`` directory
+    so the append-only data-lake never overwrites the two-way
+    ``haiku_vs_opus_<ts>.json``. ``correction_miner.load_comparison_results``
+    globs ``haiku_vs_opus_*.json`` only, so a ``three_way_*.json`` file
+    is invisible to System 2 and its different ``by_type`` shape can
+    never reach the miner's two-way reader.
+    """
+    safe_ts = timestamp.replace(":", "").replace("+", "")
+    return (
+        _meeting_dir(data_lake, source_id)
+        / "comparisons"
+        / f"three_way_{safe_ts}.json"
     )
 
 
@@ -884,6 +1109,81 @@ def render_summary_table(
     return "\n".join(rows)
 
 
+def render_three_way_table(
+    three_way_artifact: Dict[str, Any], types: List[str]
+) -> str:
+    """Human-readable Opus / Haiku / Sonnet table (STDERR only).
+
+    Reads the merged ``by_type`` and the two summaries off the
+    three-way artifact so the table can never drift from what was
+    written to disk.
+    """
+    by_type = three_way_artifact["by_type"]
+    rows = [
+        "Type              | Opus | Haiku | H-TP | H-FN | Sonnet | "
+        "S-TP | S-FN",
+        "------------------+------+-------+------+------+--------+"
+        "------+-----",
+    ]
+    seen = list(dict.fromkeys(list(types) + list(by_type.keys())))
+    tot_o = tot_h = tot_htp = tot_hfn = 0
+    tot_s = tot_stp = tot_sfn = 0
+    for etype in seen:
+        bt = by_type.get(etype)
+        if not bt:
+            continue
+        o = bt["opus_count"]
+        h = bt["haiku_count"]
+        htp = bt["haiku_tp"]
+        hfn = len(bt["haiku_fn"])
+        sc = bt["sonnet_count"]
+        stp = bt["sonnet_tp"]
+        sfn = len(bt["sonnet_fn"])
+        if o == 0 and h == 0 and sc == 0:
+            continue
+        tot_o += o
+        tot_h += h
+        tot_htp += htp
+        tot_hfn += hfn
+        tot_s += sc
+        tot_stp += stp
+        tot_sfn += sfn
+        rows.append(
+            f"{etype:<17} | {o:<4} | {h:<5} | {htp:<4} | {hfn:<4} | "
+            f"{sc:<6} | {stp:<4} | {sfn}"
+        )
+    rows.append(
+        "------------------+------+-------+------+------+--------+"
+        "------+-----"
+    )
+    rows.append(
+        f"{'TOTAL':<17} | {tot_o:<4} | {tot_h:<5} | {tot_htp:<4} | "
+        f"{tot_hfn:<4} | {tot_s:<6} | {tot_stp:<4} | {tot_sfn}"
+    )
+    h = three_way_artifact["haiku_summary"]
+    s = three_way_artifact["sonnet_summary"]
+    rows.append("")
+    rows.append(
+        f"Haiku  recall vs Opus:    "
+        f"{h['haiku_recall_vs_opus'] * 100:.1f}%"
+        f"  |  Sonnet recall vs Opus:  "
+        f"{s['haiku_recall_vs_opus'] * 100:.1f}%"
+    )
+    rows.append(
+        f"Haiku  precision vs Opus: "
+        f"{h['haiku_precision_vs_opus'] * 100:.1f}%"
+        f"  |  Sonnet precision:       "
+        f"{s['haiku_precision_vs_opus'] * 100:.1f}%"
+    )
+    rows.append(
+        f"Haiku  F1 vs Opus:        "
+        f"{h['haiku_f1_vs_opus'] * 100:.1f}%"
+        f"  |  Sonnet F1 vs Opus:      "
+        f"{s['haiku_f1_vs_opus'] * 100:.1f}%"
+    )
+    return "\n".join(rows)
+
+
 def run_comparison(
     *,
     data_lake: Path,
@@ -891,6 +1191,7 @@ def run_comparison(
     dry_run: bool,
     print_inputs: bool = False,
     print_scores: bool = False,
+    include_sonnet: bool = False,
 ) -> Dict[str, Any]:
     """Orchestrate one comparison. Returns a summary dict; raises on halt.
 
@@ -899,10 +1200,31 @@ def run_comparison(
     summary/threshold steps still parse it; neither flag changes the
     comparison or what is written. ``dry_run`` runs the full comparison
     but writes no artifact and no eval_history row.
+
+    ``include_sonnet`` is the ONLY behaviour switch. When False
+    (default) this is byte-for-byte the legacy two-way path — same
+    STDOUT shape, same on-disk ``haiku_vs_opus_<ts>.json``, same
+    eval_history row, a Sonnet artifact in the data-lake is completely
+    ignored. When True a second candidate (Sonnet) is REQUIRED: if it
+    is missing or all-empty the run halts fail-closed
+    (``missing_candidate_artifact`` / ``empty_candidate_artifact``) — it
+    never silently degrades to a two-way result mislabelled three-way.
     """
     types = extraction_types()
     baseline_rows = load_opus_baseline(data_lake, source_id)
     haiku_artifact, haiku_path = find_haiku_artifact(data_lake, source_id)
+    sonnet_artifact: Optional[Dict[str, Any]] = None
+    sonnet_path: Optional[Path] = None
+    if include_sonnet:
+        # Fail-closed BEFORE any artifact is built: a three-way run that
+        # cannot find a populated Sonnet artifact must halt, never emit
+        # a two-way result wearing a three-way label. find_haiku is
+        # unaffected — a missing Sonnet does not also mask a Haiku halt
+        # (Haiku was already resolved above, so the two failures stay
+        # independent and each surfaces its own clear reason).
+        sonnet_artifact, sonnet_path = find_candidate_artifact(
+            data_lake, source_id, "sonnet"
+        )
     gt_pairs = load_gt_pairs(data_lake, source_id)
     if gt_pairs is None:
         print(
@@ -910,6 +1232,9 @@ def run_comparison(
         )
 
     haiku_payload = haiku_artifact.get("payload") or {}
+    sonnet_payload = (
+        (sonnet_artifact or {}).get("payload") or {}
+    )
 
     if print_inputs:
         opus_path = _opus_baseline_path(data_lake, source_id)
@@ -926,6 +1251,20 @@ def run_comparison(
         print(
             f"haiku item count:    {haiku_item_count}", file=sys.stderr
         )
+        if include_sonnet:
+            sonnet_item_count = sum(
+                len(v)
+                for v in (sonnet_payload.get(t) for t in types)
+                if isinstance(v, list)
+            )
+            print(
+                f"sonnet artifact path: {sonnet_path}",
+                file=sys.stderr,
+            )
+            print(
+                f"sonnet item count:   {sonnet_item_count}",
+                file=sys.stderr,
+            )
         print("=== /print_inputs ===", file=sys.stderr)
 
     metrics = compute_comparison(
@@ -935,6 +1274,93 @@ def run_comparison(
         types=types,
     )
     compared_at = _now_utc_iso()
+
+    if include_sonnet:
+        sonnet_metrics = compute_comparison(
+            baseline_rows=baseline_rows,
+            haiku_payload=sonnet_payload,
+            gt_pairs=gt_pairs,
+            types=types,
+        )
+        artifact = build_three_way_comparison_artifact(
+            source_id=source_id,
+            haiku_artifact=haiku_artifact,
+            sonnet_artifact=sonnet_artifact or {},
+            baseline_rows=baseline_rows,
+            haiku_metrics=metrics,
+            sonnet_metrics=sonnet_metrics,
+            compared_at=compared_at,
+        )
+        # Validate our OWN output before writing it (fail-closed: never
+        # write a malformed comparison_result). The schema's three_way
+        # branch is enforced here.
+        validate_artifact(artifact, COMPARISON_ARTIFACT_TYPE)
+
+        if print_scores:
+            print("=== print_scores ===", file=sys.stderr)
+            print(
+                json.dumps(artifact, indent=2, sort_keys=True),
+                file=sys.stderr,
+            )
+            print("=== /print_scores ===", file=sys.stderr)
+
+        table = render_three_way_table(artifact, types)
+        print(table, file=sys.stderr)
+
+        out_path = _three_way_out_path(
+            data_lake, source_id, compared_at
+        )
+        hs = metrics["summary"]
+        ss = sonnet_metrics["summary"]
+        if not dry_run:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(
+                json.dumps(
+                    artifact, sort_keys=True, separators=(",", ":")
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            _append_eval_history(
+                data_lake,
+                source_id,
+                {
+                    "eval_type": "three_way_comparison",
+                    "haiku_f1_vs_opus": hs["haiku_f1_vs_opus"],
+                    "haiku_recall_vs_opus": hs["haiku_recall_vs_opus"],
+                    "haiku_precision_vs_opus": hs[
+                        "haiku_precision_vs_opus"
+                    ],
+                    "sonnet_f1_vs_opus": ss["haiku_f1_vs_opus"],
+                    "sonnet_recall_vs_opus": ss["haiku_recall_vs_opus"],
+                    "sonnet_precision_vs_opus": ss[
+                        "haiku_precision_vs_opus"
+                    ],
+                    "timestamp": compared_at,
+                    "comparison_artifact_path": str(out_path),
+                },
+            )
+        else:
+            print("DRY RUN — artifact not written", file=sys.stderr)
+
+        return {
+            "status": "success",
+            "source_id": source_id,
+            "dry_run": dry_run,
+            "comparison_mode": "three_way",
+            "haiku_artifact_path": str(haiku_path),
+            "sonnet_artifact_path": str(sonnet_path),
+            "comparison_artifact_path": str(out_path),
+            "gt_pairs_present": artifact["gt_pairs_present"],
+            # ``summary`` keeps the Haiku metrics so the workflow's
+            # existing ``d["summary"]["haiku_f1_vs_opus"]`` parse and
+            # any two-way consumer keep working unchanged; the Sonnet
+            # metrics are additive under ``sonnet_summary``.
+            "summary": hs,
+            "sonnet_summary": ss,
+            "table": table,
+        }
+
     artifact = build_comparison_artifact(
         source_id=source_id,
         haiku_artifact=haiku_artifact,
@@ -1022,6 +1448,18 @@ def main(argv: Optional[List[str]] = None) -> int:
             "to STDERR after comparison runs."
         ),
     )
+    parser.add_argument(
+        "--include-sonnet",
+        action="store_true",
+        help=(
+            "Also compare the Sonnet candidate artifact (a "
+            "meeting_minutes_llm artifact whose provenance.model_id "
+            "contains 'sonnet') against the SAME Opus baseline and "
+            "emit a three-way comparison_result. Fail-closed: if no "
+            "populated Sonnet artifact exists the run halts rather "
+            "than degrading to a mislabelled two-way result."
+        ),
+    )
     args = parser.parse_args(argv)
     for attr in vars(args):
         val = getattr(args, attr)
@@ -1050,6 +1488,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             dry_run=args.dry_run,
             print_inputs=args.print_inputs,
             print_scores=args.print_scores,
+            include_sonnet=args.include_sonnet,
         )
     except ComparisonError as exc:
         print(

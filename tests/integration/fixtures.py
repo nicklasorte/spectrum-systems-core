@@ -263,6 +263,7 @@ def make_promoted_meeting_minutes_artifact(
     action_items: list[str] | None = None,
     open_questions: list[str] | None = None,
     transcript_text: str | None = None,
+    model_id: str | None = None,
 ) -> Any:
     """Produce a promoted ``meeting_minutes`` artifact via the REAL path.
 
@@ -276,6 +277,18 @@ def make_promoted_meeting_minutes_artifact(
     The stubbed model returns the passed items verbatim; the transcript
     is synthesized to contain every item as a literal substring so the
     within-source eval passes and the artifact actually promotes.
+
+    ``model_id`` (optional) overrides ``payload.provenance.model_id`` on
+    the promoted artifact BEFORE it is written. The real workflow
+    resolves that field from ``ai/registry/model_registry.json``; the
+    ONLY thing that differs between a Haiku run and a Sonnet run of this
+    deterministic loop is which registry model_id is stamped into
+    provenance, so overriding just that one field faithfully reproduces
+    the on-disk shape the real Sonnet path writes (this mirrors the
+    workflow's own established post-promotion provenance stamp;
+    ``compare_opus_haiku`` never reads ``content_hash``). Used so a
+    three-way contract test can place a real Haiku artifact and a real
+    Sonnet artifact in the same directory.
     """
     import sys as _sys
     from pathlib import Path as _Path
@@ -328,6 +341,12 @@ def make_promoted_meeting_minutes_artifact(
             f"decision={result.control_decision.payload} "
             f"evals={eval_payloads}"
         )
+    if model_id is not None:
+        provenance = result.meeting_minutes.payload.get("provenance")
+        if not isinstance(provenance, dict):
+            provenance = {}
+            result.meeting_minutes.payload["provenance"] = provenance
+        provenance["model_id"] = model_id
     return write_promoted_artifact(
         _Path(lake_root), result.meeting_minutes, meeting_id=source_id
     )

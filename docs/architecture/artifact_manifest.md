@@ -482,10 +482,24 @@ calling `git check-ignore`.
   `payload.provenance.produced_by` MUST be `meeting_minutes_llm` — a
   regex-extractor artifact is rejected fail-closed), and (optionally)
   the human GT pairs. It never reads a model.
-- **Path template:** `data-lake/store/processed/meetings/<source_id>/comparisons/haiku_vs_opus_<run_id>.json`
+- **Path template:**
+  `data-lake/store/processed/meetings/<source_id>/comparisons/haiku_vs_opus_<run_id>.json`
+  (two-way Haiku-vs-Opus, default — unchanged) and, only when
+  `compare-opus-haiku` is dispatched with `include_sonnet=true`,
+  the DISTINCT
+  `data-lake/store/processed/meetings/<source_id>/comparisons/three_way_<run_id>.json`
+  (three-way Opus / Haiku / Sonnet). The two paths never collide so
+  the append-only data-lake never overwrites the two-way artifact.
 - **Schema:** `src/spectrum_systems_core/schemas/comparison_result.schema.json`
   (validated by the script BEFORE the write — a malformed
-  comparison_result is never written).
+  comparison_result is never written). ONE `artifact_type`
+  (`comparison_result`) carries two shapes, discriminated by an
+  `if/then/else` on `comparison_mode`: absent → the legacy two-way
+  shape (byte-identical to pre-three-way output); `"three_way"` → the
+  Opus/Haiku/Sonnet shape (`haiku_summary` + `sonnet_summary`, the
+  three-way per-type `by_type`, and `sonnet_run_id`). The branches are
+  mutually exclusive fail-closed: a two-way artifact may not carry the
+  three-way keys and vice versa.
 - **Git-tracked:** NO — same reasoning as `opus_reference_minutes`:
   the path lives under `processed/`, which the `nicklasorte/data-lake`
   repo bulk-ignores via `**/processed/**`. The compare-opus-haiku
@@ -494,13 +508,20 @@ calling `git check-ignore`.
   `!**/processed/**/eval_history.jsonl` in the data-lake clone's
   `.gitignore` (idempotent — only appends when absent) and commits
   them in the same push, mirroring the existing
-  `!**/processed/**/source_record.json` precedent. Per-artifact
+  `!**/processed/**/source_record.json` precedent. The
+  `comparisons/*.json` negation already covers the new
+  `three_way_<run_id>.json` filename (same directory, `.json`), so the
+  three-way artifact needs no additional `.gitignore` rule. Per-artifact
   gitignore enforcement inside the data-lake repo is that repo's
   responsibility; `_gitignore_audit.py` only audits `Git-tracked: YES`
   entries, so this entry does not gate CI.
 - **Readers:** `scripts/correction_miner.py` (System 2 — reads every
   `comparison_result` for a source to mine systematic failure
-  patterns). Never read back into the governed loop.
+  patterns). It globs `haiku_vs_opus_*.json` ONLY, so the three-way
+  `three_way_*.json` artifact (different `by_type` shape) is invisible
+  to System 2 and can never reach the miner's two-way reader — the
+  three-way extension is read-only from the miner's perspective.
+  Never read back into the governed loop.
 
 ### gt_pair_review
 - **Writer:** `scripts/review_gt_pairs.py` (Phase P1 — human-in-the-loop

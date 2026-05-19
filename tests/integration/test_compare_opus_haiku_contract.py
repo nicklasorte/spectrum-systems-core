@@ -394,6 +394,217 @@ def test_subprocess_object_form_decisions_are_compared(
     assert s["haiku_recall_vs_opus"] == 1.0, s
 
 
+# A non-real token containing the "sonnet" substring — enough for the
+# model-string selector, and deliberately NOT a real/deprecated model
+# string so no model-string scanner is tripped.
+SONNET_MODEL_ID = "test-sonnet-model"
+DEFERRED_DECISION = (
+    "The group deferred the aggregate interference methodology."
+)
+
+
+def _seed_three_way(tmp_path: Path) -> Path:
+    """Opus baseline (4 items) + a REAL Haiku artifact (3/4 → recall
+    0.75) + a REAL Sonnet artifact (4/4 → recall 1.0).
+
+    Both candidate artifacts are produced through the REAL governed
+    loop + ``write_promoted_artifact`` (CLAUDE.md integration rule). The
+    Sonnet artifact is identical-path-safe because its content differs
+    (it carries the extra deferred decision), so the content-hash
+    filenames differ; its ``provenance.model_id`` is overridden to a
+    'sonnet' token exactly as the real Sonnet registry lane would stamp
+    it."""
+    dl = tmp_path / "data-lake"
+    store = dl / "store"
+    sid_dir = store / "processed" / "meetings" / SOURCE_ID
+    sid_dir.mkdir(parents=True)
+    source_artifact_id = str(uuid.uuid4())
+    (sid_dir / "source_record.json").write_text(
+        json.dumps(make_source_record(SOURCE_ID, source_artifact_id)),
+        encoding="utf-8",
+    )
+
+    make_opus_reference_baseline(
+        data_lake_root=dl,
+        source_id=SOURCE_ID,
+        source_artifact_id=source_artifact_id,
+        model=OPUS_MODEL,
+        items_by_type={
+            "decisions": DECISIONS + [DEFERRED_DECISION],
+            "action_items": ACTION_ITEMS,
+            "open_questions": OPEN_QUESTIONS,
+        },
+    )
+
+    haiku_path = make_promoted_meeting_minutes_artifact(
+        lake_root=store,
+        source_id=SOURCE_ID,
+        decisions=DECISIONS,
+        action_items=ACTION_ITEMS,
+        open_questions=OPEN_QUESTIONS,
+    )
+    sonnet_path = make_promoted_meeting_minutes_artifact(
+        lake_root=store,
+        source_id=SOURCE_ID,
+        decisions=DECISIONS + [DEFERRED_DECISION],
+        action_items=ACTION_ITEMS,
+        open_questions=OPEN_QUESTIONS,
+        model_id=SONNET_MODEL_ID,
+    )
+    assert haiku_path != sonnet_path, (
+        "distinct content must yield distinct on-disk filenames"
+    )
+    return dl
+
+
+def _three_way_artifact(dl: Path) -> Path:
+    comp_dir = (
+        dl / "store" / "processed" / "meetings" / SOURCE_ID
+        / "comparisons"
+    )
+    files = sorted(comp_dir.glob("three_way_*.json"))
+    assert files, f"no three_way artifact under {comp_dir}"
+    return files[-1]
+
+
+def test_subprocess_three_way_writes_distinct_artifact(
+    tmp_path: Path,
+) -> None:
+    """End-to-end three-way: real Haiku + real Sonnet + Opus baseline.
+
+    Asserts: a ``three_way_*.json`` (NOT ``haiku_vs_opus_*.json``) is
+    written; ``comparison_mode == 'three_way'``; both summaries are
+    present and DIFFER (proving each model-string selector picked the
+    right artifact); the per-type shape is the three-way shape; the
+    artifact self-validates; an additive ``three_way_comparison``
+    eval_history row is written; STDOUT stays one JSON object."""
+    dl = _seed_three_way(tmp_path)
+    result = _run(
+        ["--data-lake", str(dl), "--source-id", SOURCE_ID,
+         "--include-sonnet"]
+    )
+    assert result.returncode == 0, (
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    data = json.loads(result.stdout)
+    assert data["status"] == "success"
+    assert data["comparison_mode"] == "three_way"
+    assert data["sonnet_artifact_path"]
+    assert data["sonnet_artifact_path"] != data["haiku_artifact_path"]
+
+    # No two-way artifact was written; exactly one three-way artifact.
+    comp_dir = (
+        dl / "store" / "processed" / "meetings" / SOURCE_ID
+        / "comparisons"
+    )
+    assert not list(comp_dir.glob("haiku_vs_opus_*.json"))
+    art = json.loads(
+        _three_way_artifact(dl).read_text(encoding="utf-8")
+    )
+    assert art["artifact_type"] == "comparison_result"
+    assert art["comparison_mode"] == "three_way"
+    assert "artifact_kind" not in json.dumps(art)
+    assert art["schema_version"] == "1.0.0"
+    assert art["opus_model_id"] == OPUS_MODEL
+    assert "summary" not in art and "false_negatives" not in art
+    hs, ss = art["haiku_summary"], art["sonnet_summary"]
+    # Haiku reproduced 3/4 (missed the deferred decision); Sonnet 4/4.
+    assert hs["total_opus_items"] == 4
+    assert hs["total_haiku_items"] == 3
+    assert hs["haiku_recall_vs_opus"] == 0.75
+    assert ss["total_haiku_items"] == 4
+    assert ss["haiku_recall_vs_opus"] == 1.0
+    assert hs != ss  # the two selectors picked different artifacts
+
+    d = art["by_type"]["decisions"]
+    assert d["opus_count"] == 2
+    assert d["haiku_count"] == 1 and d["haiku_tp"] == 1
+    assert d["sonnet_count"] == 2 and d["sonnet_tp"] == 2
+
+    eh = (
+        dl / "store" / "processed" / "meetings" / SOURCE_ID
+        / "eval_history.jsonl"
+    )
+    rows = [
+        json.loads(ln)
+        for ln in eh.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    assert any(
+        r.get("eval_type") == "three_way_comparison" for r in rows
+    )
+
+
+def test_subprocess_three_way_fail_closed_when_no_sonnet(
+    tmp_path: Path,
+) -> None:
+    """``--include-sonnet`` but only a Haiku artifact exists → the run
+    HALTS ``missing_candidate_artifact`` and writes NOTHING (never a
+    two-way result mislabelled three-way)."""
+    dl = _seed(tmp_path)  # opus + Haiku only, no Sonnet
+    result = _run(
+        ["--data-lake", str(dl), "--source-id", SOURCE_ID,
+         "--include-sonnet"]
+    )
+    assert result.returncode == 1
+    assert "missing_candidate_artifact" in result.stdout
+    comp_dir = (
+        dl / "store" / "processed" / "meetings" / SOURCE_ID
+        / "comparisons"
+    )
+    assert not comp_dir.exists() or not list(comp_dir.glob("*.json"))
+
+
+def test_subprocess_two_way_ignores_sonnet_when_flag_off(
+    tmp_path: Path,
+) -> None:
+    """Backward compatibility: a Sonnet artifact is present in the
+    data-lake but ``--include-sonnet`` is NOT passed → output is the
+    legacy two-way shape over the HAIKU artifact and the Sonnet
+    artifact is completely ignored; no three_way file is written."""
+    dl = _seed_three_way(tmp_path)
+    result = _run(["--data-lake", str(dl), "--source-id", SOURCE_ID])
+    assert result.returncode == 0, (
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    data = json.loads(result.stdout)
+    assert "comparison_mode" not in data
+    assert "sonnet_summary" not in data
+    art = json.loads(
+        _comparison_artifact(dl).read_text(encoding="utf-8")
+    )
+    assert "comparison_mode" not in art
+    assert "sonnet_run_id" not in art
+    # Two-way diff read the Haiku artifact (3/4), not Sonnet (4/4).
+    assert art["summary"]["total_haiku_items"] == 3
+    assert art["summary"]["haiku_recall_vs_opus"] == 0.75
+    comp_dir = (
+        dl / "store" / "processed" / "meetings" / SOURCE_ID
+        / "comparisons"
+    )
+    assert not list(comp_dir.glob("three_way_*.json"))
+
+
+def test_subprocess_three_way_print_inputs_stdout_stays_json(
+    tmp_path: Path,
+) -> None:
+    """Three-way + ``--print-inputs``: the Sonnet path/count land on
+    STDERR and STDOUT is still exactly one JSON object (the property
+    the workflow's correction-miner gate depends on)."""
+    dl = _seed_three_way(tmp_path)
+    result = _run(
+        [
+            "--data-lake", str(dl), "--source-id", SOURCE_ID,
+            "--include-sonnet", "--print-inputs",
+        ]
+    )
+    data = _assert_stdout_pure_json(result)
+    assert data["comparison_mode"] == "three_way"
+    assert "sonnet artifact path:" in result.stderr
+    assert "sonnet item count:" in result.stderr
+    assert "sonnet artifact path:" not in result.stdout
+
+
 STALE_DECISIONS = ["A stale decision from an earlier discarded run."]
 
 

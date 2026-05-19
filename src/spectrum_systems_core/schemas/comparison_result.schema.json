@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://spectrum-systems-core/src/schemas/comparison_result.schema.json",
   "title": "comparison_result",
-  "description": "Deterministic Haiku-vs-Opus extraction diff. Written by scripts/compare_opus_haiku.py. NEVER produced by an LLM call: the comparison is pure text matching, so this artifact is replay-stable for the same Opus baseline + Haiku artifact inputs.",
+  "description": "Deterministic model-vs-Opus extraction diff. Written by scripts/compare_opus_haiku.py. NEVER produced by an LLM call: the comparison is pure text matching, so this artifact is replay-stable for the same Opus baseline + candidate artifact inputs. Two shapes share this one artifact_type: the legacy two-way Haiku-vs-Opus shape (no comparison_mode key — byte-identical to pre-three-way output) and the three-way Opus/Haiku/Sonnet shape (comparison_mode == 'three_way'). The if/then/else below enforces exactly one shape fail-closed: a two-way artifact MUST NOT carry the three-way keys and vice versa.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -12,21 +12,85 @@
     "haiku_run_id",
     "opus_model_id",
     "compared_at",
-    "summary",
-    "by_type",
-    "false_negatives",
-    "haiku_only_items",
-    "gt_missed"
+    "by_type"
   ],
   "properties": {
     "artifact_type": { "const": "comparison_result" },
     "schema_version": { "type": "string", "minLength": 1 },
     "source_id": { "type": "string", "minLength": 1 },
     "haiku_run_id": { "type": "string" },
+    "sonnet_run_id": { "type": "string" },
     "opus_model_id": { "type": "string" },
     "compared_at": { "type": "string", "minLength": 1 },
+    "comparison_mode": {
+      "const": "three_way",
+      "description": "Only valid value is 'three_way'. The legacy two-way artifact omits this key entirely (keeping its output byte-identical); any other value is rejected fail-closed."
+    },
     "gt_pairs_present": { "type": "boolean" },
-    "summary": {
+    "summary": { "$ref": "#/$defs/summary_block" },
+    "haiku_summary": { "$ref": "#/$defs/summary_block" },
+    "sonnet_summary": { "$ref": "#/$defs/summary_block" },
+    "by_type": { "type": "object" },
+    "false_negatives": { "type": "array", "items": { "type": "object" } },
+    "haiku_only_items": { "type": "array", "items": { "type": "object" } },
+    "gt_missed": { "type": "array", "items": { "type": "object" } }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["comparison_mode"],
+        "properties": { "comparison_mode": { "const": "three_way" } }
+      },
+      "then": {
+        "required": [
+          "comparison_mode",
+          "sonnet_run_id",
+          "haiku_summary",
+          "sonnet_summary",
+          "by_type"
+        ],
+        "properties": {
+          "by_type": {
+            "type": "object",
+            "additionalProperties": { "$ref": "#/$defs/three_way_by_type_item" }
+          }
+        },
+        "not": {
+          "anyOf": [
+            { "required": ["summary"] },
+            { "required": ["false_negatives"] },
+            { "required": ["haiku_only_items"] },
+            { "required": ["gt_missed"] }
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "summary",
+          "by_type",
+          "false_negatives",
+          "haiku_only_items",
+          "gt_missed"
+        ],
+        "properties": {
+          "by_type": {
+            "type": "object",
+            "additionalProperties": { "$ref": "#/$defs/two_way_by_type_item" }
+          }
+        },
+        "not": {
+          "anyOf": [
+            { "required": ["comparison_mode"] },
+            { "required": ["sonnet_run_id"] },
+            { "required": ["haiku_summary"] },
+            { "required": ["sonnet_summary"] }
+          ]
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "summary_block": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -60,49 +124,109 @@
         "gt_recall_opus": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
       }
     },
-    "by_type": {
+    "two_way_by_type_item": {
       "type": "object",
-      "additionalProperties": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "opus_count",
-          "haiku_count",
-          "true_positives",
-          "false_negatives",
-          "haiku_only"
-        ],
-        "properties": {
-          "opus_count": { "type": "integer", "minimum": 0 },
-          "haiku_count": { "type": "integer", "minimum": 0 },
-          "true_positives": { "type": "integer", "minimum": 0 },
-          "false_negatives": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": ["text_preview", "extraction_type"],
-              "properties": {
-                "text_preview": { "type": "string" },
-                "extraction_type": { "type": "string" }
-              }
+      "additionalProperties": false,
+      "required": [
+        "opus_count",
+        "haiku_count",
+        "true_positives",
+        "false_negatives",
+        "haiku_only"
+      ],
+      "properties": {
+        "opus_count": { "type": "integer", "minimum": 0 },
+        "haiku_count": { "type": "integer", "minimum": 0 },
+        "true_positives": { "type": "integer", "minimum": 0 },
+        "false_negatives": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["text_preview", "extraction_type"],
+            "properties": {
+              "text_preview": { "type": "string" },
+              "extraction_type": { "type": "string" }
             }
-          },
-          "haiku_only": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": ["text_preview", "extraction_type"],
-              "properties": {
-                "text_preview": { "type": "string" },
-                "extraction_type": { "type": "string" }
-              }
+          }
+        },
+        "haiku_only": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["text_preview", "extraction_type"],
+            "properties": {
+              "text_preview": { "type": "string" },
+              "extraction_type": { "type": "string" }
             }
           }
         }
       }
     },
-    "false_negatives": { "type": "array", "items": { "type": "object" } },
-    "haiku_only_items": { "type": "array", "items": { "type": "object" } },
-    "gt_missed": { "type": "array", "items": { "type": "object" } }
+    "three_way_by_type_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "opus_count",
+        "haiku_count",
+        "haiku_tp",
+        "haiku_fn",
+        "haiku_only",
+        "sonnet_count",
+        "sonnet_tp",
+        "sonnet_fn",
+        "sonnet_only"
+      ],
+      "properties": {
+        "opus_count": { "type": "integer", "minimum": 0 },
+        "haiku_count": { "type": "integer", "minimum": 0 },
+        "haiku_tp": { "type": "integer", "minimum": 0 },
+        "haiku_fn": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["text_preview", "extraction_type"],
+            "properties": {
+              "text_preview": { "type": "string" },
+              "extraction_type": { "type": "string" }
+            }
+          }
+        },
+        "haiku_only": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["text_preview", "extraction_type"],
+            "properties": {
+              "text_preview": { "type": "string" },
+              "extraction_type": { "type": "string" }
+            }
+          }
+        },
+        "sonnet_count": { "type": "integer", "minimum": 0 },
+        "sonnet_tp": { "type": "integer", "minimum": 0 },
+        "sonnet_fn": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["text_preview", "extraction_type"],
+            "properties": {
+              "text_preview": { "type": "string" },
+              "extraction_type": { "type": "string" }
+            }
+          }
+        },
+        "sonnet_only": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["text_preview", "extraction_type"],
+            "properties": {
+              "text_preview": { "type": "string" },
+              "extraction_type": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
   }
 }
