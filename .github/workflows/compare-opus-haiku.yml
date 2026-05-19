@@ -49,6 +49,11 @@ on:
         options:
           - 'true'
           - 'false'
+      include_sonnet:
+        description: 'Also compare Sonnet artifact if present in data-lake'
+        required: false
+        default: 'false'
+        type: boolean
 
 permissions:
   contents: read
@@ -62,6 +67,7 @@ jobs:
       DRY_RUN: ${{ github.event.inputs.dry_run }}
       PRINT_INPUTS: ${{ github.event.inputs.print_inputs }}
       PRINT_SCORES: ${{ github.event.inputs.print_scores }}
+      INCLUDE_SONNET: ${{ github.event.inputs.include_sonnet }}
     steps:
       - name: Checkout spectrum-systems-core
         uses: actions/checkout@v4
@@ -133,6 +139,9 @@ jobs:
           if [ "$PRINT_SCORES" = "true" ]; then
             ARGS+=( --print-scores )
           fi
+          if [ "$INCLUDE_SONNET" = "true" ]; then
+            ARGS+=( --include-sonnet )
+          fi
           # STDOUT is pure JSON (the script sends the human table to
           # STDERR). Tee STDOUT to a file the summary/threshold steps
           # parse; STDERR streams to the live log.
@@ -158,7 +167,18 @@ jobs:
           summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
           p = pathlib.Path("/tmp/compare_result.json")
           with open(summary_path, "a") as f:
-              f.write("## Haiku vs Opus comparison\n\n")
+              _peek = p.read_text() if p.is_file() else ""
+              _mode = "two_way"
+              try:
+                  _mode = json.loads(_peek).get(
+                      "comparison_mode", "two_way"
+                  )
+              except Exception:
+                  _mode = "two_way"
+              if _mode == "three_way":
+                  f.write("## Opus / Haiku / Sonnet comparison\n\n")
+              else:
+                  f.write("## Haiku vs Opus comparison\n\n")
               if not p.is_file() or not p.read_text().strip():
                   f.write("No result produced (script halted; see log).\n")
                   raise SystemExit(0)
@@ -187,25 +207,49 @@ jobs:
           # succeeded AND F1 < 0.70 AND this was not a dry run (the
           # step-level `if` already gates dry_run; the F1 read gates
           # the rest). A halted/failed comparison never triggers.
-          python - <<'EOF' > /tmp/should_trigger
+          #
+          # Two-way: trigger on summary.haiku_f1_vs_opus < 0.70,
+          # target model "haiku".
+          # Three-way (comparison_mode == "three_way"): trigger when
+          # EITHER candidate's F1 < 0.70 and target the WEAKER model
+          # (sonnet_summary reuses the haiku_* summary key names — see
+          # build_three_way_comparison_artifact). The miner only
+          # rewrites the meeting_minutes_extraction prompt lane, so
+          # one dispatch per low-F1 run is dispatched for the weaker
+          # model; the next compare run re-checks both.
+          python - <<'EOF' > /tmp/trigger_decision
           import json, pathlib
           p = pathlib.Path("/tmp/compare_result.json")
-          out = "no"
+          decision, model = "no", "haiku"
           if p.is_file() and p.read_text().strip():
               try:
                   d = json.loads(p.read_text())
                   if d.get("status") == "success":
-                      f1 = float(d["summary"]["haiku_f1_vs_opus"])
-                      if f1 < 0.70:
-                          out = "yes"
+                      hf1 = float(d["summary"]["haiku_f1_vs_opus"])
+                      if d.get("comparison_mode") == "three_way":
+                          sf1 = float(
+                              d["sonnet_summary"]["haiku_f1_vs_opus"]
+                          )
+                          if min(hf1, sf1) < 0.70:
+                              decision = "yes"
+                              model = (
+                                  "haiku" if hf1 <= sf1 else "sonnet"
+                              )
+                      elif hf1 < 0.70:
+                          decision = "yes"
+                          model = "haiku"
               except Exception:
-                  out = "no"
-          print(out)
+                  decision, model = "no", "haiku"
+          print(decision)
+          print(model)
           EOF
-          if [ "$(cat /tmp/should_trigger)" = "yes" ]; then
-            echo "F1 < 0.70 — dispatching run-correction-miner.yml for $SOURCE_ID"
+          DECISION="$(sed -n '1p' /tmp/trigger_decision)"
+          MODEL="$(sed -n '2p' /tmp/trigger_decision)"
+          if [ "$DECISION" = "yes" ]; then
+            echo "F1 < 0.70 — dispatching run-correction-miner.yml for $SOURCE_ID (model=$MODEL)"
             gh workflow run run-correction-miner.yml \
               -f source_id="$SOURCE_ID" \
+              -f model_id="$MODEL" \
               -f dry_run=false \
               --repo "${{ github.repository }}"
           else

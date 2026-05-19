@@ -759,3 +759,409 @@ def test_print_inputs_then_normal_write_still_happens(
     art = json.loads(art_path.read_text(encoding="utf-8"))
     assert art["artifact_type"] == "comparison_result"
     assert art["summary"]["haiku_recall_vs_opus"] == 1.0
+
+
+# --------------------------------------------------------------------------
+# Three-way Opus / Haiku / Sonnet extension.
+#
+# Every test below fails before the fix (find_candidate_artifact /
+# build_three_way_comparison_artifact / include_sonnet do not exist) and
+# passes after. They defend: model-string selection, fail-closed missing
+# / empty Sonnet, the three-way schema, two-way byte-stability, and the
+# preserved find_haiku_artifact contract.
+# --------------------------------------------------------------------------
+def _minutes_with_model(model_id: str, *, decisions, artifact_id="art-x"):
+    art = _minutes_artifact("meeting_minutes_llm")
+    art["artifact_id"] = artifact_id
+    art["payload"]["provenance"]["model_id"] = model_id
+    art["payload"]["decisions"] = decisions
+    art["payload"]["action_items"] = []
+    art["payload"]["open_questions"] = []
+    return art
+
+
+def test_find_candidate_selects_populated_sonnet_over_empty_collision(
+    tmp_path: Path,
+) -> None:
+    """#185 regression, mirrored for the Sonnet selector.
+
+    Two Sonnet-model LLM artifacts with IDENTICAL mtimes (git-clone
+    collision); the empty one's filename sorts AFTER the populated one
+    so the content-blind ``max((mtime, name))`` would pick the empty
+    file. ``find_candidate_artifact(..., "sonnet")`` must content-skip
+    the empty one and return the populated Sonnet artifact."""
+    dl = tmp_path / "dl"
+    sid = "src"
+    _seed_baseline(dl, sid)
+    mdir = dl / "store" / "processed" / "meetings" / sid
+
+    populated = _minutes_with_model(
+        "test-sonnet-model",
+        decisions=["approved the threshold"],
+        artifact_id="1111aaaa",
+    )
+    empty = _minutes_with_model(
+        "test-sonnet-model", decisions=[], artifact_id="9999zzzz"
+    )
+    pop_path = mdir / "meeting_minutes__1111aaaa.json"
+    empty_path = mdir / "meeting_minutes__9999zzzz.json"
+    _write(pop_path, populated)
+    _write(empty_path, empty)
+    assert empty_path.name > pop_path.name  # empty sorts AFTER
+    clone_ts = 1_700_000_000
+    os.utime(pop_path, (clone_ts, clone_ts))
+    os.utime(empty_path, (clone_ts, clone_ts))
+
+    artifact, path = cmp.find_candidate_artifact(dl, sid, "sonnet")
+    assert path == pop_path, path
+    assert artifact["payload"]["decisions"] == ["approved the threshold"]
+
+
+def test_find_candidate_missing_sonnet_is_fail_closed(
+    tmp_path: Path,
+) -> None:
+    """Only a Haiku artifact present → asking for Sonnet must HALT
+    ``missing_candidate_artifact``, never silently return the Haiku
+    one."""
+    dl = tmp_path / "dl"
+    sid = "src"
+    _seed_baseline(dl, sid)
+    _write(
+        dl / "store" / "processed" / "meetings" / sid
+        / "meeting_minutes__h1.json",
+        _minutes_with_model(
+            "claude-haiku-test",
+            decisions=["approved the threshold"],
+            artifact_id="h1",
+        ),
+    )
+    with pytest.raises(cmp.ComparisonError) as ei:
+        cmp.find_candidate_artifact(dl, sid, "sonnet")
+    assert ei.value.reason == "missing_candidate_artifact"
+
+
+def test_find_candidate_empty_sonnet_is_fail_closed(
+    tmp_path: Path,
+) -> None:
+    """A Sonnet artifact exists but every array is empty → HALT
+    ``empty_candidate_artifact`` (no lying 0-item diff)."""
+    dl = tmp_path / "dl"
+    sid = "src"
+    _seed_baseline(dl, sid)
+    _write(
+        dl / "store" / "processed" / "meetings" / sid
+        / "meeting_minutes__s0.json",
+        _minutes_with_model(
+            "test-sonnet-model", decisions=[], artifact_id="s0"
+        ),
+    )
+    with pytest.raises(cmp.ComparisonError) as ei:
+        cmp.find_candidate_artifact(dl, sid, "sonnet")
+    assert ei.value.reason == "empty_candidate_artifact"
+
+
+def test_find_candidate_discriminates_haiku_and_sonnet(
+    tmp_path: Path,
+) -> None:
+    """Step 5.3 selector verification: with BOTH a Haiku-model and a
+    Sonnet-model artifact in the same directory,
+    ``find_candidate_artifact("sonnet")`` returns the Sonnet one and
+    ``find_candidate_artifact("haiku")`` returns the Haiku one."""
+    dl = tmp_path / "dl"
+    sid = "src"
+    _seed_baseline(dl, sid)
+    mdir = dl / "store" / "processed" / "meetings" / sid
+    _write(
+        mdir / "meeting_minutes__h1.json",
+        _minutes_with_model(
+            "claude-haiku-test", decisions=["haiku decision"],
+            artifact_id="h1",
+        ),
+    )
+    _write(
+        mdir / "meeting_minutes__s1.json",
+        _minutes_with_model(
+            "test-sonnet-model", decisions=["sonnet decision"],
+            artifact_id="s1",
+        ),
+    )
+
+    h_art, h_path = cmp.find_candidate_artifact(dl, sid, "haiku")
+    s_art, s_path = cmp.find_candidate_artifact(dl, sid, "sonnet")
+    assert h_path.name == "meeting_minutes__h1.json", h_path
+    assert s_path.name == "meeting_minutes__s1.json", s_path
+    assert h_art["payload"]["decisions"] == ["haiku decision"]
+    assert s_art["payload"]["decisions"] == ["sonnet decision"]
+
+
+def test_find_haiku_artifact_preserved_after_refactor(
+    tmp_path: Path,
+) -> None:
+    """The refactor must not change find_haiku_artifact behaviour.
+
+    A legacy ``meeting_minutes_llm`` artifact with NO stamped
+    provenance.model_id is still selected (the default-token clause),
+    and a Sonnet-model artifact in the same directory is NOT returned
+    by find_haiku_artifact."""
+    dl = tmp_path / "dl"
+    sid = "src"
+    _seed_baseline(dl, sid)
+    mdir = dl / "store" / "processed" / "meetings" / sid
+    # Legacy LLM artifact: provenance has produced_by only, no model_id.
+    legacy = _minutes_artifact("meeting_minutes_llm")
+    legacy["artifact_id"] = "legacy1"
+    legacy["payload"]["decisions"] = ["approved the threshold"]
+    _write(mdir / "meeting_minutes__legacy1.json", legacy)
+    # A Sonnet artifact alongside it.
+    _write(
+        mdir / "meeting_minutes__s9.json",
+        _minutes_with_model(
+            "test-sonnet-model", decisions=["sonnet only"],
+            artifact_id="s9",
+        ),
+    )
+
+    artifact, path = cmp.find_haiku_artifact(dl, sid)
+    assert path.name == "meeting_minutes__legacy1.json", path
+    assert artifact["payload"]["decisions"] == ["approved the threshold"]
+
+
+def _seed_three_way(dl: Path, sid: str) -> None:
+    """Opus baseline (2 items) + Haiku artifact (1/2 → recall 0.5) +
+    Sonnet artifact (2/2 → recall 1.0), all distinct content so the
+    on-disk filenames differ."""
+    base = (
+        dl / "store" / "processed" / "meetings" / sid
+        / "reference_baselines" / "opus_reference_minutes.jsonl"
+    )
+    base.parent.mkdir(parents=True, exist_ok=True)
+    base.write_text(
+        json.dumps(
+            {
+                "extraction_type": "decisions",
+                "ground_truth_text": "approved the threshold",
+                "model_id": "claude-opus-test",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "extraction_type": "decisions",
+                "ground_truth_text": "deferred the methodology",
+                "model_id": "claude-opus-test",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    mdir = dl / "store" / "processed" / "meetings" / sid
+    _write(
+        mdir / "meeting_minutes__h.json",
+        _minutes_with_model(
+            "claude-haiku-test",
+            decisions=["approved the threshold"],
+            artifact_id="h",
+        ),
+    )
+    _write(
+        mdir / "meeting_minutes__s.json",
+        _minutes_with_model(
+            "test-sonnet-model",
+            decisions=[
+                "approved the threshold",
+                "deferred the methodology",
+            ],
+            artifact_id="s",
+        ),
+    )
+
+
+def test_three_way_merge_schema(tmp_path: Path) -> None:
+    """Three-way merge produces the required schema and validates.
+
+    comparison_mode == 'three_way'; haiku_summary AND sonnet_summary
+    present; sonnet_run_id present; by_type carries the three-way
+    per-type keys; the two-way-only top-level keys are ABSENT."""
+    dl = tmp_path / "dl"
+    sid = "src"
+    _seed_three_way(dl, sid)
+    res = cmp.run_comparison(
+        data_lake=dl, source_id=sid, dry_run=False, include_sonnet=True
+    )
+    assert res["comparison_mode"] == "three_way"
+    art_path = Path(res["comparison_artifact_path"])
+    assert art_path.name.startswith("three_way_"), art_path
+    art = json.loads(art_path.read_text(encoding="utf-8"))
+
+    assert art["artifact_type"] == "comparison_result"
+    assert art["comparison_mode"] == "three_way"
+    assert "artifact_kind" not in json.dumps(art)
+    for key in (
+        "haiku_summary",
+        "sonnet_summary",
+        "haiku_run_id",
+        "sonnet_run_id",
+        "opus_model_id",
+        "compared_at",
+        "by_type",
+    ):
+        assert key in art, key
+    # The two-way-only top-level keys must NOT appear.
+    for absent in (
+        "summary",
+        "false_negatives",
+        "haiku_only_items",
+        "gt_missed",
+    ):
+        assert absent not in art, absent
+    # Per-type three-way shape.
+    d = art["by_type"]["decisions"]
+    for k in (
+        "opus_count",
+        "haiku_count",
+        "haiku_tp",
+        "haiku_fn",
+        "haiku_only",
+        "sonnet_count",
+        "sonnet_tp",
+        "sonnet_fn",
+        "sonnet_only",
+    ):
+        assert k in d, k
+    assert d["opus_count"] == 2
+    assert d["haiku_count"] == 1 and d["haiku_tp"] == 1
+    assert d["sonnet_count"] == 2 and d["sonnet_tp"] == 2
+    # Metrics: Haiku 1/2 = 0.5, Sonnet 2/2 = 1.0.
+    assert art["haiku_summary"]["haiku_recall_vs_opus"] == 0.5
+    assert art["sonnet_summary"]["haiku_recall_vs_opus"] == 1.0
+    # Self-validation already ran inside run_comparison; assert it
+    # explicitly too so a schema regression is caught here.
+    cmp.validate_artifact(art, "comparison_result")
+
+    # eval_history carries an additive three_way_comparison row.
+    eh = (
+        dl / "store" / "processed" / "meetings" / sid
+        / "eval_history.jsonl"
+    )
+    rows = [
+        json.loads(ln)
+        for ln in eh.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    tw = [r for r in rows if r.get("eval_type") == "three_way_comparison"]
+    assert len(tw) == 1
+    assert tw[0]["haiku_f1_vs_opus"] == pytest.approx(2 / 3)
+    assert tw[0]["sonnet_f1_vs_opus"] == 1.0
+
+
+def test_two_way_default_schema_unchanged_and_sonnet_ignored(
+    tmp_path: Path,
+) -> None:
+    """include_sonnet defaults False: output is the legacy two-way
+    shape and a Sonnet artifact in the data-lake is COMPLETELY
+    ignored."""
+    dl = tmp_path / "dl"
+    sid = "src"
+    _seed_three_way(dl, sid)  # Haiku AND Sonnet artifacts both present
+    res = cmp.run_comparison(
+        data_lake=dl, source_id=sid, dry_run=False
+    )
+    assert "comparison_mode" not in res
+    assert "sonnet_summary" not in res
+    art_path = Path(res["comparison_artifact_path"])
+    assert art_path.name.startswith("haiku_vs_opus_"), art_path
+    art = json.loads(art_path.read_text(encoding="utf-8"))
+    assert "comparison_mode" not in art
+    assert "sonnet_summary" not in art
+    assert "sonnet_run_id" not in art
+    for key in (
+        "summary",
+        "by_type",
+        "false_negatives",
+        "haiku_only_items",
+        "gt_missed",
+    ):
+        assert key in art, key
+    # The two-way diff read the HAIKU artifact (1/2), not the Sonnet
+    # one (2/2) — proof the Sonnet artifact was ignored.
+    assert art["summary"]["haiku_recall_vs_opus"] == 0.5
+    bt = art["by_type"]["decisions"]
+    assert set(bt.keys()) == {
+        "opus_count",
+        "haiku_count",
+        "true_positives",
+        "false_negatives",
+        "haiku_only",
+    }
+    # No three_way_*.json was written.
+    comp_dir = (
+        dl / "store" / "processed" / "meetings" / sid / "comparisons"
+    )
+    assert not list(comp_dir.glob("three_way_*.json"))
+    cmp.validate_artifact(art, "comparison_result")
+
+
+def test_three_way_missing_sonnet_halts_via_run_comparison(
+    tmp_path: Path,
+) -> None:
+    """include_sonnet=True but no Sonnet artifact → run_comparison
+    HALTS missing_candidate_artifact and writes nothing (never a
+    two-way result mislabelled three-way)."""
+    dl = tmp_path / "dl"
+    sid = "src"
+    _seed_baseline(dl, sid)
+    _write(
+        dl / "store" / "processed" / "meetings" / sid
+        / "meeting_minutes__h.json",
+        _minutes_with_model(
+            "claude-haiku-test",
+            decisions=["approved the threshold"],
+            artifact_id="h",
+        ),
+    )
+    with pytest.raises(cmp.ComparisonError) as ei:
+        cmp.run_comparison(
+            data_lake=dl,
+            source_id=sid,
+            dry_run=True,
+            include_sonnet=True,
+        )
+    assert ei.value.reason == "missing_candidate_artifact"
+
+
+def test_three_way_both_missing_gives_haiku_error_first(
+    tmp_path: Path,
+) -> None:
+    """Attack: both candidates missing. Haiku is resolved first, so its
+    own clear ``missing_haiku_llm_output`` halt surfaces — not a single
+    confusing combined failure. (The Sonnet halt would surface on a
+    separate run once Haiku exists.)"""
+    dl = tmp_path / "dl"
+    sid = "src"
+    _seed_baseline(dl, sid)
+    (dl / "store" / "processed" / "meetings" / sid).mkdir(
+        parents=True, exist_ok=True
+    )
+    with pytest.raises(cmp.ComparisonError) as ei:
+        cmp.run_comparison(
+            data_lake=dl,
+            source_id=sid,
+            dry_run=True,
+            include_sonnet=True,
+        )
+    assert ei.value.reason == "missing_haiku_llm_output"
+
+
+def test_three_way_dry_run_writes_nothing(tmp_path: Path) -> None:
+    dl = tmp_path / "dl"
+    sid = "src"
+    _seed_three_way(dl, sid)
+    res = cmp.run_comparison(
+        data_lake=dl, source_id=sid, dry_run=True, include_sonnet=True
+    )
+    assert res["comparison_mode"] == "three_way"
+    assert not Path(res["comparison_artifact_path"]).exists()
+    assert not (
+        dl / "store" / "processed" / "meetings" / sid
+        / "eval_history.jsonl"
+    ).exists()

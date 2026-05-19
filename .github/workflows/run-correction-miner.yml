@@ -23,6 +23,15 @@ on:
         description: 'Transcript slug to mine corrections for'
         required: true
         default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
+      model_id:
+        description: >-
+          Which model lane to target (e.g. "haiku" or "sonnet"). The
+          three-way compare-opus-haiku run passes the WEAKER model so
+          the miner knows which extraction lane underperformed.
+          Optional; defaults to "haiku" (the historical single-model
+          behaviour — unchanged when omitted).
+        required: false
+        default: 'haiku'
       dry_run:
         description: 'Dry run: analyze + generate only (no eval, no PR)'
         required: false
@@ -45,6 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SOURCE_ID: ${{ github.event.inputs.source_id }}
+      MODEL_ID: ${{ github.event.inputs.model_id }}
       DRY_RUN: ${{ github.event.inputs.dry_run }}
       MAX_CANDIDATES: ${{ github.event.inputs.max_candidates }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -97,6 +107,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          echo "correction-miner target model lane: ${MODEL_ID:-haiku}"
           ARGS=( --data-lake "${{ github.workspace }}/data-lake" --source-id "$SOURCE_ID" )
           if [ "$DRY_RUN" = "true" ]; then
             ARGS+=( --dry-run )
