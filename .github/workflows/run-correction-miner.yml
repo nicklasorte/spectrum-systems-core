@@ -44,6 +44,11 @@ on:
         description: 'Max candidates (hard cap 3)'
         required: false
         default: '3'
+      transcript_path:
+        description: 'Explicit path to transcript file (overrides auto-detection)'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: write
@@ -57,6 +62,7 @@ jobs:
       MODEL_ID: ${{ github.event.inputs.model_id }}
       DRY_RUN: ${{ github.event.inputs.dry_run }}
       MAX_CANDIDATES: ${{ github.event.inputs.max_candidates }}
+      TRANSCRIPT_PATH: ${{ github.event.inputs.transcript_path }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - name: Checkout spectrum-systems-core
@@ -116,6 +122,9 @@ jobs:
           fi
           if [ -n "${MAX_CANDIDATES:-}" ]; then
             ARGS+=( --max-candidates "$MAX_CANDIDATES" )
+          fi
+          if [ -n "${TRANSCRIPT_PATH:-}" ]; then
+            ARGS+=( --transcript-path "$TRANSCRIPT_PATH" )
           fi
           # STDOUT is pure JSON; tee it for the summary step.
           python scripts/correction_miner.py "${ARGS[@]}" \

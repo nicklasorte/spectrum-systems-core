@@ -583,6 +583,7 @@ def evaluate_candidate(
     *,
     client: Optional[Callable[..., str]] = None,
     baseline_f1: Optional[float] = None,
+    transcript_path: Optional[Path] = None,
 ) -> CandidateScore:
     """Run HAIKU (registry ``extraction`` key) with the candidate
     prompt through the real governed loop, then score it with the
@@ -597,7 +598,7 @@ def evaluate_candidate(
 
     # Read the transcript the SAME way the pipeline does so the
     # candidate is evaluated on the real input.
-    transcript = _load_transcript(data_lake, source_id)
+    transcript = _load_transcript(data_lake, source_id, transcript_path)
 
     with _prompt_override(candidate.full_prompt):
         result = run_meeting_minutes_llm_workflow(
@@ -650,32 +651,28 @@ def cmp_haiku_client(model: str) -> Callable[..., str]:
     return AnthropicJSONClient(model=model)
 
 
-def _load_transcript(data_lake: Path, source_id: str) -> str:
-    """Best-effort raw transcript text for the source.
+# Transcript-resolution constants. The processed-meeting directory
+# holds the transcript ALONGSIDE the JSON product artifacts; only the
+# real transcript extensions are eligible and the two well-known JSON
+# products are excluded by name as a second line of defence (they are
+# ``.json`` so the extension filter already excludes them — the name
+# guard documents intent and survives a future extension list change).
+_TRANSCRIPT_EXTS = (".txt", ".md", ".docx")
+_MINUTES_PREFIX = "meeting_minutes__"
+_NON_TRANSCRIPT_NAMES = frozenset({"source_record.json"})
 
-    Looks at the contract path first; falls back to the raw docx via
-    the pipeline extractor. Fail-closed: no transcript -> halt (we
-    never evaluate a candidate on an empty input).
+
+def _read_transcript_file(path: Path) -> str:
+    """Read one transcript file to non-empty plain text.
+
+    ``.docx`` goes through the real ``DocxExtractor`` (no LLM call);
+    ``.txt`` / ``.md`` are read directly. Fail-closed: a corrupt,
+    unreadable, or empty file raises ``missing_transcript`` with the
+    actual path and the underlying read error so the operator can see
+    exactly which file failed and why.
     """
-    txt = (
-        data_lake
-        / "store"
-        / "raw"
-        / "transcripts"
-        / f"{source_id}.txt"
-    )
-    if txt.is_file():
-        text = txt.read_text(encoding="utf-8")
-        if text.strip():
-            return text
-    docx = (
-        data_lake
-        / "store"
-        / "raw"
-        / "transcripts"
-        / f"{source_id}.docx"
-    )
-    if docx.is_file():
+    suffix = path.suffix.lower()
+    if suffix == ".docx":
         import tempfile
 
         from spectrum_systems_core.ingestion.docx_extractor import (
@@ -685,16 +682,139 @@ def _load_transcript(data_lake: Path, source_id: str) -> str:
         with tempfile.TemporaryDirectory() as td:
             out = Path(td) / "t.txt"
             res = DocxExtractor().extract(
-                str(docx), output_path=str(out)
+                str(path), output_path=str(out)
             )
-            if res.get("status") == "success":
-                text = out.read_text(encoding="utf-8")
-                if text.strip():
-                    return text
+            if res.get("status") != "success":
+                raise CorrectionMinerError(
+                    "missing_transcript",
+                    f"docx at {path} is unreadable: "
+                    f"{res.get('reason')}",
+                )
+            text = out.read_text(encoding="utf-8")
+            if not text.strip():
+                raise CorrectionMinerError(
+                    "missing_transcript",
+                    f"docx at {path} extracted to empty text",
+                )
+            return text
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise CorrectionMinerError(
+            "missing_transcript",
+            f"transcript at {path} is unreadable: {exc}",
+        ) from exc
+    if not text.strip():
+        raise CorrectionMinerError(
+            "missing_transcript",
+            f"transcript at {path} is empty",
+        )
+    return text
+
+
+def _find_transcript_in_dir(directory: Path) -> Optional[Path]:
+    """First transcript-like file directly in ``directory``.
+
+    Non-recursive (subdirectories such as ``markdown/``,
+    ``comparisons/``, ``reference_baselines/`` are never descended) and
+    deterministic (alphabetical). The ``meeting_minutes__*`` and
+    ``source_record.json`` product artifacts that share the
+    processed-meeting directory are excluded. Multiple matches do not
+    fail — the first alphabetically is used and a warning is logged.
+    """
+    if not directory.is_dir():
+        return None
+    candidates: List[Path] = []
+    for child in sorted(directory.iterdir()):
+        if not child.is_file():
+            continue
+        if child.suffix.lower() not in _TRANSCRIPT_EXTS:
+            continue
+        if child.name.startswith(_MINUTES_PREFIX):
+            continue
+        if child.name in _NON_TRANSCRIPT_NAMES:
+            continue
+        candidates.append(child)
+    if not candidates:
+        return None
+    if len(candidates) > 1:
+        print(
+            f"WARNING: multiple transcript files in {directory}: "
+            f"{[c.name for c in candidates]}; "
+            f"using {candidates[0].name} (first alphabetically)",
+            file=sys.stderr,
+        )
+    return candidates[0]
+
+
+def _load_transcript(
+    data_lake: Path,
+    source_id: str,
+    transcript_path: Optional[Path] = None,
+) -> str:
+    """Resolve and read the raw transcript text for ``source_id``.
+
+    Resolution order (priority — first match wins, NOT a fallback
+    chain that masks errors). No LLM call anywhere in this path:
+
+    1. ``transcript_path`` override — when given, the search is skipped
+       ENTIRELY and this exact path is read. A missing override fails
+       closed immediately, before any model call.
+    2. ``store/processed/meetings/<source_id>/`` — where transcripts
+       actually live, alongside the ``meeting_minutes__*.json`` and
+       ``source_record.json`` product artifacts (both excluded). A
+       transcript found here is read strictly: a corrupt/empty file
+       raises rather than silently falling through to the raw path.
+    3. ``store/raw/transcripts/`` — the original location, preserved
+       as a fallback for future use (legacy flat ``<source_id>.txt`` /
+       ``<source_id>.docx`` names, then a ``<source_id>/`` subdir).
+
+    Fail-closed: if no readable transcript is found, raise
+    ``missing_transcript`` listing every location checked.
+    """
+    if transcript_path is not None:
+        override = Path(transcript_path)
+        if not override.is_file():
+            raise CorrectionMinerError(
+                "missing_transcript",
+                f"--transcript-path {override} does not exist or is "
+                f"not a file",
+            )
+        return _read_transcript_file(override)
+
+    store = data_lake / "store"
+    processed_dir = store / "processed" / "meetings" / source_id
+    raw_dir = store / "raw" / "transcripts"
+
+    found = _find_transcript_in_dir(processed_dir)
+    if found is not None:
+        # A transcript exists in the processed dir: that IS the input.
+        # Read it strictly — a corrupt file is a real error the
+        # operator must see, not a reason to look elsewhere.
+        return _read_transcript_file(found)
+
+    # Fallback: the original raw/transcripts location. The legacy flat
+    # filenames are read leniently (empty/unreadable -> try the next
+    # legacy candidate) to preserve the pre-existing behaviour, then
+    # the <source_id>/ subdirectory form.
+    for name in (f"{source_id}.txt", f"{source_id}.docx"):
+        legacy = raw_dir / name
+        if legacy.is_file():
+            try:
+                return _read_transcript_file(legacy)
+            except CorrectionMinerError:
+                continue
+    found = _find_transcript_in_dir(raw_dir / source_id)
+    if found is not None:
+        return _read_transcript_file(found)
+
     raise CorrectionMinerError(
         "missing_transcript",
-        f"no readable transcript for {source_id} under "
-        f"{data_lake}/store/raw/transcripts/",
+        f"no readable transcript for {source_id}; checked "
+        f"processed dir {processed_dir} and raw fallback "
+        f"{raw_dir} (tried {raw_dir / (source_id + '.txt')}, "
+        f"{raw_dir / (source_id + '.docx')}, "
+        f"{raw_dir / source_id}{os.sep})",
     )
 
 
@@ -963,6 +1083,7 @@ def run_correction_miner(
     dry_run: bool,
     max_candidates: int,
     registry_path: Optional[Path] = None,
+    transcript_path: Optional[Path] = None,
     opus_client: Optional[Callable[..., str]] = None,
     haiku_client: Optional[Callable[..., str]] = None,
     pr_opener: Optional[Callable[..., Dict[str, Any]]] = None,
@@ -1015,6 +1136,7 @@ def run_correction_miner(
                 registry,
                 client=haiku_client,
                 baseline_f1=baseline_f1,
+                transcript_path=transcript_path,
             )
         )
 
@@ -1067,6 +1189,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--max-candidates", type=int, default=MAX_CANDIDATES_CAP
     )
+    parser.add_argument(
+        "--transcript-path",
+        dest="transcript_path",
+        default="",
+        help=(
+            "Explicit path to the transcript file. When set, skips "
+            "auto-detection entirely and reads this exact path "
+            "(fail-closed if it does not exist)."
+        ),
+    )
     args = parser.parse_args(argv)
     for attr in vars(args):
         val = getattr(args, attr)
@@ -1088,12 +1220,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         return 2
 
+    transcript_path = (
+        Path(args.transcript_path) if args.transcript_path else None
+    )
+
     try:
         result = run_correction_miner(
             data_lake=data_lake,
             source_id=args.source_id,
             dry_run=args.dry_run,
             max_candidates=args.max_candidates,
+            transcript_path=transcript_path,
         )
     except CorrectionMinerError as exc:
         print(

@@ -450,7 +450,7 @@ def test_promotion_eval_history_is_append_only(
     assert res["promotion"]["promoted"] is True
     post = eh.read_text(encoding="utf-8")
     assert post.startswith(pre)  # every prior byte intact
-    rows = [json.loads(l) for l in post.splitlines() if l.strip()]
+    rows = [json.loads(ln) for ln in post.splitlines() if ln.strip()]
     assert any(
         r.get("eval_type") == "correction_miner_promotion" for r in rows
     )
@@ -576,3 +576,234 @@ def _seed_eval_lake(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return dl
+
+
+# --------------------------------------------------------------------------
+# Transcript resolution (regression for the missing_transcript bug:
+# the miner only looked under store/raw/transcripts/ and never in the
+# processed-meeting dir where transcripts actually live).
+# --------------------------------------------------------------------------
+SID = "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218"
+
+
+def _processed_dir(dl: Path) -> Path:
+    d = dl / "store" / "processed" / "meetings" / SID
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _raw_dir(dl: Path) -> Path:
+    d = dl / "store" / "raw" / "transcripts"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _make_docx(path: Path, text: str) -> None:
+    from docx import Document
+
+    doc = Document()
+    for line in text.splitlines():
+        doc.add_paragraph(line)
+    doc.save(str(path))
+
+
+def test_transcript_resolved_from_processed_meetings_dir(
+    tmp_path: Path,
+) -> None:
+    """Case 1: the transcript lives in the processed-meeting dir
+    alongside the JSON product artifacts — the resolver must find it
+    there (this fails before the fix: only raw/ was searched)."""
+    dl = tmp_path / "dl"
+    pdir = _processed_dir(dl)
+    # JSON product artifacts that share the directory must be ignored.
+    (pdir / "meeting_minutes__abc123.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    (pdir / "source_record.json").write_text("{}", encoding="utf-8")
+    (pdir / "transcript.txt").write_text(
+        "7 GHz Downlink TIG\nThe group approved the threshold.\n",
+        encoding="utf-8",
+    )
+    text = cm._load_transcript(dl, SID)
+    assert "approved the threshold" in text
+
+
+def test_transcript_fallback_to_raw_when_processed_empty(
+    tmp_path: Path,
+) -> None:
+    """Case 2: nothing in processed -> fall back to raw. Both the
+    legacy flat name AND the new <source_id>/ subdir form resolve."""
+    # Legacy flat name (pre-existing behaviour, must still work).
+    dl1 = tmp_path / "dl1"
+    (_raw_dir(dl1) / f"{SID}.txt").write_text(
+        "legacy flat raw transcript\n", encoding="utf-8"
+    )
+    assert "legacy flat" in cm._load_transcript(dl1, SID)
+
+    # New <source_id>/ subdirectory form (raises before the fix).
+    dl2 = tmp_path / "dl2"
+    sub = _raw_dir(dl2) / SID
+    sub.mkdir(parents=True)
+    (sub / "transcript.txt").write_text(
+        "raw subdir transcript\n", encoding="utf-8"
+    )
+    assert "raw subdir" in cm._load_transcript(dl2, SID)
+
+
+def test_processed_takes_priority_over_raw(tmp_path: Path) -> None:
+    """Case 3: transcript in BOTH locations -> processed wins."""
+    dl = tmp_path / "dl"
+    (_processed_dir(dl) / "transcript.txt").write_text(
+        "PROCESSED transcript content\n", encoding="utf-8"
+    )
+    (_raw_dir(dl) / f"{SID}.txt").write_text(
+        "RAW transcript content\n", encoding="utf-8"
+    )
+    text = cm._load_transcript(dl, SID)
+    assert "PROCESSED" in text
+    assert "RAW" not in text
+
+
+def test_missing_transcript_lists_both_paths(tmp_path: Path) -> None:
+    """Case 4: neither location -> missing_transcript naming BOTH the
+    processed dir and the raw fallback dir in the error detail."""
+    dl = tmp_path / "dl"
+    _processed_dir(dl)  # exists but empty
+    _raw_dir(dl)
+    try:
+        cm._load_transcript(dl, SID)
+        raise AssertionError("expected missing_transcript")
+    except cm.CorrectionMinerError as exc:
+        assert exc.reason == "missing_transcript"
+        assert "processed" in exc.detail and SID in exc.detail
+        assert "raw" in exc.detail
+        # Both concrete locations appear.
+        assert str(
+            dl / "store" / "processed" / "meetings" / SID
+        ) in exc.detail
+        assert str(
+            dl / "store" / "raw" / "transcripts"
+        ) in exc.detail
+
+
+def test_transcript_path_override_bypasses_search(
+    tmp_path: Path,
+) -> None:
+    """Case 5: an explicit --transcript-path is read verbatim and the
+    search is skipped entirely (works even with NOTHING in either
+    auto-detect location)."""
+    dl = tmp_path / "dl"
+    _processed_dir(dl)
+    _raw_dir(dl)
+    override = tmp_path / "anywhere" / "explicit.txt"
+    override.parent.mkdir(parents=True)
+    override.write_text("explicit override content\n", encoding="utf-8")
+    text = cm._load_transcript(dl, SID, transcript_path=override)
+    assert "explicit override" in text
+
+
+def test_override_missing_fails_closed_immediately(
+    tmp_path: Path,
+) -> None:
+    """Attack: --transcript-path to a non-existent file fails closed
+    before any model work."""
+    dl = tmp_path / "dl"
+    # A valid auto-detect transcript also exists; the override must
+    # still win and fail closed (it is not a fallback).
+    (_processed_dir(dl) / "transcript.txt").write_text(
+        "would-be-found\n", encoding="utf-8"
+    )
+    try:
+        cm._load_transcript(
+            dl, SID, transcript_path=tmp_path / "nope.txt"
+        )
+        raise AssertionError("expected missing_transcript")
+    except cm.CorrectionMinerError as exc:
+        assert exc.reason == "missing_transcript"
+        assert "nope.txt" in exc.detail
+
+
+def test_docx_in_processed_is_extracted(tmp_path: Path) -> None:
+    """The transcript is a .docx — the resolver must extract clean
+    plain text via the deterministic DocxExtractor (no LLM)."""
+    dl = tmp_path / "dl"
+    _make_docx(
+        _processed_dir(dl) / "meeting-transcript.docx",
+        "7 GHz Downlink TIG\nThe group approved the threshold.",
+    )
+    text = cm._load_transcript(dl, SID)
+    assert "approved the threshold" in text
+
+
+def test_corrupt_docx_in_processed_raises_with_path(
+    tmp_path: Path,
+) -> None:
+    """Attack: a corrupt .docx in the processed dir raises
+    missing_transcript with the actual path — it does NOT silently
+    fall through to the raw location."""
+    dl = tmp_path / "dl"
+    bad = _processed_dir(dl) / "broken.docx"
+    bad.write_bytes(b"not a real docx zip")
+    # A perfectly good raw transcript exists; the corrupt processed
+    # file must still fail closed (processed has priority).
+    (_raw_dir(dl) / f"{SID}.txt").write_text(
+        "raw is fine\n", encoding="utf-8"
+    )
+    try:
+        cm._load_transcript(dl, SID)
+        raise AssertionError("expected missing_transcript")
+    except cm.CorrectionMinerError as exc:
+        assert exc.reason == "missing_transcript"
+        assert "broken.docx" in exc.detail
+
+
+def test_multiple_transcripts_in_processed_first_alpha_no_fail(
+    tmp_path: Path,
+) -> None:
+    """Attack: multiple transcript files in the processed dir -> pick
+    the first alphabetically and warn; do not fail."""
+    dl = tmp_path / "dl"
+    pdir = _processed_dir(dl)
+    (pdir / "b-second.txt").write_text("SECOND\n", encoding="utf-8")
+    (pdir / "a-first.txt").write_text("FIRST\n", encoding="utf-8")
+    text = cm._load_transcript(dl, SID)
+    assert "FIRST" in text
+    assert "SECOND" not in text
+
+
+def test_cli_threads_transcript_path(monkeypatch, tmp_path: Path) -> None:
+    """The --transcript-path CLI arg reaches run_correction_miner as a
+    Path; absent, it is None."""
+    captured: dict = {}
+
+    def fake_run(**kwargs):
+        captured.update(kwargs)
+        return {
+            "status": "success",
+            "dry_run": True,
+            "source_id": kwargs["source_id"],
+            "patterns": [],
+            "candidates": [],
+            "scores": [],
+            "promotion": {"promoted": False, "reason": "stub"},
+        }
+
+    monkeypatch.setattr(cm, "run_correction_miner", fake_run)
+
+    rc = cm.main(
+        [
+            "--data-lake", str(tmp_path),
+            "--source-id", "x",
+            "--dry-run",
+            "--transcript-path", "/tmp/explicit.txt",
+        ]
+    )
+    assert rc == 0
+    assert captured["transcript_path"] == Path("/tmp/explicit.txt")
+
+    captured.clear()
+    rc = cm.main(
+        ["--data-lake", str(tmp_path), "--source-id", "x", "--dry-run"]
+    )
+    assert rc == 0
+    assert captured["transcript_path"] is None
