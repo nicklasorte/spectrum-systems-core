@@ -369,7 +369,7 @@ entries in this file.
 
 ---
 
-## Phase 3 — glossary production wiring + measurement (PR #197)
+## Phase 3 — glossary production wiring + measurement (PR #196)
 
 ### What this change adds
 
