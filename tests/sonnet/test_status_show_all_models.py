@@ -257,6 +257,75 @@ def test_show_all_models_adds_three_fields(tmp_path: Path) -> None:
     assert row["opus_item_count"] == 12
 
 
+def test_opus_item_count_uses_schema_backed_type_list(tmp_path: Path) -> None:
+    """`_opus_item_count` reads array names from the schema, not a hard-coded tuple.
+
+    Review-comment P2 (Codex): the hard-coded type tuple drifted from
+    the meeting_minutes schema. The fix reads the array names from the
+    schema itself (mirroring `compare_opus_haiku.extraction_types`).
+
+    This test asserts the helper:
+      1. counts items in a non-hardcoded array (`commitments` is in the
+         schema today but was NOT in the legacy tuple); and
+      2. matches the union of declared array types in the schema.
+    """
+    import json as _json
+
+    from spectrum_systems_core.corpus.status import (
+        _extraction_types_from_schema,
+        _opus_item_count,
+    )
+
+    # The schema-derived type list MUST contain every Phase-5 type
+    # that the comparison engine compares; cross-check against the
+    # canonical extraction_types() helper.
+    import sys as _sys
+    _scripts = Path(__file__).resolve().parents[2] / "scripts"
+    if str(_scripts) not in _sys.path:
+        _sys.path.insert(0, str(_scripts))
+    import compare_opus_haiku as _cmp
+
+    status_types = _extraction_types_from_schema()
+    cmp_types = _cmp.extraction_types()
+    # Both readers must agree on the type set.
+    assert set(status_types) == set(cmp_types), (
+        f"status type list drifted from comparison engine: "
+        f"status_only={set(status_types) - set(cmp_types)}, "
+        f"cmp_only={set(cmp_types) - set(status_types)}"
+    )
+
+    # Now exercise the counter with a payload that lands items in
+    # every schema array. Items don't need to be valid envelopes for
+    # the count (the function just sums list lengths).
+    md = tmp_path / "lake" / "processed" / "meetings" / "src"
+    md.mkdir(parents=True, exist_ok=True)
+    payload_arrays: dict = {t: [{"placeholder": True}] for t in status_types}
+    (md / "meeting_minutes_opus__b.json").write_text(
+        _json.dumps(
+            {
+                "artifact_id": "x",
+                "artifact_type": "meeting_minutes",
+                "schema_version": "1.4.0",
+                "status": "promoted",
+                "created_at": "2026-05-20T00:00:00+00:00",
+                "trace_id": "t",
+                "input_refs": [],
+                "content_hash": "h",
+                "payload": {
+                    "title": "T",
+                    "summary": "S",
+                    "schema_version": "1.4.0",
+                    "provenance": {"produced_by": "meeting_minutes_opus"},
+                    **payload_arrays,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    # One item per type — total = len(status_types).
+    assert _opus_item_count(md) == len(status_types)
+
+
 def test_production_comparison_layout_drives_state_consistently(
     tmp_path: Path,
 ) -> None:

@@ -140,6 +140,40 @@ def _has_comparison_result(processed_dir: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _extraction_types_from_schema() -> list[str]:
+    """Read the meeting_minutes extraction array names off the schema.
+
+    Mirrors ``scripts/compare_opus_haiku.extraction_types`` so the
+    status rollup's ``opus_item_count`` and the comparison engine's
+    per-type diff are driven by the SAME source of truth. The hard-
+    coded legacy tuple this function replaces drifted from the schema
+    once the meeting_minutes payload picked up new arrays (the schema
+    is at 23 extraction arrays today) — the rollup undercounted by
+    silently skipping new types.
+
+    Returns the schema's top-level array property names, excluding
+    ``grounding`` (Phase Y meta, not a content category). On a schema
+    read / parse failure the function returns ``[]`` so the caller
+    treats the count as ``None`` rather than raising — the status
+    rollup is informational, not a gate, and must not block on a
+    transient I/O hiccup.
+    """
+    try:
+        schema = json.loads(
+            schema_path("meeting_minutes").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return []
+    props = schema.get("properties", {})
+    out: list[str] = []
+    for key, spec in props.items():
+        if key == "grounding":
+            continue
+        if isinstance(spec, dict) and spec.get("type") == "array":
+            out.append(key)
+    return out
+
+
 def _opus_item_count(processed_dir: Path) -> Optional[int]:
     """Read the Opus baseline item count, or None when no baseline exists.
 
@@ -150,6 +184,12 @@ def _opus_item_count(processed_dir: Path) -> Optional[int]:
     so lexicographic order has no relation to recency and could
     surface a stale item count in `status --show-all-models`. This
     mirrors the mtime rule used by `_latest_f1_by_variant`.
+
+    The type list is read from the meeting_minutes schema (via
+    :func:`_extraction_types_from_schema`), NOT a hard-coded tuple,
+    so the count tracks the comparison engine. A schema-read failure
+    yields ``None`` (the count is missing, not zero), so the caller
+    surfaces ``null`` rather than a misleading ``0``.
     """
     if not processed_dir.is_dir():
         return None
@@ -162,8 +202,10 @@ def _opus_item_count(processed_dir: Path) -> Optional[int]:
     except OSError:
         return None
     # The Opus baseline file is a single JSON object whose `payload`
-    # carries the arrays. Count the items across the standard
-    # extraction-types list.
+    # carries the arrays. Count items across the schema-declared
+    # extraction-types list so the rollup tracks the comparison engine
+    # (Codex review-comment, Phase 5 follow-up): a hard-coded tuple
+    # would drift the moment a new array landed in meeting_minutes.
     try:
         doc = json.loads(text)
     except json.JSONDecodeError:
@@ -171,19 +213,10 @@ def _opus_item_count(processed_dir: Path) -> Optional[int]:
     payload = doc.get("payload")
     if not isinstance(payload, dict):
         return None
-    types = (
-        "decisions",
-        "action_items",
-        "open_questions",
-        "regulatory_verbs",
-        "agency_positions",
-        "agency_relationships",
-        "agency_objections",
-        "constraints",
-        "milestones",
-        "topics",
-        "structured_items",
-    )
+    types = _extraction_types_from_schema()
+    if not types:
+        # Schema read failed — surface `null` rather than a misleading 0.
+        return None
     total = 0
     for t in types:
         v = payload.get(t)
