@@ -630,3 +630,199 @@ paraphrase.
    the chair moving on, "yes", "agreed", "that's right"). A single
    speaker's unaffirmed opinion is a `position_statement`, not a
    `decisions` item.
+
+<!-- phase-3P addition: few_shot_examples (additive) — ADDITIVE, do not edit above -->
+<!-- FEW_SHOT_BLOCK_BEGIN -->
+<!-- generated from data/few_shot/examples_v1.jsonl version=1.0.0 hash=76f8dad8c6e85a3d4acbf664e45bf09b20b75570ce69f5f2f4954eb833e95edf -->
+# Few-Shot Examples (additive)
+
+The following examples demonstrate correct extraction from NTIA/DoD TIG transcripts. Study the pattern in each example. Pay close attention to:
+- What WAS extracted and why (see rationale)
+- What was NOT extracted (empty arrays mean "nothing here")
+- The LAST example (implicit decision) is the most important pattern to internalize
+
+---
+
+### Example 1: Explicit Decision
+
+**Transcript chunk:**
+
+```
+SPEAKER_A: So before we move on, let me confirm. We've determined that the 7 GHz downlink study will focus on co-primary federal incumbents, and that commercial mobile incumbents are out of scope for this phase. SPEAKER_B: Yes, that's correct. SPEAKER_A: Good. Then that's what we'll proceed with.
+```
+
+**Correct extraction:**
+
+```json
+{
+  "action_items": [],
+  "agenda_item": [],
+  "attendees": [],
+  "claims": [],
+  "commitments": [],
+  "cross_references": [],
+  "decisions": [
+    {
+      "reason": "Explicit group decision: SPEAKER_A states the determination, SPEAKER_B affirms with \"Yes, that's correct\", and SPEAKER_A confirms \"that's what we'll proceed with\".",
+      "text": "The 7 GHz downlink study will focus on co-primary federal incumbents, and commercial mobile incumbents are out of scope for this phase.",
+      "verb": "determined"
+    }
+  ],
+  "external_stakeholder_input": [],
+  "glossary_definition": [],
+  "issue_registry_entry": [],
+  "meeting_phases": [],
+  "named_artifacts": [],
+  "open_questions": [],
+  "position_statement": [],
+  "precedent_reference": [],
+  "procedural_ruling": [],
+  "regulatory_references": [],
+  "risks": [],
+  "scheduled_events": [],
+  "sentiment_indicators": [],
+  "technical_parameters": [],
+  "topics": []
+}
+```
+
+**Why:** Demonstrates a textbook explicit decision: speaker states the determination, peer affirms, chair confirms with forward language. The verb 'determined' is the trigger.
+
+---
+
+### Example 2: Near-Miss Non-Decision
+
+**Transcript chunk:**
+
+```
+SPEAKER_C: Should we consider including commercial incumbents in the scope of this study? I'm not sure if that's the right call or not. SPEAKER_D: I think it depends on what NTIA wants from the report. SPEAKER_C: Maybe we should table this for now. Let's come back to it next meeting.
+```
+
+**Correct extraction:**
+
+```json
+{
+  "action_items": [],
+  "agenda_item": [],
+  "attendees": [],
+  "claims": [],
+  "commitments": [],
+  "cross_references": [],
+  "decisions": [],
+  "external_stakeholder_input": [],
+  "glossary_definition": [],
+  "issue_registry_entry": [],
+  "meeting_phases": [],
+  "named_artifacts": [],
+  "open_questions": [
+    {
+      "asked_by": "SPEAKER_C",
+      "question_id": "q-001",
+      "question_text": "Should we consider including commercial incumbents in the scope of this study?",
+      "resolved": false
+    }
+  ],
+  "position_statement": [],
+  "precedent_reference": [],
+  "procedural_ruling": [],
+  "regulatory_references": [],
+  "risks": [],
+  "scheduled_events": [],
+  "sentiment_indicators": [],
+  "technical_parameters": [],
+  "topics": []
+}
+```
+
+**Why:** Demonstrates near-miss non-decision: rhetorical question raised, hypothetical floated, no group commitment reached. The right extraction is an open_question, NOT a decision or action_item.
+
+---
+
+### Example 3: Implicit / Guidance-Phrased Decision (STUDY THIS PATTERN)
+
+**Transcript chunk:**
+
+```
+SPEAKER_A: Our guidance for the seven gigahertz downlink study is that we need to address all United States and possessions. That's how we're going to scope the coverage area. SPEAKER_B: Understood, we'll work to that.
+```
+
+**Correct extraction:**
+
+```json
+{
+  "action_items": [],
+  "agenda_item": [],
+  "attendees": [],
+  "claims": [],
+  "commitments": [],
+  "cross_references": [],
+  "decisions": [
+    {
+      "reason": "Implicit/guidance-phrased decision: 'our guidance is' plus 'we need to address' plus 'that's how we're going to scope' establishes the group direction. The phrasing is guidance-style rather than 'we decided', but the binding intent is the same.",
+      "text": "The seven gigahertz downlink study will address all United States and possessions for the coverage area.",
+      "verb": "directed"
+    }
+  ],
+  "external_stakeholder_input": [],
+  "glossary_definition": [],
+  "issue_registry_entry": [],
+  "meeting_phases": [],
+  "named_artifacts": [],
+  "open_questions": [],
+  "position_statement": [],
+  "precedent_reference": [],
+  "procedural_ruling": [],
+  "regulatory_references": [],
+  "risks": [],
+  "scheduled_events": [],
+  "sentiment_indicators": [],
+  "technical_parameters": [],
+  "topics": []
+}
+```
+
+**Why:** STUDY THIS PATTERN. Guidance-phrased decisions like 'our guidance is X' and 'we need to address Y' are full decisions even though the speaker did not say 'we decided'. This is the implicit-decision pattern the extractor currently misses.
+
+---
+<!-- FEW_SHOT_BLOCK_END -->
+
+
+<!-- phase-3P addition: negative_patterns (additive) — ADDITIVE, do not edit above -->
+# Do Not Extract (additive)
+
+The following patterns LOOK like decisions or action items but are NOT. If you see these, DO NOT emit an extraction. Emitting a false extraction is worse than missing a real one.
+
+**Pattern 1: Rhetorical questions**
+A speaker raises a question without the group committing to an answer.
+Example: "Has anyone considered whether we should include commercial mobile in scope?"
+→ DO NOT extract as action_item or decision. The group has not committed.
+
+**Pattern 2: Hypothetical statements**
+A speaker describes a scenario that might happen, not what the group is doing.
+Example: "If we were to include all incumbents, that would require additional analysis."
+→ DO NOT extract as decision. "If we were to" is hypothetical.
+
+**Pattern 3: Self-corrections retracted mid-sentence**
+A speaker starts a statement and immediately retracts it.
+Example: "We will — or actually, let me back up — we haven't decided on the scope yet."
+→ DO NOT extract the "we will" fragment. The speaker retracted it.
+
+**Pattern 4: Third-party statements not endorsed by the group**
+A speaker reports what someone outside the meeting said or wants.
+Example: "Industry has expressed interest in including the 7450–7550 MHz range."
+→ DO NOT extract as a group decision or commitment. This is external input, not a group action.
+
+**Pattern 5: Discussion without resolution**
+A topic is raised and discussed but no outcome is reached in this chunk.
+Example: "We've been going back and forth on whether to include adjacent band protection thresholds. Several members have different views."
+→ DO NOT extract as a decision. Extract as issue_registry_entry if appropriate.
+
+Hallucination defense applies here too: if you're unsure whether a statement crosses the threshold into a group commitment, OMIT IT.
+
+## Reason field (additive — schema_version 1.4.0+)
+
+When emitting an item in `decisions` or `action_items`, include a `reason` field — one short sentence explaining WHY this item was extracted (what trigger phrase or group affirmation made it qualify). The `reason` is OPTIONAL in the JSON Schema for backward compatibility with pre-Phase-3P artifacts, but the prompt requires it. A high missing-rate is logged as a diagnostic on the per-run `pipeline_invocation_log`.
+
+Good `reason`: "Explicit decision: speaker said 'we've determined', group affirmed."
+Good `reason`: "Implicit/guidance-phrased: 'our guidance is X' establishes group direction."
+Bad `reason`: "It looked like a decision." (insufficient — name the trigger)

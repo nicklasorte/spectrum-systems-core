@@ -479,6 +479,8 @@ outcomes are acceptable findings — the measurement is the point.
 
 ---
 
+---
+
 ## Phase 4 — corpus ingestion + status corpus mode (PR #197)
 
 ### What this change adds
@@ -609,6 +611,122 @@ enforces this against the PR diff.
 
 ---
 
+## Phase 3P — few-shot examples + negative patterns (PR #198)
+
+### What this change adds
+
+- New module ``src/spectrum_systems_core/few_shot/`` with a
+  manifest-gated loader (``load_few_shot_registry``), a renderer
+  (``build_few_shot_block``), a runtime injector
+  (``inject_or_strip_few_shot``), and a missing-reason-rate
+  diagnostic (``count_missing_reason_rate``).
+- New JSON Schema ``schemas/few_shot_entry.schema.json``
+  (additionalProperties: false) with ``id`` / ``example_type`` enum
+  / ``speaker_names_stripped: true`` const / 22-array
+  ``gold_extraction`` requirement / ``rationale`` minLength=20 /
+  ``chunk_text`` maxLength=2000 / ``id`` regex
+  ``^fewshot-[0-9]{3}$``.
+- New registry artifact ``data/few_shot/examples_v1.jsonl`` (3
+  entries) and its hash gate ``data/few_shot/MANIFEST.json``.
+- The canonical prompt file
+  ``src/spectrum_systems_core/workflows/prompts/meeting_minutes_llm.md``
+  gains two additive sections:
+  - **Few-Shot Examples** between ``<!-- FEW_SHOT_BLOCK_BEGIN -->`` /
+    ``<!-- FEW_SHOT_BLOCK_END -->`` markers — stripped at runtime by
+    ``inject_or_strip_few_shot`` when ``--enable-few-shot`` is OFF.
+  - **Do Not Extract (negative patterns)** — NOT marker-wrapped, so
+    it is ALWAYS active regardless of the flag (precision guard).
+- ``meeting_minutes.schema.json`` gains an optional ``reason`` field
+  on object-form ``decisions`` and ``action_items`` items. Backward
+  compatible — pre-3P artifacts without ``reason`` still validate.
+- ``pipeline_invocation_log.schema.json`` gains an optional
+  ``few_shot_reason_missing_rate`` field (number 0.0–1.0). Logged
+  only when the rate exceeds 0.20. Pre-3P logs without the field
+  still validate.
+- New CLI flag pair on ``spectrum-core meeting-minutes-llm``:
+  ``--enable-few-shot`` / ``--disable-few-shot`` (mutually
+  exclusive). CLI-only — env vars are NOT consulted. Default OFF
+  until the operator confirms real-corpus provenance.
+- ``scripts/cli_few_shot.py`` — CLI shell that prints the production
+  prompt with the section either present or stripped (used by
+  ``tests/few_shot/test_cli_flag.py``).
+- ``scripts/verify_fewshot_speaker_names.py`` — heuristic scanner
+  flagging suspected un-stripped speaker names.
+- ``scripts/verify_fewshot_no_regression.py`` — negative-transfer
+  guard. Reads comparison_result artifacts under a data-lake root,
+  pairs the most recent pre/post comparisons per source by
+  prompt_content_hash, and exits 1 when any source's F1 drops by
+  more than 5 points.
+
+### To roll back
+
+1. Revert the PR.
+2. The Few-Shot Examples and Do Not Extract sections leave the
+   prompt file (the revert handles this automatically).
+3. The ``reason`` field in ``meeting_minutes.schema.json`` remains
+   optional in the schema (backward-compat). Existing extraction
+   artifacts with ``reason`` fields remain valid. The field causes
+   no harm if left.
+4. The ``few_shot_reason_missing_rate`` field in
+   ``pipeline_invocation_log.schema.json`` remains optional.
+   Existing logs that recorded it remain valid.
+5. Close any open correction-miner candidate PRs immediately. Their
+   ``expected_post_merge_prompt_hash`` is now stale and the
+   comparisons they reference were taken against a stripped prompt
+   that no longer exists in production.
+6. The data registry under ``data/few_shot/`` remains on disk but
+   is unused — safe to leave as the audit trail for the (closed)
+   experiment.
+
+### Data migration required for rollback
+
+None. All schema changes are additive; the few-shot block is
+flag-gated default OFF; the regression guard reads existing on-disk
+artifacts non-destructively.
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/few_shot/ -q
+python scripts/verify_fewshot_no_regression.py --lake tests/fixtures/few_shot_regression_passing/ --current-hash POST_HASH_SENTINEL
+```
+
+After revert, ``tests/few_shot/`` is expected to disappear too. If
+it remains and fails, the revert is incomplete — fix forward.
+
+### Cross-PR dependency
+
+``depends_on``: #193 (eval-path alignment — provides
+``prompt_content_hash`` on the comparison artifact, which the
+negative-transfer guard pairs pre/post comparisons by); #196
+(Phase 3 — provides the glossary mutex flag pair pattern this PR
+mirrors and the ``governed_pipeline_run`` entry point this PR
+threads ``enable_few_shot`` and ``few_shot_reason_missing_rate``
+through).
+
+``operator_action_on_merge``: Close any open correction-miner
+candidate PRs immediately after merge. Their
+``expected_post_merge_prompt_hash`` no longer matches production
+once this PR lands.
+
+``future_dependency``: A follow-up PR flips ``--enable-few-shot``
+default to True after the operator confirms:
+1. All synthetic entries in ``examples_v1.jsonl`` are replaced with
+   real corpus data (``synthetic: false`` on every entry and
+   ``has_synthetic_entries: false`` in the manifest), AND
+2. ``verify_fewshot_no_regression.py`` passes on post-merge
+   comparison artifacts in the live data lake.
+
+### Expected F1 impact
+
+Research synthesis predicts +8–16 F1 points combined for few-shot
+examples + negative patterns. Actual measurement is gated on
+operator action: the flag stays OFF in this PR, so production F1
+does not change. The follow-up enable PR runs the runbook and
+measures the delta.
+
+---
+
 ## Phase 4a — Opus baseline prompt + baseline-opus CLI (PR #199)
 
 ### What this change adds
@@ -684,8 +802,7 @@ Future runs simply stop touching them.
 ### Verification that the rollback is clean
 
 ```bash
-pytest tests/corpus/test_baseline_opus.py \
-       tests/corpus/test_verify_opus_baseline_consistency.py
+pytest tests/corpus/test_baseline_opus.py
 python scripts/verify_opus_baseline_consistency.py --lake <data-lake-path>
 ```
 

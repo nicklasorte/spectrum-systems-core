@@ -55,6 +55,27 @@ jobs:
         # disagree on the definition after whitespace normalization.
         run: python scripts/verify_glossary_consistency.py
 
+      - name: Verify Phase 3P few-shot manifest + ordering
+        # Fails closed if data/few_shot/MANIFEST.json claims a sha256
+        # that does not match the canonicalised JSONL bytes, or if the
+        # LAST registry entry is not implicit_decision (recency-bias
+        # property). Pure stdlib so it runs without test deps.
+        run: python -c "import sys; sys.path.insert(0, 'src'); from spectrum_systems_core.few_shot import load_few_shot_registry; reg = load_few_shot_registry(); assert reg.entries[-1].example_type == 'implicit_decision', f'last entry must be implicit_decision (got {reg.entries[-1].example_type!r})'; print('OK', 'hash=' + reg.version_hash)"
+
+      - name: Verify Phase 3P few-shot speaker-name scanner (warning-only)
+        # Heuristic scan for un-stripped speaker names in the registry.
+        # Warning-only (exits 0 even on findings); the PR description
+        # is expected to document any flagged sequences.
+        run: python scripts/verify_fewshot_speaker_names.py
+
+      - name: Verify Phase 3P few-shot negative-transfer guard (fixture)
+        # Run against the CI fixture which carries a stable source plus
+        # an insufficient source. The fixture is decoupled from the
+        # live prompt-file hash via --current-hash. The matching
+        # regression fixture is exercised by tests/few_shot/test_regression_guard.py;
+        # this step asserts the script ALSO works as a CLI gate.
+        run: python scripts/verify_fewshot_no_regression.py --lake tests/fixtures/few_shot_regression_passing --current-hash POST_HASH_SENTINEL
+
       - name: Run pytest
         run: |
           set -o pipefail
