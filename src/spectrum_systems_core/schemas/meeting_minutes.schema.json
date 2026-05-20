@@ -1599,6 +1599,16 @@
             "tainted_glossary_drift": {
               "type": "boolean",
               "description": "Phase 3 (optional). True when the glossary file's sha256 changed between load and completion. A tainted run is excluded from per-source variance budget calculations (same lifecycle as `legacy_eval: true`). Omitted on runs that did not enable glossary injection."
+            },
+            "prompt_variant": {
+              "type": "string",
+              "enum": [
+                "production_haiku",
+                "haiku_prompt_with_sonnet_model",
+                "opus_prompt_with_sonnet_model",
+                "opus_baseline"
+              ],
+              "description": "Phase 5 (optional). Identifies the (prompt, model) combination that produced this artifact. Optional for backward compat — pre-Phase-5 artifacts omit it; the comparison engine defaults a missing value to `production_haiku`. Two artifacts with the same `produced_by` model but different `prompt_variant` are NOT compared directly — they are shown side-by-side in the three-way table as separate columns."
             }
           }
         }

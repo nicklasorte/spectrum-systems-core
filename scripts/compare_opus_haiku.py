@@ -929,6 +929,11 @@ def build_comparison_artifact(
         "false_negatives": metrics["false_negatives"],
         "haiku_only_items": metrics["haiku_only_items"],
         "gt_missed": metrics["gt_missed"],
+        # Phase 5 — additive prompt_variant readout. Defaults to
+        # `production_haiku` for pre-Phase-5 artifacts so the
+        # comparison engine treats the two-way path identically
+        # whether the candidate carries the field or not.
+        "haiku_prompt_variant": _prompt_variant_of(haiku_artifact),
     }
 
 
@@ -1010,7 +1015,7 @@ def build_three_way_comparison_artifact(
     branch forbids them so a three-way artifact can never be misread as
     a two-way one (and vice versa).
     """
-    return {
+    artifact_out: Dict[str, Any] = {
         "artifact_type": COMPARISON_ARTIFACT_TYPE,
         "schema_version": COMPARISON_SCHEMA_VERSION,
         "comparison_mode": "three_way",
@@ -1029,6 +1034,17 @@ def build_three_way_comparison_artifact(
             haiku_metrics, sonnet_metrics
         ),
     }
+    # Phase 5 — additive prompt_variant readout. Defaults to
+    # `production_haiku` when extraction_config.prompt_variant is
+    # absent (pre-Phase-5 artifacts). The comparison schema's
+    # additionalProperties is open at the comparison_result top level
+    # (only the two-way fields are forbidden in three_way), so adding
+    # these keys is schema-additive. Tests in
+    # tests/comparison/test_three_way_audit.py assert this stamp on
+    # both legacy and Phase-5 artifacts.
+    artifact_out["haiku_prompt_variant"] = _prompt_variant_of(haiku_artifact)
+    artifact_out["sonnet_prompt_variant"] = _prompt_variant_of(sonnet_artifact)
+    return artifact_out
 
 
 def _comparison_out_path(
@@ -1322,6 +1338,30 @@ def _extraction_config_from_artifact(
     if isinstance(ec, dict):
         return ec
     return None
+
+
+# Phase 5 — single source of truth for the comparison engine's default
+# when an artifact omits `extraction_config.prompt_variant` (pre-Phase-5
+# artifacts). Audit report `phase5_three_way_audit_report.md` enumerates
+# every read site that consumes this default.
+_DEFAULT_PROMPT_VARIANT: str = "production_haiku"
+
+
+def _prompt_variant_of(artifact: Dict[str, Any]) -> str:
+    """Read ``extraction_config.prompt_variant`` off an artifact.
+
+    Returns the stamped value when present; otherwise the
+    Phase-5 default ``production_haiku``. Pre-Phase-5 artifacts omit
+    the field entirely — they predate the (prompt, model) discriminator
+    and the comparison engine treats them as the production Haiku
+    variant.
+    """
+    ec = _extraction_config_from_artifact(artifact)
+    if isinstance(ec, dict):
+        pv = ec.get("prompt_variant")
+        if isinstance(pv, str) and pv.strip():
+            return pv
+    return _DEFAULT_PROMPT_VARIANT
 
 
 def _load_expected_post_merge_hash(
@@ -1731,6 +1771,11 @@ def run_comparison(
             # metrics are additive under ``sonnet_summary``.
             "summary": hs,
             "sonnet_summary": ss,
+            # Phase 5 — additive prompt_variant labels so the CLI
+            # readout (and the print_three_way_delta helper) labels
+            # each candidate with its (prompt, model) tag.
+            "haiku_prompt_variant": artifact["haiku_prompt_variant"],
+            "sonnet_prompt_variant": artifact["sonnet_prompt_variant"],
             "table": table,
             # Phase 1 additive fields. Pre-1.4 callers ignore them.
             "haiku_schema_version": haiku_schema_version,

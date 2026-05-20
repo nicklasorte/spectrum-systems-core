@@ -86,6 +86,23 @@ on:
         required: false
         type: boolean
         default: false
+      model:
+        description: >-
+          Phase 5. Extraction model token. One of: haiku (default),
+          sonnet (Haiku prompt + Sonnet model, apples-to-apples),
+          sonnet-unconstrained (Opus prompt + Sonnet model — requires
+          the Phase 4a Opus prompt on disk), or opus (ceiling baseline).
+          Passed verbatim to the CLI's --model flag; the CLI HALTS on
+          an unknown token. Default `haiku` is byte-identical to
+          pre-Phase-5 behaviour.
+        required: false
+        type: choice
+        options:
+          - haiku
+          - sonnet
+          - sonnet-unconstrained
+          - opus
+        default: haiku
 
 permissions:
   contents: read
@@ -105,6 +122,7 @@ jobs:
       TEST_PARSER_ONLY: ${{ github.event.inputs.test_parser_only }}
       SINGLE_CHUNK: ${{ github.event.inputs.single_chunk }}
       PRINT_CONTEXT: ${{ github.event.inputs.print_context }}
+      MODEL: ${{ github.event.inputs.model }}
     steps:
       - name: Checkout spectrum-systems-core
         uses: actions/checkout@v4
@@ -148,6 +166,14 @@ jobs:
           if [ "${PRINT_CONTEXT}" = "true" ]; then
             PRINT_CONTEXT_ARG=(--print-context)
           fi
+          # Phase 5: --model is the controlled override; default `haiku`
+          # is byte-identical to pre-Phase-5 behaviour. The CLI HALTS on
+          # an unknown token, so the choice dropdown above is the only
+          # source of authority here.
+          MODEL_ARG=()
+          if [ -n "${MODEL}" ]; then
+            MODEL_ARG=(--model "${MODEL}")
+          fi
           python -m spectrum_systems_core.cli meeting-minutes-llm \
             --source-id "${SOURCE_ID}" \
             --data-lake "${DATA_LAKE_PATH}" \
@@ -156,6 +182,7 @@ jobs:
             "${EXTRA_ARGS[@]}" \
             "${SINGLE_CHUNK_ARG[@]}" \
             "${PRINT_CONTEXT_ARG[@]}" \
+            "${MODEL_ARG[@]}" \
             >stdout.log 2>stderr.log
           rc=$?
           cat stdout.log
