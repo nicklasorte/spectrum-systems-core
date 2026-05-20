@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/pipeline_invocation_log.schema.json",
+  "title": "pipeline_invocation_log",
+  "description": "Phase 2 diagnostic. One entry per governed_pipeline_run invocation. Lifecycle mirrors `grounding_rejection_report` and `debug__<run_id>.json`: never promoted, never indexed, never product. Expires 30 days after `started_at`; the weekly reconciler (scripts/reconcile_invocation_logs.py) walks the data lake and surfaces gaps where a comparison_result has no paired invocation log.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "source_id",
+    "invocation_id",
+    "started_at",
+    "completed_at",
+    "caller",
+    "extraction_config_hash",
+    "prompt_content_hash",
+    "transcript_hash",
+    "comparison_artifact_path",
+    "ttl_expires_at"
+  ],
+  "properties": {
+    "artifact_type": { "const": "pipeline_invocation_log" },
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0"]
+    },
+    "source_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "meeting_id / source_id this run was for."
+    },
+    "invocation_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "uuid4 hex identifying this one invocation."
+    },
+    "started_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO 8601 timestamp when the call began."
+    },
+    "completed_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO 8601 timestamp when the call returned (or failed)."
+    },
+    "caller": {
+      "type": "string",
+      "enum": [
+        "production_cli",
+        "correction_miner",
+        "batch_workflow"
+      ],
+      "description": "Which subsystem invoked governed_pipeline_run. The reconciler aggregates per-caller drift gaps."
+    },
+    "extraction_config_hash": {
+      "type": "string",
+      "minLength": 1,
+      "description": "sha256 of the canonical-json ExtractionConfig dict."
+    },
+    "prompt_content_hash": {
+      "type": "string",
+      "minLength": 0,
+      "description": "sha256 of the prompt content string. May be empty when extraction halted before a prompt was assembled."
+    },
+    "transcript_hash": {
+      "type": "string",
+      "minLength": 0,
+      "description": "sha256 of the transcript string fed to the workflow."
+    },
+    "comparison_artifact_path": {
+      "type": "string",
+      "minLength": 0,
+      "description": "Path the production CLI wrote the comparison_result to. May be empty for miner runs which do not persist comparisons."
+    },
+    "ttl_expires_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO 8601 timestamp 30 days after started_at. The reconciler treats expired logs as eligible for cleanup."
+    }
+  }
+}

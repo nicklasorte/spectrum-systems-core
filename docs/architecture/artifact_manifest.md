@@ -523,6 +523,49 @@ calling `git check-ignore`.
   three-way extension is read-only from the miner's perspective.
   Never read back into the governed loop.
 
+### pipeline_invocation_log
+- **Writer:** `spectrum_systems_core.pipeline.governed_pipeline_run`
+  (Phase 2). One log per invocation. The function takes
+  `prompt_content` as a STRING (never a path), captures the
+  `ExtractionConfig` snapshot at run time, and writes the log
+  alongside the diagnostic family that already lives in the meeting
+  directory.
+- **Path template:**
+  `data-lake/store/processed/meetings/<source_id>/diagnostics/pipeline_invocation_log__<invocation_id>.json`
+- **Schema:** `src/spectrum_systems_core/schemas/pipeline_invocation_log.schema.json`
+  (1.0.0).
+- **Optional top-level fields:** none. Every field is required so a
+  reviewer can reproduce the run from the log alone:
+  `source_id`, `invocation_id`, `started_at`, `completed_at`,
+  `caller` (one of `production_cli`, `correction_miner`,
+  `batch_workflow`), `extraction_config_hash`, `prompt_content_hash`,
+  `transcript_hash`, `comparison_artifact_path`, `ttl_expires_at`.
+- **Git-tracked:** NO — same reasoning as `grounding_rejection_report`:
+  the path lives under `processed/`, which the `nicklasorte/data-lake`
+  repo bulk-ignores via `**/processed/**`. Diagnostics are
+  per-run ephemeral and expire 30 days after `started_at`.
+- **Readers:** `scripts/reconcile_invocation_logs.py` (weekly
+  reconciler — surfaces comparison_results that have no paired
+  invocation log to `reconciliation_gaps.jsonl`). Never read back
+  into the governed loop and never the source of a control decision.
+
+### tolerance_budget
+- **Writer:** Operator-edited config file checked into the repo.
+  Never produced by code (the miner reads it but never writes it).
+- **Path template:** `docs/contracts/tolerance_budget.json`
+- **Schema:** `src/spectrum_systems_core/schemas/tolerance_budget.schema.json`
+  (1.0.0). The `current_promotion_buffer` bound (0.02 ≤ x ≤ 0.10)
+  is enforced HERE at write time, NOT in code.
+- **Optional top-level fields:** `per_source_budgets` may be empty
+  on first boot. The calibration-mode gate handles the empty case.
+- **Git-tracked:** YES — the file lives in `spectrum-systems-core`,
+  not in `nicklasorte/data-lake`. It is the operator-visible
+  contract for promotion threshold composition.
+- **Readers:** `spectrum_systems_core.calibration.budget`
+  (`get_variance_budget`, `get_promotion_threshold`,
+  `is_in_calibration_mode`). The correction miner reaches the
+  budget through these functions only.
+
 ### gt_pair_review
 - **Writer:** `scripts/review_gt_pairs.py` (Phase P1 — human-in-the-loop
   confirmation of a pair's `expected_decision_outcome`).
