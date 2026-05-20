@@ -96,7 +96,16 @@ def _write_two_way_cmp(
     f1: float,
     variant: str = "production_haiku",
     slug: str = "c1",
+    in_comparisons_subdir: bool = False,
 ) -> None:
+    """Write a two-way comparison artifact.
+
+    ``in_comparisons_subdir=True`` writes to ``comparisons/haiku_vs_opus_<slug>.json``
+    — the PRODUCTION path that ``scripts/compare_opus_haiku._comparison_out_path``
+    targets. The default (``False``) writes the legacy / fixture path
+    (``comparison_result__<slug>.json`` in the meeting root) so existing
+    tests do not break.
+    """
     meeting_dir.mkdir(parents=True, exist_ok=True)
     art: Dict[str, Any] = {
         "artifact_type": "comparison_result",
@@ -127,9 +136,13 @@ def _write_two_way_cmp(
         "gt_pairs_present": False,
         "haiku_prompt_variant": variant,
     }
-    (meeting_dir / f"comparison_result__{slug}.json").write_text(
-        json.dumps(art), encoding="utf-8"
-    )
+    if in_comparisons_subdir:
+        sub = meeting_dir / "comparisons"
+        sub.mkdir(parents=True, exist_ok=True)
+        out = sub / f"haiku_vs_opus_{slug}.json"
+    else:
+        out = meeting_dir / f"comparison_result__{slug}.json"
+    out.write_text(json.dumps(art), encoding="utf-8")
 
 
 def _write_three_way_cmp(
@@ -242,6 +255,38 @@ def test_show_all_models_adds_three_fields(tmp_path: Path) -> None:
     assert row["haiku_latest_f1"] == pytest.approx(0.395)
     assert row["sonnet_latest_f1"] is None
     assert row["opus_item_count"] == 12
+
+
+def test_two_way_comparisons_in_comparisons_subdir_are_picked_up(
+    tmp_path: Path,
+) -> None:
+    """Production two-way artifacts live at `comparisons/haiku_vs_opus_*.json`.
+
+    Review-comment P1 (Codex): the rollup originally only scanned
+    `comparison_result__*.json` in the meeting root, but the real
+    comparison pipeline writes to `comparisons/haiku_vs_opus_*.json`
+    (see `scripts/compare_opus_haiku._comparison_out_path`). Without
+    this fix, every operator running the normal workflow would see
+    `null` Haiku F1s in `--show-all-models`.
+    """
+    lake = tmp_path / "lake"
+    md = lake / "processed" / "meetings" / "a"
+    _write_source_record(md, "a")
+    _write_opus_baseline(md, item_count=10)
+    # Write the two-way artifact at the PRODUCTION path.
+    _write_two_way_cmp(
+        md, f1=0.395, variant="production_haiku",
+        slug="20260520T000000",
+        in_comparisons_subdir=True,
+    )
+
+    manifest = _write_manifest(tmp_path, ["a"])
+    report = build_corpus_status_report(
+        lake_root=lake, manifest_path=manifest, show_all_models=True
+    )
+    row = next(r for r in report["rows"] if r["source_id"] == "a")
+    # The Haiku F1 is read from the comparisons/ subdir.
+    assert row["haiku_latest_f1"] == pytest.approx(0.395)
 
 
 def test_opus_item_count_picks_newest_baseline_by_mtime(tmp_path: Path) -> None:

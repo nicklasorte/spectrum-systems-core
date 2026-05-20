@@ -183,17 +183,30 @@ def _latest_f1_by_variant_with_mtime(
     for multiple Sonnet variants and the operator wants the freshest.
 
     ``want_variant`` is one of the four Phase-5 prompt variants. The
-    function scans both two-way (``comparison_result__*.json``) and
-    three-way (``comparisons/three_way_*.json``) artifacts.
+    function scans the comparison-pipeline output paths:
+
+    * ``comparisons/haiku_vs_opus_*.json`` — two-way artifacts written
+      by ``scripts/compare_opus_haiku._comparison_out_path``.
+    * ``comparisons/three_way_*.json`` — three-way artifacts written by
+      ``scripts/compare_opus_haiku._three_way_out_path``.
+    * ``comparison_result__*.json`` (meeting root) — legacy / synthetic
+      path some test fixtures still use. Scanned for robustness.
     """
     if not processed_dir.is_dir():
         return None
 
     candidates: list[tuple[float, Path]] = []
+    # Legacy / fixture path: bare comparison_result__*.json in the
+    # meeting root. Production callers do NOT write here, but some
+    # test fixtures and pre-Phase-5 callers do.
     for p in processed_dir.glob("comparison_result__*.json"):
         candidates.append((p.stat().st_mtime, p))
+    # Production paths: scripts/compare_opus_haiku writes BOTH the
+    # two-way and three-way artifacts under comparisons/.
     three_way_dir = processed_dir / "comparisons"
     if three_way_dir.is_dir():
+        for p in three_way_dir.glob("haiku_vs_opus_*.json"):
+            candidates.append((p.stat().st_mtime, p))
         for p in three_way_dir.glob("three_way_*.json"):
             candidates.append((p.stat().st_mtime, p))
     if not candidates:
