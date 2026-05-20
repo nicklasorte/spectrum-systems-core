@@ -881,6 +881,79 @@ def _build_parser() -> argparse.ArgumentParser:
         "the human-readable table.",
     )
 
+    # Phase 4a — Opus baseline producer. Deferred from Phase 4 (PR
+    # #197) until the canonical Opus prompt at
+    # workflows/prompts/meeting_minutes_opus.md existed. Calls the Opus
+    # model against the per-source transcript and writes
+    # meeting_minutes_opus__<timestamp>.json under
+    # processed/meetings/<source_id>/. The manifest's
+    # observed.ingestion_status advances to ``baseline_complete``.
+    bop = sub.add_parser(
+        "baseline-opus",
+        help="Phase 4a: produce the Opus reference baseline for one or more sources.",
+        description=(
+            "Read the corpus manifest at data/corpus/manifest.json, "
+            "resolve each selected source's transcript via "
+            "source_record.payload.raw_path, call the Opus reference "
+            "model with the canonical Opus prompt, and write "
+            "meeting_minutes_opus__<timestamp>.json. The manifest's "
+            "observed.ingestion_status is advanced to "
+            "`baseline_complete`. Provide exactly one of --source-id "
+            "(repeatable) or --all. The --all mode requires "
+            "--confirm-cost; the flag is CLI-only and cannot be set "
+            "via env var."
+        ),
+    )
+    bop.add_argument(
+        "--lake",
+        required=True,
+        help="Path to the data lake root.",
+    )
+    bop.add_argument(
+        "--source-id",
+        action="append",
+        dest="source_ids",
+        default=None,
+        help="One source_id to baseline. Repeatable. Mutually "
+        "exclusive with --all.",
+    )
+    bop.add_argument(
+        "--all",
+        action="store_true",
+        dest="baseline_all",
+        help="Baseline every source in the manifest. Requires "
+        "--confirm-cost. Mutually exclusive with --source-id.",
+    )
+    bop.add_argument(
+        "--confirm-cost",
+        action="store_true",
+        dest="confirm_cost",
+        help="CLI-ONLY confirmation flag for --all mode. Cannot be "
+        "set via env var.",
+    )
+    bop.add_argument(
+        "--manifest",
+        type=str,
+        default=None,
+        help="Override path to the corpus manifest (defaults to "
+        "data/corpus/manifest.json relative to the repo root).",
+    )
+    bop.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="Print the cost estimate, resolved model, and prompt hash "
+        "for the selected source without calling the model. Requires "
+        "exactly one --source-id.",
+    )
+    bop.add_argument(
+        "--json",
+        action="store_true",
+        dest="emit_json",
+        help="Emit the per-source summary as JSON on stdout instead "
+        "of the human-readable table.",
+    )
+
     # Phase 4 — status rollup. Provides the --corpus mode this PR
     # introduces. Adding the `status` subcommand here (not in a prior
     # PR) means there is no pre-existing implementation to extend; the
@@ -1054,6 +1127,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "ingest-corpus":
         return _run_ingest_corpus_cli(args, stream=sys.stdout)
 
+    if args.command == "baseline-opus":
+        return _run_baseline_opus_cli(args, stream=sys.stdout)
+
     if args.command == "status":
         return _run_status_cli(args, stream=sys.stdout)
 
@@ -1121,6 +1197,91 @@ def _run_ingest_corpus_cli(args, *, stream) -> int:
 
     has_quarantine = any(o.status == "quarantined" for o in summary.outcomes)
     return 1 if has_quarantine else 0
+
+
+def _run_baseline_opus_cli(args, *, stream) -> int:
+    """Dispatch ``spectrum-core baseline-opus``.
+
+    Validates the mutual-exclusion of selection flags and the
+    --confirm-cost contract BEFORE any prompt / manifest / transcript
+    read. The --confirm-cost flag is CLI-ONLY; tests assert that env
+    vars cannot bypass it.
+    """
+    import json as _json
+
+    from ..corpus.baseline_opus import (
+        BaselineOpusError,
+        estimate_dry_run,
+        format_summary_table,
+        run_baseline_opus,
+    )
+    from ..corpus.manifest_loader import CorpusManifestError
+
+    # Selection mutex.
+    if args.baseline_all and args.source_ids:
+        stream.write(
+            "ERROR: --all and --source-id are mutually exclusive.\n"
+        )
+        return 2
+    if not args.baseline_all and not args.source_ids:
+        stream.write(
+            "ERROR: provide exactly one of --source-id (repeatable) "
+            "or --all.\n"
+        )
+        return 2
+
+    # --all requires --confirm-cost. CLI-only contract: env vars cannot
+    # bypass. The parser exposes confirm_cost as a bool derived
+    # exclusively from the --confirm-cost flag; reading os.environ
+    # is intentionally NOT done here.
+    if args.baseline_all and not args.confirm_cost:
+        stream.write(
+            "ERROR: --all requires --confirm-cost (CLI-only; env var "
+            "bypass is rejected).\n"
+        )
+        return 2
+
+    # --dry-run requires a single --source-id.
+    if args.dry_run:
+        if args.baseline_all or not args.source_ids or len(args.source_ids) != 1:
+            stream.write(
+                "ERROR: --dry-run requires exactly one --source-id.\n"
+            )
+            return 2
+        try:
+            preview = estimate_dry_run(
+                lake_root=args.lake,
+                source_id=args.source_ids[0],
+                manifest_path=args.manifest,
+            )
+        except (BaselineOpusError, CorpusManifestError) as exc:
+            stream.write(f"ERROR: {exc.reason_code}: {exc}\n")
+            return 2
+        stream.write(_json.dumps(preview, indent=2, sort_keys=True) + "\n")
+        return 0
+
+    try:
+        summary = run_baseline_opus(
+            lake_root=args.lake,
+            manifest_path=args.manifest,
+            source_ids=args.source_ids,
+            all_sources=bool(args.baseline_all),
+            confirm_cost=bool(args.confirm_cost),
+            confirm_output=lambda msg: stream.write(msg),
+        )
+    except (BaselineOpusError, CorpusManifestError) as exc:
+        stream.write(f"ERROR: {exc.reason_code}: {exc}\n")
+        return 2
+
+    if args.emit_json:
+        stream.write(
+            _json.dumps(summary.to_dict(), indent=2, sort_keys=True) + "\n"
+        )
+    else:
+        stream.write(format_summary_table(summary))
+
+    has_failure = any(o.status == "failed" for o in summary.outcomes)
+    return 1 if has_failure else 0
 
 
 def _run_status_cli(args, *, stream) -> int:

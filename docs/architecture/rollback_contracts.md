@@ -727,6 +727,126 @@ measures the delta.
 
 ---
 
+## Phase 4a — Opus baseline prompt + baseline-opus CLI (PR #199)
+
+### What this change adds
+
+- `src/spectrum_systems_core/workflows/prompts/meeting_minutes_opus.md`
+  — the canonical Opus reference prompt. Distinct from the Haiku
+  production prompt (`meeting_minutes_llm.md`): the Opus prompt is
+  comprehensive ("extract everything") while the Haiku prompt is
+  guarded ("extract verbatim, defend against hallucinations").
+- `src/spectrum_systems_core/corpus/baseline_opus.py` — implementation
+  of the `baseline-opus` subcommand: prompt loader, registry-driven
+  model resolution, Anthropic transport seam (stubbable via
+  `BASELINE_OPUS_STUB_RESPONSE`), artifact writer, manifest update.
+- A new CLI subcommand `spectrum-core baseline-opus`. `--all` mode
+  requires `--confirm-cost`; the flag is CLI-ONLY and cannot be
+  bypassed via env var.
+- `scripts/verify_opus_baseline_consistency.py` — reads existing
+  Opus baselines (both the new Phase-4a layout and the legacy
+  `reference_baselines/opus_reference_minutes.jsonl` layout) and
+  verifies the item count is within the hard range `[90, 125]`. Item
+  counts outside the reference range `[100, 112]` emit a WARNING but
+  exit 0 — the operator decides whether to accept. A missing
+  `prompt_content_hash` (pre-Phase-2 legacy artifact) is a WARNING,
+  never a failure.
+- The Opus baseline writes a `meeting_minutes_opus__<timestamp>.json`
+  artifact at `processed/meetings/<source_id>/`. The artifact type
+  `meeting_minutes_opus` is new and is read by
+  `corpus.status._has_opus_baseline` (the glob existed before this
+  PR; this PR is the producer).
+- A diagnostic JSONL marker `baseline_opus_history.jsonl` is appended
+  under `processed/meetings/<source_id>/diagnostics/` on every
+  successful baseline run. The marker is informational — it does
+  NOT advance the per-source variance budget (which is fed by
+  Haiku-vs-Opus comparison F1s, not by the Opus baseline itself).
+
+### Opus prompt status: resolved
+
+Phase 4 (PR #197) deferred Step 4.4 because the Opus prompt did not
+exist. This PR canonicalises the prompt, computes its sha256, and
+wires the CLI. Future PRs that bump the prompt MUST update the
+in-repo file and re-run `verify_opus_baseline_consistency.py`
+against the resulting baseline; the hash mismatch is INFO, not a
+failure (a differing hash is expected when the prompt evolves).
+
+### To roll back
+
+1. Revert the PR.
+2. The `meeting_minutes_opus.md` prompt file is removed.
+3. The `baseline-opus` CLI subcommand is removed.
+4. The `scripts/verify_opus_baseline_consistency.py` script is
+   removed.
+5. Any `meeting_minutes_opus__*.json` artifacts produced in the
+   data lake by `baseline-opus` runs remain on disk (the data
+   lake is append-only from core's perspective). They are
+   backward-compatible with the comparison engine — the comparison
+   engine reads the legacy `opus_reference_minutes.jsonl` and is
+   unaffected by the new envelope format.
+6. The `baseline_opus_history.jsonl` diagnostic files remain on
+   disk; they are append-only diagnostics with no consumer outside
+   this PR.
+7. The manifest's `ingestion_status` fields updated by this CLI
+   remain at `baseline_complete`; reverting the code does not
+   revert the manifest state. The operator must manually reset if
+   desired (e.g. via `bootstrap_hash` after editing the observed
+   block).
+
+### Data migration required for rollback
+
+None. The data lake is append-only; `meeting_minutes_opus__*.json`
+artifacts and `baseline_opus_history.jsonl` markers remain readable.
+Future runs simply stop touching them.
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/corpus/test_baseline_opus.py
+python scripts/verify_opus_baseline_consistency.py --lake <data-lake-path>
+```
+
+After revert, both test files are expected to disappear. The
+verifier script also disappears. If either remains and fails, the
+revert is incomplete — fix forward.
+
+### Cross-PR dependency
+
+`depends_on`: #197 (Phase 4 — corpus manifest, ingest CLI, cost
+estimator; the cost estimator is the dependency for the `--all
+--confirm-cost` summary print-out).
+
+### Operator action after merge
+
+1. Run `spectrum-core baseline-opus --source-id m-2025-12-18-7ghz-downlink-tig-kickoff --lake <data-lake-path>`
+   to regenerate the Dec 18 baseline with the canonicalised prompt.
+2. Compare the new baseline's item count to 106 (the legacy
+   baseline). If within ±10 items (i.e. ~96–116), the prompt is
+   consistent with the prior run.  If outside this band, audit the
+   new baseline before running on other sources.
+3. Run `python scripts/verify_opus_baseline_consistency.py --lake <data-lake-path>`
+   against the new artifact and confirm a green exit (0).
+4. Once Dec 18 is verified, run `spectrum-core baseline-opus --all --confirm-cost --lake <data-lake-path>`
+   to baseline the other 12 sources.
+
+### Constraint compliance
+
+This PR makes NO modifications to:
+- `src/spectrum_systems_core/workflows/prompts/meeting_minutes_llm.md`
+  (the Haiku production prompt is Haiku territory).
+- `src/spectrum_systems_core/pipeline/governed_run.py` (Phase 2).
+- `scripts/compare_opus_haiku.py` (the comparison engine, Phase 2).
+- `scripts/correction_miner.py` (the correction miner core, Phase 2).
+- `src/spectrum_systems_core/grounding/` (Phase 1).
+- `src/spectrum_systems_core/glossary/` (Phase 2P).
+- `src/spectrum_systems_core/transcript_quality/` (Phase 2R).
+- `src/spectrum_systems_core/extraction/` few-shot infrastructure
+  (Phase 2 extensions).
+
+A grep against the diff in the PR description proves these.
+
+---
+
 ## Phase 5 — Sonnet model wiring + three-way comparison measurement (PR #200)
 
 ### What this change adds
