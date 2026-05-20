@@ -20,18 +20,28 @@ The Haiku production prompt carries:
 * Hallucination-defense and verbatim-grounding guardrails.
 * A glossary terminology block injected per batch.
 * Per-type "do not infer" qualifiers.
+* Few-shot examples.
 
 This Opus reference prompt INTENTIONALLY omits those guardrails. The
 production prompt's job is to be precise. THIS prompt's job is to be
 exhaustive. We pair an exhaustive Opus reference against a precise
 Haiku extraction so the F1 measurement has a meaningful ceiling.
 
+What this prompt KEEPS is the schema contract — the structural
+grounding fields every emitted item must carry. Those fields are how
+the governed pipeline verifies the extraction is anchored in the
+transcript. They are a structural requirement, not a precision
+constraint, and they apply to the Opus prompt exactly as they apply
+to the Haiku prompt.
+
 ## Output schema
 
-Return a single JSON object. EVERY one of the 23 item-type arrays
+Return a single JSON object. EVERY one of the 22 content arrays
 below MUST be present even if empty (`[]` is a valid value for any
-array). Do not wrap the object in another object. Do not add fields
-the schema does not declare.
+array), plus the `grounding` companion array. Do not wrap the object
+in another object. Do not add fields the schema does not declare —
+any unknown key on a structured item fails the schema gate
+(`additionalProperties: false`) and blocks the artifact.
 
 ```
 {
@@ -62,24 +72,80 @@ the schema does not declare.
 }
 ```
 
-`action_items` and `open_questions` are arrays of strings. `decisions`
-items may be plain strings OR objects (see below). The remaining
-arrays carry structured objects.
+`action_items` and `open_questions` may be arrays of strings OR
+arrays of objects (see below). `decisions` items may be plain
+verbatim strings OR objects. The remaining content arrays carry
+structured objects.
+
+## Grounding fields (structural, binding — schema_version 1.4.0)
+
+Every structured item you emit MUST carry the grounding fields for
+its grounding mode. There are exactly two modes; each item type
+belongs to exactly one. Mixing the wrong field set onto an item is a
+schema violation that blocks the artifact, because every item-type
+sub-schema declares `additionalProperties: false`.
+
+**Verbatim items** (the text of the item is grounded by a quoted
+substring of the transcript): every item carries
+
+* `grounding_mode`: the literal string `"verbatim"`.
+* `source_quote`: the verbatim transcript substring that supports
+  this item. Copy character-for-character including disfluencies,
+  repetitions, and false starts. Do not paraphrase, summarize, or
+  clean up the text.
+* `quote_offset_normalized`: byte offset of `source_quote` in the
+  normalized transcript (0-indexed). A best estimate is acceptable;
+  the gate recomputes the authoritative value.
+* `quote_offset_original`: byte offset of `source_quote` in the
+  ORIGINAL transcript (0-indexed). A best estimate is acceptable;
+  the gate re-derives the authoritative value from the normalization
+  position map.
+
+Verbatim item types are: `decisions` (object form), `action_items`
+(object form), `commitments`, `risks`, `claims`,
+`regulatory_references`, `technical_parameters`, `sentiment_indicators`,
+`issue_registry_entry`, `position_statement`, `dissent_or_objection`,
+`precedent_reference`, `external_stakeholder_input`,
+`glossary_definition`, `procedural_ruling`.
+
+**Turn-aggregate items** (the item summarizes content drawn from
+multiple turns rather than a single quote): every item carries
+
+* `grounding_mode`: the literal string `"turn_aggregate"`.
+* `source_turn_ids`: a non-empty list of integer turn IDs that the
+  item aggregates. Use the integer turn IDs shown in the user
+  message after the transcript (e.g. `7`, `17`). Use the real turn
+  IDs — never invent one, never emit an empty list.
+
+Turn-aggregate item types are: `open_questions` (object form),
+`cross_references`, `attendees`, `topics`, `named_artifacts`,
+`scheduled_events`, `meeting_phases`, `agenda_item`.
+
+DO NOT mix the modes. A verbatim item MUST NOT carry
+`source_turn_ids`. A turn-aggregate item MUST NOT carry
+`source_quote`, `quote_offset_normalized`, or `quote_offset_original`.
+The schema rejects either case fail-closed.
+
+## `reason` field (additive — schema_version 1.4.0+)
+
+When emitting a structured `decisions` or `action_items` item,
+include a `reason` field — one short sentence explaining WHY this
+item was extracted (the trigger phrase, group affirmation, or
+assignment that made it qualify). The `reason` is optional in JSON
+Schema for backward compat, but this prompt requires it. Example
+acceptable values:
+
+* `"Explicit decision: speaker said 'we've determined', group affirmed."`
+* `"Implicit/guidance-phrased: 'our guidance is X' establishes group direction."`
+* `"Procedural commitment: 'we will be posting X' is a group action."`
 
 ## Item-type fields
 
-For each structured item, include the type-specific fields below.
-For EVERY emitted item (regardless of type), also include the
-grounding-companion fields:
-
-* `source_quote` — the verbatim transcript substring that supports
-  this item. Copy character-for-character including disfluencies,
-  repetitions, and false starts. Do not paraphrase or clean up.
-* `quote_offset_normalized` — byte offset of `source_quote` in the
-  normalized transcript (0-indexed). Best estimate is acceptable;
-  the comparison engine recomputes the authoritative value.
-* `source_turn_ids` — list of integer turn IDs that this item spans
-  (use the turn IDs shown in the user message after the transcript).
+For each structured item, include the type-specific fields below
+plus the grounding fields for its mode. Plain-string items in
+`decisions`, `action_items`, and `open_questions` carry no grounding
+fields (the legacy string branch); emit the structured form whenever
+you can attribute the item to a quote or to a turn set.
 
 ### decisions (verbatim item type)
 
@@ -100,15 +166,17 @@ A `decisions` item may be a plain verbatim string OR an object:
   "stakeholders": ["DoD", "NTIA", ...],
   "confidence": 0.0-1.0,
   "rationale": "<the stated reason WHY, or null>",
-  "source_quote": "...",
+  "reason": "<one-sentence why this item was extracted>",
+  "grounding_mode": "verbatim",
+  "source_quote": "<verbatim substring>",
   "quote_offset_normalized": <int>,
-  "source_turn_ids": [<int>, ...]
+  "quote_offset_original": <int>
 }
 ```
 
 Prefer the object form when stakeholders or a verb are identifiable.
 
-### action_items (verbatim string array)
+### action_items (verbatim item type)
 
 Every stated next step, commitment to post a document, schedule a
 call, or follow up on any item. Procedural and administrative
@@ -117,17 +185,52 @@ meeting is Y", "comments are due Z" — ARE action_items. Be
 comprehensive: every "we will...", "we'll...", "let's...", "[owner]
 will...", and "we need to..." that names a future act belongs here.
 
-Even when the action_items field is a plain string, the comprehensive
-extraction should be exhaustive — extract every assigned task and
-every group commitment to a future act.
+An `action_items` item may be a plain verbatim string OR an object:
 
-### open_questions (verbatim string array)
+```
+{
+  "action": "<verbatim action text>",
+  "status": "open|in_progress|completed",
+  "owner": "<owner or null>",
+  "due": "<deadline or null>",
+  "follow_up_required": true|false,
+  "reason": "<one-sentence why this item was extracted>",
+  "grounding_mode": "verbatim",
+  "source_quote": "<verbatim substring>",
+  "quote_offset_normalized": <int>,
+  "quote_offset_original": <int>
+}
+```
+
+Prefer the object form when an owner, deadline, or status is
+identifiable.
+
+### open_questions (turn-aggregate item type)
 
 Every question the meeting raised that was left unresolved. Include
-questions that the group identified for follow-up, items punted to a
-later session, and unresolved ambiguities a speaker explicitly named.
+questions identified for follow-up, items punted to a later session,
+and unresolved ambiguities a speaker named.
 
-### commitments
+An `open_questions` item may be a plain verbatim string OR an object:
+
+```
+{
+  "question_id": "<short slug>",
+  "question_text": "<verbatim question text>",
+  "asked_by": "<speaker>",
+  "category": "<category>",
+  "initial_response": "<response or null>",
+  "follow_up_action": "<action or null>",
+  "resolved": true|false,
+  "grounding_mode": "turn_aggregate",
+  "source_turn_ids": [<int>, ...]
+}
+```
+
+### commitments (verbatim item type)
+
+Individual "I will do X" statements by one named person, distinct
+from a group action_item.
 
 ```
 {
@@ -136,15 +239,18 @@ later session, and unresolved ambiguities a speaker explicitly named.
   "commitment_text": "<verbatim commitment text>",
   "due": "<deadline or null>",
   "source_speaker": "<who spoke the commitment>",
-  "source_quote": "...", "quote_offset_normalized": <int>,
-  "source_turn_ids": [<int>, ...]
+  "grounding_mode": "verbatim",
+  "source_quote": "<verbatim substring>",
+  "quote_offset_normalized": <int>,
+  "quote_offset_original": <int>
 }
 ```
 
-Individual "I will do X" statements by one named person, distinct
-from a group action_item.
+### risks (verbatim item type)
 
-### risks
+Anything a speaker flagged as a potential problem, concern, or threat
+to the work. Be comprehensive — every flagged concern, however
+informal, counts as a risk for the reference baseline.
 
 ```
 {
@@ -153,16 +259,17 @@ from a group action_item.
   "raised_by": "<speaker>",
   "severity": "low|medium|high or null",
   "mitigation_mentioned": "<mitigation, or null>",
-  "source_quote": "...", "quote_offset_normalized": <int>,
-  "source_turn_ids": [<int>, ...]
+  "grounding_mode": "verbatim",
+  "source_quote": "<verbatim substring>",
+  "quote_offset_normalized": <int>,
+  "quote_offset_original": <int>
 }
 ```
 
-Anything a speaker flagged as a potential problem, concern, or threat
-to the work. Be comprehensive — every flagged concern, however
-informal, counts as a risk for the reference baseline.
+### claims (verbatim item type)
 
-### claims
+Factual or analytical assertions made in the meeting, distinct from
+decisions (which commit the group) and risks (which flag problems).
 
 ```
 {
@@ -172,15 +279,16 @@ informal, counts as a risk for the reference baseline.
   "external_references": ["OB3", "47 CFR 96.41", ...],
   "evidence_in_transcript": ["t0003", "t0007", ...],
   "claim_complexity": "atomic|compound",
-  "source_quote": "...", "quote_offset_normalized": <int>,
-  "source_turn_ids": [<int>, ...]
+  "grounding_mode": "verbatim",
+  "source_quote": "<verbatim substring>",
+  "quote_offset_normalized": <int>,
+  "quote_offset_original": <int>
 }
 ```
 
-Factual or analytical assertions made in the meeting, distinct from
-decisions (which commit the group) and risks (which flag problems).
+### cross_references (turn-aggregate item type)
 
-### cross_references
+Every reference to another meeting, document, or external work.
 
 ```
 {
@@ -189,28 +297,32 @@ decisions (which commit the group) and risks (which flag problems).
   "ref_text": "<the reference text>",
   "ref_date": "<ISO date or null>",
   "ref_url": "<URL or null>",
+  "grounding_mode": "turn_aggregate",
   "source_turn_ids": [<int>, ...]
 }
 ```
 
-Every reference to another meeting, document, or external work.
+### attendees (turn-aggregate item type)
 
-### attendees
+Extract every person mentioned as present or participating, including
+those mentioned in passing (e.g. someone whose absence was noted).
+`agency` MAY be `null` when the transcript names a participant
+without stating their agency — never invent an agency.
 
 ```
 {
   "name": "<participant name>",
-  "agency": "<agency>",
-  "role": "<role>",
+  "agency": "<agency or null>",
+  "role": "<role or null>",
   "present": true|false,
+  "grounding_mode": "turn_aggregate",
   "source_turn_ids": [<int>, ...]
 }
 ```
 
-Extract every person mentioned as present or participating, including
-those mentioned in passing (e.g. someone whose absence was noted).
+### topics (turn-aggregate item type)
 
-### topics
+Every discussion segment or agenda topic.
 
 ```
 {
@@ -219,28 +331,32 @@ those mentioned in passing (e.g. someone whose absence was noted).
   "start_timestamp": "<or null>",
   "end_timestamp": "<or null>",
   "summary": "<short summary, or null>",
+  "grounding_mode": "turn_aggregate",
   "source_turn_ids": [<int>, ...]
 }
 ```
 
-Every discussion segment or agenda topic.
+### regulatory_references (verbatim item type)
 
-### regulatory_references
+Every statutory citation, rule reference, or named policy item.
 
 ```
 {
   "ref_id": "<short slug>",
   "reference_text": "<the citation>",
-  "context": "<context, or null>",
+  "context": "<context>",
   "speaker": "<speaker>",
-  "source_quote": "...", "quote_offset_normalized": <int>,
-  "source_turn_ids": [<int>, ...]
+  "grounding_mode": "verbatim",
+  "source_quote": "<verbatim substring>",
+  "quote_offset_normalized": <int>,
+  "quote_offset_original": <int>
 }
 ```
 
-Every statutory citation, rule reference, or named policy item.
+### technical_parameters (verbatim item type)
 
-### technical_parameters
+Every frequency, band, threshold, power level, distance, or other
+numeric technical value mentioned.
 
 ```
 {
@@ -248,17 +364,19 @@ Every statutory citation, rule reference, or named policy item.
   "parameter_name": "<parameter name>",
   "value": "<verbatim numeric value>",
   "unit": "<unit, or null>",
-  "context": "<context, or null>",
+  "context": "<context>",
   "speaker": "<speaker>",
-  "source_quote": "...", "quote_offset_normalized": <int>,
-  "source_turn_ids": [<int>, ...]
+  "grounding_mode": "verbatim",
+  "source_quote": "<verbatim substring>",
+  "quote_offset_normalized": <int>,
+  "quote_offset_original": <int>
 }
 ```
 
-Every frequency, band, threshold, power level, distance, or other
-numeric technical value mentioned.
+### named_artifacts (turn-aggregate item type)
 
-### named_artifacts
+Every document, paper, working paper, study, dataset, or report
+referenced by name.
 
 ```
 {
@@ -267,30 +385,36 @@ numeric technical value mentioned.
   "artifact_type_description": "<paper|study|report|...>",
   "url": "<URL or null>",
   "mentioned_by": "<speaker>",
+  "grounding_mode": "turn_aggregate",
   "source_turn_ids": [<int>, ...]
 }
 ```
 
-Every document, paper, working paper, study, dataset, or report
-referenced by name.
+### scheduled_events (turn-aggregate item type)
 
-### scheduled_events
+Future meetings, deadlines, or scheduled events. `date` MAY be
+`null` when no date is stated.
 
 ```
 {
   "event_id": "<short slug>",
   "title": "<event title>",
-  "date": "<date or descriptor>",
+  "date": "<date or null>",
   "time": "<time or null>",
   "location": "<location or null>",
   "purpose": "<purpose, or null>",
+  "grounding_mode": "turn_aggregate",
   "source_turn_ids": [<int>, ...]
 }
 ```
 
-Future meetings, deadlines, or scheduled events.
+### sentiment_indicators (verbatim item type)
 
-### sentiment_indicators
+Extract every clear expression of disagreement, concern, strong
+endorsement, uncertainty, or frustration. `sentiment` MUST be
+exactly one of `disagreement`, `concern`, `strong_endorsement`,
+`uncertainty`, `frustration`. Be comprehensive — the comparison
+engine filters.
 
 ```
 {
@@ -298,31 +422,37 @@ Future meetings, deadlines, or scheduled events.
   "speaker": "<speaker>",
   "sentiment": "disagreement|concern|strong_endorsement|uncertainty|frustration",
   "text_preview": "<first 100 chars of the turn>",
-  "source_quote": "...", "quote_offset_normalized": <int>,
-  "source_turn_ids": [<int>, ...]
+  "grounding_mode": "verbatim",
+  "source_quote": "<verbatim substring>",
+  "quote_offset_normalized": <int>,
+  "quote_offset_original": <int>
 }
 ```
 
-Extract every clear expression of disagreement, concern, strong
-endorsement, uncertainty, or frustration. Be comprehensive — the
-comparison engine filters.
+### meeting_phases (turn-aggregate item type)
 
-### meeting_phases
+Segment the meeting into its high-level phases in order. `phase_name`
+MUST be exactly one of `opening`, `working_session`, `q_and_a`,
+`wrap_up`, `other`.
 
 ```
 {
   "phase_id": "<short slug>",
   "phase_name": "opening|working_session|q_and_a|wrap_up|other",
-  "start_turn_id": "<turn id>",
-  "end_turn_id": "<turn id>",
+  "start_turn_id": "<turn id or null>",
+  "end_turn_id": "<turn id or null>",
   "summary": "<short summary or null>",
+  "grounding_mode": "turn_aggregate",
   "source_turn_ids": [<int>, ...]
 }
 ```
 
-Segment the meeting into its high-level phases in order.
+### issue_registry_entry (verbatim item type)
 
-### issue_registry_entry
+Substantive technical or policy problems being worked across
+multiple meetings. `issue_type` MUST be exactly one of `technical`,
+`policy`, `procedural`, `regulatory`, `coordination`. `status` MUST
+be exactly one of `open`, `in_progress`, `resolved`, `deferred`.
 
 ```
 {
@@ -334,15 +464,19 @@ Segment the meeting into its high-level phases in order.
   "status": "open|in_progress|resolved|deferred",
   "resolution_summary": "<resolution or null>",
   "related_decisions": [],
-  "source_quote": "...", "quote_offset_normalized": <int>,
-  "source_turn_ids": [<int>, ...]
+  "source_turns": [],
+  "grounding_mode": "verbatim",
+  "source_quote": "<verbatim substring>",
+  "quote_offset_normalized": <int>,
+  "quote_offset_original": <int>
 }
 ```
 
-Substantive technical or policy problems being worked across multiple
-meetings.
+### position_statement (verbatim item type)
 
-### position_statement
+Stated stances on a topic that may persist or evolve across meetings.
+`position_type` MUST be exactly one of `support`, `opposition`,
+`conditional`, `neutral`, `unclear`.
 
 ```
 {
@@ -353,14 +487,17 @@ meetings.
   "position_text": "<verbatim position text>",
   "position_type": "support|opposition|conditional|neutral|unclear",
   "caveats": "<caveats or null>",
-  "source_quote": "...", "quote_offset_normalized": <int>,
-  "source_turn_ids": [<int>, ...]
+  "source_turns": [],
+  "grounding_mode": "verbatim",
+  "source_quote": "<verbatim substring>",
+  "quote_offset_normalized": <int>,
+  "quote_offset_original": <int>
 }
 ```
 
-Stated stances on a topic that may persist or evolve across meetings.
+### dissent_or_objection (verbatim item type)
 
-### dissent_or_objection
+Explicit on-the-record objections or registered disagreement.
 
 ```
 {
@@ -371,32 +508,38 @@ Stated stances on a topic that may persist or evolve across meetings.
   "objection_topic": "<topic>",
   "resolution": "<resolution or null>",
   "resolved": true|false,
-  "source_quote": "...", "quote_offset_normalized": <int>,
-  "source_turn_ids": [<int>, ...]
+  "source_turns": [],
+  "grounding_mode": "verbatim",
+  "source_quote": "<verbatim substring>",
+  "quote_offset_normalized": <int>,
+  "quote_offset_original": <int>
 }
 ```
 
-Explicit on-the-record objections or registered disagreement.
+### agenda_item (turn-aggregate item type)
 
-### agenda_item
+Formal agenda structure recoverable from the transcript.
 
 ```
 {
   "item_id": "<short slug>",
-  "item_number": "<item number, e.g. 'Agenda Item 3'>",
+  "item_number": "<item number, e.g. 'Agenda Item 3' or null>",
   "title": "<title>",
-  "presenter": "<presenter>",
+  "presenter": "<presenter or null>",
   "allocated_minutes": <int or null>,
-  "start_turn_id": "<turn id>",
-  "end_turn_id": "<turn id>",
+  "start_turn_id": "<turn id or null>",
+  "end_turn_id": "<turn id or null>",
   "outcome": "<outcome or null>",
+  "grounding_mode": "turn_aggregate",
   "source_turn_ids": [<int>, ...]
 }
 ```
 
-Formal agenda structure recoverable from the transcript.
+### precedent_reference (verbatim item type)
 
-### precedent_reference
+References to prior meetings, decisions, or studies used to justify
+a current position. `purpose` MUST be exactly one of `justification`,
+`contrast`, `correction`, `context`, `unknown`.
 
 ```
 {
@@ -404,17 +547,22 @@ Formal agenda structure recoverable from the transcript.
   "speaker": "<speaker>",
   "reference_text": "<the reference text>",
   "referenced_meeting_date": "<ISO date or null>",
-  "referenced_decision_or_study": "<what was referenced>",
+  "referenced_decision_or_study": "<what was referenced, or null>",
   "purpose": "justification|contrast|correction|context|unknown",
-  "source_quote": "...", "quote_offset_normalized": <int>,
-  "source_turn_ids": [<int>, ...]
+  "source_turns": [],
+  "grounding_mode": "verbatim",
+  "source_quote": "<verbatim substring>",
+  "quote_offset_normalized": <int>,
+  "quote_offset_original": <int>
 }
 ```
 
-References to prior meetings, decisions, or studies used to justify a
-current position.
+### external_stakeholder_input (verbatim item type)
 
-### external_stakeholder_input
+Input relayed from parties not in the room. `input_type` MUST be
+exactly one of `industry_comment`, `itu_submission`,
+`congressional_direction`, `agency_guidance`, `public_comment`,
+`other`.
 
 ```
 {
@@ -424,14 +572,17 @@ current position.
   "input_text": "<verbatim relayed input>",
   "input_type": "industry_comment|itu_submission|congressional_direction|agency_guidance|public_comment|other",
   "document_reference": "<document or null>",
-  "source_quote": "...", "quote_offset_normalized": <int>,
-  "source_turn_ids": [<int>, ...]
+  "source_turns": [],
+  "grounding_mode": "verbatim",
+  "source_quote": "<verbatim substring>",
+  "quote_offset_normalized": <int>,
+  "quote_offset_original": <int>
 }
 ```
 
-Input relayed from parties not in the room.
+### glossary_definition (verbatim item type)
 
-### glossary_definition
+Terms formally defined or clarified for the study.
 
 ```
 {
@@ -439,16 +590,22 @@ Input relayed from parties not in the room.
   "term": "<term>",
   "definition": "<the definition>",
   "defined_by": "<speaker>",
-  "context": "<context>",
+  "context": "<context or null>",
   "authoritative": true|false,
-  "source_quote": "...", "quote_offset_normalized": <int>,
-  "source_turn_ids": [<int>, ...]
+  "source_turns": [],
+  "grounding_mode": "verbatim",
+  "source_quote": "<verbatim substring>",
+  "quote_offset_normalized": <int>,
+  "quote_offset_original": <int>
 }
 ```
 
-Terms formally defined or clarified for the study.
+### procedural_ruling (verbatim item type)
 
-### procedural_ruling
+Chair or co-lead rulings on meeting procedure, scope, or process.
+`ruling_type` MUST be exactly one of `scope_boundary`, `process_rule`,
+`meeting_procedure`, `participation_rule`, `classification_handling`,
+`other`.
 
 ```
 {
@@ -457,14 +614,15 @@ Terms formally defined or clarified for the study.
   "ruled_by": "<chair or co-lead>",
   "ruling_type": "scope_boundary|process_rule|meeting_procedure|participation_rule|classification_handling|other",
   "binding": true|false,
-  "source_quote": "...", "quote_offset_normalized": <int>,
-  "source_turn_ids": [<int>, ...]
+  "source_turns": [],
+  "grounding_mode": "verbatim",
+  "source_quote": "<verbatim substring>",
+  "quote_offset_normalized": <int>,
+  "quote_offset_original": <int>
 }
 ```
 
-Chair or co-lead rulings on meeting procedure, scope, or process.
-
-### grounding
+### grounding (companion array)
 
 A flat list of per-item grounding records — one entry for EVERY
 content item emitted across the 22 content arrays:
@@ -494,5 +652,10 @@ This is a reference baseline. Be comprehensive.
 * Extract every named document, paper, or study.
 * Extract every person mentioned as participating.
 * The downstream comparison engine filters; this prompt should not.
+
+The grounding fields above are a STRUCTURAL contract, not a
+precision constraint. Carry them on every item so the artifact
+validates and the gate can verify the anchor — then be exhaustive
+about WHICH items you extract.
 
 Return the JSON object now.
