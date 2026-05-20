@@ -107,10 +107,31 @@ def _has_opus_baseline(processed_dir: Path) -> bool:
 
 
 def _has_comparison_result(processed_dir: Path) -> bool:
+    """True iff at least one comparison artifact exists for the source.
+
+    Scans BOTH:
+
+    * ``comparison_result__*.json`` in the meeting root (legacy /
+      fixture path).
+    * ``comparisons/haiku_vs_opus_*.json`` and
+      ``comparisons/three_way_*.json`` — the PRODUCTION paths written
+      by ``scripts/compare_opus_haiku``.
+
+    The original Phase-4 implementation only scanned the legacy path,
+    so a real lake's row could end up with ``state=baseline_complete``
+    + ``recommendation=run_comparison`` while ``haiku_latest_f1`` was
+    already populated from the production path — contradictory.
+    """
     if not processed_dir.is_dir():
         return False
     for _ in processed_dir.glob("comparison_result__*.json"):
         return True
+    cmp_dir = processed_dir / "comparisons"
+    if cmp_dir.is_dir():
+        for _ in cmp_dir.glob("haiku_vs_opus_*.json"):
+            return True
+        for _ in cmp_dir.glob("three_way_*.json"):
+            return True
     return False
 
 

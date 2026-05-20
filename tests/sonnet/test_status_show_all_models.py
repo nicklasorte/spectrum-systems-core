@@ -257,6 +257,49 @@ def test_show_all_models_adds_three_fields(tmp_path: Path) -> None:
     assert row["opus_item_count"] == 12
 
 
+def test_production_comparison_layout_drives_state_consistently(
+    tmp_path: Path,
+) -> None:
+    """`comparisons/haiku_vs_opus_*.json` must drive both haiku_latest_f1
+    AND state/recommendation so they cannot contradict.
+
+    Review-comment P2 (Codex): the original `_has_comparison_result`
+    only scanned the legacy `comparison_result__*.json` path while
+    `_latest_f1_by_variant` looks under `comparisons/`. That meant a
+    production lake could show `haiku_latest_f1=0.395` AND
+    `state=baseline_complete` + `recommendation=run_comparison` —
+    misleading operators into re-running comparisons that already
+    existed. After this fix both helpers read the same artifacts.
+    """
+    lake = tmp_path / "lake"
+    md = lake / "processed" / "meetings" / "a"
+    _write_source_record(md, "a")
+    _write_opus_baseline(md, item_count=10)
+    # PRODUCTION-layout comparison artifact only — no
+    # comparison_result__*.json in the meeting root.
+    _write_two_way_cmp(
+        md,
+        f1=0.395,
+        variant="production_haiku",
+        slug="20260520T000000",
+        in_comparisons_subdir=True,
+    )
+
+    manifest = _write_manifest(tmp_path, ["a"])
+    report = build_corpus_status_report(
+        lake_root=lake, manifest_path=manifest, show_all_models=True
+    )
+    row = next(r for r in report["rows"] if r["source_id"] == "a")
+    # Haiku F1 is populated (production path).
+    assert row["haiku_latest_f1"] == pytest.approx(0.395)
+    # The state/recommendation now reflect the SAME artifact — must
+    # be comparison_complete, not baseline_complete.
+    assert row["state"] == "comparison_complete"
+    assert row["recommendation"] == "none"
+    # has_comparison_result must be True since a real artifact exists.
+    assert row["has_comparison_result"] is True
+
+
 def test_two_way_comparisons_in_comparisons_subdir_are_picked_up(
     tmp_path: Path,
 ) -> None:
