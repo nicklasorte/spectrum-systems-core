@@ -1049,7 +1049,7 @@ If they justify a model swap, a separate PR flips the default
 
 ---
 
-## Phase 6 — Stage 2 cascade filter (Haiku extract → Sonnet keep/drop)
+## Phase 6 — Stage 2 cascade filter (Haiku extract → Sonnet keep/drop) (PR #203)
 
 This PR adds a Stage 2 cascade: after Haiku extracts items, Sonnet
 evaluates each item for keep/drop. The cascade is opt-in (flag default
