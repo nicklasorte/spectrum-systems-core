@@ -16,5 +16,6 @@
       "output_per_million_tokens": 75.00
     }
   },
+  "cascade_confirmation_item_threshold": 50,
   "last_updated": "2026-05-20T00:00:00Z"
 }

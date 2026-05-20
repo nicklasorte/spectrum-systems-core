@@ -2796,6 +2796,8 @@ def meeting_minutes_llm(
     confirm_cost: bool = False,
     dry_run: bool = False,
     enable_few_shot: bool = False,
+    enable_cascade_filter: bool = False,
+    cascade_api_client=None,
     client=None,
     env=None,
     out_stream=None,
@@ -3400,7 +3402,162 @@ def meeting_minutes_llm(
         )
         last_result = result
 
+        # Phase 6 — Stage 2 cascade. Runs ONCE per promoted artifact,
+        # AFTER it has been written. The cascade is additive: a run with
+        # `--enable-cascade-filter` off is byte-identical to before
+        # Phase 6. Threshold check is fail-closed (CLI-only): when the
+        # source artifact has more items than
+        # `cascade_confirmation_item_threshold`, --confirm-cost is
+        # required. The cascade reads the freshly-written meeting_minutes
+        # artifact from disk so the input the cascade sees is byte-
+        # identical to what compare_opus_haiku will eventually score.
+        if enable_cascade_filter:
+            cascade_rc = _dispatch_cascade_filter(
+                source_id=source_id,
+                data_lake_root=_Path(resolved),
+                source_artifact_path=last_written,
+                source_artifact_payload=mm.payload,
+                transcript_text=transcript_text,
+                api_client=cascade_api_client,
+                confirm_cost=confirm_cost,
+                out=out,
+            )
+            if cascade_rc != 0:
+                return cascade_rc
+
     _ = (last_result, last_written, last_produced_by)
+    return 0
+
+
+def _dispatch_cascade_filter(
+    *,
+    source_id: str,
+    data_lake_root: Path,
+    source_artifact_path: str,
+    source_artifact_payload: dict,
+    transcript_text: str,
+    api_client,
+    confirm_cost: bool,
+    out,
+) -> int:
+    """Phase 6 helper. Runs the cascade against one freshly-written
+    meeting_minutes artifact and writes the filtered + log artifacts.
+
+    Returns 0 on success, 2 on a pre-cascade halt (threshold without
+    confirm-cost, missing api_client) — mirrors the meeting-minutes-llm
+    exit code contract so the caller can return the value directly.
+    """
+    from .cascade import (
+        CascadeError,
+        items_in_artifact_count,
+        run_cascade_filter,
+        write_cascade_filter_log,
+        write_filtered_artifact,
+    )
+    from .cost.estimator import (
+        CostConstantsError,
+        load_cascade_confirmation_item_threshold,
+    )
+    from .data_lake.chunker import chunk_transcript
+
+    # Threshold check (CLI-only; env vars never consulted).
+    try:
+        threshold = load_cascade_confirmation_item_threshold()
+    except CostConstantsError as exc:
+        print(
+            f"meeting-minutes-llm [{source_id}] cascade halted: "
+            f"reason_code=cost_constants_unreadable -- {exc}",
+            file=out,
+        )
+        return 2
+    items_in = items_in_artifact_count(source_artifact_payload)
+    if items_in > threshold and not confirm_cost:
+        print(
+            f"meeting-minutes-llm [{source_id}] cascade halted pre-run: "
+            f"reason_code=cascade_cost_confirmation_required -- "
+            f"the source artifact has {items_in} items (> threshold "
+            f"{threshold}); --enable-cascade-filter requires "
+            f"--confirm-cost in this regime (CLI-only; env vars are "
+            f"not consulted).",
+            file=out,
+        )
+        return 2
+
+    # Build the cascade api_client. When the caller did not pass one
+    # we construct an AnthropicJSONClient pinned to the cascade filter
+    # model. The client is callable as `client(system=..., user=...)`
+    # and raises LLMClientError on transport failures (the cascade
+    # executor surfaces those as conservative pass-throughs).
+    if api_client is None:
+        from .cascade import DEFAULT_CASCADE_FILTER_MODEL
+        from .workflows.llm_client import AnthropicJSONClient
+
+        anthropic = AnthropicJSONClient(model=DEFAULT_CASCADE_FILTER_MODEL)
+
+        def _client(*, system: str, user: str, **_kw) -> str:
+            return anthropic(system=system, user=user)
+
+        api_client = _client
+
+    chunks = chunk_transcript(transcript_text)
+    extraction_config = (
+        (source_artifact_payload.get("provenance") or {}).get(
+            "extraction_config"
+        )
+        if isinstance(source_artifact_payload.get("provenance"), dict)
+        else None
+    )
+    # Override prompt_variant on the cascade's extraction_config stamp
+    # so the filtered artifact carries the Phase-6 discriminator. We
+    # copy the source's config so byte-identical extraction settings
+    # remain auditable from the filtered artifact alone.
+    cascade_extraction_config = None
+    if isinstance(extraction_config, dict):
+        cascade_extraction_config = dict(extraction_config)
+        cascade_extraction_config[
+            "prompt_variant"
+        ] = "production_haiku_with_cascade_filter"
+
+    try:
+        result = run_cascade_filter(
+            source_artifact=source_artifact_payload,
+            chunks=chunks,
+            api_client=api_client,
+        )
+    except CascadeError as exc:
+        print(
+            f"meeting-minutes-llm [{source_id}] cascade halted: "
+            f"reason_code={exc.reason_code} -- {exc}",
+            file=out,
+        )
+        return 2
+
+    filtered_path, _filtered_envelope = write_filtered_artifact(
+        data_lake_path=data_lake_root,
+        source_id=source_id,
+        source_artifact_path=str(source_artifact_path),
+        result=result,
+        extraction_config=cascade_extraction_config,
+    )
+    log_path, _log_envelope = write_cascade_filter_log(
+        data_lake_path=data_lake_root,
+        source_id=source_id,
+        source_artifact_path=str(source_artifact_path),
+        filtered_artifact_path=str(filtered_path),
+        result=result,
+    )
+
+    print(
+        f"meeting-minutes-llm [{source_id}] CASCADE OK "
+        f"items_in={items_in} "
+        f"items_kept={result.filter_metadata['items_kept_count']} "
+        f"items_dropped={result.filter_metadata['items_dropped_count']} "
+        f"chunks_evaluated={result.filter_metadata['chunks_evaluated']} "
+        f"chunks_invalid={result.filter_metadata['chunks_with_invalid_filter_response']} "
+        f"filtered_written={filtered_path} "
+        f"log_written={log_path}",
+        file=out,
+    )
     return 0
 
 
@@ -5217,6 +5374,39 @@ def _build_parser() -> argparse.ArgumentParser:
             "estimate; make NO API call and write NO artifact."
         ),
     )
+    # Phase 6 — Stage 2 cascade filter. After Haiku extracts items,
+    # Sonnet evaluates each item for keep/drop and the cascade writes a
+    # `meeting_minutes_filtered` artifact alongside the raw one. Default
+    # OFF (mutually exclusive pair, CLI-only — env vars
+    # ENABLE_CASCADE_FILTER / DISABLE_CASCADE_FILTER have NO effect;
+    # tests/cascade/test_cli_flag.py asserts this). The flag composes
+    # with --confirm-cost: when --enable-cascade-filter is passed AND
+    # the Haiku artifact has more than `cascade_confirmation_item_threshold`
+    # items, --confirm-cost is also required.
+    cascade_group = mml.add_mutually_exclusive_group()
+    cascade_group.add_argument(
+        "--enable-cascade-filter",
+        dest="enable_cascade_filter",
+        action="store_true",
+        default=None,
+        help=(
+            "Phase 6. Enable the Stage 2 cascade filter (Sonnet evaluates "
+            "each Haiku-extracted item for keep/drop). Default: OFF. "
+            "Produces a `meeting_minutes_filtered` artifact in addition "
+            "to the raw `meeting_minutes` artifact. CLI-only; env vars "
+            "are not consulted."
+        ),
+    )
+    cascade_group.add_argument(
+        "--disable-cascade-filter",
+        dest="enable_cascade_filter",
+        action="store_false",
+        default=None,
+        help=(
+            "Phase 6. Explicit disable for the Stage 2 cascade. "
+            "Mutually exclusive with --enable-cascade-filter."
+        ),
+    )
 
     lg = sub.add_parser(
         "link-ground-truth",
@@ -5625,6 +5815,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         resolved_few_shot = getattr(args, "enable_few_shot", None)
         if resolved_few_shot is None:
             resolved_few_shot = False
+        # Phase 6 cascade default-resolution: argparse sets None when
+        # neither flag is passed. The Phase 6 default is OFF — flip
+        # the sentinel to False here so the resolved value is auditable
+        # from argv alone (mirror of the Phase 3 glossary pattern).
+        resolved_cascade = getattr(args, "enable_cascade_filter", None)
+        if resolved_cascade is None:
+            resolved_cascade = False
         return meeting_minutes_llm(
             source_id=args.source_id,
             data_lake=args.data_lake,
@@ -5642,6 +5839,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             confirm_cost=args.confirm_cost,
             dry_run=args.dry_run,
             enable_few_shot=resolved_few_shot,
+            enable_cascade_filter=resolved_cascade,
         )
     if args.command == "link-ground-truth":
         return link_ground_truth(

@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/meeting_minutes_filtered.schema.json",
+  "title": "meeting_minutes_filtered",
+  "description": "Phase 6 (Stage 2 cascade filter). Produced by `spectrum_systems_core.cascade.executor.run_cascade_filter` after the canonical `meeting_minutes` artifact is written. Each item in `filtered_items` is a strict subset of the items in the source `meeting_minutes` artifact's payload — the cascade NEVER invents items, it only drops them. The append-only data lake keeps BOTH artifacts side-by-side: the raw `meeting_minutes` is the producer of record, the filtered artifact is the operator-facing Stage 2 result. `additionalProperties: false` everywhere so an unknown key fails validation fail-closed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "source_artifact_path",
+    "filter_metadata",
+    "filtered_items"
+  ],
+  "properties": {
+    "artifact_type": {
+      "const": "meeting_minutes_filtered"
+    },
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0"]
+    },
+    "source_artifact_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path (data-lake-relative or absolute) to the `meeting_minutes` artifact this filtered subset was derived from. Required so a downstream reader can re-locate the producer and so the cascade's audit trail is reconstructable from the artifact alone."
+    },
+    "filter_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "filter_model",
+        "filter_prompt_path",
+        "filter_prompt_content_hash",
+        "items_kept_count",
+        "items_dropped_count",
+        "chunks_evaluated",
+        "chunks_with_invalid_filter_response",
+        "truncation_count",
+        "filter_started_at",
+        "filter_completed_at"
+      ],
+      "properties": {
+        "filter_model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Model id used by the cascade filter (e.g. `claude-sonnet-4-6`)."
+        },
+        "filter_prompt_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to the cascade filter prompt file (relative to the package, e.g. `workflows/prompts/cascade_filter_sonnet.md`)."
+        },
+        "filter_prompt_content_hash": {
+          "type": "string",
+          "minLength": 1,
+          "description": "sha256 of the filter prompt content. Reproducibility anchor."
+        },
+        "items_kept_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "items_dropped_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "chunks_evaluated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "chunks_with_invalid_filter_response": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of chunks whose Sonnet filter response failed `cascade_filter_response` schema validation. Those chunks pass through ALL items unchanged (conservative failure mode — keeps false positives instead of dropping true positives). An operator monitors this across a corpus to detect filter-prompt drift."
+        },
+        "truncation_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of turn_aggregate items whose source_turn_ids list exceeded the 10-turn budget and were truncated before being sent to the filter."
+        },
+        "filter_started_at": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ISO 8601 timestamp when the cascade pass began."
+        },
+        "filter_completed_at": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ISO 8601 timestamp when the cascade pass returned."
+        }
+      }
+    },
+    "filtered_items": {
+      "type": "object",
+      "description": "Object carrying the same 22 array keys as the source meeting_minutes payload. Each value is a subset of the source's items (verbatim — the cascade NEVER mutates an item, it only includes or excludes). Empty arrays are valid (drop-all-from-chunk is a real outcome).",
+      "additionalProperties": false,
+      "properties": {
+        "decisions": {"type": "array"},
+        "action_items": {"type": "array"},
+        "open_questions": {"type": "array"},
+        "commitments": {"type": "array"},
+        "risks": {"type": "array"},
+        "claims": {"type": "array"},
+        "cross_references": {"type": "array"},
+        "attendees": {"type": "array"},
+        "topics": {"type": "array"},
+        "regulatory_references": {"type": "array"},
+        "technical_parameters": {"type": "array"},
+        "named_artifacts": {"type": "array"},
+        "scheduled_events": {"type": "array"},
+        "sentiment_indicators": {"type": "array"},
+        "meeting_phases": {"type": "array"},
+        "issue_registry_entry": {"type": "array"},
+        "position_statement": {"type": "array"},
+        "dissent_or_objection": {"type": "array"},
+        "agenda_item": {"type": "array"},
+        "precedent_reference": {"type": "array"},
+        "external_stakeholder_input": {"type": "array"},
+        "glossary_definition": {"type": "array"},
+        "procedural_ruling": {"type": "array"}
+      }
+    },
+    "extraction_config": {
+      "type": "object",
+      "description": "Passthrough copy of the source meeting_minutes artifact's `payload.provenance.extraction_config` block — captured here so the filtered artifact is self-describing (a reader does not need to load the source artifact to know which prompt / model / chunk hashes produced the candidate items). The block's shape mirrors `meeting_minutes.schema.json::extraction_config` and is loose here (the source schema owns the field-level constraints).",
+      "additionalProperties": true
+    }
+  }
+}

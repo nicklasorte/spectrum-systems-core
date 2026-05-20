@@ -1606,9 +1606,10 @@
                 "production_haiku",
                 "haiku_prompt_with_sonnet_model",
                 "opus_prompt_with_sonnet_model",
-                "opus_baseline"
+                "opus_baseline",
+                "production_haiku_with_cascade_filter"
               ],
-              "description": "Phase 5 (optional). Identifies the (prompt, model) combination that produced this artifact. Optional for backward compat — pre-Phase-5 artifacts omit it; the comparison engine defaults a missing value to `production_haiku`. Two artifacts with the same `produced_by` model but different `prompt_variant` are NOT compared directly — they are shown side-by-side in the three-way table as separate columns."
+              "description": "Phase 5 (optional). Identifies the (prompt, model) combination that produced this artifact. Optional for backward compat — pre-Phase-5 artifacts omit it; the comparison engine defaults a missing value to `production_haiku`. Two artifacts with the same `produced_by` model but different `prompt_variant` are NOT compared directly — they are shown side-by-side in the three-way table as separate columns. Phase 6 adds `production_haiku_with_cascade_filter`: stamped on the `meeting_minutes_filtered` artifact when Stage 2 cascade is enabled (the source `meeting_minutes` keeps `production_haiku`). The enum extension is additive: pre-Phase-6 artifacts validate unchanged."
             }
           }
         }

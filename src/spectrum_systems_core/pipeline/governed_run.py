@@ -79,6 +79,15 @@ PROMPT_VARIANT_PRODUCTION_HAIKU = "production_haiku"
 PROMPT_VARIANT_HAIKU_PROMPT_WITH_SONNET = "haiku_prompt_with_sonnet_model"
 PROMPT_VARIANT_OPUS_PROMPT_WITH_SONNET = "opus_prompt_with_sonnet_model"
 PROMPT_VARIANT_OPUS_BASELINE = "opus_baseline"
+# Phase 6 (additive): stamped on the `meeting_minutes_filtered` artifact
+# when the Stage 2 cascade is enabled. The source `meeting_minutes`
+# artifact keeps `production_haiku` so the comparison engine can pick
+# either side via `--use-cascade-output`. The new value is registered
+# in the meeting_minutes / comparison_result schema enums; the existing
+# four variants validate unchanged on pre-Phase-6 artifacts.
+PROMPT_VARIANT_PRODUCTION_HAIKU_WITH_CASCADE = (
+    "production_haiku_with_cascade_filter"
+)
 
 ALL_PROMPT_VARIANTS: frozenset[str] = frozenset(
     {
@@ -86,6 +95,7 @@ ALL_PROMPT_VARIANTS: frozenset[str] = frozenset(
         PROMPT_VARIANT_HAIKU_PROMPT_WITH_SONNET,
         PROMPT_VARIANT_OPUS_PROMPT_WITH_SONNET,
         PROMPT_VARIANT_OPUS_BASELINE,
+        PROMPT_VARIANT_PRODUCTION_HAIKU_WITH_CASCADE,
     }
 )
 
@@ -852,6 +862,7 @@ __all__ = [
     "PROMPT_VARIANT_OPUS_BASELINE",
     "PROMPT_VARIANT_OPUS_PROMPT_WITH_SONNET",
     "PROMPT_VARIANT_PRODUCTION_HAIKU",
+    "PROMPT_VARIANT_PRODUCTION_HAIKU_WITH_CASCADE",
     "PipelineRunError",
     "build_extraction_config_from_run",
     "extraction_config_hash",

@@ -103,6 +103,21 @@ on:
           - sonnet-unconstrained
           - opus
         default: haiku
+      cascade_filter:
+        description: >-
+          Phase 6 (Stage 2 cascade). When true, dispatches
+          --enable-cascade-filter --confirm-cost: after Haiku extracts
+          items, Sonnet evaluates each item for keep/drop and a
+          `meeting_minutes_filtered` artifact is written alongside
+          the raw one. Default false — production behaviour is
+          unchanged. The job summary records the cascade artifact path
+          and the items_in / items_kept / items_dropped counts. The
+          `--confirm-cost` half is always passed when this flag is
+          true so the threshold gate never blocks a workflow-triggered
+          run.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -123,6 +138,7 @@ jobs:
       SINGLE_CHUNK: ${{ github.event.inputs.single_chunk }}
       PRINT_CONTEXT: ${{ github.event.inputs.print_context }}
       MODEL: ${{ github.event.inputs.model }}
+      CASCADE_FILTER: ${{ github.event.inputs.cascade_filter }}
     steps:
       - name: Checkout spectrum-systems-core
         uses: actions/checkout@v4
@@ -174,6 +190,14 @@ jobs:
           if [ -n "${MODEL}" ]; then
             MODEL_ARG=(--model "${MODEL}")
           fi
+          # Phase 6 — Stage 2 cascade. Always pair with --confirm-cost
+          # when enabled so the workflow-triggered run never blocks on
+          # the per-source threshold gate (an interactive operator can
+          # still gate manually by leaving the workflow input false).
+          CASCADE_ARG=()
+          if [ "${CASCADE_FILTER}" = "true" ]; then
+            CASCADE_ARG=(--enable-cascade-filter --confirm-cost)
+          fi
           python -m spectrum_systems_core.cli meeting-minutes-llm \
             --source-id "${SOURCE_ID}" \
             --data-lake "${DATA_LAKE_PATH}" \
@@ -183,6 +207,7 @@ jobs:
             "${SINGLE_CHUNK_ARG[@]}" \
             "${PRINT_CONTEXT_ARG[@]}" \
             "${MODEL_ARG[@]}" \
+            "${CASCADE_ARG[@]}" \
             >stdout.log 2>stderr.log
           rc=$?
           cat stdout.log
@@ -215,6 +240,17 @@ jobs:
               echo "written_path=${WRITTEN_PATH}"
               echo "should_push=${SHOULD_PUSH}"
             } >> "${GITHUB_OUTPUT}"
+            # Phase 6 — record the cascade artifact path (if any) so the
+            # summary shows BOTH artifacts and the keep/drop counts.
+            # The CLI prints a `CASCADE OK ... filtered_written=<path>`
+            # line ONLY when --enable-cascade-filter ran successfully.
+            CASCADE_PATH=""
+            CASCADE_SUMMARY_LINE=""
+            if [ "${CASCADE_FILTER}" = "true" ]; then
+              CASCADE_PATH="$(grep -oE 'filtered_written=[^[:space:]]+' stdout.log \
+                | tail -n1 | sed 's/^filtered_written=//')"
+              CASCADE_SUMMARY_LINE="$(grep -E '^[^:]*\] CASCADE OK ' stdout.log | tail -n1)"
+            fi
             {
               echo "## PROMOTED OK"
               echo ""
@@ -223,6 +259,14 @@ jobs:
               if [ "${SHOULD_PUSH}" != "true" ] && [ -n "${WRITTEN_PATH}" ]; then
                 echo "- (debug/partial mode — artifact intentionally" \
                      "NOT pushed to the append-only data-lake)"
+              fi
+              if [ -n "${CASCADE_PATH}" ]; then
+                echo ""
+                echo "### Stage 2 cascade (Phase 6)"
+                echo "- filtered artifact: \`${CASCADE_PATH}\`"
+                if [ -n "${CASCADE_SUMMARY_LINE}" ]; then
+                  echo "- counts: \`${CASCADE_SUMMARY_LINE}\`"
+                fi
               fi
             } >> "${GITHUB_STEP_SUMMARY}"
             exit 0

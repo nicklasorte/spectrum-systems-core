@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/cascade_filter_log.schema.json",
+  "title": "cascade_filter_log",
+  "description": "Phase 6 diagnostic. Written by `spectrum_systems_core.cascade.executor.run_cascade_filter` alongside every `meeting_minutes_filtered` artifact. Lifecycle mirrors `pipeline_invocation_log`: never promoted, never indexed, never product. 30-day TTL. Carries the per-item keep/drop decision trail so a reviewer can reproduce the filter's behaviour without re-running it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "source_artifact_path",
+    "filtered_artifact_path",
+    "summary",
+    "decisions"
+  ],
+  "properties": {
+    "artifact_type": {
+      "const": "cascade_filter_log"
+    },
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0"]
+    },
+    "source_artifact_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path to the source `meeting_minutes` artifact the cascade filtered."
+    },
+    "filtered_artifact_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path to the resulting `meeting_minutes_filtered` artifact."
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items_in",
+        "items_kept",
+        "items_dropped",
+        "chunks_evaluated",
+        "chunks_with_invalid_filter_response",
+        "truncation_count",
+        "total_filter_tokens",
+        "total_filter_cost_usd",
+        "started_at",
+        "completed_at"
+      ],
+      "properties": {
+        "items_in": {"type": "integer", "minimum": 0},
+        "items_kept": {"type": "integer", "minimum": 0},
+        "items_dropped": {"type": "integer", "minimum": 0},
+        "chunks_evaluated": {"type": "integer", "minimum": 0},
+        "chunks_with_invalid_filter_response": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncation_count": {"type": "integer", "minimum": 0},
+        "total_filter_tokens": {"type": "integer", "minimum": 0},
+        "total_filter_cost_usd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Decimal serialized as a string (deterministic JSON; floats would round)."
+        },
+        "started_at": {"type": "string", "minLength": 1},
+        "completed_at": {"type": "string", "minLength": 1}
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "description": "One entry per item the filter evaluated, in chunk-then-item-idx order. Records the chunk the item belonged to, its extraction_type, the keep/drop decision, and the filter's reason. On a chunk-level filter-response invalid-passthrough event every item in that chunk appears with decision `invalid_response_passthrough` and the schema-validation message as the reason.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "chunk_index",
+          "item_idx",
+          "extraction_type",
+          "decision",
+          "reason"
+        ],
+        "properties": {
+          "chunk_index": {"type": "integer", "minimum": 0},
+          "item_idx": {"type": "integer", "minimum": 0},
+          "extraction_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decision": {
+            "type": "string",
+            "enum": ["keep", "drop", "invalid_response_passthrough"]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

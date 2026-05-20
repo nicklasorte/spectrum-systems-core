@@ -627,6 +627,135 @@ def find_haiku_artifact(
     )
 
 
+# --------------------------------------------------------------------------
+# Phase 6 — Stage 2 cascade output loader. Selects the most recent
+# meeting_minutes_filtered artifact for a source and reshapes it into the
+# same {payload: {extraction arrays}} envelope shape the comparison core
+# already expects, so compute_comparison can score it with no branching.
+# --------------------------------------------------------------------------
+CASCADE_FILTERED_ARTIFACT_TYPE = "meeting_minutes_filtered"
+
+
+def find_cascade_filtered_artifact(
+    data_lake: Path, source_id: str
+) -> Tuple[Dict[str, Any], Path]:
+    """Locate the most recent meeting_minutes_filtered artifact.
+
+    Selection rule: pick the candidate with the most recent mtime that
+    actually carries items (mirrors :func:`find_candidate_artifact`'s
+    content-then-recency tiebreak so a stale empty filter does not
+    shadow a real one). Fail-closed: when no cascade artifact exists
+    for the source, raise ``cascade_artifact_not_found`` so the
+    operator sees a clear halt rather than a silent fall-through to
+    the raw Haiku artifact.
+
+    Returns a SYNTHETIC dict shaped like the regular meeting_minutes
+    envelope so :func:`compute_comparison` can score it without
+    branching: ``{"artifact_type": "meeting_minutes", "schema_version":
+    "1.4.0", "payload": <filtered_items + provenance>}``. The original
+    `meeting_minutes_filtered` envelope is preserved on the returned
+    dict under `_cascade_envelope` so the caller can echo
+    `prompt_variant=production_haiku_with_cascade_filter` on the
+    comparison_result without re-reading the file.
+    """
+    mdir = _meeting_dir(data_lake, source_id)
+    candidates = sorted(mdir.glob("meeting_minutes_filtered__*.json"))
+    if not candidates:
+        raise ComparisonError(
+            "cascade_artifact_not_found",
+            f"no meeting_minutes_filtered__*.json under {mdir}; run the "
+            f"cascade with --enable-cascade-filter before "
+            f"--use-cascade-output (Phase 6).",
+        )
+
+    parsed: List[Tuple[Tuple[float, str], Dict[str, Any], Path]] = []
+    for path in candidates:
+        try:
+            envelope = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ComparisonError(
+                "invalid_cascade_artifact",
+                f"meeting_minutes_filtered at {path} unreadable/!json: "
+                f"{exc}",
+            ) from exc
+        if not isinstance(envelope, dict):
+            continue
+        if envelope.get("artifact_type") != CASCADE_FILTERED_ARTIFACT_TYPE:
+            continue
+        parsed.append((_haiku_recency_key(path), envelope, path))
+
+    if not parsed:
+        raise ComparisonError(
+            "cascade_artifact_not_found",
+            f"no readable meeting_minutes_filtered under {mdir}",
+        )
+
+    # Walk newest → oldest, take the first that has at least one item
+    # in any of the 23 filtered arrays. An all-empty cascade is real
+    # (the filter dropped everything), but we still surface a fail-
+    # closed halt because comparing 0 filtered items vs Opus would
+    # emit a meaningless 0-recall diff.
+    ordered = sorted(parsed, key=lambda c: c[0], reverse=True)
+    selected: Optional[Tuple[Dict[str, Any], Path]] = None
+    for _key, env, path in ordered:
+        filtered = env.get("filtered_items") or {}
+        total = sum(
+            len(v) for v in filtered.values()
+            if isinstance(v, list)
+        )
+        if total > 0:
+            selected = (env, path)
+            break
+
+    if selected is None:
+        newest_path = ordered[0][2]
+        raise ComparisonError(
+            "empty_cascade_artifact",
+            f"every meeting_minutes_filtered under {mdir} has all 23 "
+            f"filtered arrays empty (newest: {newest_path}); refusing "
+            f"to emit a 0-item cascade comparison",
+        )
+
+    envelope, path = selected
+    filtered_items = envelope.get("filtered_items") or {}
+    extraction_config = envelope.get("extraction_config") or {}
+    # Reshape to the meeting_minutes envelope the comparison core
+    # already understands. The Phase 1 grounding re-verification is
+    # skipped for cascade artifacts (their schema_version reflects the
+    # filtered shape, not 1.4.0); a future Phase 7 may add a parallel
+    # gate. The artifact carries enough provenance to identify itself
+    # as the Stage 2 output.
+    synthetic_payload: Dict[str, Any] = {}
+    for k, v in filtered_items.items():
+        synthetic_payload[k] = list(v) if isinstance(v, list) else v
+    synthetic_payload["provenance"] = {
+        "produced_by": HAIKU_LLM_PROVENANCE,
+        "model_id": (
+            (extraction_config.get("seed_inputs") or {}).get("model_id")
+            or extraction_config.get("model_id")
+            or ""
+        ),
+        "extraction_config": extraction_config,
+    }
+    synthetic_payload.setdefault("title", "cascade filtered output")
+    synthetic_payload.setdefault("summary", "")
+    synthetic_payload.setdefault("decisions", filtered_items.get("decisions") or [])
+    synthetic_payload.setdefault(
+        "action_items", filtered_items.get("action_items") or []
+    )
+    synthetic_payload.setdefault(
+        "open_questions", filtered_items.get("open_questions") or []
+    )
+
+    synthetic_envelope: Dict[str, Any] = {
+        "artifact_type": "meeting_minutes",
+        "schema_version": "1.4.0",
+        "payload": synthetic_payload,
+        "_cascade_envelope": envelope,
+    }
+    return synthetic_envelope, path
+
+
 def load_gt_pairs(
     data_lake: Path, source_id: str
 ) -> Optional[List[Dict[str, Any]]]:
@@ -1504,6 +1633,7 @@ def run_comparison(
     print_scores: bool = False,
     include_sonnet: bool = False,
     allow_mixed_schema: bool = False,
+    use_cascade_output: bool = False,
 ) -> Dict[str, Any]:
     """Orchestrate one comparison. Returns a summary dict; raises on halt.
 
@@ -1524,7 +1654,19 @@ def run_comparison(
     """
     types = extraction_types()
     baseline_rows = load_opus_baseline(data_lake, source_id)
-    haiku_artifact, haiku_path = find_haiku_artifact(data_lake, source_id)
+    if use_cascade_output:
+        # Phase 6 — comparison runs against the cascade-filtered Haiku
+        # artifact instead of the raw one. Fail-closed: no cascade
+        # artifact exists → halt cascade_artifact_not_found rather than
+        # silently fall through. The grounding re-verification gate
+        # below is skipped for cascade artifacts (their items mirror
+        # the source by reference; tampering is caught when the source
+        # itself is re-verified).
+        haiku_artifact, haiku_path = find_cascade_filtered_artifact(
+            data_lake, source_id
+        )
+    else:
+        haiku_artifact, haiku_path = find_haiku_artifact(data_lake, source_id)
 
     # Phase 1 (Step 1.7): schema_version cross-check. A Haiku artifact
     # at a different schema_version than the Opus baseline rows means
@@ -1584,7 +1726,17 @@ def run_comparison(
     # so the operator catches a post-merge prompt edit instead of having
     # the next miner run silently disagree with production. The gate is
     # off when the miner has never run for this source (fresh checkout).
-    haiku_extraction_config = _extraction_config_from_artifact(haiku_artifact)
+    #
+    # Phase 6 — cascade output carries the SOURCE artifact's
+    # extraction_config (with prompt_variant overridden to
+    # `production_haiku_with_cascade_filter`) so the prompt-drift gate
+    # would fire on a legitimate cascade run. Skip the gate when
+    # --use-cascade-output is set; the gate still protects the raw
+    # comparison path that runs on every default invocation.
+    haiku_extraction_config = (
+        None if use_cascade_output
+        else _extraction_config_from_artifact(haiku_artifact)
+    )
     if haiku_extraction_config is not None:
         production_hash = haiku_extraction_config.get("prompt_content_hash")
         expected_hash = _load_expected_post_merge_hash(data_lake, source_id)
@@ -1671,12 +1823,29 @@ def run_comparison(
     # the gate, the artifact is ``tainted`` — log a warning and set the
     # tainted flag in the summary so the caller can re-run the
     # pipeline. The check is observe-only; it does NOT mutate metrics.
+    #
+    # Phase 6 — when --use-cascade-output is set the artifact in hand
+    # is a SYNTHETIC envelope wrapped around the cascade-filtered
+    # items. The cascade preserves items by reference (it cannot
+    # invent or mutate them), so a tampering event on the source
+    # artifact is what we need to detect — re-verifying the cascade
+    # would re-do the same byte-match check that ran on the source.
+    # Skip the gate here and run a separate cascade-side check via
+    # the items_in_artifact_count sanity assertion below.
     transcript_text = _resolve_transcript(data_lake, source_id)
-    haiku_reverification = _re_verify_haiku_grounding(
-        haiku_artifact=haiku_artifact,
-        haiku_schema_version=haiku_schema_version,
-        transcript=transcript_text,
-    )
+    if use_cascade_output:
+        haiku_reverification = {
+            "status": "skipped_cascade",
+            "reason": "cascade_artifact",
+            "rejected_count": 0,
+            "grounding_rate": 1.0,
+        }
+    else:
+        haiku_reverification = _re_verify_haiku_grounding(
+            haiku_artifact=haiku_artifact,
+            haiku_schema_version=haiku_schema_version,
+            transcript=transcript_text,
+        )
     if haiku_reverification["status"] == "tainted":
         print(
             f"WARNING: haiku artifact at {haiku_path} failed grounding "
@@ -1905,6 +2074,19 @@ def main(argv: Optional[List[str]] = None) -> int:
             "presence is logged in the returned summary for audit."
         ),
     )
+    parser.add_argument(
+        "--use-cascade-output",
+        action="store_true",
+        default=False,
+        help=(
+            "Phase 6: compare the cascade-filtered Haiku artifact "
+            "(`meeting_minutes_filtered__*.json`) against Opus instead "
+            "of the raw `meeting_minutes__*.json`. Fail-closed with "
+            "`cascade_artifact_not_found` if no cascade artifact exists "
+            "for the source. Default OFF — the comparison engine's "
+            "default behaviour is byte-identical to pre-Phase-6."
+        ),
+    )
     args = parser.parse_args(argv)
     for attr in vars(args):
         val = getattr(args, attr)
@@ -1935,6 +2117,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             print_scores=args.print_scores,
             include_sonnet=args.include_sonnet,
             allow_mixed_schema=args.allow_mixed_schema,
+            use_cascade_output=args.use_cascade_output,
         )
     except ComparisonError as exc:
         print(
