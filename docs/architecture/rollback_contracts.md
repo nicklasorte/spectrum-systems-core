@@ -609,7 +609,7 @@ enforces this against the PR diff.
 
 ---
 
-## Phase 5 — Sonnet model wiring + three-way comparison measurement (PR #PLACEHOLDER_PHASE_5)
+## Phase 5 — Sonnet model wiring + three-way comparison measurement (PR #200)
 
 ### What this change adds
 
