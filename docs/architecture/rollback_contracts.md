@@ -369,6 +369,116 @@ entries in this file.
 
 ---
 
+## Phase 3 — glossary production wiring + measurement (PR #196)
+
+### What this change adds
+
+- `pipeline.governed_pipeline_run` now loads the NTIA/DoD glossary
+  when `enable_glossary_injection=True` (the new default) and
+  prepends a per-batch Terminology block to the user message via
+  `workflows.meeting_minutes_llm._prepend_glossary_block`.
+- `ExtractionConfig` gains three optional Phase-3 fields:
+  `glossary_version_hash`, `glossary_tokens_added`,
+  `tainted_glossary_drift`. The hash + tokens pair is enforced
+  present-together-or-absent-together by the new
+  `pipeline.governed_run.validate_glossary_metadata_consistency`
+  (the JSON Schema cannot natively express the rule).
+- `meeting_minutes.schema.json` (no version bump — the new keys
+  attach to the existing optional `extraction_config` object).
+- New artifact `tolerance_budget_state` (schema 1.0.0) at
+  `data-lake/store/processed/meetings/<source_id>/diagnostics/tolerance_budget_state__<source_id>.json`.
+  Never promoted, never indexed.
+- `docs/contracts/tolerance_budget.json` bumped to schema_version
+  `1.1.0`; `per_source_budgets` removed (now lives in the per-source
+  state artifact). The bound on `current_promotion_buffer` still
+  applies.
+- `calibration.budget.update_per_source_state` post-extraction hook,
+  called by `governed_pipeline_run` after a non-legacy non-tainted
+  comparison is built. Idempotent on the comparison artifact's
+  `(source_id, compared_at)` tuple.
+- `calibration.budget.get_variance_budget` /
+  `get_promotion_threshold` accept a new optional `data_lake_path`
+  argument so the reader can pull the per-source state from disk.
+  Default `None` returns `global_median_budget` (the previous fallback
+  path is preserved).
+- New CLI flag pair on `spectrum-core meeting-minutes-llm`:
+  `--enable-glossary-injection` and `--disable-glossary-injection`,
+  mutually exclusive, CLI-only (env vars are NOT consulted), default
+  ON.
+- `scripts/run_glossary_measurement.sh` — operator runbook
+  (executable). Dispatches the extraction + comparison and calls
+  `scripts/print_comparison_delta.py` to print the F1 + delta.
+- `scripts/print_comparison_delta.py` — diagnostic helper that reads
+  the latest comparison + extraction artifact for a source and
+  reports the glossary provenance fields.
+
+### To roll back
+
+1. Revert the PR. The `--enable-glossary-injection` / 
+   `--disable-glossary-injection` mutex pair returns to the Phase-2P
+   single-flag (`--enable-glossary-injection`, default `False`).
+2. Existing extraction artifacts under
+   `data-lake/store/processed/meetings/*/meeting_minutes__*.json`
+   that carry `glossary_version_hash` / `glossary_tokens_added` /
+   `tainted_glossary_drift` remain valid — the fields are optional in
+   the `extraction_config` subschema and the comparison engine ignores
+   them when the flag is off.
+3. Existing `tolerance_budget_state__*.json` files in the data lake
+   remain on disk. They are safe to leave: under rollback the budget
+   reader stops consulting them (the function call is gone), and the
+   files are ignored by index builders (never promoted, never indexed).
+4. The `--disable-glossary-injection` flag disappears with the revert.
+   Any operator script that relied on it must drop the flag.
+5. `docs/contracts/tolerance_budget.json` must be re-edited to
+   declare `schema_version: "1.0.0"` and to re-add
+   `per_source_budgets: {}` (the schema's old shape). Operators who
+   had populated per-source budget data MUST manually port the values
+   from the data-lake state artifacts back into the contracts file.
+
+### Data migration required for rollback
+
+If per-source state artifacts have accumulated under the data lake,
+their `f1_variance_budget` / `runs_observed` values must be
+hand-merged back into the contracts file before the rollback PR is
+merged. The operator runbook for that migration is the inverse of
+`update_per_source_state` — there is no automatic reverse migration
+script (intentional: a rollback is rare, and forcing a manual review
+of the values that re-enter the contracts file is the safer default).
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/glossary/test_production_wiring.py tests/calibration/test_per_source_state.py
+python scripts/verify_rollback_contracts.py --pr 197
+```
+
+After revert, `tests/glossary/test_production_wiring.py` and
+`tests/calibration/test_per_source_state.py` are expected to
+disappear too. If they remain and fail, the revert is incomplete —
+fix forward.
+
+### Cross-PR dependency
+
+`depends_on`: #193 (eval-path alignment — provides the
+`extraction_config` block this PR extends and the
+`pipeline.governed_pipeline_run` entry point this PR wires into),
+#194 (glossary infrastructure — provides the JSONL artifact,
+manifest, schema, loader, matcher).
+
+`future_dependency`: a follow-up PR may extend the status CLI's
+recommendation enum to surface "glossary enabled vs disabled" per
+source. Until then, operators read `extraction_config` from artifact
+files directly via `scripts/print_comparison_delta.py`.
+
+### Expected F1 impact
+
+Research synthesis predicts +4–7 F1 points. The actual delta is
+measured by the operator AFTER merge via the runbook
+(`scripts/run_glossary_measurement.sh`). Both positive and negative
+outcomes are acceptable findings — the measurement is the point.
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new

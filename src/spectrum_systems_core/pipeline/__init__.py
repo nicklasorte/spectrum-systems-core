@@ -29,6 +29,7 @@ from .governed_run import (
     governed_pipeline_run,
     prompt_content_hash,
     transcript_hash,
+    validate_glossary_metadata_consistency,
     write_pipeline_invocation_log,
 )
 
@@ -48,5 +49,6 @@ __all__ = [
     "governed_pipeline_run",
     "prompt_content_hash",
     "transcript_hash",
+    "validate_glossary_metadata_consistency",
     "write_pipeline_invocation_log",
 ]

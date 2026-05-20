@@ -31,6 +31,10 @@
       "type": "boolean",
       "description": "Phase 2. True when the Haiku artifact lacked an `extraction_config` block, lacked a `prompt_content_hash` seed input, or was at schema_version < 1.4.0. Legacy comparisons are EXCLUDED from per-source variance budget computation in tolerance_budget.json so a pre-Phase-2 run cannot contaminate the calibration data."
     },
+    "tainted_glossary_drift": {
+      "type": "boolean",
+      "description": "Phase 3 (optional). True when the glossary file's sha256 at extraction load time differs from its sha256 at completion — i.e. the glossary file was mutated mid-run. Mirrored from `extraction_config.tainted_glossary_drift` by `pipeline.governed_pipeline_run` so a budget reader (and the per-source state update hook) can branch on it without re-parsing the extraction artifact's provenance. Tainted comparisons are EXCLUDED from per-source variance budget computation, same lifecycle as `legacy_eval: true`. Omitted when injection was disabled — that path is byte-identical to a pre-Phase-3 run."
+    },
     "summary": { "$ref": "#/$defs/summary_block" },
     "haiku_summary": { "$ref": "#/$defs/summary_block" },
     "sonnet_summary": { "$ref": "#/$defs/summary_block" },

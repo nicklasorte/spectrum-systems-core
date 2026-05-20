@@ -554,10 +554,13 @@ calling `git check-ignore`.
   Never produced by code (the miner reads it but never writes it).
 - **Path template:** `docs/contracts/tolerance_budget.json`
 - **Schema:** `src/spectrum_systems_core/schemas/tolerance_budget.schema.json`
-  (1.0.0). The `current_promotion_buffer` bound (0.02 ≤ x ≤ 0.10)
-  is enforced HERE at write time, NOT in code.
-- **Optional top-level fields:** `per_source_budgets` may be empty
-  on first boot. The calibration-mode gate handles the empty case.
+  (1.0.0 = Phase 2; 1.1.0 = Phase 3). The
+  `current_promotion_buffer` bound (0.02 ≤ x ≤ 0.10) is enforced
+  HERE at write time, NOT in code.
+- **Phase 3 split:** the previously-inline `per_source_budgets`
+  object has moved to a separate per-meeting diagnostic artifact
+  (`tolerance_budget_state`, see below). The contracts file now
+  holds ONLY the immutable bounds + the global median fallback.
 - **Git-tracked:** YES — the file lives in `spectrum-systems-core`,
   not in `nicklasorte/data-lake`. It is the operator-visible
   contract for promotion threshold composition.
@@ -565,6 +568,29 @@ calling `git check-ignore`.
   (`get_variance_budget`, `get_promotion_threshold`,
   `is_in_calibration_mode`). The correction miner reaches the
   budget through these functions only.
+
+### tolerance_budget_state
+- **Writer:** `spectrum_systems_core.calibration.budget.update_per_source_state`
+  (Phase 3) — invoked by `pipeline.governed_pipeline_run` after a
+  non-legacy, non-tainted comparison artifact is built. The hook is
+  idempotent on the comparison artifact's `(source_id, compared_at)`
+  tuple so a re-run does not double-increment `runs_observed`.
+- **Path template:**
+  `data-lake/store/processed/meetings/<source_id>/diagnostics/tolerance_budget_state__<source_id>.json`
+- **Schema:** `src/spectrum_systems_core/schemas/tolerance_budget_state.schema.json`
+  (1.0.0).
+- **Optional top-level fields:** `last_comparison_artifact_path` is
+  the only optional field — it carries the idempotency token. All
+  other fields (`source_id`, `runs_observed`, `f1_variance_budget`,
+  `last_updated`) are required.
+- **Git-tracked:** NO — under `processed/` in the data-lake repo,
+  which bulk-ignores via `**/processed/**`. Diagnostics are
+  per-source mutable state; nothing else should read them.
+- **Readers:** `spectrum_systems_core.calibration.budget._read_per_source_state`,
+  via the public `get_variance_budget` / `get_promotion_threshold`
+  functions. A missing or malformed file is a soft signal — the
+  reader falls back to `global_median_budget` from the contracts
+  file (the state artifact is a diagnostic, NOT a gate).
 
 ### gt_pair_review
 - **Writer:** `scripts/review_gt_pairs.py` (Phase P1 — human-in-the-loop

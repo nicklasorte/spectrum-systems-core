@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/tolerance_budget_state.schema.json",
+  "title": "tolerance_budget_state",
+  "description": "Phase 3 — per-source variance-budget state moved out of the contracts file. One file per source under `data-lake/store/processed/meetings/<source_id>/diagnostics/tolerance_budget_state__<source_id>.json`. Never promoted, never indexed. The budget module reads the file; the production extraction's post-comparison hook writes it. A missing or malformed file does not block the run — the reader falls back to `global_median_budget` from the contracts file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "source_id",
+    "runs_observed",
+    "f1_variance_budget",
+    "last_updated"
+  ],
+  "properties": {
+    "artifact_type": {
+      "const": "tolerance_budget_state"
+    },
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0"]
+    },
+    "source_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runs_observed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of non-legacy, non-tainted comparison artifacts observed for this source. Drives the kick-in threshold for the per-source variance budget (`PER_SOURCE_RUN_THRESHOLD` runs)."
+    },
+    "f1_variance_budget": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Variance budget for this source, recomputed from the most recent N comparison F1 values. Below `PER_SOURCE_RUN_THRESHOLD` runs the budget module ignores this value and returns `global_median_budget` from the contracts file instead."
+    },
+    "last_updated": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO 8601 timestamp the state entry was last refreshed."
+    },
+    "last_comparison_artifact_path": {
+      "type": "string",
+      "description": "Path of the most recent comparison_result the hook ingested. Used by the idempotency check: if a re-run presents the same path, `runs_observed` is not incremented."
+    }
+  }
+}

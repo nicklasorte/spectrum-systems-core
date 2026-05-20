@@ -54,6 +54,22 @@ GLOSSARY_SCHEMA_VERSION: str = "1.0.0"
 ARTIFACT_TYPE: str = "glossary_entry"
 DEFAULT_MAX_TERMS: int = 3
 
+# Token-count proxy used to record `glossary_tokens_added` on the
+# extraction artifact's `extraction_config`. The codebase already uses a
+# 4-chars-per-token heuristic (see synthesis/bundle_assembler.py); we
+# reuse the same divisor here so the recorded count is consistent across
+# subsystems and deterministic given the formatted terminology block.
+_TOKEN_ESTIMATE_CHARS_PER_TOKEN: int = 4
+
+# Canonical on-disk locations the production pipeline reads when
+# glossary injection is enabled. Centralised here so the production
+# wiring (governed_run.py) and the CLI shell (cli_glossary.py) cannot
+# drift on path resolution.
+_DATA_DIR: Path = Path(__file__).resolve().parents[3] / "data" / "glossary"
+GLOSSARY_PATH: Path = _DATA_DIR / "ntia_dod_spectrum_v1.jsonl"
+GLOSSARY_MANIFEST_PATH: Path = _DATA_DIR / "MANIFEST.json"
+GLOSSARY_ALLOWED_SOURCES_PATH: Path = _DATA_DIR / "allowed_sources.json"
+
 # Modal verbs are governed by the prompt section, not the glossary.
 MODAL_VERBS: frozenset[str] = frozenset(
     {"shall", "should", "may", "will", "would"}
@@ -447,6 +463,40 @@ def load_glossary(
     )
 
 
+def count_glossary_tokens(text: str) -> int:
+    """Deterministic token-count proxy for a formatted terminology block.
+
+    Returns 0 for the empty string (the formatter emits "" when no
+    terms matched, so a no-op should not inflate the count). Otherwise
+    uses the same 4-chars-per-token estimator as
+    ``synthesis.bundle_assembler`` so the value recorded on the
+    extraction artifact's ``extraction_config.glossary_tokens_added``
+    is consistent across subsystems and a unit test can assert the
+    arithmetic on a known block.
+    """
+    if not text:
+        return 0
+    return max(1, len(text) // _TOKEN_ESTIMATE_CHARS_PER_TOKEN)
+
+
+def compute_file_sha256(path: Path) -> str:
+    """Stream-hash a file (used for the mid-run mutation detector).
+
+    Returns the hex sha256. Reads in 64KiB chunks so an oversized
+    glossary file does not need to be loaded into memory. Raises the
+    underlying ``OSError`` on read failure — the caller (the production
+    wiring) catches it and decides whether to halt or taint the run.
+    """
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        while True:
+            chunk = fh.read(65536)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def format_terminology_block(
     matched: list[GlossaryEntry],
     truncated: int,
@@ -516,6 +566,9 @@ def build_chunk_context(
 __all__ = [
     "ARTIFACT_TYPE",
     "DEFAULT_MAX_TERMS",
+    "GLOSSARY_ALLOWED_SOURCES_PATH",
+    "GLOSSARY_MANIFEST_PATH",
+    "GLOSSARY_PATH",
     "GLOSSARY_SCHEMA_VERSION",
     "GLOSSARY_VERSION",
     "MODAL_VERBS",
@@ -525,7 +578,9 @@ __all__ = [
     "GlossaryError",
     "build_chunk_context",
     "compute_allowed_sources_hash",
+    "compute_file_sha256",
     "compute_glossary_hash",
+    "count_glossary_tokens",
     "format_terminology_block",
     "load_glossary",
     "validate_entry",

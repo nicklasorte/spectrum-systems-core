@@ -33,24 +33,65 @@ from spectrum_systems_core.calibration.budget import (
 
 
 def _write_budget(path: Path, **overrides) -> Path:
+    """Build a tolerance_budget.json fixture.
+
+    Phase 3 removed ``per_source_budgets`` from this file (the state
+    lives in a per-meeting diagnostic artifact under the data lake).
+    Callers that pass ``per_source_budgets=`` in overrides are writing
+    a Phase-2 shape; tests that need to exercise per-source data must
+    instead seed the per-source state artifact via
+    :func:`_write_per_source_state` below.
+    """
     doc = {
         "artifact_type": "tolerance_budget",
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "min_promotion_buffer": 0.02,
         "max_promotion_buffer": 0.10,
         "current_promotion_buffer": 0.03,
         "global_median_budget": 0.025,
-        "per_source_budgets": {},
     }
     doc.update(overrides)
+    # Phase 3: the schema no longer accepts per_source_budgets here.
+    doc.pop("per_source_budgets", None)
     path.write_text(json.dumps(doc), encoding="utf-8")
     return path
+
+
+def _write_per_source_state(
+    data_lake_path: Path,
+    source_id: str,
+    *,
+    runs_observed: int,
+    f1_variance_budget: float,
+    last_updated: str = "2026-05-20T00:00:00+00:00",
+) -> Path:
+    """Seed a Phase-3 per-source state artifact under the data lake."""
+    state = {
+        "artifact_type": "tolerance_budget_state",
+        "schema_version": "1.0.0",
+        "source_id": source_id,
+        "runs_observed": runs_observed,
+        "f1_variance_budget": f1_variance_budget,
+        "last_updated": last_updated,
+    }
+    out = (
+        data_lake_path
+        / "store"
+        / "processed"
+        / "meetings"
+        / source_id
+        / "diagnostics"
+        / f"tolerance_budget_state__{source_id}.json"
+    )
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(state, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    return out
 
 
 def test_default_contract_validates() -> None:
     """The shipped contract validates against its schema."""
     doc = load_budget()
-    assert doc["schema_version"] == "1.0.0"
+    assert doc["schema_version"] in ("1.0.0", "1.1.0")
     assert doc["min_promotion_buffer"] == 0.02
     assert doc["max_promotion_buffer"] == 0.10
     assert (
@@ -58,6 +99,8 @@ def test_default_contract_validates() -> None:
         <= doc["current_promotion_buffer"]
         <= 0.10
     )
+    # Phase 3 split: per_source_budgets must not appear in the contract.
+    assert "per_source_budgets" not in doc
 
 
 def test_current_buffer_below_min_rejected(tmp_path: Path) -> None:
@@ -84,47 +127,111 @@ def test_current_buffer_above_max_rejected(tmp_path: Path) -> None:
     )
 
 
-def test_empty_per_source_budgets_accepted(tmp_path: Path) -> None:
-    """A budget with empty per_source_budgets is valid on first boot."""
-    path = _write_budget(tmp_path / "budget.json", per_source_budgets={})
-    doc = load_budget(path)
-    assert doc["per_source_budgets"] == {}
+def test_per_source_budgets_in_contracts_file_rejected(tmp_path: Path) -> None:
+    """Phase 3 split: per_source_budgets is no longer accepted in the
+    contracts file. A budget that still carries the legacy key fails
+    schema validation under additionalProperties:false."""
+    path = tmp_path / "budget.json"
+    path.write_text(
+        json.dumps(
+            {
+                "artifact_type": "tolerance_budget",
+                "schema_version": "1.1.0",
+                "min_promotion_buffer": 0.02,
+                "max_promotion_buffer": 0.10,
+                "current_promotion_buffer": 0.03,
+                "global_median_budget": 0.025,
+                "per_source_budgets": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(BudgetValidationError) as ei:
+        load_budget(path)
+    assert "per_source_budgets" in str(ei.value)
 
 
 def test_get_variance_budget_uses_global_median_when_runs_observed_below_threshold(
     tmp_path: Path,
 ) -> None:
-    """Step 2.3: per-source budget kicks in only at runs_observed >= 3."""
+    """Phase 3: per-source budget reads from the data-lake state artifact
+    and kicks in only at runs_observed >= 3."""
     path = _write_budget(
         tmp_path / "budget.json",
         global_median_budget=0.04,
-        per_source_budgets={
-            "src-x": {
-                "f1_variance_budget": 0.07,
-                "runs_observed": 2,
-                "last_updated": "2026-05-20T00:00:00+00:00",
-            }
-        },
     )
-    assert get_variance_budget("src-x", budget_path=path) == 0.04
+    dl = tmp_path / "dl"
+    _write_per_source_state(
+        dl, "src-x", runs_observed=2, f1_variance_budget=0.07
+    )
+    assert get_variance_budget(
+        "src-x", budget_path=path, data_lake_path=dl
+    ) == 0.04
 
 
 def test_get_variance_budget_uses_per_source_at_threshold(
     tmp_path: Path,
 ) -> None:
-    """Step 2.3: at runs_observed == 3 the per-source budget is used."""
+    """Phase 3: at runs_observed == 3 the per-source budget is used."""
     path = _write_budget(
         tmp_path / "budget.json",
         global_median_budget=0.04,
-        per_source_budgets={
-            "src-x": {
-                "f1_variance_budget": 0.07,
-                "runs_observed": PER_SOURCE_RUN_THRESHOLD,
-                "last_updated": "2026-05-20T00:00:00+00:00",
-            }
-        },
     )
-    assert get_variance_budget("src-x", budget_path=path) == 0.07
+    dl = tmp_path / "dl"
+    _write_per_source_state(
+        dl,
+        "src-x",
+        runs_observed=PER_SOURCE_RUN_THRESHOLD,
+        f1_variance_budget=0.07,
+    )
+    assert get_variance_budget(
+        "src-x", budget_path=path, data_lake_path=dl
+    ) == 0.07
+
+
+def test_get_variance_budget_falls_back_when_state_artifact_missing(
+    tmp_path: Path,
+) -> None:
+    """Phase 3 Pass 1: a missing state artifact returns global_median_budget,
+    never raises. Tests the fallback path the rollback contract relies on."""
+    path = _write_budget(
+        tmp_path / "budget.json",
+        global_median_budget=0.04,
+    )
+    dl = tmp_path / "dl"
+    (dl / "store" / "processed" / "meetings" / "src-x").mkdir(parents=True)
+    # No state artifact written. Reader must fall back to the global median.
+    assert get_variance_budget(
+        "src-x", budget_path=path, data_lake_path=dl
+    ) == 0.04
+
+
+def test_get_variance_budget_falls_back_on_corrupt_state_artifact(
+    tmp_path: Path,
+) -> None:
+    """Phase 3 Pass 1: a corrupt state artifact is treated as missing.
+    The state file is a diagnostic, not a gate; the budget loader must
+    fail open on it (load_budget itself still fails closed on the
+    contracts file)."""
+    path = _write_budget(
+        tmp_path / "budget.json",
+        global_median_budget=0.04,
+    )
+    dl = tmp_path / "dl"
+    state_path = (
+        dl
+        / "store"
+        / "processed"
+        / "meetings"
+        / "src-x"
+        / "diagnostics"
+        / "tolerance_budget_state__src-x.json"
+    )
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text("{not json", encoding="utf-8")
+    assert get_variance_budget(
+        "src-x", budget_path=path, data_lake_path=dl
+    ) == 0.04
 
 
 def test_get_promotion_threshold_computes_baseline_plus_budgets(
@@ -135,15 +242,17 @@ def test_get_promotion_threshold_computes_baseline_plus_budgets(
         tmp_path / "budget.json",
         current_promotion_buffer=0.05,
         global_median_budget=0.04,
-        per_source_budgets={
-            "src-x": {
-                "f1_variance_budget": 0.04,
-                "runs_observed": PER_SOURCE_RUN_THRESHOLD,
-                "last_updated": "2026-05-20T00:00:00+00:00",
-            }
-        },
     )
-    threshold = get_promotion_threshold("src-x", 0.38, budget_path=path)
+    dl = tmp_path / "dl"
+    _write_per_source_state(
+        dl,
+        "src-x",
+        runs_observed=PER_SOURCE_RUN_THRESHOLD,
+        f1_variance_budget=0.04,
+    )
+    threshold = get_promotion_threshold(
+        "src-x", 0.38, budget_path=path, data_lake_path=dl
+    )
     assert abs(threshold - 0.47) < 1e-9
 
 
@@ -155,15 +264,17 @@ def test_get_promotion_threshold_below_threshold_does_not_promote(
         tmp_path / "budget.json",
         current_promotion_buffer=0.05,
         global_median_budget=0.04,
-        per_source_budgets={
-            "src-x": {
-                "f1_variance_budget": 0.04,
-                "runs_observed": PER_SOURCE_RUN_THRESHOLD,
-                "last_updated": "2026-05-20T00:00:00+00:00",
-            }
-        },
     )
-    threshold = get_promotion_threshold("src-x", 0.38, budget_path=path)
+    dl = tmp_path / "dl"
+    _write_per_source_state(
+        dl,
+        "src-x",
+        runs_observed=PER_SOURCE_RUN_THRESHOLD,
+        f1_variance_budget=0.04,
+    )
+    threshold = get_promotion_threshold(
+        "src-x", 0.38, budget_path=path, data_lake_path=dl
+    )
     candidate_f1 = 0.46
     assert candidate_f1 < threshold, "0.46 must not clear 0.47 threshold"
 
@@ -176,15 +287,17 @@ def test_get_promotion_threshold_above_threshold_promotes(
         tmp_path / "budget.json",
         current_promotion_buffer=0.05,
         global_median_budget=0.04,
-        per_source_budgets={
-            "src-x": {
-                "f1_variance_budget": 0.04,
-                "runs_observed": PER_SOURCE_RUN_THRESHOLD,
-                "last_updated": "2026-05-20T00:00:00+00:00",
-            }
-        },
     )
-    threshold = get_promotion_threshold("src-x", 0.38, budget_path=path)
+    dl = tmp_path / "dl"
+    _write_per_source_state(
+        dl,
+        "src-x",
+        runs_observed=PER_SOURCE_RUN_THRESHOLD,
+        f1_variance_budget=0.04,
+    )
+    threshold = get_promotion_threshold(
+        "src-x", 0.38, budget_path=path, data_lake_path=dl
+    )
     candidate_f1 = 0.48
     assert candidate_f1 >= threshold, "0.48 must clear 0.47 threshold"
 
