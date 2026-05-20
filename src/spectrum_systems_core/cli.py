@@ -2791,6 +2791,7 @@ def meeting_minutes_llm(
     single_chunk: bool = False,
     print_context: bool = False,
     enable_glossary_injection: bool = True,
+    enable_few_shot: bool = False,
     client=None,
     env=None,
     out_stream=None,
@@ -3050,6 +3051,7 @@ def meeting_minutes_llm(
             print_context=print_context,
             glossary=glossary_obj,
             glossary_tokens_counter=glossary_tokens_counter,
+            enable_few_shot=enable_few_shot,
         )
     except LLMConfigError as exc:
         # Fail-closed pre-run halt: no artifact produced, no fallback to
@@ -4850,6 +4852,39 @@ def _build_parser() -> argparse.ArgumentParser:
             "with --enable-glossary-injection."
         ),
     )
+    # Phase 3P — few-shot examples + negative patterns. The canonical
+    # prompt file always carries the few-shot section between
+    # FEW_SHOT_BLOCK_BEGIN / FEW_SHOT_BLOCK_END markers; this flag
+    # controls whether the section survives at runtime. Default OFF —
+    # the section is stripped before the prompt is sent to the model
+    # until an operator verifies the registered examples are real
+    # corpus data and flips this default in a follow-up PR. CLI-only:
+    # env vars are NOT consulted (mirror of the glossary flag's
+    # behaviour; the test in tests/few_shot/test_cli_flag.py asserts
+    # this).
+    few_shot_group = mml.add_mutually_exclusive_group()
+    few_shot_group.add_argument(
+        "--enable-few-shot",
+        dest="enable_few_shot",
+        action="store_true",
+        default=None,
+        help=(
+            "Enable few-shot examples in the extraction prompt. "
+            "Default: OFF until an operator verifies real-corpus "
+            "provenance. DO NOT enable until the registered examples "
+            "are real corpus data."
+        ),
+    )
+    few_shot_group.add_argument(
+        "--disable-few-shot",
+        dest="enable_few_shot",
+        action="store_false",
+        default=None,
+        help=(
+            "Disable few-shot examples. Mutually exclusive with "
+            "--enable-few-shot."
+        ),
+    )
 
     lg = sub.add_parser(
         "link-ground-truth",
@@ -5252,6 +5287,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         resolved_glossary = args.enable_glossary_injection
         if resolved_glossary is None:
             resolved_glossary = True
+        # Phase 3P few-shot default-resolution: None sentinel maps to
+        # OFF until the operator confirms real-corpus provenance and
+        # flips this default in a follow-up PR.
+        resolved_few_shot = getattr(args, "enable_few_shot", None)
+        if resolved_few_shot is None:
+            resolved_few_shot = False
         return meeting_minutes_llm(
             source_id=args.source_id,
             data_lake=args.data_lake,
@@ -5264,6 +5305,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             single_chunk=args.single_chunk,
             print_context=args.print_context,
             enable_glossary_injection=resolved_glossary,
+            enable_few_shot=resolved_few_shot,
         )
     if args.command == "link-ground-truth":
         return link_ground_truth(

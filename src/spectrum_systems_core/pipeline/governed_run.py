@@ -360,6 +360,7 @@ def write_pipeline_invocation_log(
     caller: str,
     extraction_config: ExtractionConfig | Dict[str, Any],
     comparison_artifact_path: Optional[str],
+    few_shot_reason_missing_rate: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Write the diagnostic log entry and return the artifact dict.
 
@@ -394,6 +395,12 @@ def write_pipeline_invocation_log(
         "comparison_artifact_path": comparison_artifact_path or "",
         "ttl_expires_at": _ttl_iso(started_at, PIPELINE_INVOCATION_LOG_TTL_DAYS),
     }
+    # Phase 3P diagnostic: rate of object-form decisions+action_items
+    # that omitted the prompt-required `reason` field. Recorded ONLY
+    # when the rate exceeds the warning threshold (0.20) so a fully
+    # compliant run is byte-identical to a pre-3P invocation log.
+    if few_shot_reason_missing_rate is not None and few_shot_reason_missing_rate > 0.20:
+        log["few_shot_reason_missing_rate"] = float(few_shot_reason_missing_rate)
     # Validate before write — drift catcher for schema changes.
     try:
         validate_artifact(log, PIPELINE_INVOCATION_LOG_ARTIFACT_TYPE)
@@ -430,6 +437,7 @@ def governed_pipeline_run(
     client: Optional[Callable[..., str]] = None,
     skip_invocation_log: bool = False,
     enable_glossary_injection: bool = True,
+    enable_few_shot: bool = False,
 ) -> GovernedPipelineRunResult:
     """Run extraction → schema_validate → grounding_gate → compare.
 
@@ -488,6 +496,16 @@ def governed_pipeline_run(
             "transcript must be a string",
         )
 
+    # Phase 3P few-shot gating: the canonical prompt file always carries
+    # the Few-Shot Examples section between FEW_SHOT_BLOCK_BEGIN /
+    # FEW_SHOT_BLOCK_END markers. When the flag is OFF (the production
+    # default) the section is stripped before the prompt is sent to the
+    # model. The negative patterns section is NOT marker-wrapped and is
+    # always present. Verified by tests/few_shot/test_prompt_injection.py.
+    from ..few_shot import inject_or_strip_few_shot as _inject_or_strip
+
+    prompt_content = _inject_or_strip(prompt_content, enable=enable_few_shot)
+
     # Phase 3 — glossary production wiring. The glossary module is
     # imported lazily ONLY when injection is enabled so a disabled run
     # is byte-identical to a pre-Phase-3 run (the import is observable
@@ -525,7 +543,12 @@ def governed_pipeline_run(
     # ONE place candidate prompts are injected so production and the
     # miner cannot drift on injection mechanics. The glossary (when
     # enabled) is forwarded so the workflow's per-batch user message
-    # is prepended with the matched terminology block.
+    # is prepended with the matched terminology block. Note that the
+    # ``_override_prompt`` context replaces ``_system_prompt`` for the
+    # duration of the call, so the workflow sees the (already-
+    # ``inject_or_strip_few_shot``-d) prompt_content unchanged — we
+    # pass ``enable_few_shot=False`` to the workflow to make that
+    # explicit (the stripping has already happened above).
     with _override_prompt(prompt_content):
         result = run_meeting_minutes_llm_workflow(
             transcript,
@@ -535,6 +558,7 @@ def governed_pipeline_run(
             lake_root=data_lake_path / "store",
             glossary=glossary,
             glossary_tokens_counter=glossary_tokens_counter,
+            enable_few_shot=False,
         )
 
     # Re-hash the glossary file at completion. A divergence from the
@@ -730,6 +754,20 @@ def governed_pipeline_run(
             # up the gap later (the file simply does not advance).
             pass
 
+    # Phase 3P: compute the `reason` missing-rate on the extracted
+    # payload. Recorded as a diagnostic on the invocation log when it
+    # exceeds the warning threshold. Computed unconditionally so the
+    # signal works for both flag states.
+    reason_missing_rate: Optional[float] = None
+    if artifact_dict is not None:
+        from ..few_shot import count_missing_reason_rate as _count_missing_reason
+        try:
+            reason_missing_rate = _count_missing_reason(
+                artifact_dict.get("payload", {})
+            )
+        except Exception:  # noqa: BLE001 — diagnostic must never block the run
+            reason_missing_rate = None
+
     invocation_log: Dict[str, Any] = {}
     if not skip_invocation_log:
         completed_at = _now_utc_iso()
@@ -745,6 +783,7 @@ def governed_pipeline_run(
             caller=caller,
             extraction_config=extraction_config,
             comparison_artifact_path=None,
+            few_shot_reason_missing_rate=reason_missing_rate,
         )
 
     return GovernedPipelineRunResult(

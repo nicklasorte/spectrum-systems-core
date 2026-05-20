@@ -78,6 +78,12 @@
       "type": "string",
       "minLength": 1,
       "description": "ISO 8601 timestamp 30 days after started_at. The reconciler treats expired logs as eligible for cleanup."
+    },
+    "few_shot_reason_missing_rate": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Phase 3P (additive, optional). Fraction of object-form decisions+action_items emitted by this run that omitted the `reason` field. Logged ONLY when the rate exceeds 0.20 (the warning threshold). Absent on legacy runs and on runs whose extraction produced no object-form items. Diagnostic-only — never gates promotion."
     }
   }
 }

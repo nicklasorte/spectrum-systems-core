@@ -1,0 +1,8 @@
+{
+  "schema_version": "1.0.0",
+  "version": "1.0.0",
+  "examples_file": "examples_v1.jsonl",
+  "sha256_hash": "76f8dad8c6e85a3d4acbf664e45bf09b20b75570ce69f5f2f4954eb833e95edf",
+  "entry_count": 3,
+  "has_synthetic_entries": true
+}

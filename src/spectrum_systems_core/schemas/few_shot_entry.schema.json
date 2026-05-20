@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/few_shot_entry.schema.json",
+  "title": "few_shot_entry",
+  "description": "Phase 3P few-shot example for the NTIA/DoD meeting-minutes extraction prompt. Each entry pairs a (speaker-name-stripped) transcript chunk with the gold extraction the model should produce. The implicit_decision entry MUST appear LAST in the JSONL registry per the recency-bias property documented in the prompt (the JSON Schema enforces shape; ordering is asserted at load time by the loader and a positional test).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "id",
+    "source_transcript_id",
+    "example_type",
+    "chunk_text",
+    "gold_extraction",
+    "rationale",
+    "speaker_names_stripped",
+    "synthetic"
+  ],
+  "properties": {
+    "artifact_type": { "const": "few_shot_entry" },
+    "schema_version": { "const": "1.0.0" },
+    "id": {
+      "type": "string",
+      "pattern": "^fewshot-[0-9]{3}$"
+    },
+    "source_transcript_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "example_type": {
+      "type": "string",
+      "enum": [
+        "explicit_decision",
+        "implicit_decision",
+        "non_decision"
+      ]
+    },
+    "chunk_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "gold_extraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decisions",
+        "action_items",
+        "claims",
+        "risks",
+        "commitments",
+        "open_questions",
+        "cross_references",
+        "attendees",
+        "topics",
+        "regulatory_references",
+        "technical_parameters",
+        "named_artifacts",
+        "scheduled_events",
+        "sentiment_indicators",
+        "meeting_phases",
+        "issue_registry_entry",
+        "position_statement",
+        "agenda_item",
+        "precedent_reference",
+        "external_stakeholder_input",
+        "glossary_definition",
+        "procedural_ruling"
+      ],
+      "properties": {
+        "decisions": { "type": "array" },
+        "action_items": { "type": "array" },
+        "claims": { "type": "array" },
+        "risks": { "type": "array" },
+        "commitments": { "type": "array" },
+        "open_questions": { "type": "array" },
+        "cross_references": { "type": "array" },
+        "attendees": { "type": "array" },
+        "topics": { "type": "array" },
+        "regulatory_references": { "type": "array" },
+        "technical_parameters": { "type": "array" },
+        "named_artifacts": { "type": "array" },
+        "scheduled_events": { "type": "array" },
+        "sentiment_indicators": { "type": "array" },
+        "meeting_phases": { "type": "array" },
+        "issue_registry_entry": { "type": "array" },
+        "position_statement": { "type": "array" },
+        "agenda_item": { "type": "array" },
+        "precedent_reference": { "type": "array" },
+        "external_stakeholder_input": { "type": "array" },
+        "glossary_definition": { "type": "array" },
+        "procedural_ruling": { "type": "array" }
+      }
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 20
+    },
+    "speaker_names_stripped": {
+      "const": true
+    },
+    "synthetic": {
+      "type": "boolean"
+    }
+  }
+}

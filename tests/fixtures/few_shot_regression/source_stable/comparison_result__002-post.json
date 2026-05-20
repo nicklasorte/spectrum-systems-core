@@ -1,0 +1,10 @@
+{
+  "artifact_type": "comparison_result",
+  "schema_version": "1.0.0",
+  "source_id": "source_stable",
+  "compared_at": "2026-05-15T10:00:00+00:00",
+  "prompt_content_hash": "POST_HASH_SENTINEL",
+  "summary": {
+    "haiku_f1_vs_opus": 0.405
+  }
+}
