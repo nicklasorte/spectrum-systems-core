@@ -323,6 +323,50 @@ calling `git check-ignore`.
 - **Readers:** `data_lake/pipeline.py` (promotion + index),
   `evals/runner.py`, `evals/llm_extraction.py` (LLM path only).
 
+### meeting_minutes_opus
+- **Writer:** `spectrum_systems_core.corpus.baseline_opus.run_baseline_opus`
+  (the Phase 4a `spectrum-core baseline-opus` CLI). Calls Opus with
+  the canonical Opus prompt at
+  `src/spectrum_systems_core/workflows/prompts/meeting_minutes_opus.md`
+  and writes ONE envelope per run. The model string is resolved at
+  run time from
+  `ai/registry/model_registry.json::opus_reference_baseline` and
+  stamped into `payload.provenance.model_id`, so a past artifact
+  keeps its exact model even after the registry is rolled forward.
+  The prompt sha256 lands in
+  `payload.provenance.prompt_content_hash` so a future audit can
+  match an artifact to the exact prompt that produced it.
+- **Path template:**
+  `data-lake/processed/meetings/<source_id>/meeting_minutes_opus__<timestamp>.json`
+  (the `corpus.status` rollup globs this exact pattern to derive the
+  `baseline_complete` state).
+- **Schema:** no dedicated JSON Schema yet — the envelope follows the
+  9-field core artifact shape and the payload's content arrays mirror
+  `src/spectrum_systems_core/schemas/meeting_minutes.schema.json`.
+  The verifier
+  `scripts/verify_opus_baseline_consistency.py` is the contract
+  check: total item count in `[90, 125]` is the hard range and
+  `[100, 112]` is the reference range centred on the legacy
+  Dec 18 baseline (106 items).
+- **Git-tracked:** NO — runtime data lake artifact. Two layouts are
+  supported: the modern
+  `processed/meetings/<source_id>/meeting_minutes_opus__*.json`
+  (Phase 4a) and the legacy
+  `store/processed/meetings/<source_id>/reference_baselines/opus_reference_minutes.jsonl`
+  (Phase 3, `opus_reference_minutes`). The Phase 4a writer never
+  touches the legacy file; the two layouts coexist.
+- **Readers:** `corpus.status._has_opus_baseline` (for the
+  `baseline_complete` rollup state),
+  `scripts/verify_opus_baseline_consistency.py` (the consistency
+  verifier). NOT read back into the governed loop (a reference
+  baseline never participates in promotion decisions).
+- **Diagnostic companion:** every successful baseline-opus run also
+  appends one record to
+  `data-lake/processed/meetings/<source_id>/diagnostics/baseline_opus_history.jsonl`
+  (append-only, informational; never a gate, never indexed). The
+  marker exists so an operator audit can recover when a baseline
+  was last regenerated.
+
 ### source_record
 - **Writer:** `extraction/chunker.py` (per-source metadata file)
 - **Path template:** `data-lake/store/processed/meetings/<source_id>/source_record.json`
