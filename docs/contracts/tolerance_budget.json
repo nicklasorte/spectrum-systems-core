@@ -1,0 +1,9 @@
+{
+  "artifact_type": "tolerance_budget",
+  "schema_version": "1.0.0",
+  "min_promotion_buffer": 0.02,
+  "max_promotion_buffer": 0.10,
+  "current_promotion_buffer": 0.03,
+  "global_median_budget": 0.025,
+  "per_source_budgets": {}
+}

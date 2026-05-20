@@ -27,6 +27,10 @@
       "description": "Only valid value is 'three_way'. The legacy two-way artifact omits this key entirely (keeping its output byte-identical); any other value is rejected fail-closed."
     },
     "gt_pairs_present": { "type": "boolean" },
+    "legacy_eval": {
+      "type": "boolean",
+      "description": "Phase 2. True when the Haiku artifact lacked an `extraction_config` block, lacked a `prompt_content_hash` seed input, or was at schema_version < 1.4.0. Legacy comparisons are EXCLUDED from per-source variance budget computation in tolerance_budget.json so a pre-Phase-2 run cannot contaminate the calibration data."
+    },
     "summary": { "$ref": "#/$defs/summary_block" },
     "haiku_summary": { "$ref": "#/$defs/summary_block" },
     "sonnet_summary": { "$ref": "#/$defs/summary_block" },
