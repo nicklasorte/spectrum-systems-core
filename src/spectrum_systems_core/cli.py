@@ -2979,8 +2979,10 @@ def meeting_minutes_llm(
         return 2
 
     if dry_run:
-        # Observe-only: print the resolved selection and exit. No
-        # artifact, no API call, no extraction_config write.
+        # Observe-only: print the resolved selection + cost estimate
+        # and exit. No artifact, no API call, no extraction_config
+        # write. The cost estimate is the headline value the operator
+        # needs in front of `--repeat N --confirm-cost` decisions.
         #
         # Phase 5 honesty rule: the default `--model haiku` does NOT
         # pass a model_id_override, so the workflow uses the
@@ -3004,13 +3006,52 @@ def meeting_minutes_llm(
                 banner_model_id = (
                     f"{model_selection.model_id}(registry_unreadable)"
                 )
+
+        # Cost estimate. The estimator keys on the cost_constants.json
+        # model_id; the registry-resolved Haiku model
+        # (claude-haiku-4-5-20251001) is not in cost_constants. We
+        # estimate against the Phase-5 spec model_id
+        # (`model_selection.model_id`) so the banner is always
+        # populated, AND we surface the "estimate keyed on" model_id
+        # so an operator can see the gap when the registry pinned a
+        # different point release. The estimator's output is the cost
+        # of ONE extraction; we multiply by `repeat` for the total
+        # that `--repeat N --confirm-cost` would charge.
+        from decimal import Decimal as _Decimal
+        from .cost.estimator import (
+            CostConstantsError as _CostConstantsError,
+            estimate_extraction_cost as _estimate_cost,
+        )
+
+        transcript_byte_length = len(
+            transcript_text.encode("utf-8")
+        )
+        try:
+            per_run_cost = _estimate_cost(
+                transcript_byte_length,
+                model_selection.model_id,
+            )
+            total_cost = per_run_cost * _Decimal(repeat)
+            cost_line = (
+                f"estimated_cost_per_run=${per_run_cost} "
+                f"estimated_total_cost=${total_cost} "
+                f"cost_keyed_on={model_selection.model_id}"
+            )
+        except (_CostConstantsError, ValueError) as exc:
+            # Estimator unavailable — surface the reason rather than
+            # printing a misleading $0.000000.
+            cost_line = f"estimated_cost=unavailable ({exc})"
+
         print(
             f"meeting-minutes-llm [{source_id}] DRY-RUN "
             f"model={model_selection.model_token} "
             f"model_id={banner_model_id} "
             f"prompt_path={model_selection.prompt_path} "
             f"prompt_variant={model_selection.prompt_variant} "
-            f"repeat={repeat} (no artifact written)",
+            f"repeat={repeat} "
+            f"transcript_bytes={transcript_byte_length} "
+            f"{cost_line} "
+            "(no artifact written)",
             file=out,
         )
         return 0

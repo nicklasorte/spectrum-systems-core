@@ -149,6 +149,61 @@ def test_repeat_gt_1_with_confirm_cost_proceeds(fake_lake) -> None:
     assert "repeat=3" in s
 
 
+def test_dry_run_emits_cost_estimate(fake_lake) -> None:
+    """The dry-run banner MUST include a cost estimate.
+
+    Review-comment P2 (Codex): the `--dry-run` help promises a cost
+    estimate but the previous output omitted it, so operators could
+    not verify expected spend before approving `--repeat N --confirm-cost`.
+    """
+    lake, sid = fake_lake
+    out = io.StringIO()
+    rc = meeting_minutes_llm(
+        source_id=sid,
+        data_lake=str(lake),
+        model_token="haiku",
+        repeat=1,
+        confirm_cost=False,
+        dry_run=True,
+        out_stream=out,
+    )
+    assert rc == 0
+    s = out.getvalue()
+    assert "estimated_cost_per_run=$" in s
+    assert "estimated_total_cost=$" in s
+    assert "cost_keyed_on=claude-haiku-4-7" in s
+
+
+def test_dry_run_cost_scales_with_repeat(fake_lake) -> None:
+    """`--repeat N` multiplies the per-run cost in the dry-run banner."""
+    from decimal import Decimal
+
+    lake, sid = fake_lake
+    out1 = io.StringIO()
+    meeting_minutes_llm(
+        source_id=sid, data_lake=str(lake), model_token="sonnet",
+        repeat=1, confirm_cost=False, dry_run=True, out_stream=out1,
+    )
+    out3 = io.StringIO()
+    meeting_minutes_llm(
+        source_id=sid, data_lake=str(lake), model_token="sonnet",
+        repeat=3, confirm_cost=True, dry_run=True, out_stream=out3,
+    )
+
+    def _parse_total(s: str) -> Decimal:
+        # The banner emits `estimated_total_cost=$<DEC>` — extract it.
+        for token in s.split():
+            if token.startswith("estimated_total_cost=$"):
+                return Decimal(token.split("$", 1)[1])
+        raise AssertionError(f"no estimated_total_cost in: {s!r}")
+
+    total1 = _parse_total(out1.getvalue())
+    total3 = _parse_total(out3.getvalue())
+    assert total3 == total1 * Decimal(3), (
+        f"repeat=3 total {total3} != 3 * single-run {total1}"
+    )
+
+
 def test_invalid_repeat_value_rejected(fake_lake) -> None:
     lake, sid = fake_lake
     out = io.StringIO()
