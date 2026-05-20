@@ -75,6 +75,21 @@ class PipelineRunError(RuntimeError):
         super().__init__(message or reason_code)
 
 
+PROMPT_VARIANT_PRODUCTION_HAIKU = "production_haiku"
+PROMPT_VARIANT_HAIKU_PROMPT_WITH_SONNET = "haiku_prompt_with_sonnet_model"
+PROMPT_VARIANT_OPUS_PROMPT_WITH_SONNET = "opus_prompt_with_sonnet_model"
+PROMPT_VARIANT_OPUS_BASELINE = "opus_baseline"
+
+ALL_PROMPT_VARIANTS: frozenset[str] = frozenset(
+    {
+        PROMPT_VARIANT_PRODUCTION_HAIKU,
+        PROMPT_VARIANT_HAIKU_PROMPT_WITH_SONNET,
+        PROMPT_VARIANT_OPUS_PROMPT_WITH_SONNET,
+        PROMPT_VARIANT_OPUS_BASELINE,
+    }
+)
+
+
 @dataclass(frozen=True)
 class ExtractionConfig:
     """Reproducible inputs to one extraction run.
@@ -110,6 +125,10 @@ class ExtractionConfig:
         completion — i.e. the file was mutated mid-run. A tainted run
         is excluded from per-source variance budget calculations
         (same lifecycle as ``legacy_eval: true``).
+      prompt_variant: Phase 5 optional. One of the four values in
+        :data:`ALL_PROMPT_VARIANTS` identifying the (prompt, model)
+        combination. Absent on pre-Phase-5 artifacts; the comparison
+        engine defaults a missing value to ``production_haiku``.
     """
 
     temperature: float
@@ -122,6 +141,7 @@ class ExtractionConfig:
     glossary_version_hash: Optional[str] = None
     glossary_tokens_added: Optional[int] = None
     tainted_glossary_drift: Optional[bool] = None
+    prompt_variant: Optional[str] = None
 
     REQUIRED_SEED_KEYS: frozenset[str] = field(
         default=frozenset({"model_id", "prompt_content_hash", "transcript_hash"}),
@@ -156,6 +176,14 @@ class ExtractionConfig:
             out["glossary_tokens_added"] = int(self.glossary_tokens_added)
         if self.tainted_glossary_drift is not None:
             out["tainted_glossary_drift"] = bool(self.tainted_glossary_drift)
+        if self.prompt_variant is not None:
+            if self.prompt_variant not in ALL_PROMPT_VARIANTS:
+                raise PipelineRunError(
+                    "prompt_variant_invalid",
+                    f"prompt_variant must be one of {sorted(ALL_PROMPT_VARIANTS)}, "
+                    f"got {self.prompt_variant!r}",
+                )
+            out["prompt_variant"] = self.prompt_variant
         validate_glossary_metadata_consistency(out)
         return out
 
@@ -253,6 +281,7 @@ def build_extraction_config_from_run(
     glossary_version_hash: Optional[str] = None,
     glossary_tokens_added: Optional[int] = None,
     tainted_glossary_drift: Optional[bool] = None,
+    prompt_variant: Optional[str] = None,
 ) -> ExtractionConfig:
     """Construct an ExtractionConfig from the inputs the run was given.
 
@@ -294,6 +323,7 @@ def build_extraction_config_from_run(
         glossary_version_hash=glossary_version_hash,
         glossary_tokens_added=glossary_tokens_added,
         tainted_glossary_drift=tainted_glossary_drift,
+        prompt_variant=prompt_variant,
     )
 
 
@@ -430,6 +460,8 @@ def governed_pipeline_run(
     client: Optional[Callable[..., str]] = None,
     skip_invocation_log: bool = False,
     enable_glossary_injection: bool = True,
+    prompt_variant: Optional[str] = None,
+    model_id_override: Optional[str] = None,
 ) -> GovernedPipelineRunResult:
     """Run extraction → schema_validate → grounding_gate → compare.
 
@@ -487,6 +519,12 @@ def governed_pipeline_run(
             "transcript_invalid",
             "transcript must be a string",
         )
+    if prompt_variant is not None and prompt_variant not in ALL_PROMPT_VARIANTS:
+        raise PipelineRunError(
+            "prompt_variant_invalid",
+            f"prompt_variant must be one of {sorted(ALL_PROMPT_VARIANTS)} or None, "
+            f"got {prompt_variant!r}",
+        )
 
     # Phase 3 — glossary production wiring. The glossary module is
     # imported lazily ONLY when injection is enabled so a disabled run
@@ -535,6 +573,7 @@ def governed_pipeline_run(
             lake_root=data_lake_path / "store",
             glossary=glossary,
             glossary_tokens_counter=glossary_tokens_counter,
+            model_id_override=model_id_override,
         )
 
     # Re-hash the glossary file at completion. A divergence from the
@@ -612,6 +651,7 @@ def governed_pipeline_run(
                 else None
             ),
             tainted_glossary_drift=tainted_glossary_drift,
+            prompt_variant=prompt_variant,
         )
 
     if artifact_dict is not None:
@@ -759,6 +799,7 @@ def governed_pipeline_run(
 
 
 __all__ = [
+    "ALL_PROMPT_VARIANTS",
     "ALLOWED_CALLERS",
     "CALLER_BATCH_WORKFLOW",
     "CALLER_CORRECTION_MINER",
@@ -768,6 +809,10 @@ __all__ = [
     "PIPELINE_INVOCATION_LOG_ARTIFACT_TYPE",
     "PIPELINE_INVOCATION_LOG_SCHEMA_VERSION",
     "PIPELINE_INVOCATION_LOG_TTL_DAYS",
+    "PROMPT_VARIANT_HAIKU_PROMPT_WITH_SONNET",
+    "PROMPT_VARIANT_OPUS_BASELINE",
+    "PROMPT_VARIANT_OPUS_PROMPT_WITH_SONNET",
+    "PROMPT_VARIANT_PRODUCTION_HAIKU",
     "PipelineRunError",
     "build_extraction_config_from_run",
     "extraction_config_hash",

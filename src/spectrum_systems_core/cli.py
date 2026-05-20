@@ -2791,6 +2791,10 @@ def meeting_minutes_llm(
     single_chunk: bool = False,
     print_context: bool = False,
     enable_glossary_injection: bool = True,
+    model_token: str = "haiku",
+    repeat: int = 1,
+    confirm_cost: bool = False,
+    dry_run: bool = False,
     client=None,
     env=None,
     out_stream=None,
@@ -2930,6 +2934,86 @@ def meeting_minutes_llm(
     from .config import LLMConfigError
     from .data_lake.writer import write_promoted_artifact
     from .workflows import run_meeting_minutes_llm_workflow
+    from .workflows.model_selection import (
+        MODEL_TOKEN_HAIKU,
+        ModelSelectionError,
+        read_prompt,
+        resolve_model_selection,
+    )
+
+    # Phase 5 — resolve the --model token BEFORE any artifact / API
+    # call. A bad token, or `--model sonnet-unconstrained` without the
+    # Phase 4a Opus prompt on disk, HALTS here with the resolver's
+    # reason_code (never a silent fallback to Haiku). The Phase 5
+    # default `--model haiku` resolves to the production prompt and the
+    # registry model_id (None override below), keeping pre-Phase-5 CLI
+    # behaviour byte-identical.
+    try:
+        model_selection = resolve_model_selection(model_token)
+    except ModelSelectionError as exc:
+        print(
+            f"meeting-minutes-llm [{source_id}] halted pre-run: "
+            f"reason_code={exc.reason_code} -- {exc}",
+            file=out,
+        )
+        return 2
+
+    # --repeat > 1 requires --confirm-cost (CLI-only; env vars are
+    # never consulted — the test_env_var_bypass_has_no_effect test in
+    # tests/sonnet/ asserts this).
+    if repeat is None or repeat < 1:
+        print(
+            f"meeting-minutes-llm [{source_id}] halted pre-run: "
+            f"reason_code=repeat_invalid -- --repeat must be >= 1, "
+            f"got {repeat!r}",
+            file=out,
+        )
+        return 2
+    if repeat > 1 and not confirm_cost:
+        print(
+            f"meeting-minutes-llm [{source_id}] halted pre-run: "
+            f"reason_code=cost_confirmation_required -- --repeat > 1 "
+            f"requires --confirm-cost (each repeat is a full extraction).",
+            file=out,
+        )
+        return 2
+
+    if dry_run:
+        # Observe-only: print the resolved selection and exit. No
+        # artifact, no API call, no extraction_config write.
+        print(
+            f"meeting-minutes-llm [{source_id}] DRY-RUN "
+            f"model={model_selection.model_token} "
+            f"model_id={model_selection.model_id} "
+            f"prompt_path={model_selection.prompt_path} "
+            f"prompt_variant={model_selection.prompt_variant} "
+            f"repeat={repeat} (no artifact written)",
+            file=out,
+        )
+        return 0
+
+    # Phase 5 — for the default `--model haiku` we keep the legacy
+    # in-process workflow call exactly as it was (no model_id override,
+    # no prompt swap). For the three other tokens we let the workflow
+    # carry the override model_id; the prompt swap goes through the
+    # ``_override_prompt`` context manager from governed_run so we
+    # cannot drift on how the prompt is injected. ``prompt_variant`` is
+    # stamped onto the artifact's provenance.extraction_config after
+    # promotion so the comparison engine can group artifacts.
+    use_override = model_token != MODEL_TOKEN_HAIKU
+    model_id_override: str | None = None
+    prompt_override: str | None = None
+    if use_override:
+        model_id_override = model_selection.model_id
+        try:
+            prompt_override = read_prompt(model_selection.prompt_path)
+        except ModelSelectionError as exc:
+            print(
+                f"meeting-minutes-llm [{source_id}] halted pre-run: "
+                f"reason_code={exc.reason_code} -- {exc}",
+                file=out,
+            )
+            return 2
 
     resolved_env = env if env is not None else os.environ
 
@@ -3035,85 +3119,151 @@ def meeting_minutes_llm(
             )
             return 2
 
-    try:
-        result = run_meeting_minutes_llm_workflow(
-            transcript_text,
-            client=client,
-            meeting_id=source_id,
-            source_id=source_id,
-            lake_root=store_root,
-            env=resolved_env,
-            max_chunks=max_chunks,
-            debug_chunks=debug_chunks,
-            print_raw_response=print_raw_response,
-            single_chunk=single_chunk,
-            print_context=print_context,
-            glossary=glossary_obj,
-            glossary_tokens_counter=glossary_tokens_counter,
-        )
-    except LLMConfigError as exc:
-        # Fail-closed pre-run halt: no artifact produced, no fallback to
-        # the regex extractor. The reason_code is a field on the
-        # exception so a gate reads a value, not prose.
-        print(
-            f"meeting-minutes-llm [{source_id}] halted pre-run: "
-            f"reason_code={exc.reason_code} -- {exc}",
-            file=out,
-        )
-        return 2
+    # Phase 5 — when `--repeat N` is set we dispatch N extractions in a
+    # loop. Each extraction is a full, independent governed-loop run
+    # producing a separate artifact in the data lake (the writer's
+    # filename keys off the artifact_id, which is deterministic from
+    # the model output — so two distinct runs with different responses
+    # write to different files, and two byte-identical runs are
+    # idempotent). The per-source state hook (Phase 3) advances once
+    # per non-legacy comparison the operator runs against these
+    # artifacts. The first failure (extraction halt OR control block)
+    # stops the loop fail-closed: a partial repeat run is never useful.
+    from .workflows.meeting_minutes_llm import _make_override_prompt_cm
 
-    mm = result.meeting_minutes
-    mm_payload = mm.payload if isinstance(mm.payload, dict) else {}
-    produced_by = (mm_payload.get("provenance") or {}).get("produced_by")
+    last_result = None
+    last_written: str | None = None
+    last_produced_by: str | None = None
+    for invocation_idx in range(repeat):
+        try:
+            with _make_override_prompt_cm(prompt_override):
+                result = run_meeting_minutes_llm_workflow(
+                    transcript_text,
+                    client=client,
+                    meeting_id=source_id,
+                    source_id=source_id,
+                    lake_root=store_root,
+                    env=resolved_env,
+                    max_chunks=max_chunks,
+                    debug_chunks=debug_chunks,
+                    print_raw_response=print_raw_response,
+                    single_chunk=single_chunk,
+                    print_context=print_context,
+                    glossary=glossary_obj,
+                    glossary_tokens_counter=glossary_tokens_counter,
+                    model_id_override=model_id_override,
+                )
+        except LLMConfigError as exc:
+            # Fail-closed pre-run halt: no artifact produced, no fallback to
+            # the regex extractor. The reason_code is a field on the
+            # exception so a gate reads a value, not prose.
+            print(
+                f"meeting-minutes-llm [{source_id}] halted pre-run: "
+                f"reason_code={exc.reason_code} -- {exc} "
+                f"(invocation {invocation_idx + 1}/{repeat})",
+                file=out,
+            )
+            return 2
 
-    if print_raw_response:
-        # Mode 1 is observe-only: the verbatim model response was
-        # already printed by the wrapped transport BEFORE parsing. The
-        # real extraction / evals / gate all ran (so the operator sees
-        # the true outcome), but the promoted artifact is deliberately
-        # NOT written — no data-lake mutation from a diagnostic run.
-        decision_payload = (
-            result.control_decision.payload
-            if result.control_decision is not None
-            else {}
+        mm = result.meeting_minutes
+        mm_payload = mm.payload if isinstance(mm.payload, dict) else {}
+        produced_by = (mm_payload.get("provenance") or {}).get("produced_by")
+        last_produced_by = produced_by
+
+        # Phase 5 — stamp prompt_variant onto the promoted artifact's
+        # provenance.extraction_config. This is the SHIM until the
+        # production CLI is refactored to route through
+        # governed_pipeline_run; the field is read by the comparison
+        # engine and the future correction miner reconciler. The stamp
+        # is additive: the schema makes extraction_config and its
+        # nested prompt_variant both optional, so an artifact without
+        # the stamp (pre-Phase-5) still validates.
+        if (
+            result.promoted
+            and isinstance(mm.payload, dict)
+        ):
+            from .pipeline.governed_run import (
+                ALL_PROMPT_VARIANTS as _ALL_VARIANTS,
+            )
+            from .artifacts import compute_content_hash as _compute_hash
+
+            if model_selection.prompt_variant not in _ALL_VARIANTS:
+                # Defensive: the resolver enum-checks the value, but a
+                # future refactor that broadens the enum without
+                # updating the schema must fail loudly.
+                print(
+                    f"meeting-minutes-llm [{source_id}] halted post-run: "
+                    f"reason_code=prompt_variant_unknown -- "
+                    f"{model_selection.prompt_variant!r}",
+                    file=out,
+                )
+                return 2
+            provenance = mm.payload.setdefault("provenance", {})
+            if not isinstance(provenance, dict):
+                provenance = {}
+                mm.payload["provenance"] = provenance
+            ec = provenance.setdefault("extraction_config", {})
+            if not isinstance(ec, dict):
+                ec = {}
+                provenance["extraction_config"] = ec
+            ec["prompt_variant"] = model_selection.prompt_variant
+            mm.content_hash = _compute_hash(mm.payload)
+
+        # Mode 1 (print-raw-response) is observe-only for the WHOLE
+        # invocation — never writes a promoted artifact. Honour it for
+        # every repeat iteration; we deliberately do not aggregate
+        # across repeats in this mode.
+        if print_raw_response:
+            decision_payload = (
+                result.control_decision.payload
+                if result.control_decision is not None
+                else {}
+            )
+            print(
+                f"meeting-minutes-llm [{source_id}] OBSERVE-ONLY "
+                f"(print-raw-response) produced_by={produced_by} "
+                f"promoted={result.promoted} "
+                f"decision={decision_payload.get('decision')} "
+                f"invocation={invocation_idx + 1}/{repeat} "
+                f"(no artifact written)",
+                file=out,
+            )
+            last_result = result
+            continue
+
+        if not result.promoted:
+            decision_payload = (
+                result.control_decision.payload
+                if result.control_decision is not None
+                else {}
+            )
+            reason_codes = decision_payload.get("reason_codes") or []
+            print(
+                f"meeting-minutes-llm [{source_id}] BLOCKED "
+                f"produced_by={produced_by} "
+                f"decision={decision_payload.get('decision')} "
+                f"reason_codes={','.join(str(c) for c in reason_codes)} "
+                f"invocation={invocation_idx + 1}/{repeat}",
+                file=out,
+            )
+            return 1
+
+        last_written = write_promoted_artifact(
+            store_root, mm, meeting_id=source_id
         )
         print(
-            f"meeting-minutes-llm [{source_id}] OBSERVE-ONLY "
-            f"(print-raw-response) produced_by={produced_by} "
-            f"promoted={result.promoted} "
-            f"decision={decision_payload.get('decision')} "
-            f"(no artifact written)",
-            file=out,
-        )
-        return 0
-
-    if not result.promoted:
-        decision_payload = (
-            result.control_decision.payload
-            if result.control_decision is not None
-            else {}
-        )
-        reason_codes = decision_payload.get("reason_codes") or []
-        print(
-            f"meeting-minutes-llm [{source_id}] BLOCKED "
+            f"meeting-minutes-llm [{source_id}] OK "
             f"produced_by={produced_by} "
-            f"decision={decision_payload.get('decision')} "
-            f"reason_codes={','.join(str(c) for c in reason_codes)}",
+            f"model={model_selection.model_token} "
+            f"model_id={model_selection.model_id} "
+            f"prompt_variant={model_selection.prompt_variant} "
+            f"invocation={invocation_idx + 1}/{repeat} "
+            f"written={last_written}",
             file=out,
         )
-        # Non-zero so the workflow step (and validate-and-baseline)
-        # fails. The comparison is meaningless without a promoted Haiku
-        # artifact; do NOT let a blocked run pass as success.
-        return 1
+        last_result = result
 
-    written = write_promoted_artifact(
-        store_root, mm, meeting_id=source_id
-    )
-    print(
-        f"meeting-minutes-llm [{source_id}] OK "
-        f"produced_by={produced_by} written={written}",
-        file=out,
-    )
+    _ = (last_result, last_written, last_produced_by)
     return 0
 
 
@@ -4851,6 +5001,53 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # Phase 5 — Sonnet model wiring + three-way comparison measurement.
+    # The --model flag is CLI-only (env vars are NEVER consulted; the
+    # test_env_var_bypass_has_no_effect test in tests/sonnet/ asserts
+    # this). Default is `haiku`, byte-identical to pre-Phase-5 behaviour.
+    mml.add_argument(
+        "--model",
+        choices=["haiku", "sonnet", "sonnet-unconstrained", "opus"],
+        default="haiku",
+        help=(
+            "Phase 5. Extraction model. Default: haiku (production). "
+            "'sonnet' uses the Haiku prompt with Sonnet (apples-to-apples). "
+            "'sonnet-unconstrained' uses the Opus prompt with Sonnet "
+            "(Sonnet's actual capability — requires the Phase 4a Opus "
+            "prompt on disk). 'opus' is the ceiling reference. "
+            "CLI-only; env vars are not consulted."
+        ),
+    )
+    mml.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help=(
+            "Phase 5. Number of times to run the extraction (variance "
+            "measurement). Default: 1. Values > 1 require --confirm-cost. "
+            "Each repeat is a full extraction producing a separate artifact."
+        ),
+    )
+    mml.add_argument(
+        "--confirm-cost",
+        action="store_true",
+        default=False,
+        help=(
+            "Phase 5. Required for --repeat > 1. CLI-only; env vars are "
+            "not consulted."
+        ),
+    )
+    mml.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help=(
+            "Phase 5 (observe-only). Print the resolved (model_id, "
+            "prompt_path, prompt_variant) for --model and the cost "
+            "estimate; make NO API call and write NO artifact."
+        ),
+    )
+
     lg = sub.add_parser(
         "link-ground-truth",
         help="Phase L.2: pair transcripts with meeting-minutes by date.",
@@ -5264,6 +5461,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             single_chunk=args.single_chunk,
             print_context=args.print_context,
             enable_glossary_injection=resolved_glossary,
+            model_token=args.model,
+            repeat=args.repeat,
+            confirm_cost=args.confirm_cost,
+            dry_run=args.dry_run,
         )
     if args.command == "link-ground-truth":
         return link_ground_truth(

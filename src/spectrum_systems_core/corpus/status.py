@@ -33,7 +33,7 @@ import datetime as _dt
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..schemas import schema_path
 from .manifest_loader import (
@@ -114,6 +114,115 @@ def _has_comparison_result(processed_dir: Path) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Phase 5 — per-model F1 readouts (only emitted with --show-all-models).
+# ---------------------------------------------------------------------------
+
+
+def _opus_item_count(processed_dir: Path) -> Optional[int]:
+    """Read the Opus baseline item count, or None when no baseline exists.
+
+    The baseline file is a JSONL written by the Opus baseliner; each
+    line is one extracted item. The count is just the line count
+    (skipping blank lines so a trailing newline doesn't inflate the
+    total).
+    """
+    if not processed_dir.is_dir():
+        return None
+    candidates = sorted(processed_dir.glob("meeting_minutes_opus__*.json"))
+    if not candidates:
+        return None
+    try:
+        text = candidates[-1].read_text(encoding="utf-8")
+    except OSError:
+        return None
+    # The Opus baseline file is a single JSON object whose `payload`
+    # carries the arrays. Count the items across the standard
+    # extraction-types list.
+    try:
+        doc = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    payload = doc.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    types = (
+        "decisions",
+        "action_items",
+        "open_questions",
+        "regulatory_verbs",
+        "agency_positions",
+        "agency_relationships",
+        "agency_objections",
+        "constraints",
+        "milestones",
+        "topics",
+        "structured_items",
+    )
+    total = 0
+    for t in types:
+        v = payload.get(t)
+        if isinstance(v, list):
+            total += len(v)
+    return total
+
+
+def _latest_f1_by_variant(
+    processed_dir: Path, want_variant: str
+) -> Optional[float]:
+    """Read the most-recent comparison_result F1 for a given variant.
+
+    ``want_variant`` is one of the four Phase-5 prompt variants. The
+    function scans both two-way (``comparison_result__*.json``) and
+    three-way (``comparisons/three_way_*.json``) artifacts.
+
+    Returns ``None`` when no matching comparison exists. Returns the
+    raw F1 value (0.0 to 1.0) when one is found. Newest-first by file
+    mtime; the first match wins.
+    """
+    if not processed_dir.is_dir():
+        return None
+
+    candidates: list[tuple[float, Path]] = []
+    for p in processed_dir.glob("comparison_result__*.json"):
+        candidates.append((p.stat().st_mtime, p))
+    three_way_dir = processed_dir / "comparisons"
+    if three_way_dir.is_dir():
+        for p in three_way_dir.glob("three_way_*.json"):
+            candidates.append((p.stat().st_mtime, p))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda t: t[0], reverse=True)
+
+    for _, path in candidates:
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        # Two-way: `haiku_prompt_variant` plus `summary.haiku_f1_vs_opus`.
+        # Three-way: `haiku_prompt_variant` for Haiku, `sonnet_prompt_variant`
+        # for Sonnet, plus the matching `*_summary.haiku_f1_vs_opus`.
+        is_three_way = doc.get("comparison_mode") == "three_way"
+        if is_three_way:
+            hv = doc.get("haiku_prompt_variant", "production_haiku")
+            sv = doc.get("sonnet_prompt_variant", "production_haiku")
+            if hv == want_variant:
+                f1 = (doc.get("haiku_summary") or {}).get("haiku_f1_vs_opus")
+                if isinstance(f1, (int, float)):
+                    return float(f1)
+            if sv == want_variant:
+                f1 = (doc.get("sonnet_summary") or {}).get("haiku_f1_vs_opus")
+                if isinstance(f1, (int, float)):
+                    return float(f1)
+        else:
+            hv = doc.get("haiku_prompt_variant", "production_haiku")
+            if hv == want_variant:
+                f1 = (doc.get("summary") or {}).get("haiku_f1_vs_opus")
+                if isinstance(f1, (int, float)):
+                    return float(f1)
+    return None
+
+
 def _processed_root(lake_root: Path) -> Path:
     """Resolve the processed/meetings/ root.
 
@@ -168,7 +277,10 @@ def _derive_state_and_recommendation(
 
 
 def _build_manifest_rows(
-    manifest: LoadedManifest, lake_root: Path
+    manifest: LoadedManifest,
+    lake_root: Path,
+    *,
+    show_all_models: bool = False,
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     processed_root = _processed_root(lake_root)
@@ -187,26 +299,52 @@ def _build_manifest_rows(
             has_opus_baseline=hob,
             has_comparison_result=hcr,
         )
-        rows.append(
-            {
-                "source_id": sid,
-                "state": state,
-                "recommendation": rec,
-                "has_source_record": hsr,
-                "has_opus_baseline": hob,
-                "has_comparison_result": hcr,
-                "detected_speaker_count": observed["detected_speaker_count"],
-                "detected_word_count": observed["detected_word_count"],
-                "last_updated": observed["last_updated"],
-                "meeting_date": declared["meeting_date"],
-                "meeting_type": declared["meeting_type"],
-            }
-        )
+        row: Dict[str, Any] = {
+            "source_id": sid,
+            "state": state,
+            "recommendation": rec,
+            "has_source_record": hsr,
+            "has_opus_baseline": hob,
+            "has_comparison_result": hcr,
+            "detected_speaker_count": observed["detected_speaker_count"],
+            "detected_word_count": observed["detected_word_count"],
+            "last_updated": observed["last_updated"],
+            "meeting_date": declared["meeting_date"],
+            "meeting_type": declared["meeting_type"],
+        }
+        if show_all_models:
+            # Phase 5 — additive per-model F1 readouts. Absent in the
+            # default (Phase 4-byte-identical) output. The fields here
+            # are read from the most recent matching comparison_result
+            # for the source; `null` means "not yet extracted".
+            row["haiku_latest_f1"] = _latest_f1_by_variant(
+                processed_dir, "production_haiku"
+            )
+            sonnet_haiku_prompt = _latest_f1_by_variant(
+                processed_dir, "haiku_prompt_with_sonnet_model"
+            )
+            sonnet_opus_prompt = _latest_f1_by_variant(
+                processed_dir, "opus_prompt_with_sonnet_model"
+            )
+            # Pick the most-recent of the two Sonnet variants for the
+            # rollup; the operator-facing variant disambiguation lives
+            # in the three-way artifact, not the rollup. ``None`` when
+            # neither has run.
+            row["sonnet_latest_f1"] = (
+                sonnet_haiku_prompt
+                if sonnet_haiku_prompt is not None
+                else sonnet_opus_prompt
+            )
+            row["opus_item_count"] = _opus_item_count(processed_dir)
+        rows.append(row)
     return rows
 
 
 def _build_orphan_rows(
-    manifest: LoadedManifest, lake_root: Path
+    manifest: LoadedManifest,
+    lake_root: Path,
+    *,
+    show_all_models: bool = False,
 ) -> List[Dict[str, Any]]:
     """Synthesise rows for processed/meetings/<sid>/ directories not in the manifest."""
     processed_root = _processed_root(lake_root)
@@ -231,21 +369,34 @@ def _build_orphan_rows(
             or _has_comparison_result(sub)
         ):
             continue
-        rows.append(
-            {
-                "source_id": sid,
-                "state": STATE_ORPHANED_IN_LAKE,
-                "recommendation": RECOMMENDATION_INVESTIGATE_ORPHAN,
-                "has_source_record": _has_source_record(sub),
-                "has_opus_baseline": _has_opus_baseline(sub),
-                "has_comparison_result": _has_comparison_result(sub),
-                "detected_speaker_count": None,
-                "detected_word_count": None,
-                "last_updated": None,
-                "meeting_date": None,
-                "meeting_type": None,
-            }
-        )
+        row: Dict[str, Any] = {
+            "source_id": sid,
+            "state": STATE_ORPHANED_IN_LAKE,
+            "recommendation": RECOMMENDATION_INVESTIGATE_ORPHAN,
+            "has_source_record": _has_source_record(sub),
+            "has_opus_baseline": _has_opus_baseline(sub),
+            "has_comparison_result": _has_comparison_result(sub),
+            "detected_speaker_count": None,
+            "detected_word_count": None,
+            "last_updated": None,
+            "meeting_date": None,
+            "meeting_type": None,
+        }
+        if show_all_models:
+            row["haiku_latest_f1"] = _latest_f1_by_variant(
+                sub, "production_haiku"
+            )
+            sh_prompt = _latest_f1_by_variant(
+                sub, "haiku_prompt_with_sonnet_model"
+            )
+            so_prompt = _latest_f1_by_variant(
+                sub, "opus_prompt_with_sonnet_model"
+            )
+            row["sonnet_latest_f1"] = (
+                sh_prompt if sh_prompt is not None else so_prompt
+            )
+            row["opus_item_count"] = _opus_item_count(sub)
+        rows.append(row)
     return rows
 
 
@@ -253,6 +404,7 @@ def build_corpus_status_report(
     *,
     lake_root: Path | str,
     manifest_path: Path | str | None = None,
+    show_all_models: bool = False,
 ) -> Dict[str, Any]:
     """Build the corpus-mode status_report payload.
 
@@ -263,11 +415,20 @@ def build_corpus_status_report(
     ``status_report.schema.json``; the caller schema-validates it
     before serialising so a drift between this code and the schema
     fails the test suite.
+
+    ``show_all_models`` (Phase 5) defaults to ``False`` so the output
+    is byte-identical to the Phase-4 rollup on the same lake state.
+    When ``True`` each row carries three additive optional fields —
+    ``haiku_latest_f1``, ``sonnet_latest_f1``, ``opus_item_count`` —
+    each ``null`` when the corresponding artifact has not been
+    produced for that source.
     """
     lake = Path(lake_root)
     manifest = load_manifest(manifest_path)
-    rows = _build_manifest_rows(manifest, lake)
-    rows.extend(_build_orphan_rows(manifest, lake))
+    rows = _build_manifest_rows(manifest, lake, show_all_models=show_all_models)
+    rows.extend(
+        _build_orphan_rows(manifest, lake, show_all_models=show_all_models)
+    )
     rows.sort(key=lambda r: (r["state"], r["source_id"]))
     report: Dict[str, Any] = {
         "artifact_type": "status_report",

@@ -920,6 +920,18 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="emit_json",
         help="Emit the rollup as a JSON status_report on stdout.",
     )
+    st.add_argument(
+        "--show-all-models",
+        action="store_true",
+        default=False,
+        dest="show_all_models",
+        help=(
+            "Phase 5. Include Haiku, Sonnet, and Opus F1 / item-count "
+            "columns in the per-source rollup. Default (without this "
+            "flag) is unchanged: only the Phase-4 row shape is emitted. "
+            "CLI-only; env vars are not consulted."
+        ),
+    )
 
     return parser
 
@@ -1134,6 +1146,7 @@ def _run_status_cli(args, *, stream) -> int:
         report = build_corpus_status_report(
             lake_root=args.lake,
             manifest_path=args.manifest,
+            show_all_models=getattr(args, "show_all_models", False),
         )
     except CorpusManifestError as exc:
         stream.write(f"ERROR: {exc.reason_code}: {exc}\n")

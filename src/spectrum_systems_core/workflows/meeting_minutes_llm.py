@@ -102,6 +102,45 @@ def _routed_within_source_eval(
 
 _PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "meeting_minutes_llm.md"
 
+
+import contextlib as _contextlib
+
+
+@_contextlib.contextmanager
+def _make_override_prompt_cm(prompt_text):
+    """Optionally swap ``_system_prompt`` for the duration of one run.
+
+    Phase 5: the production CLI uses this to inject the Opus prompt
+    when ``--model sonnet-unconstrained`` or ``--model opus`` is set.
+    A ``None`` ``prompt_text`` is a pass-through context manager so the
+    default ``--model haiku`` path is byte-identical to pre-Phase-5
+    behaviour (no swap, no restore overhead, no observable change).
+
+    The override mechanism is intentionally the same one
+    ``pipeline.governed_pipeline_run._override_prompt`` uses so the
+    correction miner and the CLI cannot drift on injection mechanics.
+    Restoration on exception is guaranteed by the contextlib
+    machinery.
+    """
+    if prompt_text is None:
+        yield
+        return
+    import sys as _sys
+
+    this_module = _sys.modules[__name__]
+    original = getattr(this_module, "_system_prompt", None)
+    setattr(this_module, "_system_prompt", lambda: prompt_text)
+    try:
+        yield
+    finally:
+        if original is None:
+            try:
+                delattr(this_module, "_system_prompt")
+            except AttributeError:
+                pass
+        else:
+            setattr(this_module, "_system_prompt", original)
+
 # Single source of truth for the extraction model string. NEVER hardcode
 # a model literal in this module — the value below is a PATH to the
 # registry file, not a model id. P8-A swapped Haiku → Sonnet here because
@@ -1208,6 +1247,7 @@ def run_meeting_minutes_llm_workflow(
     print_context: bool = False,
     glossary=None,
     glossary_tokens_counter=None,
+    model_id_override: str | None = None,
 ) -> WorkflowResult:
     """Produce a promoted ``meeting_minutes`` artifact via a live model.
 
@@ -1281,7 +1321,24 @@ def run_meeting_minutes_llm_workflow(
     # registry-resolved provenance.model_id). A misconfigured registry
     # HALTS here fail-closed rather than producing a blocked artifact
     # with the wrong / no model_id.
-    model_id, max_tokens = _resolve_extraction_model()
+    #
+    # Phase 5: `model_id_override` (Sonnet wiring) takes precedence over
+    # the registry so the production CLI's `--model` flag can pin a
+    # specific model without editing model_registry.json. The override
+    # path keeps the registry's max_tokens (the transport budget is a
+    # property of the prompt+pipeline, not the model family). A blank
+    # / None override falls through to the registry, byte-identical to
+    # pre-Phase-5 behaviour.
+    registry_model_id, max_tokens = _resolve_extraction_model()
+    if model_id_override is not None:
+        if not isinstance(model_id_override, str) or not model_id_override.strip():
+            raise LLMConfigError(
+                "model_id_override must be a non-empty string when provided",
+                reason_code=_MODEL_REGISTRY_ERROR,
+            )
+        model_id = model_id_override.strip()
+    else:
+        model_id = registry_model_id
     if client is None:
         preflight_llm_config(enabled=True, env=env)
     active_client: LLMClient = client or AnthropicJSONClient(
@@ -1489,4 +1546,5 @@ __all__ = [
     "run_meeting_minutes_llm_workflow",
     "build_chunk_debug_report",
     "PRODUCED_BY",
+    "_make_override_prompt_cm",
 ]

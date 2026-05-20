@@ -76,6 +76,27 @@
         },
         "meeting_type": {
           "anyOf": [{ "type": "null" }, { "type": "string" }]
+        },
+        "haiku_latest_f1": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+          ],
+          "description": "Phase 5 (optional). Most recent Haiku F1 vs the Opus reference for this source, OR null when no Haiku comparison exists. Present only when the status CLI is invoked with --show-all-models; absent in default output (the byte-identical-to-Phase-4 path)."
+        },
+        "sonnet_latest_f1": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+          ],
+          "description": "Phase 5 (optional). Most recent Sonnet F1 vs Opus for this source, OR null when no Sonnet comparison exists. Present only with --show-all-models."
+        },
+        "opus_item_count": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "integer", "minimum": 0 }
+          ],
+          "description": "Phase 5 (optional). Number of Opus baseline items for this source, OR null when no Opus baseline exists. Present only with --show-all-models."
         }
       }
     }
