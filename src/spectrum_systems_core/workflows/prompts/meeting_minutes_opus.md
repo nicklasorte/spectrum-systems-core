@@ -36,8 +36,9 @@ to the Haiku prompt.
 
 ## Output schema
 
-Return a single JSON object. EVERY one of the 22 content arrays
-below MUST be present even if empty (`[]` is a valid value for any
+Return a single JSON object. The object MUST carry the top-level
+`title` and `summary` fields described below, plus EVERY one of the
+22 content arrays (even if empty — `[]` is a valid value for any
 array), plus the `grounding` companion array. Do not wrap the object
 in another object. Do not add fields the schema does not declare —
 any unknown key on a structured item fails the schema gate
@@ -45,6 +46,8 @@ any unknown key on a structured item fails the schema gate
 
 ```
 {
+  "title": "<short string naming this meeting>",
+  "summary": "<one-paragraph summary of the meeting>",
   "decisions": [...],
   "action_items": [...],
   "open_questions": [...],
@@ -71,6 +74,25 @@ any unknown key on a structured item fails the schema gate
   "grounding": [...]
 }
 ```
+
+## Required top-level fields (structural, binding)
+
+The governed pipeline's `required_meeting_minutes_fields` eval blocks
+promotion when any of these top-level fields is missing from the
+returned object. They are structural requirements, not precision
+constraints:
+
+* `title` — a non-empty string naming this meeting. A short
+  descriptive label is acceptable (e.g. `"7 GHz Downlink TIG —
+  2026-05-18"`).
+* `summary` — a string summarising the meeting. A one-paragraph
+  overview is acceptable; the field may be brief but must not be
+  empty.
+* `decisions` — the array described below (may be `[]`).
+* `action_items` — the array described below (may be `[]`).
+* `open_questions` — the array described below (may be `[]`).
+
+Emit all five top-level fields on every response.
 
 `action_items` and `open_questions` may be arrays of strings OR
 arrays of objects (see below). `decisions` items may be plain
@@ -162,7 +184,7 @@ A `decisions` item may be a plain verbatim string OR an object:
 ```
 {
   "text": "<verbatim decision text>",
-  "verb": "approved|deferred|directed|agreed|... or unclassified",
+  "verb": "<one of the approved values below>",
   "stakeholders": ["DoD", "NTIA", ...],
   "confidence": 0.0-1.0,
   "rationale": "<the stated reason WHY, or null>",
@@ -175,6 +197,34 @@ A `decisions` item may be a plain verbatim string OR an object:
 ```
 
 Prefer the object form when stakeholders or a verb are identifiable.
+
+**`verb` field — structural taxonomy, binding.** The
+`regulatory_verb` eval classifies each object-form decision's `verb`
+against a fixed taxonomy and blocks promotion on an unrecognised
+value. Use one of the values below — and when no explicit governing
+verb applies, use `"unclassified"`. This preserves your ability to
+extract implicit / guidance-phrased decisions without forcing them
+into formal parliamentary language:
+
+* Approval-side: `approved`, `adopted`, `authorized`, `accepted`,
+  `ratified`, `endorsed`, `confirmed`, `concurred`, `agreed`,
+  `decided`, `resolved`, `finalized`.
+* Rejection-side: `rejected`, `denied`, `declined`, `withdrawn`,
+  `revoked`, `prohibited`.
+* Deferral-side: `deferred`, `tabled`, `postponed`.
+* Action / direction: `directed`, `required`, `recommended`,
+  `considered`, `noted`, `designated`, `amended`.
+* Default fallback: `"unclassified"` — use this whenever no specific
+  taxonomy verb above fits the decision (the implicit-guidance case,
+  the alignment-statement case, or anything you would otherwise leave
+  as a free-form description). `"unclassified"` is non-blocking and
+  is the right choice when in doubt.
+
+Do NOT invent verbs outside this list — a value the taxonomy does
+not contain (e.g. `"committed"`, `"announced"`) blocks the run with
+`verb_not_classified:<verb>`. When the decision text already names
+its own governing verb from the list above, prefer that exact verb;
+otherwise emit `"unclassified"`.
 
 ### action_items (verbatim item type)
 
