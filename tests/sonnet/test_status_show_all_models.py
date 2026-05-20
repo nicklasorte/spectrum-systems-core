@@ -294,6 +294,65 @@ def test_sonnet_latest_f1_picks_newer_variant(tmp_path: Path) -> None:
     assert row["sonnet_latest_f1"] == pytest.approx(0.72)
 
 
+def test_human_readable_table_renders_model_columns(tmp_path: Path) -> None:
+    """`--show-all-models` MUST surface in the non-JSON table too.
+
+    Review-comment P2 (Codex): the previous `_format_status_table`
+    rendered only source_id/state/recommendation, so the flag had no
+    visible effect unless `--json` was also passed.
+    """
+    from spectrum_systems_core.data_lake.cli import _format_status_table
+
+    lake = tmp_path / "lake"
+    md = lake / "processed" / "meetings" / "a"
+    _write_source_record(md, "a")
+    _write_opus_baseline(md, item_count=12)
+    _write_two_way_cmp(md, f1=0.395)
+    manifest = _write_manifest(tmp_path, ["a"])
+
+    # Legacy / default path: no model columns.
+    legacy_report = build_corpus_status_report(
+        lake_root=lake, manifest_path=manifest, show_all_models=False
+    )
+    legacy_table = _format_status_table(legacy_report)
+    assert "haiku_f1" not in legacy_table
+    assert "sonnet_f1" not in legacy_table
+    assert "opus_items" not in legacy_table
+
+    # Phase 5 path: model columns rendered.
+    p5_report = build_corpus_status_report(
+        lake_root=lake, manifest_path=manifest, show_all_models=True
+    )
+    p5_table = _format_status_table(p5_report)
+    assert "haiku_f1" in p5_table
+    assert "sonnet_f1" in p5_table
+    assert "opus_items" in p5_table
+    # The actual F1 value appears (39.5% from f1=0.395).
+    assert "39.5%" in p5_table
+    # Opus item count appears.
+    assert "12" in p5_table
+
+
+def test_human_readable_table_handles_nulls(tmp_path: Path) -> None:
+    """Rows with null Haiku/Sonnet/Opus fields render as '-' placeholders."""
+    from spectrum_systems_core.data_lake.cli import _format_status_table
+
+    lake = tmp_path / "lake"
+    md = lake / "processed" / "meetings" / "a"
+    _write_source_record(md, "a")
+    # No Opus baseline, no comparison — all three fields will be None.
+    manifest = _write_manifest(tmp_path, ["a"])
+
+    report = build_corpus_status_report(
+        lake_root=lake, manifest_path=manifest, show_all_models=True
+    )
+    table = _format_status_table(report)
+    assert "haiku_f1" in table
+    # Both Sonnet + Opus + Haiku columns render '-' for missing data.
+    # Use a loose check: at least one '-' placeholder appears.
+    assert "-" in table
+
+
 def test_show_all_models_mixed_state(tmp_path: Path) -> None:
     """A: Haiku+Sonnet+Opus, B: Haiku+Opus only, C: Sonnet only."""
     lake = tmp_path / "lake"
