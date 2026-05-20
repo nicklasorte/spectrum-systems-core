@@ -32,6 +32,18 @@ def fake_lake(tmp_path):
 
 
 def test_dry_run_with_haiku(fake_lake) -> None:
+    """`--model haiku --dry-run` reports the REGISTRY-resolved model_id.
+
+    Phase 5 honesty rule (review-comment P2): the default haiku path
+    does NOT pass a model_id_override, so the real run uses the
+    model_id from ``ai/registry/model_registry.json``. The dry-run
+    banner must report what would actually run, not the Phase-5
+    spec's nomenclature.
+    """
+    from spectrum_systems_core.workflows.meeting_minutes_llm import (
+        _resolve_extraction_model,
+    )
+
     lake, sid = fake_lake
     out = io.StringIO()
     rc = meeting_minutes_llm(
@@ -48,7 +60,11 @@ def test_dry_run_with_haiku(fake_lake) -> None:
     assert "DRY-RUN" in s
     assert "model=haiku" in s
     assert "prompt_variant=production_haiku" in s
-    assert "claude-haiku-4-7" in s
+    # Honesty: the registry's real model_id appears in the banner
+    # (not the Phase-5 spec string `claude-haiku-4-7` unless the
+    # registry happens to agree).
+    real_model_id, _ = _resolve_extraction_model()
+    assert f"model_id={real_model_id}" in s
 
 
 def test_dry_run_with_sonnet(fake_lake) -> None:
@@ -175,7 +191,7 @@ def test_env_var_bypass_has_no_effect(fake_lake, monkeypatch) -> None:
     s = out.getvalue()
     assert "model=haiku" in s
     assert "model=sonnet" not in s
-    assert "claude-haiku-4-7" in s
+    assert "claude-sonnet" not in s
 
 
 def test_argparse_dispatch_with_no_flags_resolves_to_haiku(monkeypatch) -> None:

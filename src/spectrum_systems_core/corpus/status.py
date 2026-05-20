@@ -167,18 +167,20 @@ def _opus_item_count(processed_dir: Path) -> Optional[int]:
     return total
 
 
-def _latest_f1_by_variant(
+def _latest_f1_by_variant_with_mtime(
     processed_dir: Path, want_variant: str
-) -> Optional[float]:
-    """Read the most-recent comparison_result F1 for a given variant.
+) -> Optional[tuple[float, float]]:
+    """Read the most-recent comparison F1 for a variant + source mtime.
+
+    Returns ``(f1, mtime)`` for the most-recent comparison that
+    references ``want_variant``, or ``None`` when no such comparison
+    exists. ``mtime`` is the source artifact's filesystem mtime; the
+    caller uses it to break ties when the same source has comparisons
+    for multiple Sonnet variants and the operator wants the freshest.
 
     ``want_variant`` is one of the four Phase-5 prompt variants. The
     function scans both two-way (``comparison_result__*.json``) and
     three-way (``comparisons/three_way_*.json``) artifacts.
-
-    Returns ``None`` when no matching comparison exists. Returns the
-    raw F1 value (0.0 to 1.0) when one is found. Newest-first by file
-    mtime; the first match wins.
     """
     if not processed_dir.is_dir():
         return None
@@ -194,7 +196,7 @@ def _latest_f1_by_variant(
         return None
     candidates.sort(key=lambda t: t[0], reverse=True)
 
-    for _, path in candidates:
+    for mtime, path in candidates:
         try:
             doc = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -209,18 +211,53 @@ def _latest_f1_by_variant(
             if hv == want_variant:
                 f1 = (doc.get("haiku_summary") or {}).get("haiku_f1_vs_opus")
                 if isinstance(f1, (int, float)):
-                    return float(f1)
+                    return float(f1), mtime
             if sv == want_variant:
                 f1 = (doc.get("sonnet_summary") or {}).get("haiku_f1_vs_opus")
                 if isinstance(f1, (int, float)):
-                    return float(f1)
+                    return float(f1), mtime
         else:
             hv = doc.get("haiku_prompt_variant", "production_haiku")
             if hv == want_variant:
                 f1 = (doc.get("summary") or {}).get("haiku_f1_vs_opus")
                 if isinstance(f1, (int, float)):
-                    return float(f1)
+                    return float(f1), mtime
     return None
+
+
+def _latest_f1_by_variant(
+    processed_dir: Path, want_variant: str
+) -> Optional[float]:
+    """Backward-compatible thin wrapper that drops the mtime."""
+    rec = _latest_f1_by_variant_with_mtime(processed_dir, want_variant)
+    return rec[0] if rec is not None else None
+
+
+def _newest_sonnet_f1(processed_dir: Path) -> Optional[float]:
+    """Pick the most-recent Sonnet F1 across the two Sonnet variants.
+
+    Phase 5 has two Sonnet variants — ``haiku_prompt_with_sonnet_model``
+    (apples-to-apples vs Haiku) and ``opus_prompt_with_sonnet_model``
+    (Sonnet's unconstrained capability). When a source has comparisons
+    for both, the rollup should surface the FRESHER one (operators run
+    both as iterative measurements; the older one is stale). Tie
+    breaking by mtime is deterministic given the data lake's
+    append-only invariant. ``None`` when neither variant has run.
+    """
+    haiku_prompt = _latest_f1_by_variant_with_mtime(
+        processed_dir, "haiku_prompt_with_sonnet_model"
+    )
+    opus_prompt = _latest_f1_by_variant_with_mtime(
+        processed_dir, "opus_prompt_with_sonnet_model"
+    )
+    if haiku_prompt is None and opus_prompt is None:
+        return None
+    if haiku_prompt is None:
+        return opus_prompt[0]
+    if opus_prompt is None:
+        return haiku_prompt[0]
+    # Both present — pick the newer source artifact by mtime.
+    return haiku_prompt[0] if haiku_prompt[1] >= opus_prompt[1] else opus_prompt[0]
 
 
 def _processed_root(lake_root: Path) -> Path:
@@ -320,21 +357,7 @@ def _build_manifest_rows(
             row["haiku_latest_f1"] = _latest_f1_by_variant(
                 processed_dir, "production_haiku"
             )
-            sonnet_haiku_prompt = _latest_f1_by_variant(
-                processed_dir, "haiku_prompt_with_sonnet_model"
-            )
-            sonnet_opus_prompt = _latest_f1_by_variant(
-                processed_dir, "opus_prompt_with_sonnet_model"
-            )
-            # Pick the most-recent of the two Sonnet variants for the
-            # rollup; the operator-facing variant disambiguation lives
-            # in the three-way artifact, not the rollup. ``None`` when
-            # neither has run.
-            row["sonnet_latest_f1"] = (
-                sonnet_haiku_prompt
-                if sonnet_haiku_prompt is not None
-                else sonnet_opus_prompt
-            )
+            row["sonnet_latest_f1"] = _newest_sonnet_f1(processed_dir)
             row["opus_item_count"] = _opus_item_count(processed_dir)
         rows.append(row)
     return rows
@@ -386,15 +409,7 @@ def _build_orphan_rows(
             row["haiku_latest_f1"] = _latest_f1_by_variant(
                 sub, "production_haiku"
             )
-            sh_prompt = _latest_f1_by_variant(
-                sub, "haiku_prompt_with_sonnet_model"
-            )
-            so_prompt = _latest_f1_by_variant(
-                sub, "opus_prompt_with_sonnet_model"
-            )
-            row["sonnet_latest_f1"] = (
-                sh_prompt if sh_prompt is not None else so_prompt
-            )
+            row["sonnet_latest_f1"] = _newest_sonnet_f1(sub)
             row["opus_item_count"] = _opus_item_count(sub)
         rows.append(row)
     return rows

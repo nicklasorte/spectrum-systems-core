@@ -2981,10 +2981,33 @@ def meeting_minutes_llm(
     if dry_run:
         # Observe-only: print the resolved selection and exit. No
         # artifact, no API call, no extraction_config write.
+        #
+        # Phase 5 honesty rule: the default `--model haiku` does NOT
+        # pass a model_id_override, so the workflow uses the
+        # registry-resolved extraction model. Reading the registry
+        # here keeps the dry-run banner from lying about what the
+        # real run would use; the three override tokens print the
+        # override value directly. A misconfigured registry HALTS
+        # via the workflow's preflight, NOT the dry-run banner —
+        # so we tolerate a registry read failure here and fall back
+        # to the spec string with a marker.
+        use_override_for_banner = model_token != MODEL_TOKEN_HAIKU
+        if use_override_for_banner:
+            banner_model_id = model_selection.model_id
+        else:
+            try:
+                from .workflows.meeting_minutes_llm import (
+                    _resolve_extraction_model,
+                )
+                banner_model_id, _ = _resolve_extraction_model()
+            except Exception:  # noqa: BLE001
+                banner_model_id = (
+                    f"{model_selection.model_id}(registry_unreadable)"
+                )
         print(
             f"meeting-minutes-llm [{source_id}] DRY-RUN "
             f"model={model_selection.model_token} "
-            f"model_id={model_selection.model_id} "
+            f"model_id={banner_model_id} "
             f"prompt_path={model_selection.prompt_path} "
             f"prompt_variant={model_selection.prompt_variant} "
             f"repeat={repeat} (no artifact written)",
@@ -3251,11 +3274,22 @@ def meeting_minutes_llm(
         last_written = write_promoted_artifact(
             store_root, mm, meeting_id=source_id
         )
+        # Phase 5: read the ACTUAL model_id from the produced artifact's
+        # provenance. Default --model haiku does NOT pass an override, so
+        # the workflow uses the registry-resolved extraction model
+        # (which may diverge from the Phase-5 spec's `claude-haiku-4-7`
+        # — e.g. the current registry pins `claude-haiku-4-5-20251001`).
+        # Printing `model_selection.model_id` would lie about what
+        # actually ran; reading the provenance is authoritative.
+        actual_model_id = (
+            (mm_payload.get("provenance") or {}).get("model_id")
+            or model_selection.model_id
+        )
         print(
             f"meeting-minutes-llm [{source_id}] OK "
             f"produced_by={produced_by} "
             f"model={model_selection.model_token} "
-            f"model_id={model_selection.model_id} "
+            f"model_id={actual_model_id} "
             f"prompt_variant={model_selection.prompt_variant} "
             f"invocation={invocation_idx + 1}/{repeat} "
             f"written={last_written}",

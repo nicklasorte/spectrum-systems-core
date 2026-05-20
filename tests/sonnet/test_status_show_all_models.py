@@ -244,6 +244,56 @@ def test_show_all_models_adds_three_fields(tmp_path: Path) -> None:
     assert row["opus_item_count"] == 12
 
 
+def test_sonnet_latest_f1_picks_newer_variant(tmp_path: Path) -> None:
+    """When BOTH Sonnet variants exist, the newer-by-mtime wins.
+
+    Review-comment P1 (Codex): the previous implementation always
+    preferred ``haiku_prompt_with_sonnet_model`` if present, ignoring
+    a newer ``opus_prompt_with_sonnet_model`` run — which could mislead
+    model-selection decisions when an operator iterates on both
+    variants.
+    """
+    import os
+    import time
+
+    lake = tmp_path / "lake"
+    md = lake / "processed" / "meetings" / "a"
+    _write_source_record(md, "a")
+    _write_opus_baseline(md, item_count=20)
+    # Older Sonnet (haiku-prompt variant) first.
+    _write_three_way_cmp(
+        md,
+        haiku_f1=0.40,
+        sonnet_f1=0.50,
+        haiku_variant="production_haiku",
+        sonnet_variant="haiku_prompt_with_sonnet_model",
+        slug="old",
+    )
+    # Force the older file's mtime backward so the newer-by-mtime
+    # check can distinguish them deterministically.
+    old_path = md / "comparisons" / "three_way_old.json"
+    older_time = time.time() - 3600
+    os.utime(old_path, (older_time, older_time))
+
+    # Newer Sonnet (opus-prompt variant).
+    _write_three_way_cmp(
+        md,
+        haiku_f1=0.40,
+        sonnet_f1=0.72,
+        haiku_variant="production_haiku",
+        sonnet_variant="opus_prompt_with_sonnet_model",
+        slug="new",
+    )
+
+    manifest = _write_manifest(tmp_path, ["a"])
+    report = build_corpus_status_report(
+        lake_root=lake, manifest_path=manifest, show_all_models=True
+    )
+    row = next(r for r in report["rows"] if r["source_id"] == "a")
+    # The newer (opus-prompt-with-sonnet-model) F1 wins.
+    assert row["sonnet_latest_f1"] == pytest.approx(0.72)
+
+
 def test_show_all_models_mixed_state(tmp_path: Path) -> None:
     """A: Haiku+Sonnet+Opus, B: Haiku+Opus only, C: Sonnet only."""
     lake = tmp_path / "lake"
