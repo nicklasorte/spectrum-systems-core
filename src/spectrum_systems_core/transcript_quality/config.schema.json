@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/transcript_quality_config.schema.json",
+  "title": "transcript_quality_config",
+  "description": "Phase 2R operator-tunable configuration for the transcript-quality validator. `hard_max_byte_length` has a schema-enforced ceiling of 10M; operators cannot raise it above 10M without amending the schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "min_byte_length",
+    "advisory_max_byte_length",
+    "hard_max_byte_length",
+    "min_turn_count",
+    "min_word_count_when_single_speaker"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "min_byte_length": { "type": "integer", "minimum": 1 },
+    "advisory_max_byte_length": { "type": "integer", "minimum": 1 },
+    "hard_max_byte_length": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000000
+    },
+    "min_turn_count": { "type": "integer", "minimum": 1 },
+    "min_word_count_when_single_speaker": { "type": "integer", "minimum": 1 }
+  },
+  "allOf": [
+    {
+      "description": "advisory_max_byte_length must not exceed hard_max_byte_length.",
+      "properties": {
+        "advisory_max_byte_length": { "type": "integer" },
+        "hard_max_byte_length": { "type": "integer" }
+      },
+      "if": {
+        "required": ["advisory_max_byte_length", "hard_max_byte_length"]
+      },
+      "then": {
+        "$comment": "Cross-field constraint is enforced in the loader (transcript_quality/_config_loader.py) because JSON Schema 2020-12 does not allow expressing inequalities between two sibling integers. The loader rejects any config where advisory_max_byte_length > hard_max_byte_length and the test test_advisory_above_hard_max_rejected pins the behaviour."
+      }
+    }
+  ]
+}

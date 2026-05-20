@@ -290,6 +290,85 @@ compared faithfully across versions.
 
 ---
 
+## Phase 2R — transcript ingestion quality gate (PR #195)
+
+### What this change adds
+
+- New module `src/spectrum_systems_core/transcript_quality/` —
+  `checks.py` (the catalog of gates and severities), `validate.py`
+  (pure validator), `_config_loader.py` (config loader + cross-field
+  enforcement), `cli_integration.py` (CLI glue).
+- New diagnostic artifact `transcript_quality_report` with schema
+  `src/spectrum_systems_core/schemas/transcript_quality_report.schema.json`
+  (lifecycle mirrors `grounding_rejection_report` — never promoted,
+  never indexed).
+- New config file `data/transcript_quality_config.json` with schema
+  `src/spectrum_systems_core/transcript_quality/config.schema.json`
+  (the schema enforces a hard 10M-byte ceiling on
+  `hard_max_byte_length`; operators cannot raise it above 10M without
+  amending the schema).
+- New CLI subcommand `spectrum-core check-transcript` with
+  `--transcript-path` / (`--source-id` + `--lake`) mutually-exclusive
+  modes.
+- New `--enable-pre-flight-check` CLI flag on
+  `spectrum-core process-meeting`. CLI-only: not readable from
+  environment variables or config files. Default `False`.
+- New module `src/spectrum_systems_core/reason_codes.py` — the
+  Phase 2R reason-code registry.
+- Manifest entry for `transcript_quality_report` appended to
+  `docs/architecture/artifact_manifest.md`.
+
+### To roll back
+
+1. Revert the PR. The new modules
+   (`src/spectrum_systems_core/transcript_quality/`,
+   `src/spectrum_systems_core/reason_codes.py`) disappear; the new
+   schema `transcript_quality_report.schema.json` and config file
+   `data/transcript_quality_config.json` disappear with them.
+2. The `spectrum-core check-transcript` subcommand and the
+   `--enable-pre-flight-check` flag on `process-meeting` disappear
+   with the revert. The default behaviour of `process-meeting` is
+   unchanged because the flag was opt-in (default `False`).
+3. Existing `transcript_quality_report__*.json` diagnostic files in
+   the data lake remain on disk. They are safe to leave: no
+   downstream consumer reads them in this PR. Operators may delete
+   them for cleanliness.
+
+### Data migration required for rollback
+
+None. The Phase 2R additions are additive at every layer:
+
+- The validator is a new module; no existing code path imports it.
+- The diagnostic schema is new; no existing artifact carries the
+  `transcript_quality_report` type.
+- The config file is new; no existing module reads it.
+- The `--enable-pre-flight-check` flag defaults to `False`, so the
+  extraction path is byte-for-byte unchanged for operators who do
+  not opt in.
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/transcript_quality/
+python scripts/verify_rollback_contracts.py --pr 195 --changed-files src/spectrum_systems_core/transcript_quality/validate.py
+```
+
+After revert, the `tests/transcript_quality/` directory is expected
+to disappear too. If it remains present and any test fails, the
+revert is incomplete — fix forward.
+
+### Future dependency
+
+This PR ships with `--enable-pre-flight-check` default `False`. A
+follow-up PR (after Phase 2 lands and `governed_pipeline_run` is the
+single execution path) will flip the default to `True`. A second
+follow-up (after Phase 2Q lands) will surface the presence of
+`transcript_quality_report__*.json` files in `spectrum-core status`
+output. Both follow-up PRs MUST add their own rollback contract
+entries in this file.
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new

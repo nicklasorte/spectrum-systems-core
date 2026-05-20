@@ -1,0 +1,8 @@
+{
+  "schema_version": "1.0.0",
+  "min_byte_length": 500,
+  "advisory_max_byte_length": 1000000,
+  "hard_max_byte_length": 10000000,
+  "min_turn_count": 2,
+  "min_word_count_when_single_speaker": 100
+}

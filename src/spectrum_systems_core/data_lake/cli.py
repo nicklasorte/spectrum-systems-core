@@ -619,6 +619,24 @@ def _build_parser() -> argparse.ArgumentParser:
             "(defaults to --meeting-id). Only consulted on the --llm path."
         ),
     )
+    # Phase 2R: opt-in pre-extraction transcript-quality gate. CLI-ONLY:
+    # this flag is NEVER read from environment variables or config files
+    # (deliberate — a future PR will flip the default once Phase 2 eval
+    # alignment lands). The flag's presence is logged in the process-
+    # meeting output so an audit can confirm whether the gate ran.
+    pm.add_argument(
+        "--enable-pre-flight-check",
+        action="store_true",
+        default=False,
+        help=(
+            "Run the transcript-quality validator before extraction. "
+            "When the report contains has_errors=true the run halts "
+            "with reason_code=transcript_quality_check_failed before "
+            "any LLM call. CLI-ONLY: not readable from env vars or "
+            "config files. DO NOT enable in production until Phase 2 "
+            "(eval alignment) lands. A future PR will flip the default."
+        ),
+    )
 
     ce = sub.add_parser(
         "compare-extraction",
@@ -725,6 +743,45 @@ def _build_parser() -> argparse.ArgumentParser:
         "output, still a valid improvement_cycle_result artifact).",
     )
 
+    ct = sub.add_parser(
+        "check-transcript",
+        help="Phase 2R: run the transcript-quality validator on a single transcript.",
+        description=(
+            "Validate one transcript against the Phase 2R quality "
+            "checks BEFORE any extraction begins. The validator is "
+            "pure (no LLM, no network). Provide exactly one of "
+            "--transcript-path (reads a flat file) or --source-id "
+            "(resolves the transcript via the source_record contract "
+            "under --lake). The full report is printed to stdout in "
+            "every mode; in --source-id mode it is ALSO written to "
+            "<lake>/store/processed/meetings/<source_id>/diagnostics/"
+            "transcript_quality_report__<timestamp>.json. Exit codes: "
+            "0 = no errors, 1 = errors present, 2 = transcript "
+            "unreadable or usage error."
+        ),
+    )
+    ct.add_argument(
+        "--transcript-path",
+        help=(
+            "Path to a flat transcript file. Mutually exclusive with "
+            "--source-id."
+        ),
+    )
+    ct.add_argument(
+        "--source-id",
+        help=(
+            "Source id under <lake>/processed/meetings/. Requires "
+            "--lake. Mutually exclusive with --transcript-path."
+        ),
+    )
+    ct.add_argument(
+        "--lake",
+        help=(
+            "Data-lake root. Required with --source-id; ignored with "
+            "--transcript-path."
+        ),
+    )
+
     hs = sub.add_parser(
         "harness-search",
         help="Phase AA.7: run the Meta-Harness outer loop over one "
@@ -768,6 +825,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "process-meeting":
+        # Phase 2R: opt-in pre-extraction transcript-quality gate. The
+        # flag is CLI-only — never read from env vars or config files.
+        # When set, the validator runs on the resolved transcript
+        # BEFORE the regex / LLM extractor is dispatched. has_errors
+        # halts the run with `transcript_quality_check_failed`;
+        # warnings-only logs and proceeds.
+        if getattr(args, "enable_pre_flight_check", False):
+            from ..transcript_quality.cli_integration import (
+                run_pre_flight_check,
+            )
+
+            transcript_input = load_meeting(args.lake, args.meeting_id)
+            preflight = run_pre_flight_check(
+                transcript_text=transcript_input.transcript_text,
+                lake_root=args.lake,
+                source_id=args.source_id or args.meeting_id,
+                transcript_path=transcript_input.transcript_path,
+                stream=sys.stdout,
+            )
+            if not preflight.ok:
+                print(
+                    f"process-meeting halted pre-extraction: "
+                    f"reason_code={preflight.reason_code}",
+                    file=sys.stdout,
+                )
+                return 1
+
         # Resolution order (config.feature_flags.llm_extraction_enabled):
         # 1. --llm  -> in-process override=True (wins outright).
         # 2. else    -> the governed data-lake flag artifact at
@@ -792,6 +876,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         _print_result(result)
         return 0
+
+    if args.command == "check-transcript":
+        from ..transcript_quality.cli_integration import (
+            run_check_transcript_cli,
+        )
+
+        result_ct = run_check_transcript_cli(
+            transcript_path=args.transcript_path,
+            source_id=args.source_id,
+            lake=args.lake,
+            stream=sys.stdout,
+        )
+        return result_ct.exit_code
 
     if args.command == "compare-extraction":
         # Lazy import: keeps the anthropic-backed adapters out of the
