@@ -47,17 +47,49 @@ def _meeting_dir(data_lake: Path, source_id: str) -> Path:
 
 
 def _latest_three_way_artifact(
-    data_lake: Path, source_id: str
+    data_lake: Path,
+    source_id: str,
+    *,
+    want_sonnet_variant: Optional[str] = None,
 ) -> Optional[Path]:
-    """Return the newest three-way comparison artifact path or None."""
+    """Return the newest three-way comparison artifact path or None.
+
+    When ``want_sonnet_variant`` is provided (one of the four Phase-5
+    prompt-variant tokens, e.g. ``"haiku_prompt_with_sonnet_model"``),
+    candidates are filtered to those whose stamped
+    ``sonnet_prompt_variant`` matches before the newest-by-mtime pick.
+    Without this filter the operator can request
+    ``--variant haiku-prompt`` and receive an
+    ``opus_prompt_with_sonnet_model`` artifact's metrics
+    (Codex review P2, Phase 5 follow-up). The fallback to ``None``
+    (no filter) preserves the legacy "just give me the newest" path
+    used by callers that don't know which variant they want.
+    """
     cmp_dir = _meeting_dir(data_lake, source_id) / "comparisons"
     if not cmp_dir.is_dir():
         return None
-    candidates = sorted(cmp_dir.glob("three_way_*.json"))
-    if not candidates:
+    paths = list(cmp_dir.glob("three_way_*.json"))
+    if not paths:
         return None
-    # Newest by name (timestamp prefix is sortable lexicographically).
-    return candidates[-1]
+    # Sort newest first by mtime so the variant-filtered scan picks
+    # the freshest matching artifact; lexicographic sort would have
+    # depended on the timestamp segment's format.
+    paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+    if want_sonnet_variant is None:
+        return paths[0]
+
+    for path in paths:
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if doc.get("sonnet_prompt_variant") == want_sonnet_variant:
+            return path
+    # No matching artifact — return None rather than the wrong-variant
+    # newest, so the caller surfaces a clear "not yet measured" message
+    # instead of misattributing the F1.
+    return None
 
 
 def _format_pct(x: Any) -> str:
@@ -188,14 +220,30 @@ def main(argv: Optional[list[str]] = None) -> int:
         )
         return 1
 
-    artifact_path = _latest_three_way_artifact(data_lake, args.source_id)
+    variant_label = (
+        _VARIANT_LABEL.get(args.variant) if args.variant else None
+    )
+    artifact_path = _latest_three_way_artifact(
+        data_lake,
+        args.source_id,
+        want_sonnet_variant=variant_label,
+    )
     if artifact_path is None:
-        print(
-            f"ERROR: no three-way comparison artifact found for "
-            f"source_id={args.source_id} under "
-            f"{_meeting_dir(data_lake, args.source_id) / 'comparisons'}",
-            file=sys.stderr,
-        )
+        if variant_label is not None:
+            print(
+                f"ERROR: no three-way comparison artifact with "
+                f"sonnet_prompt_variant={variant_label!r} found for "
+                f"source_id={args.source_id} under "
+                f"{_meeting_dir(data_lake, args.source_id) / 'comparisons'}",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"ERROR: no three-way comparison artifact found for "
+                f"source_id={args.source_id} under "
+                f"{_meeting_dir(data_lake, args.source_id) / 'comparisons'}",
+                file=sys.stderr,
+            )
         return 1
 
     try:
@@ -207,9 +255,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         )
         return 1
 
-    variant_label = (
-        _VARIANT_LABEL.get(args.variant) if args.variant else None
-    )
     print(render(artifact, variant_label))
     print("")
     print(f"artifact: {artifact_path}")
