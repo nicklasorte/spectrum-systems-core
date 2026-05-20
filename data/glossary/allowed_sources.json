@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0.0",
+  "allowed_sources": [
+    "NTIA Manual",
+    "47 CFR",
+    "ITU-R",
+    "3GPP",
+    "NIST",
+    "IEEE",
+    "ANSI",
+    "NTIA TR"
+  ],
+  "sha256_hash": "b90ec3feeb07de80843511a591b9fc07b4b2a0df4dcd49469b8562a69b95d533"
+}

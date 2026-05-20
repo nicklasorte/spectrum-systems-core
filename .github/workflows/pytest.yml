@@ -42,6 +42,19 @@ jobs:
       - name: Install package with dev extras
         run: python -m pip install -e ".[dev]"
 
+      - name: Verify Phase 2P glossary manifest hashes
+        # Fails closed if data/glossary/MANIFEST.json claims a sha256
+        # that does not match the canonicalized JSONL or
+        # allowed_sources.json. Pure stdlib so it runs without test
+        # deps; placed AFTER the install step only so the imported
+        # loader helpers stay byte-identical with the test layer.
+        run: python scripts/verify_glossary_manifest.py
+
+      - name: Verify Phase 2P glossary internal consistency
+        # Fails closed if two glossary entries share an alias but
+        # disagree on the definition after whitespace normalization.
+        run: python scripts/verify_glossary_consistency.py
+
       - name: Run pytest
         run: |
           set -o pipefail
