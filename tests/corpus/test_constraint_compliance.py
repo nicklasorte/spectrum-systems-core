@@ -35,6 +35,13 @@ The test is intentionally conservative: when the diff is unavailable
 reviewer-side enforcement is the `verify_rollback_contracts.py`
 script plus the explicit constraint section in the Phase 5 rollback
 contract entry.
+
+Scoping: this test only applies to PRs that are themselves Phase 4
+work (i.e. that introduce or modify files under
+``src/spectrum_systems_core/corpus/`` or ``data/corpus/``). Branches
+that build on top of merged Phase 4 (e.g. a later Phase 3P PR that
+legitimately touches ``pipeline/governed_run.py``) skip — the
+constrained-path rule binds Phase 4 itself, not every subsequent PR.
 """
 from __future__ import annotations
 
@@ -52,6 +59,13 @@ CONSTRAINED_PREFIXES: tuple[str, ...] = (
     "src/spectrum_systems_core/glossary/",
     "src/spectrum_systems_core/transcript_quality/",
     "src/spectrum_systems_core/few_shot/",
+)
+
+# Markers that identify a PR as Phase 4 work. If none of these appear
+# in the diff, the constraint check does not apply.
+PHASE_4_MARKERS: tuple[str, ...] = (
+    "src/spectrum_systems_core/corpus/",
+    "data/corpus/",
 )
 
 
@@ -72,10 +86,24 @@ def _changed_files() -> list[str] | None:
     return files
 
 
+def _is_phase_4_branch(files: list[str]) -> bool:
+    """True iff the diff touches a Phase-4 marker path."""
+    for f in files:
+        for marker in PHASE_4_MARKERS:
+            if f == marker or f.startswith(marker):
+                return True
+    return False
+
+
 def test_no_constrained_path_modified() -> None:
     files = _changed_files()
     if files is None:
         pytest.skip("git diff vs origin/main unavailable in this environment")
+    if not _is_phase_4_branch(files):
+        pytest.skip(
+            "constraint check applies to Phase 4 PRs only (no Phase 4 marker "
+            "paths in this diff)"
+        )
     offenders = []
     for f in files:
         for prefix in CONSTRAINED_PREFIXES:

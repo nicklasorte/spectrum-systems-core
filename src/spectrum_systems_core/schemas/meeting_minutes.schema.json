@@ -98,6 +98,11 @@
                 "type": "integer",
                 "minimum": 0,
                 "description": "Phase 1 (schema_version 1.4.0). Byte offset against the ORIGINAL transcript. Computed by the gate from quote_offset_normalized via the normalization position map; producers may emit a best estimate, the gate re-derives the authoritative value."
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Phase 3P (additive, optional). One-sentence explanation of WHY this item was extracted — the trigger phrase or group affirmation. Required by the prompt; optional in JSON Schema for backward-compat with pre-3P artifacts. A high missing-rate across an extraction is recorded as the `few_shot_reason_missing_rate` diagnostic on the per-run `pipeline_invocation_log`."
               }
             }
           }
@@ -170,6 +175,11 @@
                 "type": "integer",
                 "minimum": 0,
                 "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate)."
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Phase 3P (additive, optional). One-sentence explanation of WHY this action_item was extracted — the trigger phrase, modal verb, or assignment that made it qualify. Required by the prompt; optional in JSON Schema for backward-compat with pre-3P artifacts."
               }
             }
           }

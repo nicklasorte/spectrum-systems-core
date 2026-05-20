@@ -990,6 +990,7 @@ def _make_extract(
     model_id: str,
     glossary=None,
     glossary_tokens_counter=None,
+    enable_few_shot: bool = False,
 ):
     def _base_payload(title: str, grounded: bool) -> dict:
         payload: dict = {
@@ -1105,6 +1106,13 @@ def _make_extract(
         title = _derive_title(input_text)
         grounded = bool(chunks)
         system = _system_prompt()
+        # Phase 3P: strip or keep the Few-Shot Examples section based
+        # on the operator's flag. Default OFF (the section is stripped)
+        # until the operator verifies real-corpus provenance. The
+        # negative-patterns section is NOT marker-wrapped and remains
+        # present in every run.
+        from ..few_shot import inject_or_strip_few_shot
+        system = inject_or_strip_few_shot(system, enable=enable_few_shot)
 
         if not grounded or len(chunks) <= _CHUNKS_PER_BATCH:
             # Single pass: ungrounded, OR a chunk count that already fits
@@ -1248,6 +1256,7 @@ def run_meeting_minutes_llm_workflow(
     glossary=None,
     glossary_tokens_counter=None,
     model_id_override: str | None = None,
+    enable_few_shot: bool = False,
 ) -> WorkflowResult:
     """Produce a promoted ``meeting_minutes`` artifact via a live model.
 
@@ -1383,6 +1392,7 @@ def run_meeting_minutes_llm_workflow(
         model_id=model_id,
         glossary=glossary,
         glossary_tokens_counter=glossary_tokens_counter,
+        enable_few_shot=enable_few_shot,
     )
 
     # Phase Y: chunk the transcript so the model can attribute every
