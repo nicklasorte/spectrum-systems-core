@@ -44,11 +44,15 @@ def _write_budget(path: Path, **overrides) -> Path:
     """
     doc = {
         "artifact_type": "tolerance_budget",
-        "schema_version": "1.1.0",
+        "schema_version": "1.2.0",
         "min_promotion_buffer": 0.02,
         "max_promotion_buffer": 0.10,
         "current_promotion_buffer": 0.03,
         "global_median_budget": 0.025,
+        # Phase 4 schema requirement. The tests that exercise tier 3
+        # (bootstrap) explicitly override this value; the default
+        # 0.05 satisfies the bound [0.02, 0.15] in the schema.
+        "bootstrap_variance": 0.05,
     }
     doc.update(overrides)
     # Phase 3: the schema no longer accepts per_source_budgets here.
@@ -91,7 +95,7 @@ def _write_per_source_state(
 def test_default_contract_validates() -> None:
     """The shipped contract validates against its schema."""
     doc = load_budget()
-    assert doc["schema_version"] in ("1.0.0", "1.1.0")
+    assert doc["schema_version"] in ("1.0.0", "1.1.0", "1.2.0")
     assert doc["min_promotion_buffer"] == 0.02
     assert doc["max_promotion_buffer"] == 0.10
     assert (
@@ -101,6 +105,9 @@ def test_default_contract_validates() -> None:
     )
     # Phase 3 split: per_source_budgets must not appear in the contract.
     assert "per_source_budgets" not in doc
+    # Phase 4 bound: bootstrap_variance must satisfy [0.02, 0.15].
+    if "bootstrap_variance" in doc:
+        assert 0.02 <= doc["bootstrap_variance"] <= 0.15
 
 
 def test_current_buffer_below_min_rejected(tmp_path: Path) -> None:
@@ -136,11 +143,12 @@ def test_per_source_budgets_in_contracts_file_rejected(tmp_path: Path) -> None:
         json.dumps(
             {
                 "artifact_type": "tolerance_budget",
-                "schema_version": "1.1.0",
+                "schema_version": "1.2.0",
                 "min_promotion_buffer": 0.02,
                 "max_promotion_buffer": 0.10,
                 "current_promotion_buffer": 0.03,
                 "global_median_budget": 0.025,
+                "bootstrap_variance": 0.05,
                 "per_source_budgets": {},
             }
         ),
@@ -154,8 +162,12 @@ def test_per_source_budgets_in_contracts_file_rejected(tmp_path: Path) -> None:
 def test_get_variance_budget_uses_global_median_when_runs_observed_below_threshold(
     tmp_path: Path,
 ) -> None:
-    """Phase 3: per-source budget reads from the data-lake state artifact
-    and kicks in only at runs_observed >= 3."""
+    """Phase 3 + Phase 4: per-source budget kicks in only at
+    runs_observed >= 3. Below that, the reader falls back to
+    ``global_median_budget`` provided at least one OTHER source in the
+    lake has >= 3 runs (Phase 4 tier 2). Without that secondary
+    signal the reader would fall through to ``bootstrap_variance``
+    (Phase 4 tier 3), which has its own dedicated test."""
     path = _write_budget(
         tmp_path / "budget.json",
         global_median_budget=0.04,
@@ -163,6 +175,13 @@ def test_get_variance_budget_uses_global_median_when_runs_observed_below_thresho
     dl = tmp_path / "dl"
     _write_per_source_state(
         dl, "src-x", runs_observed=2, f1_variance_budget=0.07
+    )
+    # Phase 4: feed tier 2 with a different source's mature state.
+    _write_per_source_state(
+        dl,
+        "src-other",
+        runs_observed=PER_SOURCE_RUN_THRESHOLD,
+        f1_variance_budget=0.09,
     )
     assert get_variance_budget(
         "src-x", budget_path=path, data_lake_path=dl
@@ -192,15 +211,21 @@ def test_get_variance_budget_uses_per_source_at_threshold(
 def test_get_variance_budget_falls_back_when_state_artifact_missing(
     tmp_path: Path,
 ) -> None:
-    """Phase 3 Pass 1: a missing state artifact returns global_median_budget,
-    never raises. Tests the fallback path the rollback contract relies on."""
+    """Phase 3 Pass 1 + Phase 4 tier 2: a missing state artifact on
+    `src-x` falls back to `global_median_budget` when at least one
+    OTHER source in the lake has enough runs to feed tier 2. Tests the
+    fallback path the rollback contract relies on."""
     path = _write_budget(
         tmp_path / "budget.json",
         global_median_budget=0.04,
     )
     dl = tmp_path / "dl"
     (dl / "store" / "processed" / "meetings" / "src-x").mkdir(parents=True)
-    # No state artifact written. Reader must fall back to the global median.
+    # Phase 4: tier 2 requires at least one source with runs >= 3.
+    _write_per_source_state(
+        dl, "src-y", runs_observed=PER_SOURCE_RUN_THRESHOLD, f1_variance_budget=0.07
+    )
+    # No state artifact on src-x. Reader must fall back to the global median.
     assert get_variance_budget(
         "src-x", budget_path=path, data_lake_path=dl
     ) == 0.04
@@ -209,10 +234,10 @@ def test_get_variance_budget_falls_back_when_state_artifact_missing(
 def test_get_variance_budget_falls_back_on_corrupt_state_artifact(
     tmp_path: Path,
 ) -> None:
-    """Phase 3 Pass 1: a corrupt state artifact is treated as missing.
-    The state file is a diagnostic, not a gate; the budget loader must
-    fail open on it (load_budget itself still fails closed on the
-    contracts file)."""
+    """Phase 3 Pass 1 + Phase 4 tier 2: a corrupt state artifact is
+    treated as missing. The state file is a diagnostic, not a gate;
+    the budget loader must fail open on it (load_budget itself still
+    fails closed on the contracts file)."""
     path = _write_budget(
         tmp_path / "budget.json",
         global_median_budget=0.04,
@@ -229,6 +254,10 @@ def test_get_variance_budget_falls_back_on_corrupt_state_artifact(
     )
     state_path.parent.mkdir(parents=True)
     state_path.write_text("{not json", encoding="utf-8")
+    # Phase 4: tier 2 requires at least one OTHER source with runs >= 3.
+    _write_per_source_state(
+        dl, "src-y", runs_observed=PER_SOURCE_RUN_THRESHOLD, f1_variance_budget=0.07
+    )
     assert get_variance_budget(
         "src-x", budget_path=path, data_lake_path=dl
     ) == 0.04

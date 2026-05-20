@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/status_report.schema.json",
+  "title": "status_report",
+  "description": "Phase 4 corpus status rollup. Emitted by `spectrum-core status --corpus`. One row per source in the corpus manifest, plus one row per source that exists in the data lake but is NOT declared in the manifest (`orphaned_in_lake`). Phase 4 is the initial introduction of this schema; the enum lists below are additive — a future PR may extend `state` or `recommendation` without breaking existing JSON consumers, but must not redefine an existing value.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_type", "schema_version", "manifest_hash", "generated_at", "rows"],
+  "properties": {
+    "artifact_type": { "const": "status_report" },
+    "schema_version": { "type": "string", "enum": ["1.0.0"] },
+    "manifest_hash": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "string", "minLength": 1 }
+      ],
+      "description": "The manifest_hash of the corpus manifest used to build the rollup. `null` when the manifest could not be loaded (which is a fail-closed condition surfaced via the CLI's exit code; the schema accepts null so a partial diagnostic dump is still valid)."
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "rows": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/row" }
+    }
+  },
+  "$defs": {
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "state", "recommendation"],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "validated",
+            "under_review",
+            "quarantined",
+            "baseline_complete",
+            "comparison_complete",
+            "superseded",
+            "orphaned_in_lake"
+          ]
+        },
+        "recommendation": {
+          "type": "string",
+          "enum": [
+            "none",
+            "run_ingest_corpus",
+            "force_review_quarantined",
+            "investigate_orphan_in_lake",
+            "run_baseline_opus",
+            "run_comparison"
+          ]
+        },
+        "has_source_record": { "type": "boolean" },
+        "has_opus_baseline": { "type": "boolean" },
+        "has_comparison_result": { "type": "boolean" },
+        "detected_speaker_count": {
+          "anyOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }]
+        },
+        "detected_word_count": {
+          "anyOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }]
+        },
+        "last_updated": {
+          "anyOf": [{ "type": "null" }, { "type": "string" }]
+        },
+        "meeting_date": {
+          "anyOf": [{ "type": "null" }, { "type": "string" }]
+        },
+        "meeting_type": {
+          "anyOf": [{ "type": "null" }, { "type": "string" }]
+        }
+      }
+    }
+  }
+}

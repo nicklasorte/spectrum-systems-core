@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/corpus_manifest.schema.json",
+  "title": "corpus_manifest",
+  "description": "Phase 4 corpus manifest. Single source of truth for the 13-transcript corpus. The `declared` block is hand-maintained by the operator. The `observed` block is overwritten by `spectrum-core ingest-corpus` on every run; manual edits to `observed` are not respected. `manifest_hash` is a sha256 of the canonicalized sources array (sorted by source_id, then field-sorted) computed at write time and verified at load time; mismatch fails closed with reason `corpus_manifest_hash_mismatch`. Uniqueness of `source_id` and `expected_path` plus the `supersedes` cross-reference are enforced by `spectrum_systems_core.corpus.manifest_loader` (JSON Schema cannot natively express them).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_type", "schema_version", "manifest_hash", "sources"],
+  "properties": {
+    "artifact_type": { "const": "corpus_manifest" },
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0"]
+    },
+    "manifest_hash": {
+      "type": "string",
+      "minLength": 1,
+      "description": "sha256 hex digest over the canonicalized sources array (sorted by source_id, then field-sorted within each entry). Loader recomputes and asserts equality on read. The placeholder `PLACEHOLDER_HASH_REGENERATED_BY_LOADER` is accepted by the schema but rejected by the loader's hash gate — operators must regenerate the hash by running the manifest_loader's recompute helper before committing."
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/source_entry" }
+    }
+  },
+  "$defs": {
+    "source_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "declared", "observed"],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "declared": { "$ref": "#/$defs/declared_block" },
+        "observed": { "$ref": "#/$defs/observed_block" }
+      }
+    },
+    "declared_block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected_path", "meeting_date", "meeting_type", "supersedes"],
+      "properties": {
+        "expected_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to the raw transcript, relative to the data lake root. Loader rejects empty / absolute paths."
+        },
+        "meeting_date": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "ISO-8601 calendar date (YYYY-MM-DD). Time zones not encoded — the corpus is a list of transcripts, not a schedule."
+        },
+        "meeting_type": {
+          "type": "string",
+          "enum": [
+            "TIG_kickoff",
+            "TIG_followup",
+            "industry_coordination",
+            "working_group",
+            "internal_review",
+            "other"
+          ]
+        },
+        "supersedes": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^[a-z0-9-]+$" }
+          ],
+          "description": "Either null or the source_id of an earlier entry this one supersedes. Cross-reference (must exist in the same manifest) is verified by the loader."
+        }
+      }
+    },
+    "observed_block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "detected_speaker_count",
+        "detected_word_count",
+        "ingestion_status",
+        "last_updated"
+      ],
+      "properties": {
+        "detected_speaker_count": {
+          "anyOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }]
+        },
+        "detected_word_count": {
+          "anyOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }]
+        },
+        "ingestion_status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "validated",
+            "under_review",
+            "quarantined",
+            "baseline_complete",
+            "comparison_complete",
+            "superseded"
+          ]
+        },
+        "last_updated": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        }
+      }
+    }
+  }
+}
