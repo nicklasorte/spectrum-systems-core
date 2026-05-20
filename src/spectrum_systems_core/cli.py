@@ -3080,6 +3080,25 @@ def meeting_minutes_llm(
             )
             return 2
 
+    # Phase 5 hotfix — also read the prompt content for the default
+    # `--model haiku` path so the post-run extraction_config stamp can
+    # populate `prompt_content_hash` consistently across all four model
+    # tokens. Reading the file here keeps the workflow call path
+    # byte-identical (no model_id override / prompt swap for haiku) while
+    # ensuring the produced artifact carries every required Phase 2
+    # extraction_config field, not just `prompt_variant`.
+    extraction_config_prompt: str | None = prompt_override
+    if not use_override:
+        try:
+            extraction_config_prompt = read_prompt(model_selection.prompt_path)
+        except ModelSelectionError as exc:
+            print(
+                f"meeting-minutes-llm [{source_id}] halted pre-run: "
+                f"reason_code={exc.reason_code} -- {exc}",
+                file=out,
+            )
+            return 2
+
     resolved_env = env if env is not None else os.environ
 
     # Deterministic-transport seam for the ACTUAL production entry
@@ -3236,22 +3255,32 @@ def meeting_minutes_llm(
         produced_by = (mm_payload.get("provenance") or {}).get("produced_by")
         last_produced_by = produced_by
 
-        # Phase 5 — stamp prompt_variant onto the promoted artifact's
-        # provenance.extraction_config. This is the SHIM until the
+        # Phase 5 — stamp the full Phase 2 extraction_config block onto
+        # the promoted artifact's provenance. This is the SHIM until the
         # production CLI is refactored to route through
-        # governed_pipeline_run; the field is read by the comparison
-        # engine and the future correction miner reconciler. The stamp
-        # is additive: the schema makes extraction_config and its
-        # nested prompt_variant both optional, so an artifact without
-        # the stamp (pre-Phase-5) still validates.
+        # governed_pipeline_run; the fields are read by the comparison
+        # engine and the future correction miner reconciler. The block
+        # is additive at the schema layer (extraction_config itself is
+        # optional), but `additionalProperties:false` plus the required
+        # field set inside the block means a partial stamp — e.g. only
+        # `prompt_variant` — fails schema validation. So we populate
+        # every required field for every model token, not just the
+        # discriminator. The values match what `governed_pipeline_run`
+        # would stamp via `build_extraction_config_from_run` for the
+        # same inputs.
         if (
             result.promoted
             and isinstance(mm.payload, dict)
         ):
             from .pipeline.governed_run import (
                 ALL_PROMPT_VARIANTS as _ALL_VARIANTS,
+                build_extraction_config_from_run as _build_ec,
             )
             from .artifacts import compute_content_hash as _compute_hash
+            from .data_lake.chunker import chunk_transcript as _chunk_transcript
+            from .few_shot import (
+                inject_or_strip_few_shot as _inject_or_strip,
+            )
 
             if model_selection.prompt_variant not in _ALL_VARIANTS:
                 # Defensive: the resolver enum-checks the value, but a
@@ -3268,11 +3297,42 @@ def meeting_minutes_llm(
             if not isinstance(provenance, dict):
                 provenance = {}
                 mm.payload["provenance"] = provenance
-            ec = provenance.setdefault("extraction_config", {})
-            if not isinstance(ec, dict):
-                ec = {}
-                provenance["extraction_config"] = ec
-            ec["prompt_variant"] = model_selection.prompt_variant
+
+            # The workflow's `_extract` calls `inject_or_strip_few_shot`
+            # on the system prompt before sending; reproduce that here
+            # so `prompt_content_hash` matches the bytes the model
+            # actually saw (and so two runs with identical inputs hash
+            # to identical configs — the Phase 2 determinism contract).
+            prompt_for_hash = _inject_or_strip(
+                extraction_config_prompt or "",
+                enable=enable_few_shot,
+            )
+            chunks_for_hash = _chunk_transcript(transcript_text)
+            artifact_model_id = (
+                (mm_payload.get("provenance") or {}).get("model_id")
+                or model_selection.model_id
+            )
+            glossary_version_hash = (
+                glossary_obj.version_hash
+                if glossary_obj is not None
+                else None
+            )
+            glossary_tokens_added = (
+                int(glossary_tokens_counter.get("added", 0))
+                if glossary_tokens_counter is not None
+                else None
+            )
+            ec_obj = _build_ec(
+                prompt_text=prompt_for_hash,
+                transcript_text=transcript_text,
+                model_id=artifact_model_id,
+                chunks=chunks_for_hash,
+                temperature=0.0,
+                glossary_version_hash=glossary_version_hash,
+                glossary_tokens_added=glossary_tokens_added,
+                prompt_variant=model_selection.prompt_variant,
+            )
+            provenance["extraction_config"] = ec_obj.to_dict()
             mm.content_hash = _compute_hash(mm.payload)
 
         # Mode 1 (print-raw-response) is observe-only for the WHOLE
