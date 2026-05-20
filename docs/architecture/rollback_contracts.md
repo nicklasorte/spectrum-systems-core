@@ -208,6 +208,88 @@ is incomplete — fix forward.
 
 ---
 
+## Phase 2P — NTIA/DoD glossary injection infrastructure (PR #194)
+
+### What this change adds
+
+- `data/glossary/ntia_dod_spectrum_v1.jsonl` — 57 NTIA/DoD spectrum-policy
+  glossary entries.
+- `data/glossary/allowed_sources.json` — whitelist of authoritative-source
+  prefixes (e.g. `47 CFR`, `ITU-R`, `3GPP`).
+- `data/glossary/MANIFEST.json` — sha256 hashes over the canonicalized
+  JSONL and the allowed-sources file.
+- `src/spectrum_systems_core/schemas/glossary_entry.schema.json` — write-time
+  validation gate for each entry.
+- `src/spectrum_systems_core/glossary/loader.py` — fail-closed loader,
+  matcher, terminology-block formatter.
+- `scripts/verify_glossary_manifest.py` — CI gate over both hashes.
+- `scripts/verify_glossary_consistency.py` — CI gate over alias /
+  definition conflicts.
+- `scripts/cli_glossary.py` — thin CLI shell exercising the new flag.
+- `--enable-glossary-injection` CLI flag, default `False`. CLI-only:
+  environment variables and config files are NOT read.
+- Glossary version hash recorded in the chunk-context Terminology
+  block (visible to the LLM) and emitted to debug log when the flag
+  is enabled.
+
+### To roll back
+
+1. Revert this PR. Reverting deletes the four files under
+   `data/glossary/`, the schema, the loader module
+   (`src/spectrum_systems_core/glossary/loader.py`), the verifier
+   scripts (`scripts/verify_glossary_manifest.py`,
+   `scripts/verify_glossary_consistency.py`), the CLI shell
+   (`scripts/cli_glossary.py`), the tests under `tests/glossary/`
+   (`test_loader.py`, `test_manifest_verification.py`,
+   `test_consistency_verification.py`, `test_cli_flag.py`,
+   `test_jsonl_artifact.py`), and the workflow CI step. The other
+   existing glossary modules (`glossary_builder`, `term_injector`)
+   are untouched by this PR and are unaffected by the rollback.
+2. No data-lake artifacts are produced by this PR (the flag is `False`
+   by default and no production pipeline calls the new loader). No
+   data-lake cleanup is required.
+3. If any operator independently enabled `--enable-glossary-injection`
+   in a local extraction before Phase 2P landed, the resulting
+   extraction artifacts have NOT recorded a `glossary_version_hash`
+   in their envelope (Phase 2P intentionally does not modify the
+   envelope). Those artifacts must be marked `legacy_eval` going
+   forward — they cannot be compared against post-Phase-2 artifacts
+   without explicit operator acknowledgement that the glossary state
+   was unrecorded.
+
+### Data migration required for rollback
+
+None.
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/glossary/
+python scripts/verify_glossary_manifest.py
+python scripts/verify_glossary_consistency.py
+```
+
+After revert, `tests/glossary/test_loader.py`,
+`tests/glossary/test_manifest_verification.py`,
+`tests/glossary/test_consistency_verification.py`,
+`tests/glossary/test_cli_flag.py`, and
+`tests/glossary/test_jsonl_artifact.py` are expected to disappear too.
+If any of them remain and fail, the revert is incomplete — fix
+forward.
+
+### Cross-PR dependency
+
+`depends_on`: (none — the flag default is `False`)
+
+`future_dependency`: a separate PR that flips the default for
+`--enable-glossary-injection` or enables it in production extraction
+configurations MUST declare `depends_on: <phase-2-pr-number>` so the
+Phase 2 envelope recording lands first. Without that, glossary-enabled
+artifacts have no recorded `glossary_version_hash` and cannot be
+compared faithfully across versions.
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new
