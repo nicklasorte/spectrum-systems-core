@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/tolerance_budget.schema.json",
+  "title": "tolerance_budget",
+  "description": "Phase 2 contract. The promotion-threshold knobs the correction miner uses. The bound on `current_promotion_buffer` is enforced here at write time so a malformed budget file fails closed before the miner makes a promotion decision.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "min_promotion_buffer",
+    "max_promotion_buffer",
+    "current_promotion_buffer",
+    "global_median_budget",
+    "per_source_budgets"
+  ],
+  "properties": {
+    "artifact_type": { "const": "tolerance_budget" },
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0"]
+    },
+    "min_promotion_buffer": {
+      "type": "number",
+      "const": 0.02,
+      "description": "Bound: the buffer must never drop below 2 F1 points beyond the variance budget. Fixed at the schema layer so an edit to widen the bound is auditable as a schema change, not a config tweak."
+    },
+    "max_promotion_buffer": {
+      "type": "number",
+      "const": 0.10,
+      "description": "Bound: the buffer must never exceed 10 F1 points. Fixed at the schema layer."
+    },
+    "current_promotion_buffer": {
+      "type": "number",
+      "minimum": 0.02,
+      "maximum": 0.10,
+      "description": "Active buffer added on top of the variance budget. Must satisfy min_promotion_buffer <= current_promotion_buffer <= max_promotion_buffer."
+    },
+    "global_median_budget": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Fallback variance budget when fewer than 3 non-legacy runs have been observed for a source."
+    },
+    "per_source_budgets": {
+      "type": "object",
+      "description": "Per-source variance budgets. May be an empty object on first boot; the calibration-mode gate handles the empty case.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "f1_variance_budget",
+          "runs_observed",
+          "last_updated"
+        ],
+        "properties": {
+          "f1_variance_budget": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0
+          },
+          "runs_observed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last_updated": {
+            "type": "string",
+            "minLength": 1,
+            "description": "ISO 8601 timestamp the budget entry was last refreshed."
+          }
+        }
+      }
+    }
+  }
+}

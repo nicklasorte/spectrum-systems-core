@@ -84,6 +84,7 @@ HAIKU_LLM_PROVENANCE = "meeting_minutes_llm"
 # is caught BEFORE the comparison's metrics are written.
 _GROUNDING_BINDING_SCHEMA_VERSION = "1.4.0"
 _MIXED_SCHEMA_REASON = "schema_version_mixed"
+_PROMPT_DRIFT_REASON = "prompt_drift_post_merge"
 
 # The model token that a candidate with NO ``provenance.model_id`` is
 # treated as. Historically every ``produced_by == "meeting_minutes_llm"``
@@ -922,12 +923,37 @@ def build_comparison_artifact(
         "opus_model_id": _opus_model_id(baseline_rows),
         "compared_at": compared_at,
         "gt_pairs_present": metrics["gt_pairs_present"],
+        "legacy_eval": is_legacy_eval(haiku_artifact),
         "summary": metrics["summary"],
         "by_type": metrics["by_type"],
         "false_negatives": metrics["false_negatives"],
         "haiku_only_items": metrics["haiku_only_items"],
         "gt_missed": metrics["gt_missed"],
     }
+
+
+def is_legacy_eval(haiku_artifact: Dict[str, Any]) -> bool:
+    """Phase 2: True when a comparison should be excluded from the
+    tolerance-budget per-source variance computation.
+
+    A run is "legacy" when ANY of these hold:
+
+    * The artifact has no ``extraction_config`` block in
+      ``payload.provenance``.
+    * The block is present but ``prompt_content_hash`` is missing.
+    * The artifact's schema_version predates 1.4.0.
+    """
+    sv = _artifact_schema_version(haiku_artifact) or ""
+    if sv and sv < _GROUNDING_BINDING_SCHEMA_VERSION:
+        return True
+    ec = _extraction_config_from_artifact(haiku_artifact)
+    if not isinstance(ec, dict):
+        return True
+    if not isinstance(ec.get("prompt_content_hash"), str):
+        return True
+    if not ec["prompt_content_hash"].strip():
+        return True
+    return False
 
 
 def _merge_three_way_by_type(
@@ -1260,6 +1286,82 @@ def _artifact_schema_version(artifact: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _baseline_at_version_exists(
+    data_lake: Path, source_id: str, target_version: str
+) -> bool:
+    """True iff an opus baseline at ``target_version`` is on disk.
+
+    Phase 2 schema-version coherence (Step 2.7). A Haiku artifact at
+    1.4.0 must be diffed against an opus baseline ALSO at 1.4.0 (or
+    later). The miner, when it detects a schema bump on ``main``, is
+    expected to re-run the opus baseline at the new version BEFORE
+    evaluating any candidate. This helper lets the comparison engine
+    verify that re-baseline happened.
+    """
+    rows = load_opus_baseline(data_lake, source_id)
+    for row in rows:
+        v = row.get("schema_version")
+        if isinstance(v, str) and v.strip() == target_version:
+            return True
+    return False
+
+
+def _extraction_config_from_artifact(
+    artifact: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Read the Phase 2 ``extraction_config`` block off an artifact.
+
+    Returns the dict when present, ``None`` otherwise. The miner's
+    PR-opener stamps ``expected_post_merge_prompt_hash`` separately
+    and the comparison engine reads it via
+    :func:`_load_expected_post_merge_hash`.
+    """
+    payload = artifact.get("payload") or {}
+    prov = payload.get("provenance") or {}
+    ec = prov.get("extraction_config")
+    if isinstance(ec, dict):
+        return ec
+    return None
+
+
+def _load_expected_post_merge_hash(
+    data_lake: Path, source_id: str
+) -> Optional[str]:
+    """Most-recent miner-run ``expected_post_merge_prompt_hash`` for source.
+
+    The miner writes a ``correction_miner_run__*.json`` artifact
+    alongside the eval_history rows; that file records the candidate's
+    ``expected_post_merge_prompt_hash``. The comparison engine reads
+    the most recent one and asserts the production artifact's
+    ``prompt_content_hash`` matches. The function returns ``None``
+    when no such artifact exists (the typical fresh-checkout case);
+    callers treat that as "no drift gate active".
+    """
+    meeting_dir = (
+        data_lake / "store" / "processed" / "meetings" / source_id
+    )
+    if not meeting_dir.is_dir():
+        return None
+    candidates: List[Tuple[float, Optional[str]]] = []
+    for path in meeting_dir.glob("correction_miner_run__*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        ts = path.stat().st_mtime
+        h = data.get("expected_post_merge_prompt_hash") or (
+            (data.get("payload") or {}).get("expected_post_merge_prompt_hash")
+        )
+        candidates.append((ts, h if isinstance(h, str) and h else None))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda t: t[0], reverse=True)
+    for _, h in candidates:
+        if h:
+            return h
+    return None
+
+
 def _baseline_schema_version(
     baseline_rows: List[Dict[str, Any]],
 ) -> Optional[str]:
@@ -1409,14 +1511,58 @@ def run_comparison(
         and haiku_schema_version >= _GROUNDING_BINDING_SCHEMA_VERSION
         and not allow_mixed_schema
     ):
-        raise ComparisonError(
-            _MIXED_SCHEMA_REASON,
-            (
-                f"Haiku schema_version={haiku_schema_version!r} differs "
-                f"from baseline schema_version={baseline_schema_version!r}. "
-                "Re-run with --allow-mixed-schema if intentional (CLI-only)."
-            ),
-        )
+        # Phase 2 (Step 2.7) refinement: when the Haiku artifact is at
+        # the binding version but a baseline at the matching version
+        # ALSO exists on disk, the comparison can proceed — the miner
+        # is expected to re-run the opus baseline at the bumped
+        # version before evaluating any candidate. The mismatch the
+        # halt was designed to catch is "1.4.0 producer silently diffed
+        # against an ungated baseline because no matching baseline was
+        # ever created". With a matching baseline present we use it.
+        if not _baseline_at_version_exists(
+            data_lake, source_id, haiku_schema_version
+        ):
+            raise ComparisonError(
+                _MIXED_SCHEMA_REASON,
+                (
+                    f"Haiku schema_version={haiku_schema_version!r} differs "
+                    f"from baseline schema_version={baseline_schema_version!r}, "
+                    "and no opus baseline at the matching version is on disk. "
+                    "Re-run the opus baseline at the new schema BEFORE "
+                    "the next miner evaluation, or pass --allow-mixed-schema "
+                    "as a last-resort operator override (CLI-only)."
+                ),
+            )
+
+    # Phase 2 (Step 2.6) prompt-drift gate. Fires when:
+    #   1. The Haiku artifact carries a Phase 2 `extraction_config`
+    #      (legacy artifacts skip silently — they pre-date the gate).
+    #   2. A recent miner run has an `expected_post_merge_prompt_hash`
+    #      recorded for this source.
+    #   3. The two hashes disagree.
+    # When all three hold the comparison halts with `prompt_drift_post_merge`
+    # so the operator catches a post-merge prompt edit instead of having
+    # the next miner run silently disagree with production. The gate is
+    # off when the miner has never run for this source (fresh checkout).
+    haiku_extraction_config = _extraction_config_from_artifact(haiku_artifact)
+    if haiku_extraction_config is not None:
+        production_hash = haiku_extraction_config.get("prompt_content_hash")
+        expected_hash = _load_expected_post_merge_hash(data_lake, source_id)
+        if (
+            isinstance(production_hash, str)
+            and isinstance(expected_hash, str)
+            and production_hash != expected_hash
+        ):
+            raise ComparisonError(
+                _PROMPT_DRIFT_REASON,
+                (
+                    f"Production prompt_content_hash={production_hash!r} != "
+                    f"miner expected_post_merge_hash={expected_hash!r}. "
+                    "A post-merge prompt edit drifted from what the miner "
+                    "measured. Re-run the miner against the live prompt "
+                    "before relying on this comparison."
+                ),
+            )
 
     sonnet_artifact: Optional[Dict[str, Any]] = None
     sonnet_path: Optional[Path] = None

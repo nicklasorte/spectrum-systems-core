@@ -1527,6 +1527,7 @@
     },
     "provenance": {
       "type": "object",
+      "description": "Producer metadata. Does NOT set `additionalProperties: false` so phase-additive blocks (e.g. Phase 2's `extraction_config`) attach without bumping schema_version.",
       "required": [
         "produced_by"
       ],
@@ -1537,6 +1538,45 @@
         },
         "phase": {
           "type": "string"
+        },
+        "extraction_config": {
+          "type": "object",
+          "description": "Phase 2 (optional, additive). Captured by `pipeline.governed_pipeline_run` so the run can be re-executed from the artifact alone. Two identical-config invocations must produce identical comparison F1; a perturbed `prompt_content_hash` must produce a different F1. Absent on legacy (pre-Phase-2) artifacts; the comparison engine treats those as `legacy_eval: true`.",
+          "additionalProperties": false,
+          "required": [
+            "temperature",
+            "seed_inputs",
+            "chunks_full_hash",
+            "chunk_count",
+            "first_chunk_hash",
+            "last_chunk_hash",
+            "prompt_content_hash"
+          ],
+          "properties": {
+            "temperature": {
+              "type": "number",
+              "minimum": 0.0,
+              "maximum": 2.0
+            },
+            "seed_inputs": {
+              "type": "object",
+              "required": [
+                "model_id",
+                "prompt_content_hash",
+                "transcript_hash"
+              ],
+              "properties": {
+                "model_id": { "type": "string", "minLength": 1 },
+                "prompt_content_hash": { "type": "string", "minLength": 1 },
+                "transcript_hash": { "type": "string", "minLength": 1 }
+              }
+            },
+            "chunks_full_hash": { "type": "string", "minLength": 1 },
+            "chunk_count": { "type": "integer", "minimum": 0 },
+            "first_chunk_hash": { "type": "string", "minLength": 1 },
+            "last_chunk_hash": { "type": "string", "minLength": 1 },
+            "prompt_content_hash": { "type": "string", "minLength": 1 }
+          }
         }
       }
     },

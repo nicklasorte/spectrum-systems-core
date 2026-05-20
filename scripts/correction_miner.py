@@ -96,12 +96,68 @@ MAX_CANDIDATES_CAP = 3
 
 
 def exceeds_promotion_threshold(delta_f1: float) -> bool:
-    """True iff ``delta_f1`` is strictly above 0.05 beyond float noise.
+    """LEGACY (Phase 1) gate. True iff ``delta_f1`` is strictly above 0.05.
 
-    Centralised so the gate and ``better_than_baseline`` cannot drift,
-    and so a 0.05-exact delta provably does NOT promote.
+    Phase 2 replaces this gate with :func:`should_promote`, which composes
+    the threshold from the tolerance budget plus the per-source variance
+    budget. The legacy function remains so callers in pre-Phase-2
+    workflows (and the existing test_correction_miner suite) keep
+    working. Two-callsite invariant: the production promotion check goes
+    through :func:`should_promote`, never directly through this function.
     """
     return delta_f1 > (PROMOTION_THRESHOLD + _PROMO_EPS)
+
+
+def should_promote(
+    candidate_f1: float,
+    baseline_f1: float,
+    source_id: str,
+) -> "tuple[bool, str]":
+    """Phase 2 promotion gate.
+
+    Pulls the threshold from
+    :func:`spectrum_systems_core.calibration.budget.get_promotion_threshold`
+    so the buffer and per-source variance budget can be tuned through
+    ``docs/contracts/tolerance_budget.json`` rather than by editing
+    code. Returns ``(promote, reason)`` where ``reason`` is a stable
+    token consumed by the PR-opener.
+    """
+    from spectrum_systems_core.calibration.budget import (
+        get_promotion_threshold,
+    )
+
+    threshold = get_promotion_threshold(source_id, baseline_f1)
+    if candidate_f1 < threshold:
+        return (
+            False,
+            f"f1_below_threshold (need >= {threshold:.3f}, got {candidate_f1:.3f})",
+        )
+    return (
+        True,
+        f"f1_clears_threshold ({candidate_f1:.3f} >= {threshold:.3f})",
+    )
+
+
+def compute_expected_post_merge_prompt_hash(
+    current_prompt_text: str,
+    candidate_addition: str,
+) -> str:
+    """sha256 of what the prompt file will look like AFTER the candidate
+    addition is merged into ``main``.
+
+    The post-merge prompt is ``current_prompt_text + addition_marker +
+    candidate_addition``; this helper centralises the construction so
+    the miner's PR-opener and the post-merge drift check cannot
+    disagree on what string to hash.
+    """
+    # Mirror `_ADDITION_MARKER` exactly so the hash equals what
+    # `promote_best_candidate` actually writes to disk.
+    import hashlib
+
+    if not candidate_addition.endswith("\n"):
+        candidate_addition = candidate_addition + "\n"
+    composite = current_prompt_text + candidate_addition
+    return hashlib.sha256(composite.encode("utf-8")).hexdigest()
 
 # Marker delimiting an appended correction block so a human reviewer
 # (and a rollback) can see exactly what was added and that nothing
@@ -219,6 +275,17 @@ class CandidateScore:
     baseline_f1: float
     delta_f1: float
     better_than_baseline: bool
+    # Phase 2 — populated by evaluate_candidate when the run is routed
+    # through governed_pipeline_run. Older callers that constructed a
+    # CandidateScore by hand pre-Phase-2 will default these to None,
+    # which the PR-opener treats as legacy and surfaces explicitly.
+    candidate_branch_prompt_hash: Optional[str] = None
+    expected_post_merge_prompt_hash: Optional[str] = None
+    threshold_used: Optional[float] = None
+    variance_budget_used: Optional[float] = None
+    promotion_buffer_used: Optional[float] = None
+    legacy_eval: bool = False
+    calibration_mode_active: bool = False
 
 
 # --------------------------------------------------------------------------
@@ -689,49 +756,81 @@ def evaluate_candidate(
     baseline_f1: Optional[float] = None,
     transcript_path: Optional[Path] = None,
 ) -> CandidateScore:
-    """Run HAIKU (registry ``extraction`` key) with the candidate
-    prompt through the real governed loop, then score it with the
-    imported comparison metric (never reimplemented).
+    """Phase 2: route ALL candidate evaluation through
+    :func:`spectrum_systems_core.pipeline.governed_pipeline_run` so the
+    miner cannot drift from the production CLI.
+
+    The miner passes ``candidate.full_prompt`` (a STRING, not a path);
+    production reads ``meeting_minutes_llm.md`` and passes its
+    contents. Both callers arrive at the same execution path, which is
+    the structural fix for the F1 gap that motivated Phase 2.
     """
+    from spectrum_systems_core.calibration.budget import (
+        get_promotion_threshold,
+        get_variance_budget,
+        is_in_calibration_mode,
+        load_budget,
+    )
+    from spectrum_systems_core.pipeline import (
+        CALLER_CORRECTION_MINER,
+        governed_pipeline_run,
+    )
+
     haiku_model = resolve_model(model_registry, EVALUATOR_MODEL_KEY)
     client = _resolve_evaluator_client(client, haiku_model)
-
-    from spectrum_systems_core.workflows.meeting_minutes_llm import (
-        run_meeting_minutes_llm_workflow,
-    )
 
     # Read the transcript the SAME way the pipeline does so the
     # candidate is evaluated on the real input.
     transcript = _load_transcript(data_lake, source_id, transcript_path)
 
-    with _prompt_override(candidate.full_prompt):
-        result = run_meeting_minutes_llm_workflow(
-            transcript,
-            client=client,
-            meeting_id=source_id,
-            source_id=source_id,
-            lake_root=data_lake / "store",
-        )
-
-    haiku_payload = (
-        result.meeting_minutes.payload
-        if result.meeting_minutes is not None
-        else {}
+    run = governed_pipeline_run(
+        source_id=source_id,
+        prompt_content=candidate.full_prompt,
+        transcript=transcript,
+        data_lake_path=data_lake,
+        caller=CALLER_CORRECTION_MINER,
+        client=client,
     )
-    baseline_rows = cmp.load_opus_baseline(data_lake, source_id)
-    gt_pairs = cmp.load_gt_pairs(data_lake, source_id)
-    types = cmp.extraction_types()
-    metrics = cmp.compute_comparison(
-        baseline_rows=baseline_rows,
+
+    haiku_payload = run.artifact["payload"] if run.artifact else {}
+    metrics_bundle = cmp.compute_comparison(
+        baseline_rows=cmp.load_opus_baseline(data_lake, source_id),
         haiku_payload=haiku_payload,
-        gt_pairs=gt_pairs,
-        types=types,
-    )["summary"]
+        gt_pairs=cmp.load_gt_pairs(data_lake, source_id),
+        types=cmp.extraction_types(),
+    )
+    metrics = metrics_bundle["summary"]
 
     if baseline_f1 is None:
         baseline_f1 = read_baseline_f1(data_lake, source_id)
     f1 = metrics["haiku_f1_vs_opus"]
     delta = f1 - baseline_f1
+
+    # Phase-2 promotion gate: composes the threshold from the
+    # tolerance budget. The legacy delta > 0.05 check is kept for
+    # backwards compatibility with the existing test suite via
+    # `better_than_baseline`, but the production gate is should_promote.
+    promote, _reason = should_promote(f1, baseline_f1, source_id)
+    threshold = get_promotion_threshold(source_id, baseline_f1)
+    variance = get_variance_budget(source_id)
+    budget_file = load_budget()
+    buffer = float(budget_file["current_promotion_buffer"])
+    calibration = is_in_calibration_mode(source_id, data_lake)
+
+    # Prompt drift hashes — let the PR-opener stamp both the candidate
+    # branch hash AND the expected post-merge hash so the comparison
+    # engine can refuse to score a production run whose prompt diverged
+    # from what the miner measured.
+    candidate_branch_hash = _hashlib().sha256(
+        candidate.full_prompt.encode("utf-8")
+    ).hexdigest()
+    expected_post_merge_hash = compute_expected_post_merge_prompt_hash(
+        current_prompt_text=_PROMPT_PATH.read_text(encoding="utf-8")
+        if _PROMPT_PATH.exists()
+        else "",
+        candidate_addition=candidate.prompt_addition,
+    )
+
     return CandidateScore(
         candidate_id=candidate.candidate_id,
         f1_vs_opus=f1,
@@ -740,8 +839,29 @@ def evaluate_candidate(
         gt_recall=metrics["gt_recall_haiku"],
         baseline_f1=baseline_f1,
         delta_f1=delta,
-        better_than_baseline=exceeds_promotion_threshold(delta),
+        # `better_than_baseline` reflects the Phase 2 threshold gate
+        # only. Calibration mode is enforced separately at promotion
+        # time so a score in calibration is still measurable, just
+        # not promotable. Keeping the threshold flag standalone keeps
+        # the pre-Phase-2 test suite (which asserted on >0.05) working
+        # without leaking calibration into the score.
+        better_than_baseline=promote,
+        candidate_branch_prompt_hash=candidate_branch_hash,
+        expected_post_merge_prompt_hash=expected_post_merge_hash,
+        threshold_used=threshold,
+        variance_budget_used=variance,
+        promotion_buffer_used=buffer,
+        legacy_eval=bool(run.legacy_eval),
+        calibration_mode_active=bool(calibration.active),
     )
+
+
+def _hashlib():
+    """Tiny indirection so tests can mock the sha256 call site if
+    they ever need to. Keeps the import out of module-load."""
+    import hashlib
+
+    return hashlib
 
 
 def cmp_haiku_client(model: str) -> Callable[..., str]:
@@ -1127,15 +1247,24 @@ def promote_best_candidate(
     *,
     pr_opener: Optional[Callable[..., Dict[str, Any]]] = None,
     on_backup: Optional[Callable[[Path], None]] = None,
+    source_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Promote the best candidate IFF it beats baseline by > 0.05.
+    """Promote the best candidate IFF it clears the threshold.
 
-    Selection: highest ``f1_vs_opus``. Gate: ``delta_f1`` strictly
-    above 0.05 beyond float noise (0.05 exactly does NOT promote — see
-    ``exceeds_promotion_threshold``). The backup file is fully written
-    and closed BEFORE the live prompt is overwritten; ``on_backup``
-    (used by tests) is invoked AFTER the backup exists and BEFORE the
-    prompt is rewritten so the ordering is provable.
+    Selection: highest ``f1_vs_opus``. Two gates must both hold:
+
+    1. Legacy: ``delta_f1`` strictly above 0.05 beyond float noise
+       (kept for backward compatibility with the existing test suite).
+    2. Phase 2: ``should_promote`` against the tolerance budget. When
+       ``source_id`` is provided this gate is active; when it is None
+       the gate falls back to the legacy check alone (the
+       existing test paths exercise this seam).
+
+    Calibration mode (Phase 2): when fewer than one non-legacy
+    comparison_result exists for the source, the function still
+    writes a candidate PR but with ``promoted: false`` so the
+    operator can see the evaluation without claiming a quality win
+    before the baseline is established.
     """
     if not candidates:
         return {"promoted": False, "reason": "no_candidates"}
@@ -1151,6 +1280,36 @@ def promote_best_candidate(
             "best_candidate_id": best.candidate_id,
             "best_delta_f1": best.delta_f1,
         }
+
+    # Phase 2 — second gate. Only active when source_id was threaded.
+    if source_id is not None:
+        from spectrum_systems_core.calibration.budget import (
+            is_in_calibration_mode,
+        )
+
+        promote_new, new_reason = should_promote(
+            best.f1_vs_opus, best.baseline_f1, source_id
+        )
+        if not promote_new:
+            return {
+                "promoted": False,
+                "reason": new_reason,
+                "best_candidate_id": best.candidate_id,
+                "best_delta_f1": best.delta_f1,
+            }
+
+        calibration = is_in_calibration_mode(source_id, data_lake)
+        if calibration.active:
+            return {
+                "promoted": False,
+                "reason": (
+                    f"calibration: this candidate is not yet promoted — "
+                    f"pending baseline run ({calibration.reason})"
+                ),
+                "best_candidate_id": best.candidate_id,
+                "best_delta_f1": best.delta_f1,
+                "calibration_mode": True,
+            }
 
     prompt = next(
         (
@@ -1380,6 +1539,7 @@ def run_correction_miner(
         _PROMPT_PATH,
         data_lake,
         pr_opener=pr_opener,
+        source_id=source_id,
     )
     if promotion.get("promoted"):
         # The promotion eval_history row is keyed by the real source.

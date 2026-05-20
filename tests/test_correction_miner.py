@@ -561,8 +561,10 @@ def _fake_registry_file(tmp_path: Path) -> Path:
 
 
 def _seed_eval_lake(tmp_path: Path) -> Path:
-    """A data-lake with an Opus baseline, a transcript, and an
-    eval_history baseline row — the minimum evaluate_candidate needs."""
+    """A data-lake with an Opus baseline, a transcript, an
+    eval_history baseline row, and a Phase-2 non-legacy
+    comparison_result — the minimum evaluate_candidate +
+    promote_best_candidate need post-Phase-2 to clear calibration."""
     dl = tmp_path / "dl"
     sid_dir = dl / "store" / "processed" / "meetings" / "src"
     sid_dir.mkdir(parents=True)
@@ -589,6 +591,22 @@ def _seed_eval_lake(tmp_path: Path) -> Path:
             }
         )
         + "\n",
+        encoding="utf-8",
+    )
+    # Phase 2: a non-legacy comparison_result so calibration mode is
+    # satisfied. The miner's promotion gate now checks this artifact
+    # set; an empty set = calibration active = no promotion.
+    (sid_dir / "comparison_result__seed.json").write_text(
+        json.dumps(
+            {
+                "artifact_type": "comparison_result",
+                "schema_version": "1.0.0",
+                "source_id": "src",
+                "compared_at": "2026-05-15T00:00:00+00:00",
+                "legacy_eval": False,
+                "summary": {"haiku_f1_vs_opus": 0.30},
+            }
+        ),
         encoding="utf-8",
     )
     tdir = dl / "store" / "raw" / "transcripts"

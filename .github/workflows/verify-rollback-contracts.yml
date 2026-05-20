@@ -1,0 +1,49 @@
+name: verify-rollback-contracts
+
+# Phase 2 Step 2.9 — CI gate that asserts every PR adds an entry to
+# docs/architecture/rollback_contracts.md referencing this PR number,
+# at least one of the PR's changed file paths, and a verification
+# command from the whitelist (pytest <path>, python scripts/<name>.py,
+# python -m spectrum_systems_core.<module>).
+
+on:
+  pull_request:
+    paths:
+      - "src/spectrum_systems_core/schemas/**"
+      - "src/spectrum_systems_core/pipeline/**"
+      - "src/spectrum_systems_core/calibration/**"
+      - "src/spectrum_systems_core/promotion/**"
+      - "scripts/verify_rollback_contracts.py"
+      - "docs/architecture/rollback_contracts.md"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: python -m pip install -e ".[dev]"
+
+      - name: Compute changed files for this PR
+        id: changed
+        run: |
+          set -e
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          files=$(git diff --name-only "$base" "$head" | paste -sd, -)
+          echo "files=$files" >> "$GITHUB_OUTPUT"
+
+      - name: Verify rollback_contracts.md entry
+        run: |
+          python scripts/verify_rollback_contracts.py \
+            --pr "${{ github.event.pull_request.number }}" \
+            --changed-files "${{ steps.changed.outputs.files }}"
