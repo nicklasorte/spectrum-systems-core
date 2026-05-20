@@ -89,7 +89,7 @@ forward rather than re-revert.
 
 ---
 
-## Phase 2 — eval-path alignment + tolerance budget + calibration mode (PR #PHASE2)
+## Phase 2 — eval-path alignment + tolerance budget + calibration mode (PR #193)
 
 ### What this change adds
 
