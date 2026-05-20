@@ -116,7 +116,19 @@ def test_prompt_variants_match_schema() -> None:
 
 
 def test_resolver_returns_one_of_four_prompt_variants(tmp_path, monkeypatch) -> None:
-    """Every resolved model_token sets a prompt_variant from the enum."""
+    """Every resolved model_token sets a prompt_variant from the enum.
+
+    Phase 5 wired the four `--model` tokens to four prompt variants.
+    Phase 6 added a fifth variant
+    (`production_haiku_with_cascade_filter`) which is NOT reachable
+    via `--model`; it is stamped by the cascade dispatcher on the
+    filtered artifact. So the resolver still covers exactly four
+    variants, and the union (resolver + cascade) equals
+    `ALL_PROMPT_VARIANTS`.
+    """
+    from spectrum_systems_core.pipeline.governed_run import (
+        PROMPT_VARIANT_PRODUCTION_HAIKU_WITH_CASCADE,
+    )
     from spectrum_systems_core.workflows import model_selection as ms
 
     stub = tmp_path / "stub_opus.md"
@@ -128,8 +140,14 @@ def test_resolver_returns_one_of_four_prompt_variants(tmp_path, monkeypatch) -> 
         sel = resolve_model_selection(tok)
         assert sel.prompt_variant in ALL_PROMPT_VARIANTS
         seen.add(sel.prompt_variant)
-    # All four prompt variants are reachable from the four tokens
-    # (sonnet-unconstrained ↔ opus_prompt_with_sonnet_model; opus ↔
-    # opus_baseline; sonnet ↔ haiku_prompt_with_sonnet_model; haiku ↔
-    # production_haiku).
-    assert seen == ALL_PROMPT_VARIANTS
+    # All four `--model`-reachable prompt variants seen.
+    assert seen == ALL_PROMPT_VARIANTS - {
+        PROMPT_VARIANT_PRODUCTION_HAIKU_WITH_CASCADE
+    }
+    # The Phase 6 cascade variant is reachable only via the cascade
+    # dispatcher (cli._dispatch_cascade_filter overrides the
+    # extraction_config's prompt_variant before writing the filtered
+    # artifact); the resolver does NOT emit it from a --model token.
+    assert (
+        PROMPT_VARIANT_PRODUCTION_HAIKU_WITH_CASCADE in ALL_PROMPT_VARIANTS
+    )

@@ -1049,6 +1049,149 @@ If they justify a model swap, a separate PR flips the default
 
 ---
 
+## Phase 6 — Stage 2 cascade filter (Haiku extract → Sonnet keep/drop)
+
+This PR adds a Stage 2 cascade: after Haiku extracts items, Sonnet
+evaluates each item for keep/drop. The cascade is opt-in (flag default
+OFF). No production extraction is affected until the operator enables
+the flag.
+
+### What this change adds
+
+- `--enable-cascade-filter` / `--disable-cascade-filter` mutually
+  exclusive flags on `spectrum-core meeting-minutes-llm` (CLI-only;
+  env vars `ENABLE_CASCADE_FILTER` / `DISABLE_CASCADE_FILTER` have
+  NO effect — tests/cascade/test_cli_flag.py asserts this). Default
+  OFF — pre-Phase-6 behaviour byte-identical.
+- New artifact type `meeting_minutes_filtered` (schema 1.0.0). Each
+  filtered item is a verbatim subset of the source
+  `meeting_minutes` payload; the cascade NEVER invents or mutates
+  items.
+- New diagnostic artifact `cascade_filter_log` (schema 1.0.0).
+  30-day TTL, never promoted, never indexed.
+- New JSON Schema `cascade_filter_response.schema.json` describing
+  the per-chunk filter response shape; on validation failure the
+  executor falls back to CONSERVATIVE pass-through (every item from
+  the chunk is kept).
+- New cascade module
+  `src/spectrum_systems_core/cascade/` (executor.py + __init__.py).
+- New cascade prompt
+  `src/spectrum_systems_core/workflows/prompts/cascade_filter_sonnet.md`.
+- Extension to `cost/estimator.py`:
+  `estimate_cascade_cost`, `estimate_extraction_cost_breakdown`
+  (returns `CostBreakdown` so the CLI can print both lines when
+  cascade is enabled), `load_cascade_confirmation_item_threshold`.
+- New constant `cascade_confirmation_item_threshold` in
+  `data/cost_constants.json` (default 50). Schema-bounded `[10, 500]`.
+- Additive enum extension on `meeting_minutes.schema.json` and
+  `comparison_result.schema.json`:
+  `production_haiku_with_cascade_filter`. Pre-Phase-6 artifacts
+  without the value validate unchanged.
+- `--use-cascade-output` flag on `scripts/compare_opus_haiku.py`.
+  Default OFF — comparison-engine output is byte-identical to
+  pre-Phase-6.
+- `CASCADE_FILTER` input on `.github/workflows/debug-llm-extraction.yml`.
+  Default false; when true the workflow passes
+  `--enable-cascade-filter --confirm-cost`.
+
+### To roll back
+
+1. Revert the PR.
+2. The cascade prompt, executor, and CLI flags are removed.
+3. Existing `meeting_minutes_filtered` artifacts in the data lake
+   remain readable but are no longer producible.
+4. The `--use-cascade-output` flag on the comparison engine is removed.
+5. The `production_haiku_with_cascade_filter` value in the
+   prompt_variant enum is removed; any artifacts using this value
+   become invalid (none exist before this PR merges).
+6. The `cascade_confirmation_item_threshold` constant is removed
+   from `cost_constants.json`.
+
+### Data migration required for rollback
+
+None. The data lake is append-only; pre-existing Phase-6 cascade
+artifacts remain on disk as inert files (no reader in the reverted
+codebase). The raw `meeting_minutes` artifacts the cascade was
+filtering are untouched and remain canonical.
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/cascade/ tests/cost/test_cascade_cost.py \
+    tests/comparison/test_use_cascade_output.py
+# Expected: collection error (the modules are gone).
+
+# Default extraction still works.
+DATA_LAKE_PATH=$PWD/data-lake python -m spectrum_systems_core.cli \
+    meeting-minutes-llm --source-id <source-id>
+
+# Default comparison still works byte-identical.
+python scripts/compare_opus_haiku.py --data-lake $PWD/data-lake \
+    --source-id <source-id>
+```
+
+`verification_command`: `pytest tests/cascade/ tests/cost/test_cascade_cost.py tests/comparison/test_use_cascade_output.py`
+
+### Cross-PR dependency
+
+`depends_on`: #192 (verbatim grounding gate — provides per-item
+anchoring the cascade uses to splice transcript context into the
+filter prompt), #193 (eval alignment — provides
+`ExtractionConfig.prompt_variant`), #196 (Phase 3 per-source budget
+state — interacts with the cascade's variance signal).
+
+`future_dependency`: a follow-up PR may flip `--enable-cascade-filter`
+default to True after the operator confirms cross-source F1
+improvement.
+
+### Operator action after merge
+
+1. Verify cascade pricing in `cost_constants.json` matches current
+   Anthropic docs. The Phase 6 estimator reuses the
+   `claude-sonnet-4-6` row already added in Phase 5; no new pricing
+   entry is required.
+2. Run `spectrum-core meeting-minutes-llm --enable-cascade-filter --confirm-cost`
+   on Dec 18 → produces `meeting_minutes` + `meeting_minutes_filtered`
+   artifacts.
+3. Run `python scripts/compare_opus_haiku.py --use-cascade-output --data-lake <lake> --source-id <id>`
+   → produces F1 for the filtered output vs Opus.
+4. Compare the filtered F1 against the 39.5% baseline:
+   - `+2 to +5` F1: marginal cascade value; consider tuning the
+     filter prompt.
+   - `+5 to +10` F1: cascade is the right architecture; scale to
+     corpus.
+   - `+10+` F1: cascade is a major win; flip default to ON in a
+     follow-up PR.
+   - `0 or negative`: cascade is filtering too aggressively; adjust
+     prompt before proceeding to corpus scale.
+5. If filtered F1 > 50%, run on a second source to confirm
+   cross-source generalization.
+
+### Conservative failure mode
+
+When Sonnet's filter response fails JSON Schema validation, ALL items
+from that chunk are KEPT, not dropped. This preserves recall at the
+cost of leaving some false positives in the filtered output.
+Operators monitor `chunks_with_invalid_filter_response` in the
+`cascade_filter_log` to detect when this happens at scale.
+
+### Constraint compliance
+
+This PR explicitly does NOT modify:
+- `src/spectrum_systems_core/workflows/prompts/meeting_minutes_llm.md` (Haiku prompt)
+- `src/spectrum_systems_core/workflows/prompts/meeting_minutes_opus.md` (Opus prompt)
+- `scripts/correction_miner.py` core miner logic
+- `src/spectrum_systems_core/grounding/` (Phase 1)
+- `src/spectrum_systems_core/transcript_quality/` (Phase 2R)
+- `src/spectrum_systems_core/glossary/` (Phase 2P / 3)
+- `src/spectrum_systems_core/few_shot/` (Phase 3P)
+
+The constraint compliance test
+`tests/cascade/test_constraint_compliance.py` enforces this against
+the PR diff.
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new

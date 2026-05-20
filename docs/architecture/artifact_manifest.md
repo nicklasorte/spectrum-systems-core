@@ -367,6 +367,52 @@ calling `git check-ignore`.
   marker exists so an operator audit can recover when a baseline
   was last regenerated.
 
+### meeting_minutes_filtered
+- **Writer:** `spectrum_systems_core.cascade.executor.write_filtered_artifact`
+  (Phase 6 Stage 2 cascade filter). Produced after Haiku writes a
+  `meeting_minutes` artifact, when an operator passes
+  `--enable-cascade-filter` on `spectrum-core meeting-minutes-llm`.
+  Sonnet evaluates each Haiku-extracted item for keep/drop and the
+  cascade writes the surviving subset.
+- **Path template:**
+  `data-lake/store/processed/meetings/<source_id>/meeting_minutes_filtered__<timestamp>.json`
+  (same per-meeting directory as `meeting_minutes__*.json` — the
+  comparison engine's `--use-cascade-output` flag globs for the
+  cascade pattern there).
+- **Schema:** `src/spectrum_systems_core/schemas/meeting_minutes_filtered.schema.json`
+  (1.0.0). `additionalProperties: false` everywhere; `filtered_items`
+  carries the same 23 array keys as the source meeting_minutes payload
+  and every item is a verbatim subset (the cascade NEVER invents or
+  mutates items).
+- **Git-tracked:** NO — runtime data lake artifact (lives under
+  `processed/` which the data-lake repo bulk-ignores). Cascade product
+  artifacts are append-only and grow with the corpus.
+- **Readers:** `scripts/compare_opus_haiku.find_cascade_filtered_artifact`
+  (only when invoked with `--use-cascade-output`). The cascade artifact
+  is NEVER read back into the governed loop — it is opt-in operator
+  signal, not a promotion gate.
+- **Lifecycle:** opt-in. A run without `--enable-cascade-filter` writes
+  zero cascade artifacts; existing ones remain readable indefinitely.
+
+### cascade_filter_log
+- **Writer:** `spectrum_systems_core.cascade.executor.write_cascade_filter_log`
+  (Phase 6). One log per cascade pass, written alongside the
+  `meeting_minutes_filtered` product.
+- **Path template:**
+  `data-lake/store/processed/meetings/<source_id>/diagnostics/cascade_filter_log__<timestamp>.json`
+  (same diagnostics family as `pipeline_invocation_log__*.json`).
+- **Schema:** `src/spectrum_systems_core/schemas/cascade_filter_log.schema.json`
+  (1.0.0). `additionalProperties: false` throughout. Carries the
+  per-item keep/drop decision trail and the conservative-passthrough
+  tally so a reviewer can reproduce the filter's behaviour from the
+  artifact alone.
+- **Git-tracked:** NO — diagnostic, 30-day TTL (same lifecycle as
+  `pipeline_invocation_log`).
+- **Readers:** none yet in the governed loop. The log is operator
+  signal for cascade prompt tuning; a future Phase 7 may add an
+  aggregator that surfaces `chunks_with_invalid_filter_response` drift
+  across the corpus.
+
 ### source_record
 - **Writer:** `extraction/chunker.py` (per-source metadata file)
 - **Path template:** `data-lake/store/processed/meetings/<source_id>/source_record.json`

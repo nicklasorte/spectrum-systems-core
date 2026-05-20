@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/cascade_filter_response.schema.json",
+  "title": "cascade_filter_response",
+  "description": "Phase 6. Per-chunk JSON response shape the Stage 2 filter (Sonnet) MUST return. Validated by `spectrum_systems_core.cascade.executor.run_cascade_filter` immediately after the API call returns. On validation failure the executor falls back to a CONSERVATIVE pass-through (every item in the chunk is kept, not dropped) and increments `chunks_with_invalid_filter_response` on the cascade_filter_log — the safer failure mode because dropping a true positive is worse than keeping a false positive in the filtered output.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["item_idx", "decision", "reason"],
+    "properties": {
+      "item_idx": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Position of the item in the input list the filter was given. Every input item must appear exactly once in the response array."
+      },
+      "decision": {
+        "type": "string",
+        "enum": ["keep", "drop"],
+        "description": "Sonnet's keep/drop judgment. Any other value (e.g. \"maybe\") fails validation and triggers the conservative pass-through path."
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 1,
+        "description": "One-sentence justification for the decision. Required (minLength 1) so a downstream auditor can read the filter's rationale without re-running."
+      }
+    }
+  }
+}

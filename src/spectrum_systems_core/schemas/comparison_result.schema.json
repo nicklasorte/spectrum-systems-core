@@ -48,9 +48,10 @@
         "production_haiku",
         "haiku_prompt_with_sonnet_model",
         "opus_prompt_with_sonnet_model",
-        "opus_baseline"
+        "opus_baseline",
+        "production_haiku_with_cascade_filter"
       ],
-      "description": "Phase 5 (optional, additive). Echoes the Haiku-side `extraction_config.prompt_variant`, defaulting to `production_haiku` for pre-Phase-5 artifacts. Read by `print_three_way_delta` so the operator-facing readout labels each column with its (prompt, model) variant."
+      "description": "Phase 5 (optional, additive). Echoes the Haiku-side `extraction_config.prompt_variant`, defaulting to `production_haiku` for pre-Phase-5 artifacts. Read by `print_three_way_delta` so the operator-facing readout labels each column with its (prompt, model) variant. Phase 6 extends the enum with `production_haiku_with_cascade_filter` so a comparison against a Stage 2 filtered artifact is labelled distinctly."
     },
     "sonnet_prompt_variant": {
       "type": "string",
@@ -58,7 +59,8 @@
         "production_haiku",
         "haiku_prompt_with_sonnet_model",
         "opus_prompt_with_sonnet_model",
-        "opus_baseline"
+        "opus_baseline",
+        "production_haiku_with_cascade_filter"
       ],
       "description": "Phase 5 (optional, additive). Echoes the Sonnet-side `extraction_config.prompt_variant`. Present only on three-way artifacts."
     }

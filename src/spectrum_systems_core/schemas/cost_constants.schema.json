@@ -20,6 +20,12 @@
         }
       },
       "additionalProperties": false
+    },
+    "cascade_confirmation_item_threshold": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 500,
+      "description": "Phase 6 (additive, optional). When the Stage 2 cascade is enabled AND the upstream Haiku artifact carries more items than this threshold, `--enable-cascade-filter` requires `--confirm-cost` (CLI-only). Schema bounds: [10, 500] — below 10 the threshold would fire on every real extraction and below 500 keeps any single source from accidentally bypassing cost confirmation. Absent on pre-Phase-6 cost_constants files (the cascade CLI surface defaults the value when missing)."
     }
   },
   "$defs": {
