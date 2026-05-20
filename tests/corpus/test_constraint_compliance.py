@@ -1,14 +1,38 @@
-"""Phase 4 — constraint compliance test.
+"""Constraint compliance: paths the in-flight PR must NOT modify.
 
-The Phase 4 spec enumerates a list of constrained paths the PR must
-NOT modify. This test runs ``git diff --name-only`` against
-``origin/main`` (the same diff base the CI uses) and asserts that no
-constrained path appears.
+This test was introduced in Phase 4 as a per-PR constraint guard;
+each subsequent phase updates the constrained list so the test
+continues to defend the CURRENT phase's "no scope creep" boundary.
 
-The check is intentionally conservative: when the diff is
-unavailable (forked PR sandbox, missing remote), the test skips. The
-PR's reviewer-side enforcement is the `verify_rollback_contracts.py`
-script plus the explicit constraint section in the Phase 4 rollback
+Phase 4a (Opus baseline prompt + ``baseline-opus`` CLI) deliberately
+CREATES one of the paths Phase 5's constraint list forbids — the
+canonical Opus prompt
+(``src/spectrum_systems_core/workflows/prompts/meeting_minutes_opus.md``).
+Until Phase 4a lands the file does not exist; after Phase 4a lands
+a subsequent Phase-4 PR must not modify it. The constrained list
+below therefore reflects Phase 4a's own boundary, not Phase 5's
+forward-looking one. The Phase 5 entry in
+``docs/architecture/rollback_contracts.md`` documents that
+``sonnet-unconstrained`` / ``opus`` modes require Phase 4a as a
+``depends_on``; the two phases are layered, not antagonistic.
+
+Phase 4a explicitly FORBIDS changes to:
+
+- The Haiku prompt
+  (``src/spectrum_systems_core/workflows/prompts/meeting_minutes_llm.md``)
+- ``src/spectrum_systems_core/pipeline/governed_run.py`` (Phase 2 —
+  the single execution path; Phase 5 extends it additively post-merge)
+- ``scripts/compare_opus_haiku.py`` (Phase 2 comparison engine)
+- ``scripts/correction_miner.py`` (Phase 2 core miner)
+- ``src/spectrum_systems_core/grounding/`` (Phase 1)
+- ``src/spectrum_systems_core/glossary/`` (Phase 2P / 3)
+- ``src/spectrum_systems_core/transcript_quality/`` (Phase 2R)
+- ``src/spectrum_systems_core/few_shot/`` (Phase 3P)
+
+The test is intentionally conservative: when the diff is unavailable
+(forked PR sandbox, missing remote), the test skips. The PR's
+reviewer-side enforcement is the `verify_rollback_contracts.py`
+script plus the explicit constraint section in the Phase 4a rollback
 contract entry.
 
 Scoping: this test only applies to PRs that are themselves Phase 4
@@ -25,7 +49,9 @@ from pathlib import Path
 
 import pytest
 
+# Phase 4a constraint list. See module docstring for the rationale.
 CONSTRAINED_PREFIXES: tuple[str, ...] = (
+    "src/spectrum_systems_core/workflows/prompts/meeting_minutes_llm.md",
     "src/spectrum_systems_core/pipeline/governed_run.py",
     "src/spectrum_systems_core/schemas/meeting_minutes.schema.json",
     "scripts/compare_opus_haiku.py",
@@ -33,6 +59,7 @@ CONSTRAINED_PREFIXES: tuple[str, ...] = (
     "src/spectrum_systems_core/grounding/",
     "src/spectrum_systems_core/glossary/",
     "src/spectrum_systems_core/transcript_quality/",
+    "src/spectrum_systems_core/few_shot/",
 )
 
 # Markers that identify a PR as Phase 4 work. If none of these appear
@@ -85,6 +112,6 @@ def test_no_constrained_path_modified() -> None:
                 offenders.append((f, prefix))
                 break
     assert not offenders, (
-        f"Phase 4 must not modify constrained paths. Offenders: "
+        f"Phase 4a must not modify constrained paths. Offenders: "
         f"{offenders}"
     )

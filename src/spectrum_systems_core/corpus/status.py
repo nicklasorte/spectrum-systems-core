@@ -33,7 +33,7 @@ import datetime as _dt
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..schemas import schema_path
 from .manifest_loader import (
@@ -107,11 +107,262 @@ def _has_opus_baseline(processed_dir: Path) -> bool:
 
 
 def _has_comparison_result(processed_dir: Path) -> bool:
+    """True iff at least one comparison artifact exists for the source.
+
+    Scans BOTH:
+
+    * ``comparison_result__*.json`` in the meeting root (legacy /
+      fixture path).
+    * ``comparisons/haiku_vs_opus_*.json`` and
+      ``comparisons/three_way_*.json`` — the PRODUCTION paths written
+      by ``scripts/compare_opus_haiku``.
+
+    The original Phase-4 implementation only scanned the legacy path,
+    so a real lake's row could end up with ``state=baseline_complete``
+    + ``recommendation=run_comparison`` while ``haiku_latest_f1`` was
+    already populated from the production path — contradictory.
+    """
     if not processed_dir.is_dir():
         return False
     for _ in processed_dir.glob("comparison_result__*.json"):
         return True
+    cmp_dir = processed_dir / "comparisons"
+    if cmp_dir.is_dir():
+        for _ in cmp_dir.glob("haiku_vs_opus_*.json"):
+            return True
+        for _ in cmp_dir.glob("three_way_*.json"):
+            return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — per-model F1 readouts (only emitted with --show-all-models).
+# ---------------------------------------------------------------------------
+
+
+def _extraction_types_from_schema() -> list[str]:
+    """Read the meeting_minutes extraction array names off the schema.
+
+    Mirrors ``scripts/compare_opus_haiku.extraction_types`` so the
+    status rollup's ``opus_item_count`` and the comparison engine's
+    per-type diff are driven by the SAME source of truth. The hard-
+    coded legacy tuple this function replaces drifted from the schema
+    once the meeting_minutes payload picked up new arrays (the schema
+    is at 23 extraction arrays today) — the rollup undercounted by
+    silently skipping new types.
+
+    Returns the schema's top-level array property names, excluding
+    ``grounding`` (Phase Y meta, not a content category). On a schema
+    read / parse failure the function returns ``[]`` so the caller
+    treats the count as ``None`` rather than raising — the status
+    rollup is informational, not a gate, and must not block on a
+    transient I/O hiccup.
+    """
+    try:
+        schema = json.loads(
+            schema_path("meeting_minutes").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return []
+    props = schema.get("properties", {})
+    out: list[str] = []
+    for key, spec in props.items():
+        if key == "grounding":
+            continue
+        if isinstance(spec, dict) and spec.get("type") == "array":
+            out.append(key)
+    return out
+
+
+def _opus_item_count(processed_dir: Path) -> Optional[int]:
+    """Read the Opus baseline item count, or None when no baseline exists.
+
+    When a source has multiple Opus baselines on disk (an operator
+    re-ran the baseliner after a schema bump or a prompt change), the
+    NEWEST baseline-by-mtime is authoritative. Filename sort would
+    pick lexicographically — the slug segment is content-hash based,
+    so lexicographic order has no relation to recency and could
+    surface a stale item count in `status --show-all-models`. This
+    mirrors the mtime rule used by `_latest_f1_by_variant`.
+
+    The type list is read from the meeting_minutes schema (via
+    :func:`_extraction_types_from_schema`), NOT a hard-coded tuple,
+    so the count tracks the comparison engine. A schema-read failure
+    yields ``None`` (the count is missing, not zero), so the caller
+    surfaces ``null`` rather than a misleading ``0``.
+    """
+    if not processed_dir.is_dir():
+        return None
+    candidates = list(processed_dir.glob("meeting_minutes_opus__*.json"))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    try:
+        text = candidates[0].read_text(encoding="utf-8")
+    except OSError:
+        return None
+    # The Opus baseline file is a single JSON object whose `payload`
+    # carries the arrays. Count items across the schema-declared
+    # extraction-types list so the rollup tracks the comparison engine
+    # (Codex review-comment, Phase 5 follow-up): a hard-coded tuple
+    # would drift the moment a new array landed in meeting_minutes.
+    try:
+        doc = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    payload = doc.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    types = _extraction_types_from_schema()
+    if not types:
+        # Schema read failed — surface `null` rather than a misleading 0.
+        return None
+    total = 0
+    for t in types:
+        v = payload.get(t)
+        if isinstance(v, list):
+            total += len(v)
+    return total
+
+
+def _latest_f1_by_variant_with_mtime(
+    processed_dir: Path, want_variant: str
+) -> Optional[tuple[float, float]]:
+    """Read the most-recent comparison F1 for a variant + source mtime.
+
+    Returns ``(f1, mtime)`` for the most-recent comparison that
+    references ``want_variant``, or ``None`` when no such comparison
+    exists. ``mtime`` is the source artifact's filesystem mtime; the
+    caller uses it to break ties when the same source has comparisons
+    for multiple Sonnet variants and the operator wants the freshest.
+
+    ``want_variant`` is one of the four Phase-5 prompt variants. The
+    function scans the comparison-pipeline output paths:
+
+    * ``comparisons/haiku_vs_opus_*.json`` — two-way artifacts written
+      by ``scripts/compare_opus_haiku._comparison_out_path``.
+    * ``comparisons/three_way_*.json`` — three-way artifacts written by
+      ``scripts/compare_opus_haiku._three_way_out_path``.
+    * ``comparison_result__*.json`` (meeting root) — legacy / synthetic
+      path some test fixtures still use. Scanned for robustness.
+
+    Recency-tiebreak (Codex review-comment): freshly cloned data-lakes
+    have every file at the checkout mtime, so a pure-mtime sort is
+    non-deterministic. Candidates are sorted by
+    ``(mtime, compared_at, filename)`` descending so mtime ties fall
+    through to the artifact's own ``compared_at`` (the producer's
+    UTC ISO timestamp), then to the filename (also typically a UTC
+    ISO timestamp). The triple is total-order so two callers reading
+    the same data lake see the same artifact.
+    """
+    if not processed_dir.is_dir():
+        return None
+
+    # Gather candidates by globbing every known comparison-artifact
+    # path. We deliberately read the JSON eagerly so the recency
+    # tiebreak can use the artifact's own `compared_at`.
+    paths: list[Path] = []
+    for p in processed_dir.glob("comparison_result__*.json"):
+        paths.append(p)
+    three_way_dir = processed_dir / "comparisons"
+    if three_way_dir.is_dir():
+        for p in three_way_dir.glob("haiku_vs_opus_*.json"):
+            paths.append(p)
+        for p in three_way_dir.glob("three_way_*.json"):
+            paths.append(p)
+    if not paths:
+        return None
+
+    candidates: list[tuple[float, str, str, Path, Dict[str, Any]]] = []
+    for p in paths:
+        try:
+            doc = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        compared_at = str(doc.get("compared_at") or "")
+        candidates.append(
+            (p.stat().st_mtime, compared_at, p.name, p, doc)
+        )
+    if not candidates:
+        return None
+    # Sort by (mtime, compared_at, filename) descending — deterministic
+    # under mtime ties (post-clone) and under compared_at ties.
+    candidates.sort(key=lambda t: (t[0], t[1], t[2]), reverse=True)
+
+    for mtime, _ca, _name, _path, doc in candidates:
+        is_three_way = doc.get("comparison_mode") == "three_way"
+        if is_three_way:
+            hv = doc.get("haiku_prompt_variant", "production_haiku")
+            sv = doc.get("sonnet_prompt_variant", "production_haiku")
+            if hv == want_variant:
+                f1 = (doc.get("haiku_summary") or {}).get("haiku_f1_vs_opus")
+                if isinstance(f1, (int, float)):
+                    return float(f1), mtime
+            if sv == want_variant:
+                f1 = (doc.get("sonnet_summary") or {}).get("haiku_f1_vs_opus")
+                if isinstance(f1, (int, float)):
+                    return float(f1), mtime
+        else:
+            hv = doc.get("haiku_prompt_variant", "production_haiku")
+            if hv == want_variant:
+                f1 = (doc.get("summary") or {}).get("haiku_f1_vs_opus")
+                if isinstance(f1, (int, float)):
+                    return float(f1), mtime
+    return None
+
+
+def _latest_f1_by_variant(
+    processed_dir: Path, want_variant: str
+) -> Optional[float]:
+    """Backward-compatible thin wrapper that drops the mtime."""
+    rec = _latest_f1_by_variant_with_mtime(processed_dir, want_variant)
+    return rec[0] if rec is not None else None
+
+
+def _newest_sonnet_f1(processed_dir: Path) -> Optional[float]:
+    """Pick the most-recent Sonnet F1 across all three-way artifacts.
+
+    Phase 5 has two Sonnet variants — ``haiku_prompt_with_sonnet_model``
+    (apples-to-apples vs Haiku) and ``opus_prompt_with_sonnet_model``
+    (Sonnet's unconstrained capability). The rollup should surface the
+    fresher one (operators run both as iterative measurements; the
+    older one is stale).
+
+    Mixed-lake backward compatibility (Codex review-comment): a
+    LEGACY three-way artifact omits ``sonnet_prompt_variant`` because
+    the stamp is Phase 5+. Restricting the scan to artifacts whose
+    stamp matches one of the two variants would silently skip those
+    historical Sonnet measurements. Instead the function walks every
+    three-way artifact, deterministically newest first by
+    ``(mtime, compared_at, filename)``, and returns the first
+    ``sonnet_summary.haiku_f1_vs_opus`` it finds. Variant attribution
+    lives in ``print_three_way_delta.py``'s ``--variant`` filter for
+    the operator-facing readout; the rollup is a "is there a Sonnet
+    measurement at all" summary.
+    """
+    three_way_dir = processed_dir / "comparisons"
+    if not three_way_dir.is_dir():
+        return None
+    candidates: list[tuple[float, str, str, Path, Dict[str, Any]]] = []
+    for p in three_way_dir.glob("three_way_*.json"):
+        try:
+            doc = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if doc.get("comparison_mode") != "three_way":
+            continue
+        compared_at = str(doc.get("compared_at") or "")
+        candidates.append(
+            (p.stat().st_mtime, compared_at, p.name, p, doc)
+        )
+    if not candidates:
+        return None
+    candidates.sort(key=lambda t: (t[0], t[1], t[2]), reverse=True)
+    for _mtime, _ca, _name, _path, doc in candidates:
+        f1 = (doc.get("sonnet_summary") or {}).get("haiku_f1_vs_opus")
+        if isinstance(f1, (int, float)):
+            return float(f1)
+    return None
 
 
 def _processed_root(lake_root: Path) -> Path:
@@ -168,7 +419,10 @@ def _derive_state_and_recommendation(
 
 
 def _build_manifest_rows(
-    manifest: LoadedManifest, lake_root: Path
+    manifest: LoadedManifest,
+    lake_root: Path,
+    *,
+    show_all_models: bool = False,
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     processed_root = _processed_root(lake_root)
@@ -187,26 +441,38 @@ def _build_manifest_rows(
             has_opus_baseline=hob,
             has_comparison_result=hcr,
         )
-        rows.append(
-            {
-                "source_id": sid,
-                "state": state,
-                "recommendation": rec,
-                "has_source_record": hsr,
-                "has_opus_baseline": hob,
-                "has_comparison_result": hcr,
-                "detected_speaker_count": observed["detected_speaker_count"],
-                "detected_word_count": observed["detected_word_count"],
-                "last_updated": observed["last_updated"],
-                "meeting_date": declared["meeting_date"],
-                "meeting_type": declared["meeting_type"],
-            }
-        )
+        row: Dict[str, Any] = {
+            "source_id": sid,
+            "state": state,
+            "recommendation": rec,
+            "has_source_record": hsr,
+            "has_opus_baseline": hob,
+            "has_comparison_result": hcr,
+            "detected_speaker_count": observed["detected_speaker_count"],
+            "detected_word_count": observed["detected_word_count"],
+            "last_updated": observed["last_updated"],
+            "meeting_date": declared["meeting_date"],
+            "meeting_type": declared["meeting_type"],
+        }
+        if show_all_models:
+            # Phase 5 — additive per-model F1 readouts. Absent in the
+            # default (Phase 4-byte-identical) output. The fields here
+            # are read from the most recent matching comparison_result
+            # for the source; `null` means "not yet extracted".
+            row["haiku_latest_f1"] = _latest_f1_by_variant(
+                processed_dir, "production_haiku"
+            )
+            row["sonnet_latest_f1"] = _newest_sonnet_f1(processed_dir)
+            row["opus_item_count"] = _opus_item_count(processed_dir)
+        rows.append(row)
     return rows
 
 
 def _build_orphan_rows(
-    manifest: LoadedManifest, lake_root: Path
+    manifest: LoadedManifest,
+    lake_root: Path,
+    *,
+    show_all_models: bool = False,
 ) -> List[Dict[str, Any]]:
     """Synthesise rows for processed/meetings/<sid>/ directories not in the manifest."""
     processed_root = _processed_root(lake_root)
@@ -231,21 +497,26 @@ def _build_orphan_rows(
             or _has_comparison_result(sub)
         ):
             continue
-        rows.append(
-            {
-                "source_id": sid,
-                "state": STATE_ORPHANED_IN_LAKE,
-                "recommendation": RECOMMENDATION_INVESTIGATE_ORPHAN,
-                "has_source_record": _has_source_record(sub),
-                "has_opus_baseline": _has_opus_baseline(sub),
-                "has_comparison_result": _has_comparison_result(sub),
-                "detected_speaker_count": None,
-                "detected_word_count": None,
-                "last_updated": None,
-                "meeting_date": None,
-                "meeting_type": None,
-            }
-        )
+        row: Dict[str, Any] = {
+            "source_id": sid,
+            "state": STATE_ORPHANED_IN_LAKE,
+            "recommendation": RECOMMENDATION_INVESTIGATE_ORPHAN,
+            "has_source_record": _has_source_record(sub),
+            "has_opus_baseline": _has_opus_baseline(sub),
+            "has_comparison_result": _has_comparison_result(sub),
+            "detected_speaker_count": None,
+            "detected_word_count": None,
+            "last_updated": None,
+            "meeting_date": None,
+            "meeting_type": None,
+        }
+        if show_all_models:
+            row["haiku_latest_f1"] = _latest_f1_by_variant(
+                sub, "production_haiku"
+            )
+            row["sonnet_latest_f1"] = _newest_sonnet_f1(sub)
+            row["opus_item_count"] = _opus_item_count(sub)
+        rows.append(row)
     return rows
 
 
@@ -253,6 +524,7 @@ def build_corpus_status_report(
     *,
     lake_root: Path | str,
     manifest_path: Path | str | None = None,
+    show_all_models: bool = False,
 ) -> Dict[str, Any]:
     """Build the corpus-mode status_report payload.
 
@@ -263,11 +535,20 @@ def build_corpus_status_report(
     ``status_report.schema.json``; the caller schema-validates it
     before serialising so a drift between this code and the schema
     fails the test suite.
+
+    ``show_all_models`` (Phase 5) defaults to ``False`` so the output
+    is byte-identical to the Phase-4 rollup on the same lake state.
+    When ``True`` each row carries three additive optional fields —
+    ``haiku_latest_f1``, ``sonnet_latest_f1``, ``opus_item_count`` —
+    each ``null`` when the corresponding artifact has not been
+    produced for that source.
     """
     lake = Path(lake_root)
     manifest = load_manifest(manifest_path)
-    rows = _build_manifest_rows(manifest, lake)
-    rows.extend(_build_orphan_rows(manifest, lake))
+    rows = _build_manifest_rows(manifest, lake, show_all_models=show_all_models)
+    rows.extend(
+        _build_orphan_rows(manifest, lake, show_all_models=show_all_models)
+    )
     rows.sort(key=lambda r: (r["state"], r["source_id"]))
     report: Dict[str, Any] = {
         "artifact_type": "status_report",

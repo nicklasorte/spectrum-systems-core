@@ -847,6 +847,208 @@ A grep against the diff in the PR description proves these.
 
 ---
 
+## Phase 5 — Sonnet model wiring + three-way comparison measurement (PR #200)
+
+### What this change adds
+
+- `--model {haiku,sonnet,sonnet-unconstrained,opus}` flag on
+  `spectrum-core meeting-minutes-llm` (CLI-only; env vars NOT
+  consulted). Default: `haiku`, byte-identical to pre-Phase-5
+  behaviour.
+- `--repeat N` and `--confirm-cost` flags on the same CLI. `N > 1`
+  requires `--confirm-cost` fail-closed.
+- `--dry-run` flag on the same CLI: prints the resolved
+  (model_id, prompt_path, prompt_variant) and exits without an
+  artifact / API call.
+- `--show-all-models` flag on `spectrum-core status --corpus`
+  (Phase-4 status CLI). Default OFF — output is byte-identical
+  to Phase 4. When ON, rows carry three additive optional
+  fields: `haiku_latest_f1`, `sonnet_latest_f1`,
+  `opus_item_count` (each `null` when the corresponding
+  artifact has not been produced).
+- New module
+  `src/spectrum_systems_core/workflows/model_selection.py` —
+  single source of truth for the `--model` resolution
+  (model_id, prompt_path, prompt_variant).
+- `extraction_config.prompt_variant` (optional enum field) added
+  to `meeting_minutes.schema.json`. Four values: `production_haiku`,
+  `haiku_prompt_with_sonnet_model`, `opus_prompt_with_sonnet_model`,
+  `opus_baseline`. Pre-Phase-5 artifacts omit the field; the
+  comparison engine defaults a missing value to `production_haiku`.
+- `ExtractionConfig.prompt_variant` field on the dataclass in
+  `pipeline/governed_run.py` and a matching argument on
+  `governed_pipeline_run`.
+- `claude-sonnet-4-6` entry in `data/cost_constants.json` and
+  `DEFAULT_SONNET_OUTPUT_TOKENS = 4000` in
+  `cost/estimator.py`.
+- `haiku_prompt_variant` / `sonnet_prompt_variant` optional
+  enum fields on `comparison_result.schema.json` so the
+  comparison engine surfaces the variant identity of each
+  candidate.
+- `scripts/run_sonnet_baseline.sh` — operator-facing runbook
+  (dispatch extraction → dispatch comparison → print delta).
+- `scripts/print_three_way_delta.py` — pure formatter that
+  reads the most recent three-way comparison artifact for a
+  source and prints F1/recall/precision plus the delta.
+- `docs/architecture/phase5_three_way_audit_report.md` —
+  Step 5.6 audit report enumerating the comparison-engine code
+  paths that were touched and which were deferred.
+- `tests/sonnet/` — new test module covering the model
+  resolver, the CLI flag wiring, the schema enum, and the
+  status `--show-all-models` flag.
+- `tests/cost/test_sonnet_pricing.py` — pricing sanity tests.
+- `tests/comparison/test_three_way_audit.py` — the Step 5.6
+  three-way audit's behavioural tests.
+
+### Model string verification
+
+The four Phase 5 model strings live in
+`src/spectrum_systems_core/workflows/model_selection.py::MODEL_STRINGS`:
+
+- `claude-haiku-4-7`
+- `claude-sonnet-4-6`
+- `claude-opus-4-7`
+
+These are the Phase 5 spec's nomenclature. The on-disk
+`ai/registry/model_registry.json` uses concrete model IDs that may
+include dated point releases (e.g. `claude-haiku-4-5-20251001`).
+The CLI's `--model` flag OVERRIDES the registry at runtime; the
+override values above are flagged here for operator verification
+against current Anthropic documentation **before** running the
+first live extraction. If a string is wrong, edit only
+`workflows/model_selection.py::MODEL_STRINGS` and re-run.
+
+### Sonnet pricing verification
+
+Phase 5 ships `data/cost_constants.json::claude-sonnet-4-6` with:
+
+- `input_per_million_tokens`: 3.00
+- `output_per_million_tokens`: 15.00
+
+These match the Phase 5 spec but are flagged as **placeholders
+pending operator verification** against current Anthropic
+documentation. If incorrect, update `data/cost_constants.json` in
+a follow-up commit — the schema validator catches any negative or
+out-of-range price.
+
+### To roll back
+
+1. Revert the PR. The `--model` flag returns to a single Haiku
+   path. Existing Sonnet artifacts in the data lake remain
+   readable (the producer / consumer are decoupled) but the
+   `--model sonnet*` and `--model opus` paths disappear.
+2. Existing three-way comparison artifacts remain valid; the
+   `haiku_prompt_variant` / `sonnet_prompt_variant` fields are
+   additive on the comparison_result schema and pre-Phase-5
+   readers ignore them.
+3. The status CLI's `--show-all-models` flag disappears; default
+   behaviour is unchanged.
+4. `extraction_config.prompt_variant` becomes an unknown key
+   under the reverted schema; artifacts produced under Phase 5
+   with the stamp will fail `additionalProperties: false` if
+   re-validated. Operators should NOT re-validate pre-existing
+   Phase-5 artifacts after revert (same lifecycle rule as the
+   Phase 1 grounding fields).
+5. The cost estimator's `claude-sonnet-4-6` entry is gone; any
+   caller that asked for Sonnet pricing must update to a
+   different model_id.
+
+### Data migration required for rollback
+
+None. The data lake is append-only; pre-existing Phase-5 artifacts
+keep their `prompt_variant` stamp as inert metadata. Two-way
+comparison artifacts continue to validate (the `haiku_prompt_variant`
+field is optional in the schema).
+
+### Verification that the rollback is clean
+
+```bash
+# 1. Default `--model haiku` still produces a promoted artifact end-to-end.
+DATA_LAKE_PATH=$PWD/data-lake python -m spectrum_systems_core.cli \
+    meeting-minutes-llm --source-id <source-id>
+
+# 2. The Phase 5 tests are gone.
+python -m pytest tests/sonnet/ tests/cost/test_sonnet_pricing.py \
+    tests/comparison/test_three_way_audit.py
+# Expected: collection error (the directories are gone).
+
+# 3. The unmodified two-way comparison path still produces a
+#    byte-identical artifact compared to a pre-Phase-5 input.
+python scripts/compare_opus_haiku.py --data-lake $PWD/data-lake \
+    --source-id <source-id>
+```
+
+If step 3 fails — i.e. the two-way artifact format changes after
+revert — the rollback is incomplete; investigate before re-applying
+forward.
+
+### Cross-PR dependency
+
+`depends_on`: #193 (eval-path alignment — provides the
+`extraction_config` dataclass), #196 (Phase 3 glossary wiring —
+the per-source state hook this PR's `--repeat N` flag interacts
+with), #197 (Phase 4 corpus — provides the status CLI this PR
+extends with `--show-all-models`), and the Phase 4a Opus prompt PR
+(`src/spectrum_systems_core/workflows/prompts/meeting_minutes_opus.md`).
+`--model sonnet-unconstrained` and `--model opus` REQUIRE Phase 4a
+to have merged; without the Opus prompt on disk both halt with
+the resolver's `opus_prompt_not_found_for_sonnet_unconstrained`
+or `opus_prompt_not_found` reason code.
+
+`verification_command`: `pytest tests/sonnet/ tests/cost/test_sonnet_pricing.py tests/comparison/test_three_way_audit.py tests/calibration/test_per_source_state.py`
+
+### Operator action after merge
+
+1. Verify `cost_constants.json::claude-sonnet-4-6` pricing
+   matches current Anthropic documentation.
+2. Verify `model_selection.MODEL_STRINGS` model IDs match
+   current Anthropic documentation.
+3. Run:
+   `scripts/run_sonnet_baseline.sh 7-ghz-downlink-tig-meeting-kickoff---transcript-20251218 haiku-prompt`
+   — produces Sonnet's F1 on the Haiku prompt (apples-to-apples).
+4. Run:
+   `scripts/run_sonnet_baseline.sh 7-ghz-downlink-tig-meeting-kickoff---transcript-20251218 opus-prompt`
+   — produces Sonnet's F1 on the Opus prompt (capability).
+5. Run: `spectrum-core meeting-minutes-llm --source-id <sid> --model sonnet --repeat 3 --confirm-cost`
+   — produces 3 Sonnet runs for variance measurement.
+6. Read the three-way comparison artifact. The Sonnet F1 result
+   determines the next phase:
+   - Sonnet F1 < 50%: build the cascade filter (Phase 6 cascade).
+   - Sonnet F1 50–70%: build the cascade with Sonnet as filter.
+   - Sonnet F1 > 70%: consider switching primary to Sonnet
+     before building the cascade.
+
+Sonnet is opt-in only — no production behaviour changes when
+`--model` is omitted.
+
+### Constraint compliance
+
+This PR explicitly does NOT modify:
+- `src/spectrum_systems_core/workflows/prompts/meeting_minutes_llm.md` (Haiku prompt)
+- `src/spectrum_systems_core/workflows/prompts/meeting_minutes_opus.md` (Phase 4a Opus prompt)
+- `scripts/correction_miner.py` core miner logic
+- `src/spectrum_systems_core/grounding/` (Phase 1)
+- `src/spectrum_systems_core/glossary/` (Phase 2P / 3)
+- `src/spectrum_systems_core/transcript_quality/` (Phase 2R)
+- `src/spectrum_systems_core/few_shot/` (Phase 3P, if present)
+
+The Phase 5 spec explicitly allows the small Step 5.6 audit fixes
+to `scripts/compare_opus_haiku.py` (the
+`_prompt_variant_of` helper + stamps on the two artifact builders;
+< 100 LOC) and the additive `ExtractionConfig.prompt_variant`
+extension to `src/spectrum_systems_core/pipeline/governed_run.py`.
+The compliance check
+`tests/corpus/test_constraint_compliance.py` was updated to
+reflect the Phase 5 constraint list and enforces it against the
+PR diff.
+
+`future_dependency`: if Sonnet F1 results justify the cascade,
+Phase 6 will build a Haiku-extract → Sonnet-filter architecture.
+If they justify a model swap, a separate PR flips the default
+`--model` from `haiku` to `sonnet`.
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new

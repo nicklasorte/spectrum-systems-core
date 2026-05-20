@@ -45,6 +45,7 @@ DEFAULT_COST_CONSTANTS_PATH: Path = _REPO_ROOT / "data" / "cost_constants.json"
 # slack. The values are documented here (and in the rollback contract)
 # so an operator can override them by passing explicit ``output_tokens``.
 DEFAULT_HAIKU_OUTPUT_TOKENS: int = 2_000
+DEFAULT_SONNET_OUTPUT_TOKENS: int = 4_000
 DEFAULT_OPUS_OUTPUT_TOKENS: int = 10_000
 
 # Conservative bytes-per-token ratio. English averages ~3.5; we use 4
@@ -103,6 +104,8 @@ def load_cost_constants(
 def _default_output_tokens(model_id: str) -> int:
     if "opus" in model_id:
         return DEFAULT_OPUS_OUTPUT_TOKENS
+    if "sonnet" in model_id:
+        return DEFAULT_SONNET_OUTPUT_TOKENS
     return DEFAULT_HAIKU_OUTPUT_TOKENS
 
 
@@ -175,6 +178,7 @@ __all__ = [
     "DEFAULT_COST_CONSTANTS_PATH",
     "DEFAULT_HAIKU_OUTPUT_TOKENS",
     "DEFAULT_OPUS_OUTPUT_TOKENS",
+    "DEFAULT_SONNET_OUTPUT_TOKENS",
     "estimate_extraction_cost",
     "load_cost_constants",
 ]

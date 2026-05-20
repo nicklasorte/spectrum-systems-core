@@ -993,6 +993,18 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="emit_json",
         help="Emit the rollup as a JSON status_report on stdout.",
     )
+    st.add_argument(
+        "--show-all-models",
+        action="store_true",
+        default=False,
+        dest="show_all_models",
+        help=(
+            "Phase 5. Include Haiku, Sonnet, and Opus F1 / item-count "
+            "columns in the per-source rollup. Default (without this "
+            "flag) is unchanged: only the Phase-4 row shape is emitted. "
+            "CLI-only; env vars are not consulted."
+        ),
+    )
 
     return parser
 
@@ -1295,6 +1307,7 @@ def _run_status_cli(args, *, stream) -> int:
         report = build_corpus_status_report(
             lake_root=args.lake,
             manifest_path=args.manifest,
+            show_all_models=getattr(args, "show_all_models", False),
         )
     except CorpusManifestError as exc:
         stream.write(f"ERROR: {exc.reason_code}: {exc}\n")
@@ -1308,6 +1321,51 @@ def _run_status_cli(args, *, stream) -> int:
 
 
 def _format_status_table(report) -> str:
+    # Phase 5: detect whether any row carries the `--show-all-models`
+    # columns. We branch on row CONTENT (not a separate flag) so the
+    # default Phase-4 output is byte-identical to before — a row with
+    # no haiku/sonnet/opus keys produces the legacy 3-column table.
+    # A row that DOES carry them (added by `--show-all-models`) makes
+    # the human-readable output match the JSON output's information.
+    rows = report.get("rows", []) or []
+    has_model_cols = any(
+        ("haiku_latest_f1" in r) or
+        ("sonnet_latest_f1" in r) or
+        ("opus_item_count" in r)
+        for r in rows
+    )
+
+    if not has_model_cols:
+        lines = [
+            f"manifest_hash: {report.get('manifest_hash') or '(unknown)'}",
+            "",
+            "source_id".ljust(50)
+            + " | "
+            + "state".ljust(22)
+            + " | "
+            + "recommendation",
+            "-" * 110,
+        ]
+        for row in rows:
+            lines.append(
+                str(row.get("source_id", "")).ljust(50)
+                + " | "
+                + str(row.get("state", "")).ljust(22)
+                + " | "
+                + str(row.get("recommendation", ""))
+            )
+        return "\n".join(lines) + "\n"
+
+    def _fmt_f1(v) -> str:
+        if isinstance(v, (int, float)):
+            return f"{float(v) * 100:>5.1f}%"
+        return "    -"
+
+    def _fmt_int(v) -> str:
+        if isinstance(v, int):
+            return f"{v:>5d}"
+        return "    -"
+
     lines = [
         f"manifest_hash: {report.get('manifest_hash') or '(unknown)'}",
         "",
@@ -1315,14 +1373,26 @@ def _format_status_table(report) -> str:
         + " | "
         + "state".ljust(22)
         + " | "
+        + "haiku_f1".rjust(8)
+        + " | "
+        + "sonnet_f1".rjust(9)
+        + " | "
+        + "opus_items".rjust(10)
+        + " | "
         + "recommendation",
-        "-" * 110,
+        "-" * 130,
     ]
-    for row in report.get("rows", []):
+    for row in rows:
         lines.append(
             str(row.get("source_id", "")).ljust(50)
             + " | "
             + str(row.get("state", "")).ljust(22)
+            + " | "
+            + _fmt_f1(row.get("haiku_latest_f1"))
+            + " | "
+            + _fmt_f1(row.get("sonnet_latest_f1")).rjust(9)
+            + " | "
+            + _fmt_int(row.get("opus_item_count")).rjust(10)
             + " | "
             + str(row.get("recommendation", ""))
         )
