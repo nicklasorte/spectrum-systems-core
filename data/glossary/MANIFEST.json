@@ -1,0 +1,8 @@
+{
+  "schema_version": "1.0.0",
+  "version": "1.0.0",
+  "glossary_file": "ntia_dod_spectrum_v1.jsonl",
+  "sha256_hash": "fab179de43e2a31d581a0dd0c079c48da7f777423503e39d50f927357009634c",
+  "allowed_sources_hash": "b90ec3feeb07de80843511a591b9fc07b4b2a0df4dcd49469b8562a69b95d533",
+  "entry_count": 57
+}
