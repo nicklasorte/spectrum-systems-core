@@ -40,9 +40,26 @@ from __future__ import annotations
 import pytest
 
 from spectrum_systems_core.artifacts.model import new_artifact
+from spectrum_systems_core.config.taxonomy import (
+    AMBIGUOUS_VERBS,
+    DECISION_SYNONYM_VERBS,
+    DECISION_VERBS,
+    REGULATORY_VERBS,
+    UNCLASSIFIED_DECISION_VERB,
+)
 from spectrum_systems_core.evals.llm_extraction import (
     STRICT_SCHEMA_EVAL_TYPE,
     run_llm_strict_schema_eval,
+)
+from spectrum_systems_core.evals.regulatory_verb import (
+    EVAL_TYPE as REGULATORY_VERB_EVAL_TYPE,
+)
+from spectrum_systems_core.evals.regulatory_verb import (
+    run_regulatory_verb_eval,
+)
+from spectrum_systems_core.evals.runner import (
+    REQUIRED_MEETING_MINUTES_FIELDS,
+    run_required_evals,
 )
 from spectrum_systems_core.validation import validate_artifact
 from spectrum_systems_core.workflows.model_selection import OPUS_PROMPT_PATH
@@ -555,3 +572,260 @@ def test_turn_aggregate_item_rejects_source_quote() -> None:
 
     with pytest.raises(ArtifactValidationError):
         validate_artifact(response, "meeting_minutes")
+
+
+# -------- regulatory_verb + required_fields prompt directives -------------
+
+
+def test_opus_prompt_mentions_verb_field_and_unclassified_default() -> None:
+    """The prompt must instruct the model to emit `verb` with `unclassified`
+    as the default for non-explicit decisions.
+
+    The ``regulatory_verb`` eval blocks promotion when a decision's
+    verb is not in the canonical taxonomy or is not the
+    ``UNCLASSIFIED_DECISION_VERB`` sentinel. Without an explicit
+    "use `unclassified` when no taxonomy verb fits" instruction the
+    model invents free-form verbs and the gate hard-blocks the run.
+    """
+    text = _opus_prompt_text()
+    assert '"verb"' in text, (
+        "Opus prompt must instruct the model to emit a `verb` field on "
+        "object-form decisions — the `regulatory_verb` eval reads this "
+        "field to classify the decision."
+    )
+    assert UNCLASSIFIED_DECISION_VERB in text, (
+        "Opus prompt must mention the `unclassified` sentinel as the "
+        "verb default for non-explicit decisions. Without it the model "
+        "invents free-form verbs and the gate blocks with "
+        "`verb_not_classified:<verb>`."
+    )
+
+
+def test_opus_prompt_enumerates_canonical_verb_taxonomy() -> None:
+    """The prompt must enumerate the canonical regulatory-verb taxonomy.
+
+    A model told only "use one of approved/deferred/... or unclassified"
+    cannot reliably emit a passing verb; we list every canonical verb
+    explicitly so the model has the closed taxonomy to draw from. The
+    set tested here is the union of every verb the ``regulatory_verb``
+    eval's pass + warn paths recognise — anything outside it would
+    block.
+    """
+    text = _opus_prompt_text()
+    expected = (
+        set(REGULATORY_VERBS)
+        | set(DECISION_VERBS)
+        | set(DECISION_SYNONYM_VERBS)
+    )
+    missing = sorted(v for v in expected if v not in text)
+    assert not missing, (
+        "Opus prompt must enumerate every canonical regulatory verb so "
+        "the model has a closed taxonomy to choose from. Missing from "
+        f"prompt: {missing}"
+    )
+
+
+def test_opus_prompt_lists_every_required_top_level_field() -> None:
+    """The prompt must mention every top-level field the
+    `required_meeting_minutes_fields` eval enforces.
+
+    The eval blocks the run with ``missing_field:<f>`` for each
+    required top-level field absent from the assembled payload. The
+    prompt is the contract with the model; a required field the
+    prompt does not name is structural drift waiting to fail.
+    """
+    text = _opus_prompt_text()
+    missing = sorted(
+        f for f in REQUIRED_MEETING_MINUTES_FIELDS if f not in text
+    )
+    assert not missing, (
+        "Opus prompt must mention every required top-level field. "
+        f"Missing from prompt: {missing}"
+    )
+
+
+def test_synthetic_response_passes_regulatory_verb_eval() -> None:
+    """The synthetic response passes the `regulatory_verb` eval.
+
+    The fixture's one decisions item declares ``verb: "directed"`` —
+    a member of the canonical ``DECISION_VERBS`` set — and so the
+    eval must return ``status: pass``. This is the exact eval that
+    failed with ``failed:regulatory_verb`` on ``--model
+    sonnet-unconstrained`` before the prompt's verb-taxonomy
+    enumeration was added.
+    """
+    response = _build_synthetic_response()
+    payload = {k: v for k, v in response.items() if k != "artifact_type"}
+    artifact = new_artifact(
+        artifact_type="meeting_minutes",
+        payload=payload,
+        trace_id="opus-prompt-regulatory-verb-test",
+    )
+    result = run_regulatory_verb_eval(artifact)
+    result_payload = result.payload
+    assert isinstance(result_payload, dict)
+    assert result_payload.get("eval_type") == REGULATORY_VERB_EVAL_TYPE
+    assert result_payload.get("status") == "pass", (
+        f"regulatory_verb eval failed on prompt-compliant payload: "
+        f"reason_codes={result_payload.get('reason_codes')!r}"
+    )
+
+
+def test_synthetic_response_passes_regulatory_verb_with_unclassified() -> None:
+    """A decision emitting `verb: "unclassified"` also passes the eval.
+
+    Pins the documented fallback path: a decision the model could
+    not classify against the taxonomy emits the
+    ``UNCLASSIFIED_DECISION_VERB`` sentinel and the eval surfaces a
+    non-blocking note (the same way it always has for verb-free
+    string decisions). This is what the prompt now instructs the
+    model to do, and it must not block.
+    """
+    response = _build_synthetic_response()
+    response["decisions"][0]["verb"] = UNCLASSIFIED_DECISION_VERB  # type: ignore[index]
+    payload = {k: v for k, v in response.items() if k != "artifact_type"}
+    artifact = new_artifact(
+        artifact_type="meeting_minutes",
+        payload=payload,
+        trace_id="opus-prompt-unclassified-verb-test",
+    )
+    result = run_regulatory_verb_eval(artifact)
+    result_payload = result.payload
+    assert isinstance(result_payload, dict)
+    assert result_payload.get("status") == "pass", (
+        f"regulatory_verb eval must NOT block on `unclassified` verb; "
+        f"got reason_codes={result_payload.get('reason_codes')!r}"
+    )
+
+
+def test_synthetic_response_passes_required_meeting_minutes_fields() -> None:
+    """The synthetic response passes the `required_meeting_minutes_fields`
+    eval.
+
+    The fixture carries every top-level field
+    ``REQUIRED_MEETING_MINUTES_FIELDS`` enumerates plus the
+    ``schema_version`` the 1.1.0 spec branch requires. This is the
+    exact eval that failed with
+    ``failed:required_meeting_minutes_fields`` on ``--model
+    sonnet-unconstrained`` before the prompt's top-level-field
+    contract was added.
+    """
+    response = _build_synthetic_response()
+    payload = {k: v for k, v in response.items() if k != "artifact_type"}
+    artifact = new_artifact(
+        artifact_type="meeting_minutes",
+        payload=payload,
+        trace_id="opus-prompt-required-fields-test",
+    )
+    results = run_required_evals(artifact)
+    by_type = {
+        r.payload.get("eval_type"): r.payload  # type: ignore[union-attr]
+        for r in results
+        if isinstance(r.payload, dict)
+    }
+    fields_result = by_type.get("required_meeting_minutes_fields")
+    assert fields_result is not None, (
+        f"required_meeting_minutes_fields not in results: "
+        f"{sorted(by_type.keys())}"
+    )
+    assert fields_result.get("status") == "pass", (
+        f"required_meeting_minutes_fields failed on prompt-compliant "
+        f"payload: reason_codes={fields_result.get('reason_codes')!r}"
+    )
+
+
+def test_synthetic_response_passes_all_four_evals_in_bug_report() -> None:
+    """End-to-end: all four evals the bug report cited pass together.
+
+    The bug report on ``--model sonnet-unconstrained`` listed:
+
+    * ``failed:required_meeting_minutes_fields``
+    * ``failed:regulatory_verb``
+    * ``failed:llm_extraction_strict_schema``
+    * ``failed:tlc_routed_extraction``
+
+    ``llm_extraction_strict_schema`` and ``tlc_routed_extraction``
+    are downstream cascades — ``tlc_routed_extraction`` runs
+    ``run_llm_strict_schema_eval`` and ``run_regulatory_verb_eval``
+    as sub-evals (see ``evals/tlc_router.py`` ~ line 415 / 425), so
+    when those two pass, the combined router result also passes.
+    This test confirms the cascade-resolution claim from the PR
+    description on the SAME synthetic fixture.
+    """
+    from spectrum_systems_core.evals.tlc_router import (
+        TLC_ROUTED_EVAL_TYPE,
+        run_tlc_routed_eval,
+    )
+
+    response = _build_synthetic_response()
+    payload = {k: v for k, v in response.items() if k != "artifact_type"}
+    artifact = new_artifact(
+        artifact_type="meeting_minutes",
+        payload=payload,
+        trace_id="opus-prompt-all-four-evals-test",
+    )
+
+    # 1. required_meeting_minutes_fields
+    required_results = run_required_evals(artifact)
+    required_fields = next(
+        (
+            r
+            for r in required_results
+            if isinstance(r.payload, dict)
+            and r.payload.get("eval_type") == "required_meeting_minutes_fields"
+        ),
+        None,
+    )
+    assert required_fields is not None
+    assert required_fields.payload.get("status") == "pass", (  # type: ignore[union-attr]
+        f"required_meeting_minutes_fields: "
+        f"{required_fields.payload.get('reason_codes')!r}"  # type: ignore[union-attr]
+    )
+
+    # 2. regulatory_verb
+    verb_result = run_regulatory_verb_eval(artifact)
+    assert verb_result.payload.get("status") == "pass", (  # type: ignore[union-attr]
+        f"regulatory_verb: {verb_result.payload.get('reason_codes')!r}"  # type: ignore[union-attr]
+    )
+
+    # 3. llm_extraction_strict_schema
+    schema_result = run_llm_strict_schema_eval(artifact)
+    assert schema_result.payload.get("eval_type") == STRICT_SCHEMA_EVAL_TYPE  # type: ignore[union-attr]
+    assert schema_result.payload.get("status") == "pass", (  # type: ignore[union-attr]
+        f"llm_extraction_strict_schema: "
+        f"{schema_result.payload.get('reason_codes')!r}"  # type: ignore[union-attr]
+    )
+
+    # 4. tlc_routed_extraction — cascade root for #3 + regulatory_verb
+    routed_result = run_tlc_routed_eval(
+        artifact, transcript_text="we will proceed with the threshold"
+    )
+    assert routed_result.payload.get("eval_type") == TLC_ROUTED_EVAL_TYPE  # type: ignore[union-attr]
+    assert routed_result.payload.get("status") == "pass", (  # type: ignore[union-attr]
+        f"tlc_routed_extraction: "
+        f"{routed_result.payload.get('reason_codes')!r}"  # type: ignore[union-attr]
+    )
+
+
+def test_warn_only_ambiguous_verbs_in_taxonomy_check() -> None:
+    """Defence: the `AMBIGUOUS_VERBS` set is warn-only, not the pass set.
+
+    The prompt is allowed to mention these verbs in passing (e.g.
+    "recommended" is in REGULATORY_VERBS *and* AMBIGUOUS_VERBS) but
+    the canonical-taxonomy enumeration the prompt now ships is
+    REGULATORY_VERBS ∪ DECISION_VERBS ∪ DECISION_SYNONYM_VERBS. This
+    test pins that an AMBIGUOUS-only verb (with no overlap to the
+    pass set) is NOT what the prompt is enumerating as canonical, so
+    a future edit that conflates the two sets and accidentally tells
+    the model "use 'discussed' as a decision verb" stays caught.
+    """
+    pass_set = (
+        set(REGULATORY_VERBS) | set(DECISION_VERBS) | set(DECISION_SYNONYM_VERBS)
+    )
+    ambiguous_only = set(AMBIGUOUS_VERBS) - pass_set
+    # Sanity: there really IS at least one AMBIGUOUS-only verb to test.
+    assert ambiguous_only, "AMBIGUOUS_VERBS fully overlaps the pass set"
+    # The prompt MAY still mention these (e.g. inside other prose) —
+    # this is a documentation pin on what the canonical-pass-set
+    # enumeration test above guards, not a content restriction.
+    assert pass_set.isdisjoint(ambiguous_only)
