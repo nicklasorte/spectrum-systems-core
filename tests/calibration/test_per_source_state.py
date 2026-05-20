@@ -38,11 +38,12 @@ def _budget_file(tmp_path: Path) -> Path:
         json.dumps(
             {
                 "artifact_type": "tolerance_budget",
-                "schema_version": "1.1.0",
+                "schema_version": "1.2.0",
                 "min_promotion_buffer": 0.02,
                 "max_promotion_buffer": 0.10,
                 "current_promotion_buffer": 0.03,
                 "global_median_budget": 0.025,
+                "bootstrap_variance": 0.05,
             }
         ),
         encoding="utf-8",
@@ -268,7 +269,9 @@ def test_get_variance_budget_reads_from_data_lake_state(tmp_path: Path) -> None:
 def test_get_variance_budget_falls_back_when_only_two_runs(tmp_path: Path) -> None:
     """Below the PER_SOURCE_RUN_THRESHOLD the reader returns
     ``global_median_budget`` instead of the (tiny / unreliable)
-    per-source value."""
+    per-source value. Phase 4 tier 2: requires at least one OTHER
+    source in the lake to have runs >= 3 — otherwise the reader
+    falls through to `bootstrap_variance` (tier 3)."""
     budget = _budget_file(tmp_path)
     dl = tmp_path / "dl"
     source_id = "src-g"
@@ -280,6 +283,21 @@ def test_get_variance_budget_falls_back_when_only_two_runs(tmp_path: Path) -> No
             source_id=source_id,
             data_lake_path=dl,
             comparison_artifact=cmp_doc,
+        )
+
+    # Phase 4: seed a second source whose run count clears tier 2.
+    for i, f1 in enumerate([0.32, 0.36, 0.40], start=1):
+        cmp_doc2 = _write_comparison(
+            dl,
+            "src-other",
+            f"{i:04d}",
+            f1=f1,
+            compared_at=f"2026-04-1{i}",
+        )
+        update_per_source_state(
+            source_id="src-other",
+            data_lake_path=dl,
+            comparison_artifact=cmp_doc2,
         )
 
     variance = get_variance_budget(

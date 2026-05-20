@@ -1,8 +1,9 @@
 {
   "artifact_type": "tolerance_budget",
-  "schema_version": "1.1.0",
+  "schema_version": "1.2.0",
   "min_promotion_buffer": 0.02,
   "max_promotion_buffer": 0.10,
   "current_promotion_buffer": 0.03,
-  "global_median_budget": 0.025
+  "global_median_budget": 0.025,
+  "bootstrap_variance": 0.05
 }

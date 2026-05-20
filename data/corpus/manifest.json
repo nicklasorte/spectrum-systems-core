@@ -1,0 +1,202 @@
+{
+  "artifact_type": "corpus_manifest",
+  "manifest_hash": "210e576271c0c8d0d0a350c73274ccfd31c4da335378245a9e50bfca48a06e56",
+  "schema_version": "1.0.0",
+  "sources": [
+    {
+      "declared": {
+        "expected_path": "raw/transcripts/dec18_7ghz_downlink_tig.txt",
+        "meeting_date": "2025-12-18",
+        "meeting_type": "TIG_kickoff",
+        "supersedes": null
+      },
+      "observed": {
+        "detected_speaker_count": null,
+        "detected_word_count": null,
+        "ingestion_status": "comparison_complete",
+        "last_updated": null
+      },
+      "source_id": "m-2025-12-18-7ghz-downlink-tig-kickoff"
+    },
+    {
+      "declared": {
+        "expected_path": "raw/transcripts/nov20_ntia_coordination_session.txt",
+        "meeting_date": "2025-11-20",
+        "meeting_type": "industry_coordination",
+        "supersedes": null
+      },
+      "observed": {
+        "detected_speaker_count": null,
+        "detected_word_count": null,
+        "ingestion_status": "pending",
+        "last_updated": null
+      },
+      "source_id": "m-2025-11-20-ntia-coordination-session"
+    },
+    {
+      "declared": {
+        "expected_path": "raw/transcripts/jan15_7ghz_downlink_tig_followup.txt",
+        "meeting_date": "2026-01-15",
+        "meeting_type": "TIG_followup",
+        "supersedes": null
+      },
+      "observed": {
+        "detected_speaker_count": null,
+        "detected_word_count": null,
+        "ingestion_status": "pending",
+        "last_updated": null
+      },
+      "source_id": "m-2026-01-15-7ghz-downlink-tig-followup"
+    },
+    {
+      "declared": {
+        "expected_path": "raw/transcripts/feb12_aggregate_interference_methodology.txt",
+        "meeting_date": "2026-02-12",
+        "meeting_type": "working_group",
+        "supersedes": null
+      },
+      "observed": {
+        "detected_speaker_count": null,
+        "detected_word_count": null,
+        "ingestion_status": "pending",
+        "last_updated": null
+      },
+      "source_id": "m-2026-02-12-aggregate-interference-methodology"
+    },
+    {
+      "declared": {
+        "expected_path": "raw/transcripts/feb26_coexistence_framework_review.txt",
+        "meeting_date": "2026-02-26",
+        "meeting_type": "internal_review",
+        "supersedes": null
+      },
+      "observed": {
+        "detected_speaker_count": null,
+        "detected_word_count": null,
+        "ingestion_status": "pending",
+        "last_updated": null
+      },
+      "source_id": "m-2026-02-26-coexistence-framework-review"
+    },
+    {
+      "declared": {
+        "expected_path": "raw/transcripts/mar12_erp_threshold_working_session.txt",
+        "meeting_date": "2026-03-12",
+        "meeting_type": "working_group",
+        "supersedes": null
+      },
+      "observed": {
+        "detected_speaker_count": null,
+        "detected_word_count": null,
+        "ingestion_status": "pending",
+        "last_updated": null
+      },
+      "source_id": "m-2026-03-12-erp-threshold-working-session"
+    },
+    {
+      "declared": {
+        "expected_path": "raw/transcripts/mar26_federal_incumbent_coordination.txt",
+        "meeting_date": "2026-03-26",
+        "meeting_type": "industry_coordination",
+        "supersedes": null
+      },
+      "observed": {
+        "detected_speaker_count": null,
+        "detected_word_count": null,
+        "ingestion_status": "pending",
+        "last_updated": null
+      },
+      "source_id": "m-2026-03-26-federal-incumbent-coordination"
+    },
+    {
+      "declared": {
+        "expected_path": "raw/transcripts/apr01_bands.txt",
+        "meeting_date": "2026-04-01",
+        "meeting_type": "working_group",
+        "supersedes": null
+      },
+      "observed": {
+        "detected_speaker_count": null,
+        "detected_word_count": null,
+        "ingestion_status": "pending",
+        "last_updated": null
+      },
+      "source_id": "m-2026-04-01-bands"
+    },
+    {
+      "declared": {
+        "expected_path": "raw/transcripts/apr16_out_of_band_emission_limits.txt",
+        "meeting_date": "2026-04-16",
+        "meeting_type": "working_group",
+        "supersedes": null
+      },
+      "observed": {
+        "detected_speaker_count": null,
+        "detected_word_count": null,
+        "ingestion_status": "pending",
+        "last_updated": null
+      },
+      "source_id": "m-2026-04-16-out-of-band-emission-limits"
+    },
+    {
+      "declared": {
+        "expected_path": "raw/transcripts/apr30_measurement_campaign_planning.txt",
+        "meeting_date": "2026-04-30",
+        "meeting_type": "working_group",
+        "supersedes": null
+      },
+      "observed": {
+        "detected_speaker_count": null,
+        "detected_word_count": null,
+        "ingestion_status": "pending",
+        "last_updated": null
+      },
+      "source_id": "m-2026-04-30-measurement-campaign-planning"
+    },
+    {
+      "declared": {
+        "expected_path": "raw/transcripts/may09_alpha.txt",
+        "meeting_date": "2026-05-09",
+        "meeting_type": "internal_review",
+        "supersedes": null
+      },
+      "observed": {
+        "detected_speaker_count": null,
+        "detected_word_count": null,
+        "ingestion_status": "pending",
+        "last_updated": null
+      },
+      "source_id": "m-2026-05-09-alpha"
+    },
+    {
+      "declared": {
+        "expected_path": "raw/transcripts/may09_q3.txt",
+        "meeting_date": "2026-05-09",
+        "meeting_type": "internal_review",
+        "supersedes": null
+      },
+      "observed": {
+        "detected_speaker_count": null,
+        "detected_word_count": null,
+        "ingestion_status": "pending",
+        "last_updated": null
+      },
+      "source_id": "m-2026-05-09-q3"
+    },
+    {
+      "declared": {
+        "expected_path": "raw/transcripts/may14_draft_report_consolidation.txt",
+        "meeting_date": "2026-05-14",
+        "meeting_type": "internal_review",
+        "supersedes": null
+      },
+      "observed": {
+        "detected_speaker_count": null,
+        "detected_word_count": null,
+        "ingestion_status": "pending",
+        "last_updated": null
+      },
+      "source_id": "m-2026-05-14-draft-report-consolidation"
+    }
+  ]
+}

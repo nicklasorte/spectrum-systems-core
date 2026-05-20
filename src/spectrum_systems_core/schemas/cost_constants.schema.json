@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/cost_constants.schema.json",
+  "title": "cost_constants",
+  "description": "Phase 4 cost constants. Per-model input/output token prices used by `cost.estimator` to print an estimate before a `baseline-opus --all` run. The values in `data/cost_constants.json` are PLACEHOLDERS — they reflect a snapshot of public Anthropic API pricing at the time this PR was opened, and operators MUST verify them against current docs before treating an --all confirmation as accurate. All numeric values are non-negative; the currency is restricted to USD for the Phase 4 surface.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifact_type", "schema_version", "currency", "constants", "last_updated"],
+  "properties": {
+    "artifact_type": { "const": "cost_constants" },
+    "schema_version": { "type": "string", "enum": ["1.0.0"] },
+    "currency": { "type": "string", "enum": ["USD"] },
+    "last_updated": { "type": "string", "minLength": 1 },
+    "constants": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^claude-(haiku|sonnet|opus)-[0-9]+-[0-9]+$": {
+          "$ref": "#/$defs/model_pricing"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "model_pricing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input_per_million_tokens", "output_per_million_tokens"],
+      "properties": {
+        "input_per_million_tokens": { "type": "number", "minimum": 0 },
+        "output_per_million_tokens": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

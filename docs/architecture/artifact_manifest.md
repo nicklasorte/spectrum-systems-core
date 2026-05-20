@@ -554,13 +554,19 @@ calling `git check-ignore`.
   Never produced by code (the miner reads it but never writes it).
 - **Path template:** `docs/contracts/tolerance_budget.json`
 - **Schema:** `src/spectrum_systems_core/schemas/tolerance_budget.schema.json`
-  (1.0.0 = Phase 2; 1.1.0 = Phase 3). The
+  (1.0.0 = Phase 2; 1.1.0 = Phase 3; 1.2.0 = Phase 4). The
   `current_promotion_buffer` bound (0.02 ≤ x ≤ 0.10) is enforced
   HERE at write time, NOT in code.
 - **Phase 3 split:** the previously-inline `per_source_budgets`
   object has moved to a separate per-meeting diagnostic artifact
   (`tolerance_budget_state`, see below). The contracts file now
   holds ONLY the immutable bounds + the global median fallback.
+- **Phase 4 addition:** `bootstrap_variance` (required in 1.2.0;
+  bounded [0.02, 0.15] at the schema layer) is the third-tier
+  fallback used when no source in the lake yet has `runs_observed
+  >= 3`. The reader (`calibration.budget.get_variance_budget`)
+  consults it after tier 1 (per-source) and tier 2 (global median)
+  both fail to apply.
 - **Git-tracked:** YES — the file lives in `spectrum-systems-core`,
   not in `nicklasorte/data-lake`. It is the operator-visible
   contract for promotion threshold composition.
@@ -568,6 +574,48 @@ calling `git check-ignore`.
   (`get_variance_budget`, `get_promotion_threshold`,
   `is_in_calibration_mode`). The correction miner reaches the
   budget through these functions only.
+
+### corpus_manifest
+- **Writer:** Hand-maintained (`declared` block) +
+  `spectrum-core ingest-corpus` (`observed` block). Phase 4.
+- **Path template:** `data/corpus/manifest.json`
+- **Schema:** `src/spectrum_systems_core/schemas/corpus_manifest.schema.json`
+  (1.0.0). `additionalProperties: false`. `source_id` and
+  `expected_path` uniqueness, plus the `supersedes` cross-reference,
+  are enforced by the loader (`corpus.manifest_loader`) — JSON
+  Schema cannot express them natively. `manifest_hash` is a sha256
+  of the canonicalized sources array and is verified at load time;
+  mismatch fails closed with reason `corpus_manifest_hash_mismatch`.
+- **Git-tracked:** YES — the manifest IS the corpus contract.
+- **Readers:** `spectrum_systems_core.corpus.manifest_loader.load_manifest`,
+  `corpus.ingest.run_ingest`, `corpus.status.build_corpus_status_report`.
+
+### cost_constants
+- **Writer:** Operator-edited config file checked into the repo.
+  Phase 4. Placeholder values pending verification against current
+  Anthropic API pricing (documented in the rollback contract entry).
+- **Path template:** `data/cost_constants.json`
+- **Schema:** `src/spectrum_systems_core/schemas/cost_constants.schema.json`
+  (1.0.0). Per-model pricing object with non-negative numeric
+  values; currency restricted to USD.
+- **Git-tracked:** YES — the file is the operator-visible cost
+  contract that the `baseline-opus --all --confirm-cost` flow
+  consumes.
+- **Readers:** `spectrum_systems_core.cost.estimator.load_cost_constants`,
+  `cost.estimator.estimate_extraction_cost`.
+
+### status_report
+- **Writer:** `spectrum-core status --corpus` (emitted to stdout;
+  not written to disk in Phase 4). Phase 4.
+- **Path template:** none (CLI output only — a future PR may
+  persist it under `processed/` for an audit trail; the schema is
+  designed to accept that without revision).
+- **Schema:** `src/spectrum_systems_core/schemas/status_report.schema.json`
+  (1.0.0). State and recommendation enums declared inside `$defs`.
+- **Git-tracked:** N/A (not written to disk).
+- **Readers:** none yet — the rollup is human-facing. Future
+  consumers MUST read the JSON shape (validated against the
+  schema), never the table format.
 
 ### tolerance_budget_state
 - **Writer:** `spectrum_systems_core.calibration.budget.update_per_source_state`
