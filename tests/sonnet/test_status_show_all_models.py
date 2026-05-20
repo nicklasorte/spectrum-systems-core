@@ -244,6 +244,47 @@ def test_show_all_models_adds_three_fields(tmp_path: Path) -> None:
     assert row["opus_item_count"] == 12
 
 
+def test_opus_item_count_picks_newest_baseline_by_mtime(tmp_path: Path) -> None:
+    """When multiple Opus baselines exist, the NEWEST by mtime wins.
+
+    Review-comment P2 (Codex): the previous implementation sorted
+    baselines lexicographically by filename — but the slug segment is
+    content-hash-based, so a newer baseline with a lower-sorting
+    filename would be ignored. The mtime rule mirrors the F1 selection.
+    """
+    import os
+    import time
+
+    lake = tmp_path / "lake"
+    md = lake / "processed" / "meetings" / "a"
+    md.mkdir(parents=True, exist_ok=True)
+    _write_source_record(md, "a")
+
+    # Older Opus baseline with a lexicographically LATER filename
+    # (`zzz` sorts AFTER `aaa`).
+    _write_opus_baseline(md, item_count=5)
+    older = md / "meeting_minutes_opus__baseline.json"
+    older.rename(md / "meeting_minutes_opus__zzz_old.json")
+    older_path = md / "meeting_minutes_opus__zzz_old.json"
+    older_time = time.time() - 3600
+    os.utime(older_path, (older_time, older_time))
+
+    # Newer Opus baseline with a lexicographically EARLIER filename
+    # (`aaa` sorts BEFORE `zzz`).
+    _write_opus_baseline(md, item_count=42)
+    newer = md / "meeting_minutes_opus__baseline.json"
+    newer.rename(md / "meeting_minutes_opus__aaa_new.json")
+
+    manifest = _write_manifest(tmp_path, ["a"])
+    report = build_corpus_status_report(
+        lake_root=lake, manifest_path=manifest, show_all_models=True
+    )
+    row = next(r for r in report["rows"] if r["source_id"] == "a")
+    # The newer baseline (42 items) wins; lexicographic sort would
+    # have picked the older (5-item) one.
+    assert row["opus_item_count"] == 42
+
+
 def test_sonnet_latest_f1_picks_newer_variant(tmp_path: Path) -> None:
     """When BOTH Sonnet variants exist, the newer-by-mtime wins.
 

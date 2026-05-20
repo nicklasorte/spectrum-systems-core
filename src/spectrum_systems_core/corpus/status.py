@@ -122,18 +122,22 @@ def _has_comparison_result(processed_dir: Path) -> bool:
 def _opus_item_count(processed_dir: Path) -> Optional[int]:
     """Read the Opus baseline item count, or None when no baseline exists.
 
-    The baseline file is a JSONL written by the Opus baseliner; each
-    line is one extracted item. The count is just the line count
-    (skipping blank lines so a trailing newline doesn't inflate the
-    total).
+    When a source has multiple Opus baselines on disk (an operator
+    re-ran the baseliner after a schema bump or a prompt change), the
+    NEWEST baseline-by-mtime is authoritative. Filename sort would
+    pick lexicographically — the slug segment is content-hash based,
+    so lexicographic order has no relation to recency and could
+    surface a stale item count in `status --show-all-models`. This
+    mirrors the mtime rule used by `_latest_f1_by_variant`.
     """
     if not processed_dir.is_dir():
         return None
-    candidates = sorted(processed_dir.glob("meeting_minutes_opus__*.json"))
+    candidates = list(processed_dir.glob("meeting_minutes_opus__*.json"))
     if not candidates:
         return None
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     try:
-        text = candidates[-1].read_text(encoding="utf-8")
+        text = candidates[0].read_text(encoding="utf-8")
     except OSError:
         return None
     # The Opus baseline file is a single JSON object whose `payload`
