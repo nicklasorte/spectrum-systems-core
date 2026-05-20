@@ -1541,7 +1541,7 @@
         },
         "extraction_config": {
           "type": "object",
-          "description": "Phase 2 (optional, additive). Captured by `pipeline.governed_pipeline_run` so the run can be re-executed from the artifact alone. Two identical-config invocations must produce identical comparison F1; a perturbed `prompt_content_hash` must produce a different F1. Absent on legacy (pre-Phase-2) artifacts; the comparison engine treats those as `legacy_eval: true`.",
+          "description": "Phase 2 (optional, additive). Captured by `pipeline.governed_pipeline_run` so the run can be re-executed from the artifact alone. Two identical-config invocations must produce identical comparison F1; a perturbed `prompt_content_hash` must produce a different F1. Absent on legacy (pre-Phase-2) artifacts; the comparison engine treats those as `legacy_eval: true`. Phase 3 adds three optional glossary metadata fields: `glossary_version_hash`, `glossary_tokens_added`, `tainted_glossary_drift`. The hash + tokens fields must be present together or absent together (enforced by `pipeline.governed_run.validate_glossary_metadata_consistency`, which JSON Schema cannot natively express because each field is optional in isolation).",
           "additionalProperties": false,
           "required": [
             "temperature",
@@ -1575,7 +1575,21 @@
             "chunk_count": { "type": "integer", "minimum": 0 },
             "first_chunk_hash": { "type": "string", "minLength": 1 },
             "last_chunk_hash": { "type": "string", "minLength": 1 },
-            "prompt_content_hash": { "type": "string", "minLength": 1 }
+            "prompt_content_hash": { "type": "string", "minLength": 1 },
+            "glossary_version_hash": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Phase 3 (optional). sha256 of the glossary file at load time. Present together with `glossary_tokens_added` (enforced by `validate_glossary_metadata_consistency`); absent when glossary injection was disabled. Legacy (pre-Phase-3) artifacts omit it entirely."
+            },
+            "glossary_tokens_added": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Phase 3 (optional). Total tokens added across all batches from glossary terminology blocks. Present together with `glossary_version_hash`; 0 is valid (injection was enabled but no batch matched). Absent when injection was disabled."
+            },
+            "tainted_glossary_drift": {
+              "type": "boolean",
+              "description": "Phase 3 (optional). True when the glossary file's sha256 changed between load and completion. A tainted run is excluded from per-source variance budget calculations (same lifecycle as `legacy_eval: true`). Omitted on runs that did not enable glossary injection."
+            }
           }
         }
       }

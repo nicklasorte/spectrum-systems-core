@@ -37,6 +37,13 @@ from ..artifacts import Artifact, compute_content_hash
 from ..config import LLMConfigError, preflight_llm_config
 from ..config.taxonomy import UNCLASSIFIED_DECISION_VERB
 from ..data_lake.chunker import chunk_transcript
+
+# NB: the glossary loader is imported lazily inside
+# ``_prepend_glossary_block`` so a disabled run NEVER pays the import
+# cost. The lazy-import contract is asserted by
+# ``tests/glossary/test_production_wiring.py::test_disabled_path_does_not_import_loader``
+# (subprocess + sys.modules introspection). Do not move these imports
+# back to module scope without breaking that test.
 from ..evals import (
     EXTRACTION_NOT_IN_SOURCE,
     REGULATORY_VERB_EVAL_TYPE,
@@ -889,11 +896,61 @@ def _build_chunk_debug_report(
     return "\n".join(lines)
 
 
+def _prepend_glossary_block(
+    *,
+    user_message: str,
+    batch_text: str,
+    glossary,
+    tokens_counter,
+) -> str:
+    """Prepend a Terminology block to ``user_message`` when ``glossary``
+    matches against ``batch_text``.
+
+    The block is matched against the batch text the model is actually
+    shown — not the full transcript — so the terminology relevant to
+    THIS batch is what gets surfaced. Matches are capped by the loader's
+    default (``DEFAULT_MAX_TERMS``); the truncation count is rendered
+    inside the block. ``tokens_counter['added']`` accumulates the
+    formatted-block token count across all batches; the production
+    wiring reads this value and stamps it into ``extraction_config``.
+
+    When ``glossary`` is ``None`` (the disable flag was passed) the
+    function is a pure pass-through and the user message is byte-
+    identical to a run before this seam existed — the additivity /
+    rollback property. The lazy import below is deliberate: a disabled
+    run NEVER loads ``glossary.loader`` (proven by the sys.modules
+    test referenced at the top of this module).
+    """
+    if glossary is None:
+        return user_message
+    from ..glossary.loader import (
+        DEFAULT_MAX_TERMS as _GLOSSARY_DEFAULT_MAX_TERMS,
+        count_glossary_tokens as _count_glossary_tokens,
+        format_terminology_block as _format_terminology_block,
+    )
+
+    matched, truncated = glossary.match(
+        batch_text, max_terms=_GLOSSARY_DEFAULT_MAX_TERMS
+    )
+    if not matched:
+        return user_message
+    block = _format_terminology_block(
+        matched, truncated, version_hash=glossary.version_hash
+    )
+    if tokens_counter is not None:
+        tokens_counter["added"] = tokens_counter.get("added", 0) + (
+            _count_glossary_tokens(block)
+        )
+    return f"{block}\n\n{user_message}"
+
+
 def _make_extract(
     *,
     client: LLMClient,
     meeting_id: str | None,
     model_id: str,
+    glossary=None,
+    glossary_tokens_counter=None,
 ):
     def _base_payload(title: str, grounded: bool) -> dict:
         payload: dict = {
@@ -1017,6 +1074,12 @@ def _make_extract(
             # (same content_hash), so small runs and the existing hermetic
             # suite are completely unaffected by batching.
             base_user = _build_user_message(input_text, chunks, grounded)
+            base_user = _prepend_glossary_block(
+                user_message=base_user,
+                batch_text=input_text,
+                glossary=glossary,
+                tokens_counter=glossary_tokens_counter,
+            )
             candidate, _ = _run_batch(
                 system=system,
                 base_user=base_user,
@@ -1044,6 +1107,12 @@ def _make_extract(
                 transcript_lines, batch
             )
             base_user = _build_user_message(batch_text, batch, True)
+            base_user = _prepend_glossary_block(
+                user_message=base_user,
+                batch_text=batch_text,
+                glossary=glossary,
+                tokens_counter=glossary_tokens_counter,
+            )
             candidate, ok = _run_batch(
                 system=system,
                 base_user=base_user,
@@ -1137,6 +1206,8 @@ def run_meeting_minutes_llm_workflow(
     print_raw_response: bool = False,
     single_chunk: bool = False,
     print_context: bool = False,
+    glossary=None,
+    glossary_tokens_counter=None,
 ) -> WorkflowResult:
     """Produce a promoted ``meeting_minutes`` artifact via a live model.
 
@@ -1250,7 +1321,11 @@ def run_meeting_minutes_llm_workflow(
         active_client = _raw_printer
 
     extract = _make_extract(
-        client=active_client, meeting_id=meeting_id, model_id=model_id
+        client=active_client,
+        meeting_id=meeting_id,
+        model_id=model_id,
+        glossary=glossary,
+        glossary_tokens_counter=glossary_tokens_counter,
     )
 
     # Phase Y: chunk the transcript so the model can attribute every

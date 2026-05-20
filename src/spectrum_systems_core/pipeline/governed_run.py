@@ -36,18 +36,15 @@ between callers. Two invocations with identical
 from __future__ import annotations
 
 import contextlib
-import dataclasses
 import datetime
 import hashlib
 import json
-import os
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from ..validation import (
-    ArtifactValidationError,
     SchemaNotFoundError,
     validate_artifact,
 )
@@ -98,6 +95,21 @@ class ExtractionConfig:
       last_chunk_hash: sha256 of the last chunk's text.
       prompt_content_hash: sha256 of the FULL prompt content (the
         string the model was given, not a file path).
+      glossary_version_hash: Phase 3 optional. sha256 of the glossary
+        file (computed via :func:`glossary.loader.compute_glossary_hash`)
+        when glossary injection was enabled for this run. ``None`` when
+        injection was disabled — both ``None`` together with
+        ``glossary_tokens_added`` (present-together-or-absent-together
+        is enforced by :func:`validate_glossary_metadata_consistency`).
+      glossary_tokens_added: Phase 3 optional. Total tokens added
+        across all batches from glossary terminology blocks. ``None``
+        when injection was disabled; ``0`` is a valid value (the flag
+        was on but no batch had a matching term).
+      tainted_glossary_drift: Phase 3 optional. True when the glossary
+        file's sha256 at load time differs from its sha256 at run
+        completion — i.e. the file was mutated mid-run. A tainted run
+        is excluded from per-source variance budget calculations
+        (same lifecycle as ``legacy_eval: true``).
     """
 
     temperature: float
@@ -107,6 +119,9 @@ class ExtractionConfig:
     first_chunk_hash: str
     last_chunk_hash: str
     prompt_content_hash: str
+    glossary_version_hash: Optional[str] = None
+    glossary_tokens_added: Optional[int] = None
+    tainted_glossary_drift: Optional[bool] = None
 
     REQUIRED_SEED_KEYS: frozenset[str] = field(
         default=frozenset({"model_id", "prompt_content_hash", "transcript_hash"}),
@@ -121,7 +136,7 @@ class ExtractionConfig:
                 "extraction_config_seed_missing",
                 f"seed_inputs missing required keys: {sorted(missing)}",
             )
-        return {
+        out: Dict[str, Any] = {
             "temperature": float(self.temperature),
             "seed_inputs": dict(self.seed_inputs),
             "chunks_full_hash": self.chunks_full_hash,
@@ -130,6 +145,47 @@ class ExtractionConfig:
             "last_chunk_hash": self.last_chunk_hash,
             "prompt_content_hash": self.prompt_content_hash,
         }
+        # Glossary fields are optional and additive — they appear on the
+        # serialized config only when injection produced a recordable
+        # value. The consistency validator below asserts hash + tokens
+        # come as a pair so an artifact cannot record one without the
+        # other.
+        if self.glossary_version_hash is not None:
+            out["glossary_version_hash"] = self.glossary_version_hash
+        if self.glossary_tokens_added is not None:
+            out["glossary_tokens_added"] = int(self.glossary_tokens_added)
+        if self.tainted_glossary_drift is not None:
+            out["tainted_glossary_drift"] = bool(self.tainted_glossary_drift)
+        validate_glossary_metadata_consistency(out)
+        return out
+
+
+def validate_glossary_metadata_consistency(extraction_config: Mapping[str, Any]) -> None:
+    """Assert ``glossary_version_hash`` and ``glossary_tokens_added``
+    are present together or absent together.
+
+    The JSON Schema cannot natively express this cross-field rule (each
+    field is optional in isolation). The validator is invoked both by
+    :meth:`ExtractionConfig.to_dict` and by external callers who load an
+    on-disk artifact and want to assert the same invariant without
+    re-running the full schema validator. Raises
+    :class:`PipelineRunError` with ``glossary_metadata_inconsistent``
+    so a gate reads a stable token, not a message string.
+
+    ``tainted_glossary_drift`` is deliberately NOT coupled to the pair:
+    a tainted run still records both hash + tokens (it must, so the
+    diagnostic is reproducible), and an honest run with no taint may
+    omit the boolean entirely.
+    """
+    has_hash = "glossary_version_hash" in extraction_config
+    has_tokens = "glossary_tokens_added" in extraction_config
+    if has_hash != has_tokens:
+        raise PipelineRunError(
+            "glossary_metadata_inconsistent",
+            "glossary_version_hash and glossary_tokens_added must be "
+            "present together or absent together; got "
+            f"hash={has_hash} tokens={has_tokens}",
+        )
 
 
 @dataclass(frozen=True)
@@ -194,12 +250,21 @@ def build_extraction_config_from_run(
     model_id: str,
     chunks: List[Dict[str, Any]],
     temperature: float = 0.0,
+    glossary_version_hash: Optional[str] = None,
+    glossary_tokens_added: Optional[int] = None,
+    tainted_glossary_drift: Optional[bool] = None,
 ) -> ExtractionConfig:
     """Construct an ExtractionConfig from the inputs the run was given.
 
     Chunk hashes are derived from each chunk's ``text`` field in
     chunk-order so two identical inputs produce byte-identical
     config dicts.
+
+    The three glossary fields default to ``None`` (the field is omitted
+    from ``to_dict``'s output). Callers that enabled glossary injection
+    pass the load-time hash and the accumulated token count; the
+    tainted flag is set only when the load-time and completion-time
+    hashes disagree.
     """
     chunk_texts: List[str] = []
     for ch in chunks:
@@ -226,6 +291,9 @@ def build_extraction_config_from_run(
         first_chunk_hash=first,
         last_chunk_hash=last,
         prompt_content_hash=p_hash,
+        glossary_version_hash=glossary_version_hash,
+        glossary_tokens_added=glossary_tokens_added,
+        tainted_glossary_drift=tainted_glossary_drift,
     )
 
 
@@ -361,6 +429,7 @@ def governed_pipeline_run(
     caller: str = CALLER_PRODUCTION_CLI,
     client: Optional[Callable[..., str]] = None,
     skip_invocation_log: bool = False,
+    enable_glossary_injection: bool = True,
 ) -> GovernedPipelineRunResult:
     """Run extraction → schema_validate → grounding_gate → compare.
 
@@ -419,9 +488,44 @@ def governed_pipeline_run(
             "transcript must be a string",
         )
 
+    # Phase 3 — glossary production wiring. The glossary module is
+    # imported lazily ONLY when injection is enabled so a disabled run
+    # is byte-identical to a pre-Phase-3 run (the import is observable
+    # via `sys.modules` introspection, which the silent-pass test in
+    # tests/glossary/test_production_wiring.py asserts).
+    glossary = None
+    glossary_load_hash: Optional[str] = None
+    glossary_tokens_counter: Dict[str, int] = {"added": 0}
+    if enable_glossary_injection:
+        from ..glossary.loader import (
+            GLOSSARY_ALLOWED_SOURCES_PATH as _GAS_PATH,
+            GLOSSARY_MANIFEST_PATH as _GM_PATH,
+            GLOSSARY_PATH as _GLOSSARY_PATH,
+            GlossaryError,
+            compute_file_sha256,
+            load_glossary,
+        )
+
+        try:
+            glossary = load_glossary(
+                glossary_path=_GLOSSARY_PATH,
+                manifest_path=_GM_PATH,
+                allowed_sources_path=_GAS_PATH,
+            )
+            glossary_load_hash = compute_file_sha256(_GLOSSARY_PATH)
+        except GlossaryError as exc:
+            # Fail-closed: a missing / malformed glossary or a hash
+            # mismatch HALTS the run with the loader's exact reason
+            # token. There is no silent-skip path — that would let a
+            # glossary-disabled artifact masquerade as a
+            # glossary-enabled one and break the F1 measurement.
+            raise PipelineRunError(exc.reason, str(exc)) from exc
+
     # Execute extraction. The prompt-override context manager is the
     # ONE place candidate prompts are injected so production and the
-    # miner cannot drift on injection mechanics.
+    # miner cannot drift on injection mechanics. The glossary (when
+    # enabled) is forwarded so the workflow's per-batch user message
+    # is prepended with the matched terminology block.
     with _override_prompt(prompt_content):
         result = run_meeting_minutes_llm_workflow(
             transcript,
@@ -429,6 +533,33 @@ def governed_pipeline_run(
             meeting_id=source_id,
             source_id=source_id,
             lake_root=data_lake_path / "store",
+            glossary=glossary,
+            glossary_tokens_counter=glossary_tokens_counter,
+        )
+
+    # Re-hash the glossary file at completion. A divergence from the
+    # load-time hash signals mid-run mutation — the artifact is still
+    # produced but the comparison engine will mark its
+    # extraction_config with `tainted_glossary_drift: true` so the
+    # per-source variance budget excludes it. The hash is recomputed
+    # only when glossary was loaded; the disabled path stays None.
+    tainted_glossary_drift: Optional[bool] = None
+    glossary_completion_hash: Optional[str] = None
+    if glossary is not None and glossary_load_hash is not None:
+        from ..glossary.loader import (
+            GLOSSARY_PATH as _GLOSSARY_PATH,
+            compute_file_sha256,
+        )
+
+        try:
+            glossary_completion_hash = compute_file_sha256(_GLOSSARY_PATH)
+        except OSError:
+            # The file vanished between load and completion. That is a
+            # taint event (the load-time content is no longer
+            # reproducible), so flag it explicitly rather than skipping.
+            glossary_completion_hash = ""
+        tainted_glossary_drift = (
+            glossary_completion_hash != glossary_load_hash
         )
 
     artifact_dict: Optional[Dict[str, Any]] = None
@@ -472,6 +603,15 @@ def governed_pipeline_run(
             model_id=model_id,
             chunks=chunks_for_hash,
             temperature=0.0,
+            glossary_version_hash=(
+                glossary.version_hash if glossary is not None else None
+            ),
+            glossary_tokens_added=(
+                int(glossary_tokens_counter.get("added", 0))
+                if glossary is not None
+                else None
+            ),
+            tainted_glossary_drift=tainted_glossary_drift,
         )
 
     if artifact_dict is not None:
@@ -560,6 +700,35 @@ def governed_pipeline_run(
             "summary": metrics_bundle.get("summary", {}),
             "legacy_eval": cmp.is_legacy_eval(haiku_artifact_for_cmp),
         }
+    # Mirror `tainted_glossary_drift` onto the comparison envelope so a
+    # downstream budget reader (and the per-source state update hook
+    # below) can branch on it without re-parsing the extraction
+    # artifact's provenance. The key is omitted when injection was
+    # disabled — that path is byte-identical to a pre-Phase-3 run.
+    if tainted_glossary_drift is not None:
+        comparison["tainted_glossary_drift"] = bool(tainted_glossary_drift)
+
+    # Phase 3 Step 3.5: per-source variance budget state hook. The
+    # hook is idempotent on the (source_id, comparison_artifact_path)
+    # pair so a re-run with the same comparison artifact does not
+    # double-increment. Legacy and tainted runs are excluded — the
+    # budget intentionally tracks only the runs the operator has full
+    # provenance for.
+    if not legacy_eval and not bool(tainted_glossary_drift):
+        try:
+            from ..calibration.budget import update_per_source_state
+
+            update_per_source_state(
+                source_id=source_id,
+                data_lake_path=data_lake_path,
+                comparison_artifact=comparison,
+            )
+        except Exception:  # noqa: BLE001 — hook never blocks the run
+            # The budget state file is a diagnostic; an unwriteable
+            # filesystem or a malformed pre-existing file MUST NOT
+            # take down the production extraction. The reconciler picks
+            # up the gap later (the file simply does not advance).
+            pass
 
     invocation_log: Dict[str, Any] = {}
     if not skip_invocation_log:
@@ -605,5 +774,6 @@ __all__ = [
     "governed_pipeline_run",
     "prompt_content_hash",
     "transcript_hash",
+    "validate_glossary_metadata_consistency",
     "write_pipeline_invocation_log",
 ]

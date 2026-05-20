@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://spectrum-systems-core/src/schemas/tolerance_budget.schema.json",
   "title": "tolerance_budget",
-  "description": "Phase 2 contract. The promotion-threshold knobs the correction miner uses. The bound on `current_promotion_buffer` is enforced here at write time so a malformed budget file fails closed before the miner makes a promotion decision.",
+  "description": "Phase 2 contract; Phase 3 split. The promotion-threshold knobs the correction miner uses. Phase 3 moved mutable per-source state out of this file into the per-source diagnostic artifact `tolerance_budget_state` (one file per source under `processed/meetings/<source_id>/diagnostics/`) so the contracts file holds only immutable bounds. The bound on `current_promotion_buffer` is enforced here at write time so a malformed budget file fails closed before the miner makes a promotion decision.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -11,14 +11,14 @@
     "min_promotion_buffer",
     "max_promotion_buffer",
     "current_promotion_buffer",
-    "global_median_budget",
-    "per_source_budgets"
+    "global_median_budget"
   ],
   "properties": {
     "artifact_type": { "const": "tolerance_budget" },
     "schema_version": {
       "type": "string",
-      "enum": ["1.0.0"]
+      "enum": ["1.0.0", "1.1.0"],
+      "description": "1.0.0 = Phase 2 (carried `per_source_budgets` inline). 1.1.0 = Phase 3 (per-source state moved to the data lake; the property is removed from this schema). Both versions remain accepted so a checkout that lags the file edit still validates."
     },
     "min_promotion_buffer": {
       "type": "number",
@@ -40,36 +40,7 @@
       "type": "number",
       "minimum": 0.0,
       "maximum": 1.0,
-      "description": "Fallback variance budget when fewer than 3 non-legacy runs have been observed for a source."
-    },
-    "per_source_budgets": {
-      "type": "object",
-      "description": "Per-source variance budgets. May be an empty object on first boot; the calibration-mode gate handles the empty case.",
-      "additionalProperties": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "f1_variance_budget",
-          "runs_observed",
-          "last_updated"
-        ],
-        "properties": {
-          "f1_variance_budget": {
-            "type": "number",
-            "minimum": 0.0,
-            "maximum": 1.0
-          },
-          "runs_observed": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "last_updated": {
-            "type": "string",
-            "minLength": 1,
-            "description": "ISO 8601 timestamp the budget entry was last refreshed."
-          }
-        }
-      }
+      "description": "Fallback variance budget when fewer than 3 non-legacy runs have been observed for a source (read from the per-source state artifact in the data lake)."
     }
   }
 }

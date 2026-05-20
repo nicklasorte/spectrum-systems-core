@@ -9,20 +9,29 @@ Three knobs compose the promotion threshold a candidate must clear:
 
 Where ``variance_budget`` is:
 
-* the per-source ``f1_variance_budget`` when at least
-  :data:`PER_SOURCE_RUN_THRESHOLD` non-legacy comparison runs are on
-  record (``runs_observed >= 3``); or
+* the per-source ``f1_variance_budget`` from the data-lake state
+  artifact when at least :data:`PER_SOURCE_RUN_THRESHOLD` non-legacy
+  comparison runs are on record (``runs_observed >= 3``); or
 * the file's ``global_median_budget`` otherwise.
 
 The buffer is bounded (``min_promotion_buffer`` <=
 ``current_promotion_buffer`` <= ``max_promotion_buffer``). The bound
 is enforced by the JSON Schema at write time so a malformed
 ``tolerance_budget.json`` cannot silently slip through the loader.
+
+Phase 3 split: the per-source state lives in a separate, per-meeting
+diagnostic artifact under the data lake, NOT in the contracts file.
+The reader (:func:`get_variance_budget`, :func:`get_promotion_threshold`)
+loads the state via :func:`_read_per_source_state`; the writer
+(:func:`update_per_source_state`) is invoked from
+``pipeline.governed_pipeline_run`` after a non-legacy comparison is
+built.
 """
 from __future__ import annotations
 
-import dataclasses
+import datetime
 import json
+import statistics
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
@@ -40,6 +49,19 @@ DEFAULT_GLOBAL_MEDIAN_BUDGET: float = 0.025
 
 # Per-source variance budget kicks in only when there is enough signal.
 PER_SOURCE_RUN_THRESHOLD: int = 3
+
+# Per-source state artifact constants. The path and schema are part of
+# the data-lake contract; the writer (`update_per_source_state`) and
+# the reader (`_read_per_source_state`) reference these so a path drift
+# is a single edit, not a silent disagreement.
+PER_SOURCE_STATE_ARTIFACT_TYPE: str = "tolerance_budget_state"
+PER_SOURCE_STATE_SCHEMA_VERSION: str = "1.0.0"
+
+# Sliding window used by `update_per_source_state` to recompute the
+# variance budget. The window is intentionally small so the budget
+# tracks recent runs; older comparisons fall out of the window after
+# enough new runs land.
+_VARIANCE_WINDOW_SIZE: int = 10
 
 
 class BudgetValidationError(ValueError):
@@ -63,6 +85,13 @@ def _load_budget_schema() -> Dict[str, Any]:
     from ..schemas import schema_path
 
     path = schema_path("tolerance_budget")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_per_source_state_schema() -> Dict[str, Any]:
+    from ..schemas import schema_path
+
+    path = schema_path(PER_SOURCE_STATE_ARTIFACT_TYPE)
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -102,33 +131,76 @@ def load_budget(path: Path | str | None = None) -> Dict[str, Any]:
     return data
 
 
-def _per_source_entry(
-    budget: Mapping[str, Any], source_id: str
+def _per_source_state_path(data_lake_path: Path | str, source_id: str) -> Path:
+    """Canonical on-disk path for the per-source state artifact."""
+    return (
+        Path(data_lake_path)
+        / "store"
+        / "processed"
+        / "meetings"
+        / source_id
+        / "diagnostics"
+        / f"tolerance_budget_state__{source_id}.json"
+    )
+
+
+def _read_per_source_state(
+    source_id: str,
+    data_lake_path: Path | str | None,
 ) -> Optional[Dict[str, Any]]:
-    per_source = budget.get("per_source_budgets") or {}
-    entry = per_source.get(source_id)
-    return entry if isinstance(entry, dict) else None
+    """Read + schema-validate the per-source state artifact.
+
+    Returns ``None`` when the artifact does not exist, when the data
+    lake path is not provided, or when the file fails schema validation
+    (the fallback is to ``global_median_budget``; the budget module
+    deliberately MUST NOT raise on a malformed state file because the
+    state artifact is a diagnostic, not a gate).
+    """
+    if data_lake_path is None:
+        return None
+    path = _per_source_state_path(data_lake_path, source_id)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    try:
+        import jsonschema
+
+        validator = jsonschema.Draft202012Validator(
+            _load_per_source_state_schema()
+        )
+        validator.validate(data)
+    except Exception:  # noqa: BLE001 — fallback path is the safe default
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def get_variance_budget(
     source_id: str,
     *,
     budget_path: Path | str | None = None,
+    data_lake_path: Path | str | None = None,
 ) -> float:
     """Per-source budget if runs_observed >= 3 else global_median_budget.
 
-    A per-source entry whose ``runs_observed`` is below the threshold
-    falls back to the global median. The bound is enforced at the
-    schema layer; the loader fails closed.
+    The per-source value is read from the data-lake state artifact at
+    ``processed/meetings/<source_id>/diagnostics/tolerance_budget_state__<source_id>.json``;
+    when the artifact does not exist (first boot, unseeded source) or
+    fails validation, the fallback is the contracts file's
+    ``global_median_budget``. Callers in production pass
+    ``data_lake_path``; legacy callers that do not (the calibration
+    test fixtures, mostly) get the fallback automatically.
     """
     budget = load_budget(budget_path)
-    entry = _per_source_entry(budget, source_id)
+    state = _read_per_source_state(source_id, data_lake_path)
     if (
-        entry is not None
-        and int(entry.get("runs_observed", 0)) >= PER_SOURCE_RUN_THRESHOLD
-        and "f1_variance_budget" in entry
+        state is not None
+        and int(state.get("runs_observed", 0)) >= PER_SOURCE_RUN_THRESHOLD
+        and "f1_variance_budget" in state
     ):
-        return float(entry["f1_variance_budget"])
+        return float(state["f1_variance_budget"])
     return float(budget.get("global_median_budget", DEFAULT_GLOBAL_MEDIAN_BUDGET))
 
 
@@ -137,6 +209,7 @@ def get_promotion_threshold(
     baseline_f1: float,
     *,
     budget_path: Path | str | None = None,
+    data_lake_path: Path | str | None = None,
 ) -> float:
     """Returns ``baseline_f1 + variance_budget + current_promotion_buffer``.
 
@@ -147,13 +220,13 @@ def get_promotion_threshold(
     crossing the threshold is a clear, schema-bounded amount.
     """
     budget = load_budget(budget_path)
-    entry = _per_source_entry(budget, source_id)
+    state = _read_per_source_state(source_id, data_lake_path)
     if (
-        entry is not None
-        and int(entry.get("runs_observed", 0)) >= PER_SOURCE_RUN_THRESHOLD
-        and "f1_variance_budget" in entry
+        state is not None
+        and int(state.get("runs_observed", 0)) >= PER_SOURCE_RUN_THRESHOLD
+        and "f1_variance_budget" in state
     ):
-        variance = float(entry["f1_variance_budget"])
+        variance = float(state["f1_variance_budget"])
     else:
         variance = float(budget.get("global_median_budget", DEFAULT_GLOBAL_MEDIAN_BUDGET))
     buffer = float(budget.get("current_promotion_buffer", DEFAULT_MIN_PROMOTION_BUFFER))
@@ -230,6 +303,150 @@ def is_in_calibration_mode(
     )
 
 
+def _collect_recent_f1s(
+    meeting_dir: Path,
+    *,
+    limit: int,
+) -> list[float]:
+    """Collect F1 values from the most recent N non-legacy, non-tainted
+    comparison artifacts for one source.
+
+    Used by :func:`update_per_source_state` to recompute the variance
+    budget. Sort order is filename-ascending — the canonical layout
+    timestamps comparison artifacts via the suffix so the lex order
+    aligns with time order. Returns at most ``limit`` values; an
+    unreadable file is skipped silently.
+    """
+    out: list[float] = []
+    for path in sorted(meeting_dir.glob("comparison_result__*.json"), reverse=True):
+        if len(out) >= limit:
+            break
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if data.get("legacy_eval") is True:
+            continue
+        if data.get("tainted_glossary_drift") is True:
+            continue
+        summary = data.get("summary") or {}
+        f1 = summary.get("haiku_f1_vs_opus")
+        if isinstance(f1, (int, float)):
+            out.append(float(f1))
+    return out
+
+
+def update_per_source_state(
+    *,
+    source_id: str,
+    data_lake_path: Path | str,
+    comparison_artifact: Mapping[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Post-extraction hook: refresh the per-source state artifact.
+
+    Called by ``pipeline.governed_pipeline_run`` after a non-legacy,
+    non-tainted comparison artifact is built. The hook:
+
+    * is idempotent on ``last_comparison_artifact_path`` — passing the
+      same comparison artifact twice does NOT double-increment
+      ``runs_observed``;
+    * recomputes ``f1_variance_budget`` from the most recent
+      :data:`_VARIANCE_WINDOW_SIZE` non-legacy, non-tainted F1 values
+      on disk for this source;
+    * writes the artifact atomically (write to ``.tmp`` then rename)
+      so a crash mid-write cannot leave a half-written file the
+      reader then has to skip.
+
+    Returns the written state dict, or ``None`` when the hook decided
+    not to write (e.g. when the comparison artifact is missing the
+    required F1 field — a partial bundle should never advance the
+    budget). Never raises: the caller wraps a broad ``except`` so a
+    diagnostic write failure cannot take down production extraction.
+    """
+    summary = comparison_artifact.get("summary") if isinstance(
+        comparison_artifact, Mapping
+    ) else None
+    if not isinstance(summary, Mapping):
+        return None
+    f1_now = summary.get("haiku_f1_vs_opus")
+    if not isinstance(f1_now, (int, float)):
+        return None
+
+    # Idempotency token: the comparison artifact's compared_at + source
+    # uniquely identifies one run. We use it (not a filesystem path —
+    # the caller does not always know where the comparison will be
+    # written) so a re-run with the same comparison content is a no-op.
+    cmp_token = (
+        f"{comparison_artifact.get('source_id', source_id)}|"
+        f"{comparison_artifact.get('compared_at', '')}"
+    )
+
+    state_path = _per_source_state_path(data_lake_path, source_id)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+
+    existing: Optional[Dict[str, Any]] = None
+    if state_path.is_file():
+        try:
+            existing = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            existing = None
+
+    if (
+        isinstance(existing, dict)
+        and existing.get("last_comparison_artifact_path") == cmp_token
+    ):
+        # Idempotency: the same comparison artifact has already been
+        # ingested. Do nothing — runs_observed must not double-count.
+        return existing
+
+    meeting_dir = (
+        Path(data_lake_path)
+        / "store"
+        / "processed"
+        / "meetings"
+        / source_id
+    )
+    recent = _collect_recent_f1s(meeting_dir, limit=_VARIANCE_WINDOW_SIZE)
+    if len(recent) >= 2:
+        # statistics.pstdev is a population-stdev — appropriate here
+        # because we are characterising the spread of the observed
+        # sample, not estimating a population parameter.
+        variance_budget = float(statistics.pstdev(recent))
+    else:
+        # With <2 observations there is no spread to characterise; use
+        # 0.0 so the reader (which requires runs_observed >= 3 before
+        # using this value at all) keeps falling back to global_median.
+        variance_budget = 0.0
+
+    runs_observed = int(existing.get("runs_observed", 0)) if isinstance(
+        existing, dict
+    ) else 0
+    runs_observed += 1
+
+    state = {
+        "artifact_type": PER_SOURCE_STATE_ARTIFACT_TYPE,
+        "schema_version": PER_SOURCE_STATE_SCHEMA_VERSION,
+        "source_id": source_id,
+        "runs_observed": runs_observed,
+        "f1_variance_budget": variance_budget,
+        "last_updated": datetime.datetime.now(
+            datetime.timezone.utc
+        ).isoformat(),
+        "last_comparison_artifact_path": cmp_token,
+    }
+
+    # Atomic write: rename is atomic on POSIX so a partial file never
+    # appears at the canonical path even if the process is killed
+    # mid-write.
+    tmp_path = state_path.with_suffix(".tmp")
+    tmp_path.write_text(
+        json.dumps(state, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    tmp_path.replace(state_path)
+    return state
+
+
 __all__ = [
     "BudgetValidationError",
     "CalibrationMode",
@@ -238,8 +455,11 @@ __all__ = [
     "DEFAULT_MAX_PROMOTION_BUFFER",
     "DEFAULT_MIN_PROMOTION_BUFFER",
     "PER_SOURCE_RUN_THRESHOLD",
+    "PER_SOURCE_STATE_ARTIFACT_TYPE",
+    "PER_SOURCE_STATE_SCHEMA_VERSION",
     "get_promotion_threshold",
     "get_variance_budget",
     "is_in_calibration_mode",
     "load_budget",
+    "update_per_source_state",
 ]

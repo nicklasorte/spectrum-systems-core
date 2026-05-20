@@ -1040,7 +1040,7 @@ def certify_paper(
         if isinstance(release_artifact, dict):
             release_path = release_artifact.get("release_path", "")
         print(f"certification_id: {certification_id}", file=out)
-        print(f"status: PASSED", file=out)
+        print("status: PASSED", file=out)
         print(f"release: {release_path}", file=out)
         print(f"total_pipeline_cost_usd: {total_cost:.4f}", file=out)
         return 0
@@ -2790,6 +2790,7 @@ def meeting_minutes_llm(
     test_parser_only: bool = False,
     single_chunk: bool = False,
     print_context: bool = False,
+    enable_glossary_injection: bool = True,
     client=None,
     env=None,
     out_stream=None,
@@ -3002,6 +3003,38 @@ def meeting_minutes_llm(
             )
         return 0
 
+    # Phase 3 — load the production glossary when enabled. The loader
+    # is imported lazily so a `--disable-glossary-injection` run never
+    # pulls the module (verified by the sys.modules introspection test
+    # in tests/glossary/test_production_wiring.py). A loader halt
+    # surfaces as exit 2 with the loader's exact reason token — never
+    # a silent-skip path.
+    glossary_obj = None
+    glossary_tokens_counter: dict | None = None
+    if enable_glossary_injection:
+        from .glossary.loader import (
+            GLOSSARY_ALLOWED_SOURCES_PATH,
+            GLOSSARY_MANIFEST_PATH,
+            GLOSSARY_PATH,
+            GlossaryError,
+            load_glossary,
+        )
+
+        try:
+            glossary_obj = load_glossary(
+                glossary_path=GLOSSARY_PATH,
+                manifest_path=GLOSSARY_MANIFEST_PATH,
+                allowed_sources_path=GLOSSARY_ALLOWED_SOURCES_PATH,
+            )
+            glossary_tokens_counter = {"added": 0}
+        except GlossaryError as exc:
+            print(
+                f"meeting-minutes-llm [{source_id}] halted pre-run: "
+                f"reason_code={exc.reason} -- {exc.detail or exc}",
+                file=out,
+            )
+            return 2
+
     try:
         result = run_meeting_minutes_llm_workflow(
             transcript_text,
@@ -3015,6 +3048,8 @@ def meeting_minutes_llm(
             print_raw_response=print_raw_response,
             single_chunk=single_chunk,
             print_context=print_context,
+            glossary=glossary_obj,
+            glossary_tokens_counter=glossary_tokens_counter,
         )
     except LLMConfigError as exc:
         # Fail-closed pre-run halt: no artifact produced, no fallback to
@@ -4785,6 +4820,36 @@ def _build_parser() -> argparse.ArgumentParser:
             "present in the API call. No effect without --single-chunk."
         ),
     )
+    # Phase 3 — production wiring. Replaces the disabled-by-default
+    # Phase 2P flag with a mutually-exclusive pair so an operator can
+    # explicitly opt in OR opt out and the resolved value is auditable
+    # from argv alone. CLI-only: env vars are never consulted (the
+    # test_env_var_bypass_has_no_effect test in
+    # tests/glossary/test_production_wiring.py asserts this).
+    glossary_group = mml.add_mutually_exclusive_group()
+    glossary_group.add_argument(
+        "--enable-glossary-injection",
+        dest="enable_glossary_injection",
+        action="store_true",
+        default=None,
+        help=(
+            "Inject NTIA/DoD glossary terminology blocks into the "
+            "per-batch chunk context. Default after Phase 3: ON. "
+            "Requires PR #193 (eval-path alignment) to have landed "
+            "for measurement honesty. To disable, use "
+            "--disable-glossary-injection."
+        ),
+    )
+    glossary_group.add_argument(
+        "--disable-glossary-injection",
+        dest="enable_glossary_injection",
+        action="store_false",
+        default=None,
+        help=(
+            "Disable NTIA/DoD glossary injection. Mutually exclusive "
+            "with --enable-glossary-injection."
+        ),
+    )
 
     lg = sub.add_parser(
         "link-ground-truth",
@@ -5179,6 +5244,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_chunks=args.max_chunks,
         )
     if args.command == "meeting-minutes-llm":
+        # Phase 3 default-resolution: argparse sets the dest to None
+        # when neither --enable-glossary-injection nor
+        # --disable-glossary-injection is passed. The Phase 3 default
+        # is ON — flip the None sentinel to True here so the resolved
+        # value is the default-enabled production behaviour.
+        resolved_glossary = args.enable_glossary_injection
+        if resolved_glossary is None:
+            resolved_glossary = True
         return meeting_minutes_llm(
             source_id=args.source_id,
             data_lake=args.data_lake,
@@ -5190,6 +5263,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             test_parser_only=args.test_parser_only,
             single_chunk=args.single_chunk,
             print_context=args.print_context,
+            enable_glossary_injection=resolved_glossary,
         )
     if args.command == "link-ground-truth":
         return link_ground_truth(
