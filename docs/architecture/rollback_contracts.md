@@ -479,7 +479,7 @@ outcomes are acceptable findings — the measurement is the point.
 
 ---
 
-## Phase 4 — corpus ingestion + status corpus mode (PR #TBD)
+## Phase 4 — corpus ingestion + status corpus mode (PR #197)
 
 ### What this change adds
 
