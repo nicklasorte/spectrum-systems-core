@@ -594,3 +594,118 @@ def test_show_all_models_mixed_state(tmp_path: Path) -> None:
     # C: Sonnet only
     assert rows["c"]["sonnet_latest_f1"] == pytest.approx(0.55)
     assert rows["c"]["opus_item_count"] is None
+
+
+def test_legacy_three_way_without_sonnet_variant_surfaces_sonnet_f1(
+    tmp_path: Path,
+) -> None:
+    """Legacy three-way artifacts (no sonnet_prompt_variant stamp) must
+    still surface their Sonnet F1 in --show-all-models.
+
+    Review-comment P2 (Codex): the default for a missing
+    sonnet_prompt_variant was `production_haiku`, which meant
+    _newest_sonnet_f1 skipped every legacy three-way artifact and
+    reported `null` on backward-compat lakes — silently misleading
+    operators about historical Sonnet measurements.
+    """
+    lake = tmp_path / "lake"
+    md = lake / "processed" / "meetings" / "a"
+    _write_source_record(md, "a")
+    _write_opus_baseline(md, item_count=10)
+
+    # Construct a LEGACY three-way artifact: no prompt_variant fields
+    # on the envelope (the pre-Phase-5 shape).
+    three_way_dir = md / "comparisons"
+    three_way_dir.mkdir(parents=True, exist_ok=True)
+    legacy_block = lambda f1: {
+        "total_opus_items": 10,
+        "total_haiku_items": 5,
+        "true_positives": 4,
+        "false_negatives": 6,
+        "haiku_only": 1,
+        "gt_covered_by_haiku": 0,
+        "gt_missed_by_haiku": 0,
+        "gt_covered_by_opus": 0,
+        "haiku_recall_vs_opus": 0.4,
+        "haiku_precision_vs_opus": 0.8,
+        "haiku_f1_vs_opus": float(f1),
+        "gt_recall_haiku": 0,
+        "gt_recall_opus": 0,
+    }
+    legacy = {
+        "artifact_type": "comparison_result",
+        "schema_version": "1.0.0",
+        "comparison_mode": "three_way",
+        "source_id": "a",
+        "haiku_run_id": "h",
+        "sonnet_run_id": "s",
+        "opus_model_id": "claude-opus-4-7",
+        "compared_at": "2025-12-01T00:00:00+00:00",
+        "haiku_summary": legacy_block(0.40),
+        "sonnet_summary": legacy_block(0.55),
+        "by_type": {},
+        "gt_pairs_present": False,
+        # No haiku_prompt_variant, no sonnet_prompt_variant.
+    }
+    (three_way_dir / "three_way_legacy.json").write_text(
+        json.dumps(legacy), encoding="utf-8"
+    )
+
+    manifest = _write_manifest(tmp_path, ["a"])
+    report = build_corpus_status_report(
+        lake_root=lake, manifest_path=manifest, show_all_models=True
+    )
+    row = next(r for r in report["rows"] if r["source_id"] == "a")
+    # Sonnet F1 IS reported even though the variant stamp is absent.
+    assert row["sonnet_latest_f1"] == pytest.approx(0.55)
+
+
+def test_mtime_tie_breaks_by_compared_at(tmp_path: Path) -> None:
+    """When two artifacts share an mtime (e.g. fresh git clone), the
+    artifact's own `compared_at` breaks the tie deterministically.
+
+    Review-comment P2 (Codex): a pure-mtime sort is non-deterministic
+    after `git clone` because every file inherits the checkout time.
+    """
+    import os
+    import time
+
+    lake = tmp_path / "lake"
+    md = lake / "processed" / "meetings" / "a"
+    _write_source_record(md, "a")
+    _write_opus_baseline(md, item_count=10)
+
+    # Two comparisons in the comparisons/ subdir with different
+    # compared_at; we'll forcibly tie their mtimes below.
+    _write_two_way_cmp(
+        md, f1=0.40, variant="production_haiku",
+        slug="earlier_ca", in_comparisons_subdir=True,
+    )
+    _write_two_way_cmp(
+        md, f1=0.55, variant="production_haiku",
+        slug="later_ca", in_comparisons_subdir=True,
+    )
+    # Patch each artifact's compared_at so the later wins by payload
+    # timestamp.
+    for slug, ca, f1 in (
+        ("earlier_ca", "2025-12-01T00:00:00+00:00", 0.40),
+        ("later_ca", "2026-05-20T00:00:00+00:00", 0.55),
+    ):
+        p = md / "comparisons" / f"haiku_vs_opus_{slug}.json"
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        doc["compared_at"] = ca
+        doc["summary"]["haiku_f1_vs_opus"] = f1
+        p.write_text(json.dumps(doc), encoding="utf-8")
+    # Force identical mtimes (post-`git clone` scenario).
+    shared_mtime = time.time()
+    for slug in ("earlier_ca", "later_ca"):
+        p = md / "comparisons" / f"haiku_vs_opus_{slug}.json"
+        os.utime(p, (shared_mtime, shared_mtime))
+
+    manifest = _write_manifest(tmp_path, ["a"])
+    report = build_corpus_status_report(
+        lake_root=lake, manifest_path=manifest, show_all_models=True
+    )
+    row = next(r for r in report["rows"] if r["source_id"] == "a")
+    # The artifact with the later compared_at wins.
+    assert row["haiku_latest_f1"] == pytest.approx(0.55)

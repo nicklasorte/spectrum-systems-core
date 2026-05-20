@@ -245,36 +245,51 @@ def _latest_f1_by_variant_with_mtime(
       ``scripts/compare_opus_haiku._three_way_out_path``.
     * ``comparison_result__*.json`` (meeting root) — legacy / synthetic
       path some test fixtures still use. Scanned for robustness.
+
+    Recency-tiebreak (Codex review-comment): freshly cloned data-lakes
+    have every file at the checkout mtime, so a pure-mtime sort is
+    non-deterministic. Candidates are sorted by
+    ``(mtime, compared_at, filename)`` descending so mtime ties fall
+    through to the artifact's own ``compared_at`` (the producer's
+    UTC ISO timestamp), then to the filename (also typically a UTC
+    ISO timestamp). The triple is total-order so two callers reading
+    the same data lake see the same artifact.
     """
     if not processed_dir.is_dir():
         return None
 
-    candidates: list[tuple[float, Path]] = []
-    # Legacy / fixture path: bare comparison_result__*.json in the
-    # meeting root. Production callers do NOT write here, but some
-    # test fixtures and pre-Phase-5 callers do.
+    # Gather candidates by globbing every known comparison-artifact
+    # path. We deliberately read the JSON eagerly so the recency
+    # tiebreak can use the artifact's own `compared_at`.
+    paths: list[Path] = []
     for p in processed_dir.glob("comparison_result__*.json"):
-        candidates.append((p.stat().st_mtime, p))
-    # Production paths: scripts/compare_opus_haiku writes BOTH the
-    # two-way and three-way artifacts under comparisons/.
+        paths.append(p)
     three_way_dir = processed_dir / "comparisons"
     if three_way_dir.is_dir():
         for p in three_way_dir.glob("haiku_vs_opus_*.json"):
-            candidates.append((p.stat().st_mtime, p))
+            paths.append(p)
         for p in three_way_dir.glob("three_way_*.json"):
-            candidates.append((p.stat().st_mtime, p))
-    if not candidates:
+            paths.append(p)
+    if not paths:
         return None
-    candidates.sort(key=lambda t: t[0], reverse=True)
 
-    for mtime, path in candidates:
+    candidates: list[tuple[float, str, str, Path, Dict[str, Any]]] = []
+    for p in paths:
         try:
-            doc = json.loads(path.read_text(encoding="utf-8"))
+            doc = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        # Two-way: `haiku_prompt_variant` plus `summary.haiku_f1_vs_opus`.
-        # Three-way: `haiku_prompt_variant` for Haiku, `sonnet_prompt_variant`
-        # for Sonnet, plus the matching `*_summary.haiku_f1_vs_opus`.
+        compared_at = str(doc.get("compared_at") or "")
+        candidates.append(
+            (p.stat().st_mtime, compared_at, p.name, p, doc)
+        )
+    if not candidates:
+        return None
+    # Sort by (mtime, compared_at, filename) descending — deterministic
+    # under mtime ties (post-clone) and under compared_at ties.
+    candidates.sort(key=lambda t: (t[0], t[1], t[2]), reverse=True)
+
+    for mtime, _ca, _name, _path, doc in candidates:
         is_three_way = doc.get("comparison_mode") == "three_way"
         if is_three_way:
             hv = doc.get("haiku_prompt_variant", "production_haiku")
@@ -305,30 +320,49 @@ def _latest_f1_by_variant(
 
 
 def _newest_sonnet_f1(processed_dir: Path) -> Optional[float]:
-    """Pick the most-recent Sonnet F1 across the two Sonnet variants.
+    """Pick the most-recent Sonnet F1 across all three-way artifacts.
 
     Phase 5 has two Sonnet variants — ``haiku_prompt_with_sonnet_model``
     (apples-to-apples vs Haiku) and ``opus_prompt_with_sonnet_model``
-    (Sonnet's unconstrained capability). When a source has comparisons
-    for both, the rollup should surface the FRESHER one (operators run
-    both as iterative measurements; the older one is stale). Tie
-    breaking by mtime is deterministic given the data lake's
-    append-only invariant. ``None`` when neither variant has run.
+    (Sonnet's unconstrained capability). The rollup should surface the
+    fresher one (operators run both as iterative measurements; the
+    older one is stale).
+
+    Mixed-lake backward compatibility (Codex review-comment): a
+    LEGACY three-way artifact omits ``sonnet_prompt_variant`` because
+    the stamp is Phase 5+. Restricting the scan to artifacts whose
+    stamp matches one of the two variants would silently skip those
+    historical Sonnet measurements. Instead the function walks every
+    three-way artifact, deterministically newest first by
+    ``(mtime, compared_at, filename)``, and returns the first
+    ``sonnet_summary.haiku_f1_vs_opus`` it finds. Variant attribution
+    lives in ``print_three_way_delta.py``'s ``--variant`` filter for
+    the operator-facing readout; the rollup is a "is there a Sonnet
+    measurement at all" summary.
     """
-    haiku_prompt = _latest_f1_by_variant_with_mtime(
-        processed_dir, "haiku_prompt_with_sonnet_model"
-    )
-    opus_prompt = _latest_f1_by_variant_with_mtime(
-        processed_dir, "opus_prompt_with_sonnet_model"
-    )
-    if haiku_prompt is None and opus_prompt is None:
+    three_way_dir = processed_dir / "comparisons"
+    if not three_way_dir.is_dir():
         return None
-    if haiku_prompt is None:
-        return opus_prompt[0]
-    if opus_prompt is None:
-        return haiku_prompt[0]
-    # Both present — pick the newer source artifact by mtime.
-    return haiku_prompt[0] if haiku_prompt[1] >= opus_prompt[1] else opus_prompt[0]
+    candidates: list[tuple[float, str, str, Path, Dict[str, Any]]] = []
+    for p in three_way_dir.glob("three_way_*.json"):
+        try:
+            doc = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if doc.get("comparison_mode") != "three_way":
+            continue
+        compared_at = str(doc.get("compared_at") or "")
+        candidates.append(
+            (p.stat().st_mtime, compared_at, p.name, p, doc)
+        )
+    if not candidates:
+        return None
+    candidates.sort(key=lambda t: (t[0], t[1], t[2]), reverse=True)
+    for _mtime, _ca, _name, _path, doc in candidates:
+        f1 = (doc.get("sonnet_summary") or {}).get("haiku_f1_vs_opus")
+        if isinstance(f1, (int, float)):
+            return float(f1)
+    return None
 
 
 def _processed_root(lake_root: Path) -> Path:
