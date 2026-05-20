@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/transcript_quality_report.schema.json",
+  "title": "transcript_quality_report",
+  "description": "Phase 2R diagnostic artifact: the result of running the transcript-quality validator on a single transcript. Lifecycle mirrors `debug__<run_id>.json` and `grounding_rejection_report`: written under `processed/meetings/<source_id>/diagnostics/`, never promoted, never indexed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "transcript_path",
+    "source_id",
+    "transcript_byte_length",
+    "detected_format",
+    "detected_turn_count",
+    "detected_word_count",
+    "checks",
+    "has_errors",
+    "has_warnings",
+    "generated_at"
+  ],
+  "properties": {
+    "artifact_type": { "const": "transcript_quality_report" },
+    "schema_version": { "const": "1.0.0" },
+    "transcript_path": { "type": ["string", "null"] },
+    "source_id": { "type": ["string", "null"] },
+    "transcript_byte_length": { "type": "integer", "minimum": 0 },
+    "detected_format": {
+      "type": "string",
+      "enum": ["speaker_colon", "speaker_dash", "unknown"]
+    },
+    "detected_turn_count": { "type": "integer", "minimum": 0 },
+    "detected_word_count": { "type": "integer", "minimum": 0 },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "check_name",
+          "severity",
+          "passed",
+          "reason_code",
+          "detail"
+        ],
+        "properties": {
+          "check_name": { "type": "string", "minLength": 1 },
+          "severity": {
+            "type": "string",
+            "enum": ["error", "warning", "info"]
+          },
+          "passed": { "type": "boolean" },
+          "reason_code": { "type": ["string", "null"] },
+          "detail": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "has_errors": { "type": "boolean" },
+    "has_warnings": { "type": "boolean" },
+    "generated_at": { "type": "string", "minLength": 1 }
+  }
+}

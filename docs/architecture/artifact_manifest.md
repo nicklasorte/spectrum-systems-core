@@ -1235,6 +1235,22 @@ debug or runtime state and live under `data-lake/` only when
 - Git-tracked: NO — diagnostic state under `processed/`, covered by
   the `**/processed/**` ignore.
 
+### transcript_quality_report (Phase 2R, diagnostic)
+- Path: `data-lake/store/processed/meetings/<source_id>/diagnostics/transcript_quality_report__<timestamp>.json`
+- Writer: `src/spectrum_systems_core/transcript_quality/cli_integration.py`
+  (`spectrum-core check-transcript` in `--source-id` mode and the
+  extraction CLI's `--enable-pre-flight-check` hook). In `--transcript-path`
+  mode the report is printed to stdout and NOT written to the lake.
+- Schema: `src/spectrum_systems_core/schemas/transcript_quality_report.schema.json`
+- Lifecycle: NOT a product artifact. Never promoted. Never indexed in
+  `artifact_index.jsonl`. Same lifecycle as `grounding_rejection_report`:
+  the run produced it to explain itself; nothing downstream reads it
+  in this PR. A future PR (Phase 2Q follow-up) will surface its
+  presence in `spectrum-core status`.
+- Reader: none in this PR (diagnostic-only).
+- Git-tracked: NO — diagnostic state under `processed/`, covered by
+  the `**/processed/**` ignore.
+
 ## Gitignore Audit Rule
 
 Every path listed above as **Git-tracked: YES** must satisfy:
