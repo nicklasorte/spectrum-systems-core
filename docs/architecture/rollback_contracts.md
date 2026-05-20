@@ -609,7 +609,7 @@ enforces this against the PR diff.
 
 ---
 
-## Phase 4a — Opus baseline prompt + baseline-opus CLI (PR #TBD)
+## Phase 4a — Opus baseline prompt + baseline-opus CLI (PR #199)
 
 ### What this change adds
 
