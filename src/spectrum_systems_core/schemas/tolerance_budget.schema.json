@@ -11,14 +11,15 @@
     "min_promotion_buffer",
     "max_promotion_buffer",
     "current_promotion_buffer",
-    "global_median_budget"
+    "global_median_budget",
+    "bootstrap_variance"
   ],
   "properties": {
     "artifact_type": { "const": "tolerance_budget" },
     "schema_version": {
       "type": "string",
-      "enum": ["1.0.0", "1.1.0"],
-      "description": "1.0.0 = Phase 2 (carried `per_source_budgets` inline). 1.1.0 = Phase 3 (per-source state moved to the data lake; the property is removed from this schema). Both versions remain accepted so a checkout that lags the file edit still validates."
+      "enum": ["1.0.0", "1.1.0", "1.2.0"],
+      "description": "1.0.0 = Phase 2 (carried `per_source_budgets` inline). 1.1.0 = Phase 3 (per-source state moved to the data lake; the property is removed from this schema). 1.2.0 = Phase 4 (adds `bootstrap_variance`, the third-tier fallback used when no source in the lake yet has enough runs to compute either a per-source or a global-median budget). All three versions remain accepted so a checkout that lags the file edit still validates."
     },
     "min_promotion_buffer": {
       "type": "number",
@@ -40,7 +41,13 @@
       "type": "number",
       "minimum": 0.0,
       "maximum": 1.0,
-      "description": "Fallback variance budget when fewer than 3 non-legacy runs have been observed for a source (read from the per-source state artifact in the data lake)."
+      "description": "Fallback variance budget when fewer than 3 non-legacy runs have been observed for a source (read from the per-source state artifact in the data lake). Used when AT LEAST ONE source in the lake has accumulated >= 3 runs."
+    },
+    "bootstrap_variance": {
+      "type": "number",
+      "minimum": 0.02,
+      "maximum": 0.15,
+      "description": "Phase 4: third-tier fallback used by `calibration.budget.get_variance_budget` when NO source in the lake yet has enough runs to compute either a per-source or a global-median budget. Bounded [0.02, 0.15] at the schema layer so a typo cannot widen the threshold beyond the contracted range. Removed on rollback (see docs/architecture/rollback_contracts.md Phase 4 entry)."
     }
   }
 }

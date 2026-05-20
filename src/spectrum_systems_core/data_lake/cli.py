@@ -817,6 +817,110 @@ def _build_parser() -> argparse.ArgumentParser:
         "the search halts cleanly at pre-flight with "
         "no_trace_data_available (iterations_completed: 0).",
     )
+
+    # Phase 4 — corpus ingest.
+    icp = sub.add_parser(
+        "ingest-corpus",
+        help="Phase 4: ingest one or more transcripts from the corpus.",
+        description=(
+            "Read the corpus manifest at data/corpus/manifest.json, run "
+            "the transcript-quality pre-flight (always on — never "
+            "flag-controlled) against the selected source(s), and write "
+            "source_record.json per the per-PR-#188 contract. The "
+            "manifest is updated atomically with the new observed "
+            "fields and a refreshed manifest_hash. Provide exactly one "
+            "of --source-id (one or more) or --all."
+        ),
+    )
+    icp.add_argument(
+        "--lake",
+        required=True,
+        help="Path to the data lake root.",
+    )
+    icp.add_argument(
+        "--source-id",
+        action="append",
+        dest="source_ids",
+        default=None,
+        help="One source_id to ingest. Repeatable. Mutually exclusive "
+        "with --all.",
+    )
+    icp.add_argument(
+        "--all",
+        action="store_true",
+        dest="ingest_all",
+        help="Ingest every source in the manifest. Mutually exclusive "
+        "with --source-id.",
+    )
+    icp.add_argument(
+        "--force-ingest",
+        action="store_true",
+        help="Bypass pre-flight errors. Requires --force-reason of "
+        "length >= 20 characters. The bypass is recorded in the "
+        "source_record's payload (ingestion_forced=true, force_reason).",
+    )
+    icp.add_argument(
+        "--force-reason",
+        type=str,
+        default=None,
+        help="Operator-supplied justification for --force-ingest. Must "
+        "be at least 20 characters of text.",
+    )
+    icp.add_argument(
+        "--manifest",
+        type=str,
+        default=None,
+        help="Override path to the corpus manifest (defaults to "
+        "data/corpus/manifest.json relative to the repo root).",
+    )
+    icp.add_argument(
+        "--json",
+        action="store_true",
+        dest="emit_json",
+        help="Emit the per-source summary as JSON on stdout instead of "
+        "the human-readable table.",
+    )
+
+    # Phase 4 — status rollup. Provides the --corpus mode this PR
+    # introduces. Adding the `status` subcommand here (not in a prior
+    # PR) means there is no pre-existing implementation to extend; the
+    # status_report enum is therefore additive against ITS OWN
+    # initial schema. The PR description documents this.
+    st = sub.add_parser(
+        "status",
+        help="Phase 4: report ingest / baseline / comparison state across the corpus.",
+        description=(
+            "Walk the corpus manifest and the data lake, and emit one "
+            "status_report row per source plus a row for any "
+            "data-lake source that is not declared in the manifest "
+            "(`orphaned_in_lake`). The output is informational; no "
+            "state is written, no gate is changed."
+        ),
+    )
+    st.add_argument(
+        "--lake",
+        required=True,
+        help="Path to the data lake root.",
+    )
+    st.add_argument(
+        "--corpus",
+        action="store_true",
+        dest="corpus_mode",
+        help="Required for Phase 4: emit the cross-source rollup.",
+    )
+    st.add_argument(
+        "--manifest",
+        type=str,
+        default=None,
+        help="Override path to the corpus manifest.",
+    )
+    st.add_argument(
+        "--json",
+        action="store_true",
+        dest="emit_json",
+        help="Emit the rollup as a JSON status_report on stdout.",
+    )
+
     return parser
 
 
@@ -935,8 +1039,133 @@ def main(argv: Sequence[str] | None = None) -> int:
             stream=sys.stdout,
         )
 
+    if args.command == "ingest-corpus":
+        return _run_ingest_corpus_cli(args, stream=sys.stdout)
+
+    if args.command == "status":
+        return _run_status_cli(args, stream=sys.stdout)
+
     parser.error(f"unknown command: {args.command}")
     return 2
+
+
+def _run_ingest_corpus_cli(args, *, stream) -> int:
+    """Dispatch ``spectrum-core ingest-corpus``.
+
+    Validates the mutual-exclusion of selection flags before any
+    manifest read, then hands off to ``corpus.ingest.run_ingest``.
+    Manifest / force-reason errors are surfaced as exit 2; pre-flight
+    quarantine on any source is exit 1; otherwise exit 0.
+    """
+    import json as _json
+
+    from ..corpus.ingest import format_summary_table, run_ingest
+    from ..corpus.manifest_loader import CorpusManifestError
+
+    # Selection mutex.
+    if args.ingest_all and args.source_ids:
+        stream.write(
+            "ERROR: --all and --source-id are mutually exclusive.\n"
+        )
+        return 2
+    if not args.ingest_all and not args.source_ids:
+        stream.write(
+            "ERROR: provide exactly one of --source-id (repeatable) "
+            "or --all.\n"
+        )
+        return 2
+
+    # Force mutex.
+    if args.force_ingest and not args.force_reason:
+        stream.write(
+            "ERROR: --force-ingest requires --force-reason.\n"
+        )
+        return 2
+    if args.force_reason and not args.force_ingest:
+        stream.write(
+            "ERROR: --force-reason is only valid with --force-ingest.\n"
+        )
+        return 2
+
+    try:
+        summary = run_ingest(
+            lake_root=args.lake,
+            manifest_path=args.manifest,
+            source_ids=args.source_ids,
+            all_sources=bool(args.ingest_all),
+            forced=bool(args.force_ingest),
+            force_reason=args.force_reason,
+        )
+    except CorpusManifestError as exc:
+        stream.write(f"ERROR: {exc.reason_code}: {exc}\n")
+        return 2
+
+    if args.emit_json:
+        stream.write(
+            _json.dumps(summary.to_dict(), indent=2, sort_keys=True) + "\n"
+        )
+    else:
+        stream.write(format_summary_table(summary))
+
+    has_quarantine = any(o.status == "quarantined" for o in summary.outcomes)
+    return 1 if has_quarantine else 0
+
+
+def _run_status_cli(args, *, stream) -> int:
+    """Dispatch ``spectrum-core status --corpus``.
+
+    Only the corpus mode is supported in Phase 4. A future PR may add
+    a per-source mode; until then the absence of --corpus exits with
+    a clear error.
+    """
+    import json as _json
+
+    from ..corpus.manifest_loader import CorpusManifestError
+    from ..corpus.status import build_corpus_status_report
+
+    if not args.corpus_mode:
+        stream.write(
+            "ERROR: --corpus is required (Phase 4 status CLI only "
+            "supports the corpus rollup mode).\n"
+        )
+        return 2
+
+    try:
+        report = build_corpus_status_report(
+            lake_root=args.lake,
+            manifest_path=args.manifest,
+        )
+    except CorpusManifestError as exc:
+        stream.write(f"ERROR: {exc.reason_code}: {exc}\n")
+        return 2
+
+    if args.emit_json:
+        stream.write(_json.dumps(report, indent=2, sort_keys=True) + "\n")
+    else:
+        stream.write(_format_status_table(report))
+    return 0
+
+
+def _format_status_table(report) -> str:
+    lines = [
+        f"manifest_hash: {report.get('manifest_hash') or '(unknown)'}",
+        "",
+        "source_id".ljust(50)
+        + " | "
+        + "state".ljust(22)
+        + " | "
+        + "recommendation",
+        "-" * 110,
+    ]
+    for row in report.get("rows", []):
+        lines.append(
+            str(row.get("source_id", "")).ljust(50)
+            + " | "
+            + str(row.get("state", "")).ljust(22)
+            + " | "
+            + str(row.get("recommendation", ""))
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _harness_search_preflight(

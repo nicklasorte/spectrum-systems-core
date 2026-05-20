@@ -479,7 +479,139 @@ outcomes are acceptable findings — the measurement is the point.
 
 ---
 
-## Phase 3P — few-shot examples + negative patterns (PR #XXX)
+---
+
+## Phase 4 — corpus ingestion + status corpus mode (PR #197)
+
+### What this change adds
+
+- `data/corpus/manifest.json` — single source of truth for the 13
+  transcripts in the corpus.
+- `src/spectrum_systems_core/schemas/corpus_manifest.schema.json` —
+  schema for the manifest (`additionalProperties: false`,
+  enum-restricted `meeting_type` and `ingestion_status`).
+- `src/spectrum_systems_core/corpus/manifest_loader.py` — loader
+  with hash verification + custom uniqueness / supersedes checks.
+- `src/spectrum_systems_core/corpus/ingest.py` — implementation of
+  the `ingest-corpus` CLI.
+- `src/spectrum_systems_core/corpus/status.py` — implementation of
+  the `status --corpus` CLI rollup.
+- `src/spectrum_systems_core/schemas/status_report.schema.json` —
+  schema for the rollup. The `state` and `recommendation` enums are
+  introduced fresh; subsequent PRs may extend additively without
+  redefining existing values.
+- Two new subcommands on `spectrum-core` (`ingest-corpus` and
+  `status --corpus`).
+- `docs/contracts/tolerance_budget.json` and
+  `src/spectrum_systems_core/schemas/tolerance_budget.schema.json`
+  bump from `1.1.0` to `1.2.0`, adding the required `bootstrap_variance`
+  field bounded `[0.02, 0.15]`.
+- `src/spectrum_systems_core/calibration/budget.py`
+  `get_variance_budget` and `get_promotion_threshold` add the third
+  fallback tier (`bootstrap_variance`) used when no source in the
+  lake yet has accumulated `runs_observed >= 3`.
+- `data/cost_constants.json` and
+  `src/spectrum_systems_core/schemas/cost_constants.schema.json` —
+  per-model API pricing placeholders pending operator verification.
+- `src/spectrum_systems_core/cost/estimator.py` — pure cost estimator
+  used by `baseline-opus --all --confirm-cost` (the baseline-opus
+  CLI itself is deferred — see "Opus prompt status" below).
+
+### Opus prompt status
+
+Step 4.4 (`baseline-opus` subcommand) is DEFERRED in this PR. The
+canonical Opus baseline prompt was not found at the expected path
+`src/spectrum_systems_core/workflows/prompts/meeting_minutes_opus.md`
+when Phase 4 ran its first task. A follow-up Phase 4a PR must create
+the prompt and regenerate the Dec 18 baseline before the
+`baseline-opus` CLI can be wired up. Phase 4b will then implement
+Step 4.4 and expand the rollback contract to cover it.
+
+The cost estimator and the `status --corpus` recommendation
+`run_baseline_opus` ship in this PR because they are not coupled to
+the Opus prompt file's existence.
+
+### To roll back
+
+1. Revert the PR. The two new CLI subcommands disappear; the
+   corpus manifest, schema, and loader disappear with them.
+2. `data/corpus/manifest.json` is removed from the repo. Existing
+   data-lake artifacts produced by the Phase 4 ingest CLI
+   (`source_record.json`, `transcript_quality_report__*.json`)
+   remain on disk under
+   `processed/meetings/<source_id>/` because the data lake is
+   append-only — they are simply no longer rewritten by an
+   `ingest-corpus` invocation.
+3. The `status_report` schema and the `status --corpus` mode
+   disappear together. A future PR that wants to bring the rollup
+   back must redeclare both — the enum values introduced here
+   (`pending`, `validated`, `under_review`, `quarantined`,
+   `baseline_complete`, `comparison_complete`, `superseded`,
+   `orphaned_in_lake` for `state`; `run_ingest_corpus`,
+   `force_review_quarantined`, `investigate_orphan_in_lake`,
+   `run_baseline_opus`, `run_comparison`, `none` for
+   `recommendation`) are part of the rollback's contract surface.
+4. The `bootstrap_variance` field is removed from the contracts
+   file; the schema reverts to `1.1.0` and stops requiring it.
+   `calibration.budget.get_variance_budget` reverts to its
+   Phase-3 two-tier fallback (per-source -> global_median).
+5. `data/cost_constants.json`, the cost schema, and the cost
+   estimator module disappear.
+6. The `corpus_manifest` and `cost_constants` schema files
+   disappear; any tooling that imported them must drop the import.
+
+### Data migration required for rollback
+
+None. The data lake is append-only; existing source_records and
+diagnostic reports remain readable. Future runs simply stop touching
+them.
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/corpus/ tests/cost/ tests/calibration/test_bootstrap_variance.py
+python scripts/verify_rollback_contracts.py --pr TBD
+```
+
+After revert, the test files under `tests/corpus/`, `tests/cost/`,
+and `tests/calibration/test_bootstrap_variance.py` are expected to
+disappear. If they remain and fail, the revert is incomplete — fix
+forward.
+
+### Cross-PR dependency
+
+`depends_on`: #193 (eval-path alignment — provides the
+`extraction_config` block the future baseline-opus path consumes),
+#195 (transcript-quality validator — the pre-flight gate the ingest
+CLI invokes), #196 (glossary production wiring — the prior PR's
+recommendation about a future status-CLI extension is honoured by
+this PR's additive enum, not by editing PR #196's surface).
+
+`future_dependency`: a follow-up PR (Phase 4a / 4b) will create the
+Opus baseline prompt and add the `baseline-opus` CLI subcommand
+gated behind `--confirm-cost`. Until then, the cost estimator and
+the `run_baseline_opus` recommendation are present but no command
+consumes them.
+
+### Constraint compliance
+
+This PR makes NO modifications to:
+- `src/spectrum_systems_core/pipeline/governed_run.py` (Phase 2/3)
+- `src/spectrum_systems_core/schemas/meeting_minutes.schema.json` (Phase 2)
+- `scripts/compare_opus_haiku.py` (Phase 2)
+- `scripts/correction_miner.py` (Phase 2)
+- `src/spectrum_systems_core/grounding/` (Phase 1)
+- `src/spectrum_systems_core/glossary/` (Phase 2P)
+- `src/spectrum_systems_core/transcript_quality/` (Phase 2R; allowed:
+  the ingest CLI imports `validate` and calls it, but does not
+  modify the module).
+
+The compliance check `tests/corpus/test_constraint_compliance.py`
+enforces this against the PR diff.
+
+---
+
+## Phase 3P — few-shot examples + negative patterns (PR #198)
 
 ### What this change adds
 

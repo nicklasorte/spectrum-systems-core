@@ -46,6 +46,13 @@ DEFAULT_BUDGET_PATH: Path = _REPO_ROOT / "docs" / "contracts" / "tolerance_budge
 DEFAULT_MIN_PROMOTION_BUFFER: float = 0.02
 DEFAULT_MAX_PROMOTION_BUFFER: float = 0.10
 DEFAULT_GLOBAL_MEDIAN_BUDGET: float = 0.025
+# Phase 4: third-tier fallback used when no source in the lake yet has
+# accumulated >= 3 runs (i.e. global_median has no signal either). The
+# schema bound on ``bootstrap_variance`` is [0.02, 0.15]; this default
+# is what the contracts file ships with. The reader pulls the value
+# from the file at run time so changing the bootstrap value is a
+# contract edit, not a code edit.
+DEFAULT_BOOTSTRAP_VARIANCE: float = 0.05
 
 # Per-source variance budget kicks in only when there is enough signal.
 PER_SOURCE_RUN_THRESHOLD: int = 3
@@ -177,21 +184,66 @@ def _read_per_source_state(
     return data if isinstance(data, dict) else None
 
 
+def _any_source_has_enough_runs(
+    data_lake_path: Path | str | None,
+) -> bool:
+    """True iff at least one source on disk has runs_observed >= 3.
+
+    Used by :func:`get_variance_budget` to decide whether the global
+    median (tier 2) carries enough signal to be trusted, or whether
+    the function should fall through to the bootstrap variance
+    (tier 3). When the data lake is unavailable we return False so
+    the caller falls through to bootstrap — the safer default for a
+    cold-start corpus.
+    """
+    if data_lake_path is None:
+        return False
+    root = Path(data_lake_path) / "store" / "processed" / "meetings"
+    if not root.is_dir():
+        return False
+    for source_dir in root.iterdir():
+        if not source_dir.is_dir():
+            continue
+        diag = source_dir / "diagnostics"
+        if not diag.is_dir():
+            continue
+        for state_path in diag.glob("tolerance_budget_state__*.json"):
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if int(state.get("runs_observed", 0)) >= PER_SOURCE_RUN_THRESHOLD:
+                return True
+    return False
+
+
 def get_variance_budget(
     source_id: str,
     *,
     budget_path: Path | str | None = None,
     data_lake_path: Path | str | None = None,
 ) -> float:
-    """Per-source budget if runs_observed >= 3 else global_median_budget.
+    """Per-source budget if runs_observed >= 3, else global_median_budget,
+    else bootstrap_variance (the Phase 4 third tier).
 
-    The per-source value is read from the data-lake state artifact at
-    ``processed/meetings/<source_id>/diagnostics/tolerance_budget_state__<source_id>.json``;
-    when the artifact does not exist (first boot, unseeded source) or
-    fails validation, the fallback is the contracts file's
-    ``global_median_budget``. Callers in production pass
-    ``data_lake_path``; legacy callers that do not (the calibration
-    test fixtures, mostly) get the fallback automatically.
+    Tier 1 — per-source: ``processed/meetings/<source_id>/diagnostics/
+    tolerance_budget_state__<source_id>.json`` exists and reports
+    ``runs_observed >= 3``. Return its ``f1_variance_budget``.
+
+    Tier 2 — global median: at least one source in the lake has
+    ``runs_observed >= 3`` (i.e. there is signal SOMEWHERE in the
+    corpus). Return the contracts file's ``global_median_budget``.
+
+    Tier 3 — bootstrap (Phase 4 addition): no source has yet reached
+    the per-source threshold. Return the contracts file's
+    ``bootstrap_variance``. This avoids the previous silent behaviour
+    where a cold-start corpus would use ``global_median_budget``
+    even though no source had contributed to that median.
+
+    Callers in production pass ``data_lake_path``; legacy callers
+    that do not (some calibration test fixtures) get tier 3
+    (bootstrap) automatically because tier 1 and tier 2 both depend
+    on lake artifacts.
     """
     budget = load_budget(budget_path)
     state = _read_per_source_state(source_id, data_lake_path)
@@ -201,7 +253,13 @@ def get_variance_budget(
         and "f1_variance_budget" in state
     ):
         return float(state["f1_variance_budget"])
-    return float(budget.get("global_median_budget", DEFAULT_GLOBAL_MEDIAN_BUDGET))
+    if _any_source_has_enough_runs(data_lake_path):
+        return float(
+            budget.get("global_median_budget", DEFAULT_GLOBAL_MEDIAN_BUDGET)
+        )
+    return float(
+        budget.get("bootstrap_variance", DEFAULT_BOOTSTRAP_VARIANCE)
+    )
 
 
 def get_promotion_threshold(
@@ -227,8 +285,14 @@ def get_promotion_threshold(
         and "f1_variance_budget" in state
     ):
         variance = float(state["f1_variance_budget"])
+    elif _any_source_has_enough_runs(data_lake_path):
+        variance = float(
+            budget.get("global_median_budget", DEFAULT_GLOBAL_MEDIAN_BUDGET)
+        )
     else:
-        variance = float(budget.get("global_median_budget", DEFAULT_GLOBAL_MEDIAN_BUDGET))
+        variance = float(
+            budget.get("bootstrap_variance", DEFAULT_BOOTSTRAP_VARIANCE)
+        )
     buffer = float(budget.get("current_promotion_buffer", DEFAULT_MIN_PROMOTION_BUFFER))
     return float(baseline_f1) + variance + buffer
 
@@ -450,6 +514,7 @@ def update_per_source_state(
 __all__ = [
     "BudgetValidationError",
     "CalibrationMode",
+    "DEFAULT_BOOTSTRAP_VARIANCE",
     "DEFAULT_BUDGET_PATH",
     "DEFAULT_GLOBAL_MEDIAN_BUDGET",
     "DEFAULT_MAX_PROMOTION_BUFFER",
