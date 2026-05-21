@@ -61,6 +61,10 @@ from ..evals import (
     run_source_turn_validity_eval_from_chunks,
     run_tlc_routed_eval,
 )
+# Private helper reused so the producer-side source_turn_validity
+# pre-check and the authoritative in-loop eval cannot drift on what
+# counts as a valid turn-id set. Sibling module inside the same package.
+from ..evals.source_turn_validity import _valid_turn_ids_from_chunks
 from ..validation import (
     ArtifactValidationError,
     SchemaNotFoundError,
@@ -450,6 +454,84 @@ _CORRECTION_HEADER = (
     "JSON only, no prose, no code fences. Do not repeat the error above "
     "and do not add keys the schema does not define.\n"
 )
+
+# Sibling correction block for source_turn_validity. Same retry budget
+# (one bounded attempt), same fail-closed contract: if the corrected
+# response still cites a fabricated turn_id, the in-loop
+# source_turn_validity eval (authoritative) still blocks the run with
+# its own reason codes — this pre-check never weakens the gate, it only
+# gives the model a single concrete chance to self-correct an
+# intermittent turn-id hallucination on a 138-chunk full-transcript
+# run. Deterministic given (candidate, chunks) so stubbed tests stay
+# replay-stable.
+_SOURCE_TURN_CORRECTION_HEADER = (
+    "\n\n=== YOUR PREVIOUS RESPONSE WAS REJECTED — RETURN CORRECTED "
+    "STRICT JSON ONLY ===\n"
+    "The following source_turn_ids in your response do not exist in "
+    "this transcript chunk batch (valid turn IDs for this batch: "
+    "{valid_ids}):\n"
+    "{invalid_lines}\n"
+    "Please re-extract with only valid turn IDs from the list above. "
+    "Return the FULL corrected JSON object: every required key, STRICT "
+    "JSON only, no prose, no code fences.\n"
+)
+
+
+def _source_turn_correction_text(
+    candidate: dict, batch_chunks: list[dict] | None
+) -> str | None:
+    """Return a structured correction-prompt block when ``candidate``'s
+    grounding / items cite source_turn_ids missing from this batch's
+    chunk set; otherwise ``None``.
+
+    Mirrors the fail-closed contract of the in-loop
+    ``source_turn_validity`` eval, importing
+    :func:`_valid_turn_ids_from_chunks` directly so the producer-side
+    pre-check and the authoritative gate cannot drift on what counts as
+    a valid turn-id set. The retry only fires when there is a concrete
+    invalid id to feed back; on an absent / malformed chunk list this
+    returns ``None`` and the in-loop gate still fails the run closed
+    with the precise reason.
+    """
+    if not batch_chunks:
+        return None
+    valid_set, _err = _valid_turn_ids_from_chunks(batch_chunks)
+    if valid_set is None:
+        return None
+    invalid_lines: list[str] = []
+    for parent_key in ("grounding", "items"):
+        items = candidate.get(parent_key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            source_turns = item.get("source_turns")
+            if not isinstance(source_turns, list):
+                continue
+            bad = [
+                t for t in source_turns
+                if isinstance(t, str) and t not in valid_set
+            ]
+            if not bad:
+                continue
+            kind = item.get("kind") or parent_key
+            text = item.get("text")
+            if not isinstance(text, str):
+                text = ""
+            preview = text if len(text) <= 80 else text[:77] + "..."
+            for turn_id in bad:
+                invalid_lines.append(
+                    f"- item kind \"{kind}\", text \"{preview}\", "
+                    f"invalid turn_id: \"{turn_id}\""
+                )
+    if not invalid_lines:
+        return None
+    valid_ids = ", ".join(sorted(valid_set))
+    return _SOURCE_TURN_CORRECTION_HEADER.format(
+        valid_ids=valid_ids,
+        invalid_lines="\n".join(invalid_lines),
+    )
 
 
 def _schema_reject_reason(payload: dict) -> str | None:
@@ -1026,25 +1108,40 @@ def _make_extract(
         return payload
 
     def _run_batch(
-        *, system: str, base_user: str, title: str, grounded: bool
+        *,
+        system: str,
+        base_user: str,
+        title: str,
+        grounded: bool,
+        batch_chunks: list[dict] | None = None,
     ) -> tuple[dict, bool]:
         """One model call (plus the bounded corrective retry) for a
         single batch's user message.
 
         Returns ``(candidate, ok)``. ``ok`` is ``True`` only when the
-        response parsed AND passed the producer-side schema pre-check
-        for this batch; ``candidate`` is then the schema-valid parsed
-        payload whose arrays the caller aggregates. ``ok`` is ``False``
-        on a transport failure (no retry — unchanged) or an exhausted,
-        still-malformed response; ``candidate`` is then the diagnostic
-        base / last payload (carrying ``_llm_error`` / ``_llm_raw``)
-        that the caller returns AS-IS so the governed loop's unchanged
+        response parsed AND passed BOTH producer-side pre-checks for
+        this batch (strict schema + source_turn_validity);
+        ``candidate`` is then the parsed payload whose arrays the
+        caller aggregates. ``ok`` is ``False`` on a transport failure
+        (no retry — unchanged) or an exhausted, still-malformed
+        response; ``candidate`` is then the diagnostic base / last
+        payload (carrying ``_llm_error`` / ``_llm_raw``) that the
+        caller returns AS-IS so the governed loop's unchanged
         fail-closed evals block the whole run with the cause visible.
 
-        The loop body is byte-identical to the pre-batching single-call
-        logic — only the early returns now carry an explicit ``ok``
-        flag so the caller can distinguish "mergeable" from "fail the
-        whole run".
+        ``batch_chunks`` (grounded path only) is the chunk list shown
+        in this batch's user message. It is used solely by the
+        producer-side ``source_turn_validity`` pre-check: when the
+        model cites a turn_id missing from this set the precise invalid
+        ids + the valid set are fed back to the model for ONE bounded
+        retry. The check fires only on the grounded path; the
+        ungrounded path passes ``None`` and behaviour is unchanged.
+
+        The retry budget is the SAME ``_MAX_LLM_ATTEMPTS`` already used
+        by the schema-reject retry — schema and source_turn issues
+        share one bounded budget so a persistently-bad model cannot
+        loop. If both attempts still fail, the in-loop eval
+        (authoritative) blocks the run with the same reason codes.
         """
         candidate = _base_payload(title, grounded)
         user = base_user
@@ -1061,12 +1158,15 @@ def _make_extract(
                 return p, False
 
             parsed = _parse_llm_payload(raw)
+            correction_text: str | None = None
             if parsed is None:
                 # Non-object / missing-array: arrays deliberately absent
                 # so the strict-schema eval fails closed if not corrected.
                 candidate = _base_payload(title, grounded)
                 candidate["_llm_raw"] = (raw or "")[:500]
-                reason = _PARSE_FAIL_REASON
+                correction_text = _CORRECTION_HEADER.format(
+                    reason=_PARSE_FAIL_REASON
+                )
             else:
                 if not grounded:
                     # Ungrounded (1.0.0) path: drop grounding so the
@@ -1083,17 +1183,33 @@ def _make_extract(
                 )
                 candidate = _base_payload(title, grounded)
                 candidate.update(parsed)
-                reason = _schema_reject_reason(candidate)
-                if reason is None:
-                    # Schema-valid on this attempt — done. No extra keys
-                    # added, so a first-attempt success is byte-identical
-                    # to the pre-retry behaviour (same content_hash).
-                    return candidate, True
+                schema_reason = _schema_reject_reason(candidate)
+                if schema_reason is None:
+                    # Schema clean. On the grounded path, additionally
+                    # check source_turn_validity: a candidate that cites
+                    # a turn_id missing from this batch's chunks gets
+                    # one bounded retry with the precise invalid ids
+                    # fed back. Ungrounded path has no grounding array
+                    # to check, so this is a no-op there and the path
+                    # is byte-identical to the pre-retry behaviour.
+                    stv_correction = (
+                        _source_turn_correction_text(candidate, batch_chunks)
+                        if grounded
+                        else None
+                    )
+                    if stv_correction is None:
+                        return candidate, True
+                    correction_text = stv_correction
+                else:
+                    correction_text = _CORRECTION_HEADER.format(
+                        reason=schema_reason
+                    )
 
-            # Malformed. Re-ask once with the precise reason fed back,
-            # only while attempts remain (bounded by _MAX_LLM_ATTEMPTS).
+            # Malformed (schema OR source_turn_validity). Re-ask once
+            # with the precise reason fed back, only while attempts
+            # remain (bounded by _MAX_LLM_ATTEMPTS).
             if attempt + 1 < _MAX_LLM_ATTEMPTS:
-                user = base_user + _CORRECTION_HEADER.format(reason=reason)
+                user = base_user + correction_text
 
         # Retry budget exhausted and still malformed: return the last
         # candidate UNCHANGED. Promotion is decided solely by the
@@ -1132,6 +1248,7 @@ def _make_extract(
                 base_user=base_user,
                 title=title,
                 grounded=grounded,
+                batch_chunks=chunks if grounded else None,
             )
             return candidate
 
@@ -1165,6 +1282,7 @@ def _make_extract(
                 base_user=base_user,
                 title=title,
                 grounded=True,
+                batch_chunks=batch,
             )
             if not ok:
                 # Fail closed for the WHOLE run, exactly as the
