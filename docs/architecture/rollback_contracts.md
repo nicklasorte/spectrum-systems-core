@@ -1192,6 +1192,114 @@ the PR diff.
 
 ---
 
+## Stage 2 — per-type source_quote minimum length threshold (opt-in) (PR #214)
+
+This PR adds an opt-in precision-improving threshold to the grounding
+gate. A verbatim item whose normalized `source_quote` is shorter than
+the per-type minimum is rejected with a new reason code. The threshold
+is OFF by default — every existing caller (production promoter,
+comparison engine, tests) is byte-identical to pre-Stage-2 behaviour
+until it explicitly passes the threshold mapping.
+
+### What this change adds
+
+- New module-level constants in
+  `src/spectrum_systems_core/promotion/gate.py`:
+  - `MIN_QUOTE_CHARS_SUBSTANTIVE = 30` (substantive verbatim types:
+    `decisions`, `action_items`, `commitments`, `claims`, `risks`,
+    `position_statement`, `dissent_or_objection`, `procedural_ruling`,
+    `precedent_reference`, `external_stakeholder_input`,
+    `issue_registry_entry`).
+  - `MIN_QUOTE_CHARS_SHORT = 10` (short verbatim types:
+    `regulatory_references`, `technical_parameters`,
+    `sentiment_indicators`, `glossary_definition`).
+  - `DEFAULT_MIN_QUOTE_CHARS_BY_TYPE: dict[str, int]` — the table the
+    Stage 2 roadmap recommends. Every entry in `VERBATIM_TYPES` MUST
+    appear here (`test_default_min_quote_chars_table_covers_all_verbatim_types`
+    pins this invariant). Every value MUST be one of the two tier
+    constants (`test_default_min_quote_chars_values_are_substantive_or_short_tier`).
+- New optional keyword argument `min_quote_chars_by_type` on
+  `verify_grounding` and `grounding_gated_payload`. When supplied, a
+  verbatim item whose normalized `source_quote` is shorter than the
+  per-type minimum is rejected with reason code
+  `grounding_source_quote_too_short`. When `None` (default), the
+  threshold check is skipped entirely.
+- New reason code `grounding_source_quote_too_short` emitted by the
+  gate. The detail string carries the actual length, the expected
+  minimum, and the item-type so a reviewer can explain the rejection
+  without reading the gate code.
+- Ten new unit tests in `tests/promotion/test_grounding_gate.py`
+  pinning: table coverage, table tier values, default-off baseline
+  preservation, substantive under/at threshold, short under/at
+  threshold, unknown-type-not-checked, too-short precedence over
+  byte-match, and whole-artifact block when threshold drops rate
+  below `GROUNDING_RATE_FLOOR`.
+
+### To roll back
+
+1. Revert this PR. The new constants
+   (`MIN_QUOTE_CHARS_SUBSTANTIVE`, `MIN_QUOTE_CHARS_SHORT`,
+   `DEFAULT_MIN_QUOTE_CHARS_BY_TYPE`) and the
+   `min_quote_chars_by_type` kwarg disappear from `gate.py` and
+   `promoter.py`.
+2. The reason code `grounding_source_quote_too_short` is no longer
+   emitted. Existing `grounding_rejection_report` artifacts on disk
+   that carry this reason code remain readable; downstream consumers
+   that branch on the reason code default to a generic
+   "grounding" interpretation (the comparison engine reads only the
+   `artifact_blocked` flag and the per-item count, not the reason
+   strings).
+3. No data migration required. The threshold was never on in
+   production (the default was `None`), so no promoted artifact's
+   acceptance decision changes on rollback. Any local experiment that
+   set the threshold ON locally simply stops applying it — re-running
+   the same input through the rolled-back gate accepts every item that
+   had been rejected for being too short.
+
+### Data migration required for rollback
+
+None. The threshold is opt-in: pre-Stage-2 callers do not pass
+`min_quote_chars_by_type` and the gate path is byte-identical. No
+promoted artifact, no `grounding_rejection_report`, and no
+`comparison_result` field changes on rollback.
+
+### Verification that the rollback is clean
+
+```bash
+# All ten new threshold tests are expected to disappear with the revert.
+pytest tests/promotion/test_grounding_gate.py -q
+# Existing gate behaviour must remain green:
+pytest tests/promotion/ tests/grounding/ tests/comparison/ -q
+```
+
+`verification_command`: `pytest tests/promotion/ tests/grounding/ tests/comparison/`
+
+### Cross-PR dependency
+
+`depends_on`: #192 (Phase 1 verbatim grounding gate — this PR extends
+the gate's existing reject-paths without altering their semantics).
+The threshold runs BEFORE the byte-match check; an item that fails the
+threshold is rejected as `grounding_source_quote_too_short` instead of
+falling through to the byte-match (the reason code surfaces the
+precision problem at its actual cause).
+
+`future_dependency`: a follow-up may flip the threshold to ON by
+default in `grounding_gated_payload` and/or `verify_grounding`, OR
+plumb a CLI flag through `spectrum-core meeting-minutes-llm` and
+`scripts/compare_opus_haiku.py` to opt in at run time. Either
+extension requires a fresh rollback contract entry because either
+would change F1 measurement against the existing data-lake baseline.
+
+### Operator action after merge
+
+None required. The threshold ships OFF; F1 measurement is unchanged.
+To experiment with the Stage 2 precision lever, a caller passes
+`min_quote_chars_by_type=DEFAULT_MIN_QUOTE_CHARS_BY_TYPE` to
+`verify_grounding` or `grounding_gated_payload` directly from a
+research script (no CLI surface is added by this PR).
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new

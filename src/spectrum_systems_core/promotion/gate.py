@@ -84,6 +84,67 @@ TURN_AGGREGATE_TYPES: frozenset[str] = frozenset(
 )
 
 
+# Stage 2 source-quote-grounding extension (opt-in).
+#
+# A precision-improving threshold: a verbatim item whose ``source_quote``
+# is shorter than the per-type minimum is rejected with
+# ``grounding_source_quote_too_short``. The threshold catches the foot-gun
+# where a model anchors a 100-word "decision" on a 3-character span like
+# "yes" or "decided" — the byte-match passes but the quote is not a real
+# verbatim span supporting the claim.
+#
+# Thresholds are tiered by item-type semantics:
+#
+# - SUBSTANTIVE (30 chars): the item carries a propositional claim and
+#   the supporting span MUST be long enough to actually contain the
+#   claim. A 30-char minimum is roughly a short subject + verb + object.
+# - SHORT (10 chars): the item is a short verbatim record (a parameter
+#   value, a regulatory citation, a glossary term). 10 chars is a lower
+#   bound that still rules out 1-3 char fragments.
+#
+# This threshold is OPT-IN: callers must pass ``min_quote_chars_by_type``
+# explicitly to :func:`verify_grounding`. The default behaviour is
+# byte-identical to pre-Stage-2 — no behaviour change for existing
+# 1.4.0 producers or the comparison engine until the operator opts in.
+MIN_QUOTE_CHARS_SUBSTANTIVE: int = 30
+"""Minimum source_quote length for substantive verbatim item types."""
+
+MIN_QUOTE_CHARS_SHORT: int = 10
+"""Minimum source_quote length for short verbatim item types."""
+
+DEFAULT_MIN_QUOTE_CHARS_BY_TYPE: dict[str, int] = {
+    # Substantive types: a claim, a commitment, an objection, a
+    # ruling — the supporting span must contain enough text to be the
+    # claim, not a token affirming it.
+    "decisions": MIN_QUOTE_CHARS_SUBSTANTIVE,
+    "action_items": MIN_QUOTE_CHARS_SUBSTANTIVE,
+    "commitments": MIN_QUOTE_CHARS_SUBSTANTIVE,
+    "claims": MIN_QUOTE_CHARS_SUBSTANTIVE,
+    "risks": MIN_QUOTE_CHARS_SUBSTANTIVE,
+    "position_statement": MIN_QUOTE_CHARS_SUBSTANTIVE,
+    "dissent_or_objection": MIN_QUOTE_CHARS_SUBSTANTIVE,
+    "procedural_ruling": MIN_QUOTE_CHARS_SUBSTANTIVE,
+    "precedent_reference": MIN_QUOTE_CHARS_SUBSTANTIVE,
+    "external_stakeholder_input": MIN_QUOTE_CHARS_SUBSTANTIVE,
+    "issue_registry_entry": MIN_QUOTE_CHARS_SUBSTANTIVE,
+    # Short types: a parameter value, a citation, a glossary term, a
+    # sentiment marker. Substantively shorter content; threshold still
+    # rules out 1-3 char fragments.
+    "regulatory_references": MIN_QUOTE_CHARS_SHORT,
+    "technical_parameters": MIN_QUOTE_CHARS_SHORT,
+    "sentiment_indicators": MIN_QUOTE_CHARS_SHORT,
+    "glossary_definition": MIN_QUOTE_CHARS_SHORT,
+}
+"""Per-type minimum source_quote length.
+
+Every entry in :data:`VERBATIM_TYPES` MUST appear here so a Stage 2
+caller can never silently bypass the gate by passing a type whose
+threshold defaults to zero. The
+:func:`test_default_min_quote_chars_table_covers_all_verbatim_types`
+test pins this invariant.
+"""
+
+
 @dataclass(frozen=True)
 class RejectionRecord:
     """One rejected item with its reason code and audit detail."""
@@ -177,8 +238,21 @@ def _verify_verbatim_item(
     item_type: str,
     item: Mapping[str, Any],
     nt: NormalizedTranscript,
+    *,
+    min_quote_chars: int | None = None,
 ) -> RejectionRecord | AcceptanceRecord:
-    """Verify one verbatim-mode item against the normalized transcript."""
+    """Verify one verbatim-mode item against the normalized transcript.
+
+    Args:
+        item_type: the payload key the item came from.
+        item: the per-item dict.
+        nt: the normalized transcript.
+        min_quote_chars: Stage 2 opt-in. When set, the normalized quote
+            must be at least this many characters or the item is
+            rejected with ``grounding_source_quote_too_short``. When
+            ``None`` (default) the threshold check is skipped — the
+            pre-Stage-2 behaviour is preserved byte-for-byte.
+    """
     if not isinstance(item, Mapping):
         return RejectionRecord(
             item_type=item_type,
@@ -230,6 +304,25 @@ def _verify_verbatim_item(
             item=item,
             reason_code="grounding_missing_field",
             detail="source_quote normalizes to an empty string",
+        )
+
+    # Stage 2 opt-in: per-type minimum-length threshold. Runs BEFORE the
+    # byte-match so a too-short quote is rejected as "too short" rather
+    # than as "exact_text_not_in_transcript" — the reason code surfaces
+    # the actual precision problem (model anchored on a token, not a
+    # span). The pre-Stage-2 path (``min_quote_chars is None``) skips
+    # this check entirely.
+    if min_quote_chars is not None and len(quote_norm) < min_quote_chars:
+        return RejectionRecord(
+            item_type=item_type,
+            item=item,
+            reason_code="grounding_source_quote_too_short",
+            detail=(
+                f"normalized source_quote is {len(quote_norm)} chars, "
+                f"below the per-type minimum of {min_quote_chars} for "
+                f"{item_type!r}"
+            ),
+            expected_quote_normalized=quote_norm,
         )
 
     # First check the byte-match at the declared offset.
@@ -337,6 +430,7 @@ def verify_grounding(
     *,
     transcript_turn_ids: Iterable[str] | None = None,
     normalized_transcript: NormalizedTranscript | None = None,
+    min_quote_chars_by_type: Mapping[str, int] | None = None,
 ) -> GroundingReport:
     """Verify every item in ``artifact.payload`` against the transcript.
 
@@ -353,6 +447,17 @@ def verify_grounding(
             be rejected with ``grounding_unknown_turn_id``.
         normalized_transcript: pre-computed normalization. Optional
             performance hint; the gate normalizes on demand if absent.
+        min_quote_chars_by_type: Stage 2 opt-in. When supplied, every
+            verbatim item whose normalized ``source_quote`` is shorter
+            than ``min_quote_chars_by_type[item_type]`` is rejected
+            with ``grounding_source_quote_too_short``. An item-type
+            absent from the mapping is NOT threshold-checked (a
+            missing entry is treated as "no threshold for this type").
+            When ``None`` (default), the threshold check is skipped
+            for every item — the pre-Stage-2 gate behaviour is
+            preserved byte-for-byte. Pass
+            :data:`DEFAULT_MIN_QUOTE_CHARS_BY_TYPE` to apply the
+            roadmap's recommended thresholds.
 
     Returns:
         A :class:`GroundingReport`.
@@ -411,7 +516,14 @@ def verify_grounding(
                     )
                 )
                 continue
-            result = _verify_verbatim_item(item_type, item, nt)
+            min_chars = (
+                min_quote_chars_by_type.get(item_type)
+                if min_quote_chars_by_type is not None
+                else None
+            )
+            result = _verify_verbatim_item(
+                item_type, item, nt, min_quote_chars=min_chars
+            )
             if isinstance(result, AcceptanceRecord):
                 accepted.append(result)
             else:
