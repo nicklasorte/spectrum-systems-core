@@ -436,6 +436,46 @@ def _slice_transcript_for_batch(
     end = batch[-1].get("line_end", len(transcript_lines))
     return "\n".join(transcript_lines[max(0, start - 1):end])
 
+
+def _is_well_formed_grounding_item(item: object) -> bool:
+    """A grounding item is well-formed if it is a dict carrying a
+    non-empty list ``source_turns`` of strings.
+
+    Mirrors exactly what the in-loop ``source_turn_validity`` eval
+    (``_collect_unresolved_reason_codes``) AND the required-fields
+    per-item check (``runner._check_per_item_fields`` for the
+    ``("grounding", "source_turns")`` pair) BOTH require. A grounding
+    item that fails this gate produced these reason codes on the
+    aggregate before the filter:
+
+    * ``required_meeting_minutes_fields`` →
+      ``empty_item_field:grounding[N].source_turns`` /
+      ``missing_item_field:grounding[N].source_turns`` /
+      ``item_not_dict:grounding[N]``
+    * ``source_turn_validity`` →
+      ``source_turn_unresolved:grounding[N]:empty_source_turns_list`` /
+      ``source_turn_unresolved:grounding[N]:source_turns_not_a_list`` /
+      ``source_turn_unresolved:grounding[N]:non_string_turn_id``
+
+    A bad grounding item from ONE batch was sufficient to block the
+    whole multi-batch run (this is the chunk-132 failure shape: every
+    earlier batch's clean content was discarded). Filtering at the
+    aggregation seam keeps the aggregate fail-closed on the trust
+    properties that matter — every grounding item the gate sees is
+    well-formed — without letting one batch's malformed entry corrupt
+    the whole transcript's promotion.
+
+    Trust property preserved: filtering CANNOT add a fail signal; if
+    the aggregate has any content but no remaining grounding,
+    ``grounding_coverage`` still fails closed with
+    ``grounding_missing_for_content``."""
+    if not isinstance(item, dict):
+        return False
+    source_turns = item.get("source_turns")
+    if not isinstance(source_turns, list) or not source_turns:
+        return False
+    return all(isinstance(t, str) and t for t in source_turns)
+
 _PARSE_FAIL_REASON = (
     "the response was not a single JSON object carrying the three "
     "required arrays decisions, action_items, open_questions"
@@ -1319,8 +1359,29 @@ def _make_extract(
             # _run_batch already stamped the verb sentinel per batch, so
             # the aggregate inherits it. Contiguous, non-overlapping
             # batches over disjoint slices ⇒ no cross-batch duplication.
-            for key in (*_LEGACY_ARRAYS, *_STRUCTURED_ARRAYS, "grounding"):
+            for key in (*_LEGACY_ARRAYS, *_STRUCTURED_ARRAYS):
                 aggregated[key].extend(candidate.get(key, []))
+            # Grounding: defensively filter items that would block the
+            # aggregate's in-loop ``source_turn_validity`` /
+            # ``required_meeting_minutes_fields`` per-item checks even
+            # when ``_schema_reject_reason`` passed (the schema declares
+            # grounding items as generic objects; per-item correctness
+            # is enforced at eval time, not by jsonschema). One bad
+            # grounding item in ONE batch was enough to fail the WHOLE
+            # multi-batch run on the aggregate — the chunk-132 failure
+            # shape. The precheck (``_source_turn_correction_text``)
+            # gives the model one retry to self-correct; if the model
+            # persistently emits malformed grounding for a batch, the
+            # filter at this seam keeps the aggregate gate-passable on
+            # the trust properties that matter (every grounding item
+            # the eval sees is well-formed and resolvable). Filtering
+            # cannot ADD a fail signal: if all grounding gets dropped
+            # while content remains, ``grounding_coverage`` still
+            # fails closed with ``grounding_missing_for_content``, so
+            # the constitution's "no allow, no promotion" gate holds.
+            for item in candidate.get("grounding", []) or []:
+                if _is_well_formed_grounding_item(item):
+                    aggregated["grounding"].append(item)
 
         return aggregated
 

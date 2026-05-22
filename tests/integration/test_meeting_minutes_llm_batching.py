@@ -436,3 +436,236 @@ def test_single_batch_run_payload_byte_identical_on_success_path():
     # No diagnostic markers on the success-path candidate.
     assert "_llm_raw" not in payload
     assert "_llm_error" not in payload
+
+
+class _OneBatchWithBadGrounding:
+    """Reproduces the chunk-132 failure shape exactly: every batch
+    returns schema-valid content with well-formed grounding, EXCEPT
+    one designated batch which returns the same schema-valid content
+    but with a grounding item whose ``source_turns`` is empty.
+
+    Before the aggregation filter, this scenario blocked the WHOLE
+    multi-batch run on the aggregate with ``required_meeting_minutes_
+    fields`` + ``source_turn_validity`` even though every batch's
+    JSON was schema-valid in isolation. That is the chunk-132 / single
+    -chunk asymmetry: a per-batch payload that passes the schema gate
+    individually still fails the per-item check on the aggregate, so
+    every earlier batch's clean content was discarded by the
+    fail-closed short-circuit. The filter keeps the aggregate gate
+    -passable; the bad item is dropped from the aggregate, and the
+    constitution's "no allow, no promotion" still holds because
+    ``grounding_coverage`` would block any aggregate that ends up with
+    content but no grounding."""
+
+    def __init__(self, bad_batch_marker_turn_id: str = "t0125") -> None:
+        self.calls = 0
+        self.bad_batch_marker = bad_batch_marker_turn_id
+        self.bad_batch_calls = 0
+        self.good = _BatchAwareStub()
+
+    def __call__(self, *, system: str, user: str) -> str:
+        self.calls += 1
+        turn_ids = list(dict.fromkeys(_TURN_RE.findall(user)))
+        if self.bad_batch_marker in turn_ids:
+            self.bad_batch_calls += 1
+            # Same content shape as the good stub, but the grounding
+            # item carries an EMPTY source_turns list. Schema-valid
+            # (the grounding sub-schema allows generic objects); the
+            # per-item check + source_turn_validity reject it.
+            m = _DEC_RE.search(user)
+            text = m.group(0) if m else "We adopted the threshold."
+            return json.dumps(
+                {
+                    "decisions": [{"text": text, "verb": "adopted"}],
+                    "action_items": [],
+                    "open_questions": [],
+                    "technical_parameters": [
+                        {
+                            "param_id": "p-bad-batch",
+                            "parameter_name": "interference threshold",
+                            "value": text,
+                        }
+                    ],
+                    "grounding": [
+                        {
+                            "kind": "decision",
+                            "text": text,
+                            "source_turns": [],  # the chunk-132 bug
+                        },
+                    ],
+                }
+            )
+        return self.good(system=system, user=user)
+
+
+def test_multi_batch_bad_grounding_in_one_batch_does_not_corrupt_aggregate():
+    """The chunk-132 failure shape: one batch's grounding carries an
+    empty ``source_turns`` list. Before the aggregation filter the
+    aggregate failed ``required_meeting_minutes_fields``
+    (``empty_item_field:grounding[N].source_turns``) and
+    ``source_turn_validity`` (``empty_source_turns_list``), blocking
+    the whole 132-chunk multi-batch run — exactly the symptom binary
+    search reproduced at MAX_CHUNKS=132.
+
+    The fix filters malformed grounding items at the aggregation seam
+    so the aggregate gate sees only well-formed grounding. The run
+    promotes; the bad batch's content (decisions, action_items,
+    technical_parameters) is preserved because it was schema-valid in
+    isolation."""
+    n = 132  # the binary-search transition point
+    stub = _OneBatchWithBadGrounding("t0125")
+    result = run_meeting_minutes_llm_workflow(
+        _transcript(n), client=stub, meeting_id="m132-bad-grounding"
+    )
+    n_batches = _expected_batches(n)
+    assert stub.calls == n_batches, (stub.calls, n_batches)
+    # The bad batch was called exactly once (no retry on this shape —
+    # the precheck targets fabricated turn_ids, not empty / missing
+    # source_turns; the filter at aggregation absorbs the malformed
+    # entry instead).
+    assert stub.bad_batch_calls == 1, stub.bad_batch_calls
+
+    ev = _evals(result)
+    # The two evals that previously blocked the chunk-132 aggregate now
+    # both PASS — the bad grounding item never reaches the gate.
+    assert ev["required_meeting_minutes_fields"][0] == "pass", ev
+    assert ev["source_turn_validity"][0] == "pass", ev
+    assert result.promoted is True
+    assert _decision(result) == "allow"
+
+    payload = result.meeting_minutes.payload
+    # Every batch's decision survived (n_batches), and so did every
+    # well-formed grounding item (2 per good batch + 0 from the
+    # filtered bad batch = 2 * (n_batches - 1)).
+    assert len(payload["decisions"]) == n_batches, payload["decisions"]
+    assert len(payload["grounding"]) == 2 * (n_batches - 1), payload[
+        "grounding"
+    ]
+    # Every surviving grounding entry has a non-empty list source_turns.
+    for entry in payload["grounding"]:
+        assert isinstance(entry.get("source_turns"), list) and entry[
+            "source_turns"
+        ], entry
+
+
+def test_multi_batch_aggregate_blocks_when_all_grounding_filtered_out():
+    """Defense-in-depth: if EVERY batch's grounding is malformed and
+    gets filtered, the aggregate ends up with content but no grounding.
+    ``grounding_coverage`` must still block — the filter strengthens
+    the per-item gate, it does NOT relax the "content requires
+    grounding" gate. Trust property preserved.
+    """
+
+    class _AllBadGrounding:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self, *, system: str, user: str) -> str:  # noqa: ARG002
+            self.calls += 1
+            return json.dumps(
+                {
+                    "decisions": [
+                        {"text": "We adopted the threshold.", "verb": "adopted"}
+                    ],
+                    "action_items": [],
+                    "open_questions": [],
+                    "grounding": [
+                        {
+                            "kind": "decision",
+                            "text": "We adopted the threshold.",
+                            "source_turns": [],  # filtered everywhere
+                        },
+                    ],
+                }
+            )
+
+    n = 60  # > _CHUNKS_PER_BATCH so batching fires
+    stub = _AllBadGrounding()
+    result = run_meeting_minutes_llm_workflow(
+        _transcript(n), client=stub, meeting_id="m-all-bad-grounding"
+    )
+    assert result.promoted is False
+    assert _decision(result) == "block"
+    ev = _evals(result)
+    # The aggregate has decisions but the filter dropped every
+    # grounding entry; ``grounding_coverage`` holds the gate fail
+    # -closed with the right reason code.
+    assert ev["grounding_coverage"][0] == "fail", ev
+    assert "grounding_missing_for_content" in ev["grounding_coverage"][1]
+    # Trust property: the bad source_turns entries never reached the
+    # in-loop per-item check (they were filtered before aggregation),
+    # so ``required_meeting_minutes_fields`` itself passes; the block
+    # comes from the right gate (content-without-grounding), not from
+    # a spurious per-item failure on the malformed entries themselves.
+    assert ev["required_meeting_minutes_fields"][0] == "pass", ev
+    assert ev["source_turn_validity"][0] == "pass", ev
+
+
+def test_multi_batch_filter_drops_missing_and_malformed_source_turns():
+    """The filter is the single guard for every malformed-source_turns
+    shape the in-loop ``source_turn_validity`` eval rejects on the
+    aggregate: missing key, non-list, empty list, non-string entries.
+    Each shape would otherwise block the whole multi-batch run on the
+    aggregate even though the batch's other content was clean."""
+
+    class _MixedMalformedGrounding:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self, *, system: str, user: str) -> str:
+            self.calls += 1
+            turn_ids = list(dict.fromkeys(_TURN_RE.findall(user)))
+            if self.calls == 2:
+                # Batch 2: one item missing source_turns entirely, one
+                # with a non-list, one with non-string entries, one
+                # well-formed. Only the last survives the filter.
+                text = "We adopted the threshold."
+                good_st = [turn_ids[0]] if turn_ids else ["t0000"]
+                return json.dumps(
+                    {
+                        "decisions": [{"text": text, "verb": "adopted"}],
+                        "action_items": [],
+                        "open_questions": [],
+                        "grounding": [
+                            {"kind": "decision", "text": text},  # missing
+                            {
+                                "kind": "decision",
+                                "text": text,
+                                "source_turns": "t0000",  # non-list
+                            },
+                            {
+                                "kind": "decision",
+                                "text": text,
+                                "source_turns": [42, None],  # non-string
+                            },
+                            {
+                                "kind": "decision",
+                                "text": text,
+                                "source_turns": good_st,
+                            },
+                        ],
+                    }
+                )
+            return _BatchAwareStub()(system=system, user=user)
+
+    n = 50  # ensures 2 batches at _CHUNKS_PER_BATCH=25
+    stub = _MixedMalformedGrounding()
+    result = run_meeting_minutes_llm_workflow(
+        _transcript(n), client=stub, meeting_id="m-mixed-grounding"
+    )
+    assert stub.calls == 2, stub.calls
+    ev = _evals(result)
+    assert ev["required_meeting_minutes_fields"][0] == "pass", ev
+    assert ev["source_turn_validity"][0] == "pass", ev
+    assert result.promoted is True
+
+    payload = result.meeting_minutes.payload
+    # Batch 1 contributed 2 grounding entries; batch 2's 4 entries
+    # collapsed to 1 (only the well-formed one) → 3 total.
+    assert len(payload["grounding"]) == 3, payload["grounding"]
+    # Every surviving grounding entry passes the in-loop per-item gate.
+    for entry in payload["grounding"]:
+        assert isinstance(entry, dict)
+        st = entry.get("source_turns")
+        assert isinstance(st, list) and st
+        assert all(isinstance(t, str) and t for t in st)
