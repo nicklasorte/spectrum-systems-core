@@ -1,0 +1,168 @@
+name: Run Comparison (compare-opus-haiku)
+
+# Dedicated one-decision wrapper around scripts/compare_opus_haiku.py.
+# Compares the most-recent Sonnet (or Haiku) meeting_minutes artifact
+# against the Opus reference baseline for one source_id and writes
+# F1 / precision / recall to the step summary.
+#
+# Two inputs only:
+#   - source_id           — transcript slug
+#   - use_cascade_output  — compare the cascade-filtered artifact
+#                           (meeting_minutes_filtered__*.json) instead
+#                           of the raw meeting_minutes__*.json
+#
+# Three-way Opus/Haiku/Sonnet mode is the default here (the
+# sonnet-unconstrained artifact is the whole reason this companion
+# workflow exists) so --include-sonnet is always passed. Comparison
+# results are pushed to nicklasorte/data-lake (same composite-action
+# path as compare-opus-haiku.yml).
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_id:
+        description: 'Source ID to compare'
+        required: true
+        default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
+      use_cascade_output:
+        description: 'Compare against cascade-filtered artifact'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  run-comparison:
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_ID: ${{ github.event.inputs.source_id }}
+      USE_CASCADE_OUTPUT: ${{ github.event.inputs.use_cascade_output }}
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      # Mirror the .gitignore negation that compare-opus-haiku.yml uses
+      # so the comparison_result + eval_history records actually land
+      # in the pushed commit. ``processed/`` is bulk-ignored in
+      # nicklasorte/data-lake; without re-including the directory
+      # chain and the specific filenames, ``git add`` is a silent
+      # no-op. Idempotent.
+      - name: Ensure data-lake .gitignore negation
+        env:
+          CLONE_PATH: ${{ github.workspace }}/data-lake
+        run: |
+          set -euo pipefail
+          GI="$CLONE_PATH/.gitignore"
+          touch "$GI"
+          add_rule() {
+            grep -qxF "$1" "$GI" || printf '%s\n' "$1" >> "$GI"
+          }
+          add_rule '!**/processed/**/'
+          add_rule '!**/processed/**/comparisons/'
+          add_rule '!**/processed/**/comparisons/*.json'
+          add_rule '!**/processed/**/eval_history.jsonl'
+          echo "Ensured comparison_result + eval_history negation in data-lake .gitignore"
+
+      - name: Run comparison
+        id: compare
+        run: |
+          set -euo pipefail
+          ARGS=(
+            --data-lake "${{ github.workspace }}/data-lake"
+            --source-id "$SOURCE_ID"
+            --include-sonnet
+            --print-scores
+          )
+          if [ "$USE_CASCADE_OUTPUT" = "true" ]; then
+            ARGS+=( --use-cascade-output )
+          fi
+          # STDOUT is pure JSON (the script sends the human table to
+          # STDERR). Tee STDOUT to a file the summary step parses;
+          # STDERR streams to the live log.
+          python scripts/compare_opus_haiku.py "${ARGS[@]}" \
+            > /tmp/compare_result.json
+
+      - name: Push comparison + eval_history to nicklasorte/data-lake
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            feat(comparison): Opus/Haiku/Sonnet diff for ${{ env.SOURCE_ID }} [skip ci]
+          add_paths: |
+            .gitignore
+            store/processed/
+
+      - name: Post summary table
+        if: always()
+        run: |
+          python - <<'EOF'
+          import json, os, pathlib
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
+          p = pathlib.Path("/tmp/compare_result.json")
+          with open(summary_path, "a") as f:
+              f.write("## Opus / Haiku / Sonnet comparison\n\n")
+              if not p.is_file() or not p.read_text().strip():
+                  f.write("No result produced (script halted; see log).\n")
+                  raise SystemExit(0)
+              text = p.read_text()
+              try:
+                  data = json.loads(text)
+              except json.JSONDecodeError:
+                  f.write("```\n" + text + "\n```\n")
+                  raise SystemExit(0)
+              if data.get("status") != "success":
+                  f.write(f"- status: **{data.get('status')}**\n")
+                  f.write(f"- reason: `{data.get('reason')}`\n")
+                  f.write(f"- detail: {data.get('detail')}\n")
+                  raise SystemExit(0)
+              f.write("```\n" + data.get("table", "") + "\n```\n")
+              f.write(
+                  f"\n- comparison artifact: "
+                  f"`{data.get('comparison_artifact_path')}`\n"
+              )
+              f.write(f"- comparison mode: `{data.get('comparison_mode')}`\n")
+              summary = data.get("summary") or {}
+              f.write(
+                  f"- haiku F1 vs Opus: "
+                  f"`{summary.get('haiku_f1_vs_opus')}`\n"
+              )
+              f.write(
+                  f"- haiku precision: "
+                  f"`{summary.get('haiku_precision_vs_opus')}`\n"
+              )
+              f.write(
+                  f"- haiku recall:    "
+                  f"`{summary.get('haiku_recall_vs_opus')}`\n"
+              )
+              sonnet = data.get("sonnet_summary") or {}
+              if sonnet:
+                  # Note: three-way mode reuses the haiku_* key names
+                  # in sonnet_summary (see compare_opus_haiku.py:
+                  # build_three_way_comparison_artifact).
+                  f.write(
+                      f"- sonnet F1 vs Opus: "
+                      f"`{sonnet.get('haiku_f1_vs_opus')}`\n"
+                  )
+                  f.write(
+                      f"- sonnet precision:  "
+                      f"`{sonnet.get('haiku_precision_vs_opus')}`\n"
+                  )
+                  f.write(
+                      f"- sonnet recall:     "
+                      f"`{sonnet.get('haiku_recall_vs_opus')}`\n"
+                  )
+          EOF
