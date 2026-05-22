@@ -1285,14 +1285,35 @@ def _make_extract(
                 batch_chunks=batch,
             )
             if not ok:
-                # Fail closed for the WHOLE run, exactly as the
-                # single-call path does today: return this batch's
-                # diagnostic candidate (carrying _llm_error / _llm_raw
-                # or the schema-invalid content) so the governed loop's
-                # unchanged evals block it and the cause is visible. A
-                # partial aggregation is NEVER promoted as if it were
-                # the whole transcript.
-                return candidate
+                # Fail closed for the WHOLE run. Build a fresh failure
+                # envelope that carries the legacy / structured /
+                # grounding arrays as empty lists so the envelope is
+                # structurally valid even on the failure path —
+                # ``required_meeting_minutes_fields`` no longer fires
+                # with spurious
+                # ``missing_field:decisions/action_items/open_questions``
+                # reasons that masked the real cause (the actual
+                # failure visible in ``_llm_error`` / ``_llm_raw`` on
+                # the same envelope, or in the strict-schema eval
+                # flagging the failing batch's bad content). Earlier
+                # successful batches' content is DISCARDED — a partial
+                # aggregation is NEVER promoted as if it were the
+                # whole transcript (constitution §8: promotion
+                # requires a control allow; here the failing batch's
+                # diagnostic markers + the unmodified evals block via
+                # ``llm_extraction_nonempty_required`` /
+                # ``llm_extraction_strict_schema``). The failing
+                # batch's parsed content (e.g.
+                # ``decisions: "not-a-list"``) and diagnostic markers
+                # are layered onto the envelope verbatim so the
+                # in-loop strict-schema eval can still flag the exact
+                # ``schema_violation``.
+                failure_envelope = _base_payload(title, grounded)
+                for key in (*_LEGACY_ARRAYS, *_STRUCTURED_ARRAYS):
+                    failure_envelope[key] = []
+                failure_envelope["grounding"] = []
+                failure_envelope.update(candidate)
+                return failure_envelope
             # ok is True ⇒ _schema_reject_reason passed ⇒ every carried
             # array is a valid list per meeting_minutes.schema.json.
             # _run_batch already stamped the verb sentinel per batch, so
