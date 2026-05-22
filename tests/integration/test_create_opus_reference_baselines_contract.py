@@ -164,6 +164,39 @@ def test_subprocess_writes_reference_only_baselines(
     }
 
 
+def test_factory_calls_real_writer_with_strategy_version(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No-weakening guard: the
+    ``tests/integration/fixtures.make_opus_reference_baseline`` factory
+    MUST pass ``chunking_strategy_version_value`` through to the real
+    writer (per CLAUDE.md's integration-test fixture-factory rule —
+    the factory cannot diverge from the writer's signature).
+
+    If a future change makes the writer's strategy-version arg optional
+    again, or stops resolving it from ``CHUNK_OVERLAP_TURNS`` via the
+    SSOT helper, this test fires before the downstream comparison /
+    correction-miner contract suites break in CI.
+    """
+    monkeypatch.setenv("CHUNK_OVERLAP_TURNS", "2")
+    from tests.integration.fixtures import make_opus_reference_baseline
+
+    dl = _seed(tmp_path)
+    aid = str(uuid.uuid4())
+    out = make_opus_reference_baseline(
+        data_lake_root=dl,
+        source_id=SOURCE_ID,
+        source_artifact_id=aid,
+        model=MODEL,
+        items_by_type={"decisions": ["one"]},
+    )
+    rows = [json.loads(ln) for ln in out.read_text("utf-8").splitlines() if ln.strip()]
+    assert rows, "factory must produce at least one row"
+    for r in rows:
+        assert r["chunking_strategy_version"] == "speaker_turn_v1_overlap2"
+        assert r["source_artifact_id"] == aid
+
+
 def test_subprocess_chunk_overlap_turns_env_stamps_version(
     tmp_path: Path,
 ) -> None:

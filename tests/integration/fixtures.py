@@ -404,6 +404,11 @@ def make_opus_reference_baseline(
         model=model,
         meeting_date="2025-12-18",
         created_at="1970-01-01T00:00:00+00:00",
+        # Mirror the real workflow: resolve CHUNK_OVERLAP_TURNS once
+        # via the SSOT helper the script also uses, so a test that
+        # sets the env var produces a matched overlap=N baseline
+        # through the factory exactly as the production script would.
+        chunking_strategy_version_value=crb.chunking_strategy_version(),
     )
     out = crb._jsonl_path(_Path(data_lake_root), source_id)
     crb._write_jsonl(out, records)
