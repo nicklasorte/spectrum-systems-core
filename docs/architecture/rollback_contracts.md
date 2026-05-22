@@ -1192,7 +1192,7 @@ the PR diff.
 
 ---
 
-## Stage 2 — per-type source_quote minimum length threshold (opt-in) (PR #XXX)
+## Stage 2 — per-type source_quote minimum length threshold (opt-in) (PR #214)
 
 This PR adds an opt-in precision-improving threshold to the grounding
 gate. A verbatim item whose normalized `source_quote` is shorter than
