@@ -31,7 +31,13 @@ on:
       source_id:
         description: 'Transcript slug to process (blank = all transcripts)'
         required: false
-        default: ''
+        default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
+        type: string
+      chunk_overlap_turns:
+        description: 'Number of prior turns to prepend to each chunk (0 = default, no overlap)'
+        required: false
+        default: '0'
+        type: string
       dry_run:
         description: 'Dry run: print what would be written, commit nothing'
         required: false
@@ -134,6 +140,12 @@ jobs:
           SOURCE_ID: ${{ github.event.inputs.source_id }}
           DRY_RUN: ${{ github.event.inputs.dry_run }}
           SKIP_EXISTING: ${{ github.event.inputs.skip_existing }}
+          # Phase 2.B: read by the script via the shared
+          # chunking_strategy_version() helper in data_lake/chunker.py.
+          # Default '0' produces a baseline stamped speaker_turn_v1
+          # (no overlap suffix) — byte-compatible with pre-Phase-2.B
+          # Opus baselines on disk.
+          CHUNK_OVERLAP_TURNS: ${{ github.event.inputs.chunk_overlap_turns }}
         run: |
           set -euo pipefail
           ARGS=( --data-lake "${{ github.workspace }}/data-lake" --model "$OPUS_MODEL" )
@@ -187,6 +199,14 @@ jobs:
               f.write(f"- model: `{data.get('model')}`\n")
               f.write(f"- dry_run: {data.get('dry_run')}\n")
               f.write(f"- skip_existing: {data.get('skip_existing')}\n")
+              f.write(
+                  f"- chunk_overlap_turns: "
+                  f"`{data.get('chunk_overlap_turns')}`\n"
+              )
+              f.write(
+                  f"- chunking_strategy_version: "
+                  f"`{data.get('chunking_strategy_version')}`\n"
+              )
               f.write(f"- transcripts: {data.get('transcripts')}\n")
               for t in data.get("per_transcript", []):
                   by_type = t.get("by_type") or {}

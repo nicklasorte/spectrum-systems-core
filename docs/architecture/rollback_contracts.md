@@ -1358,6 +1358,20 @@ research script (no CLI surface is added by this PR).
 - New workflow `.github/workflows/run-haiku-overlap-extraction.yml`
   mirroring `run-haiku-extraction.yml` but passing
   `CHUNK_OVERLAP_TURNS=2`. Phone-safe operator-driven dispatch.
+- `.github/workflows/create-opus-reference-baselines.yml` — added
+  `chunk_overlap_turns` input (PR #218). The new input is passed
+  through to `scripts/create_opus_reference_baselines.py` as the
+  `CHUNK_OVERLAP_TURNS` env var; the script reads it via the shared
+  `chunking_strategy_version()` helper (the SSOT shipped in this
+  Phase 2.B PR) and stamps the resulting token on every
+  `opus_reference_minutes.jsonl` row so the comparison engine's
+  per-row `_chunking_strategy_version_of()` lookup finds a matched
+  value against an overlap=N haiku artifact. The same PR sets the
+  `source_id` input default to the Dec 18 transcript slug so the
+  workflow can be dispatched from a phone with a single tap. Default
+  `chunk_overlap_turns=0` yields `speaker_turn_v1` (no suffix) —
+  byte-compatible with pre-Phase-2.B baselines on disk that omit the
+  field (the comparator defaults a missing value to the same string).
 - New tests:
   - `tests/extraction/test_overlap_attribution_gate.py` — pins the
     overlap-attribution gate behaviour (rejection, mixed-pass,
