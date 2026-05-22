@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, Optional
+from typing import Iterable, Mapping, Optional
 
 from ..artifacts import Artifact, ArtifactStore
 from .gate import GroundingReport, verify_grounding
@@ -30,6 +30,7 @@ def grounding_gated_payload(
     transcript: Optional[str],
     *,
     transcript_turn_ids: Optional[Iterable[str]] = None,
+    min_quote_chars_by_type: Optional[Mapping[str, int]] = None,
 ) -> tuple[dict, GroundingReport]:
     """Phase 1 — run the grounding gate on ``artifact``'s payload.
 
@@ -65,6 +66,7 @@ def grounding_gated_payload(
         payload,
         transcript,
         transcript_turn_ids=transcript_turn_ids,
+        min_quote_chars_by_type=min_quote_chars_by_type,
     )
     accepted_by_type = report.accepted_payload_keys()
     # Replace each known item-type array with the accepted subset; an
