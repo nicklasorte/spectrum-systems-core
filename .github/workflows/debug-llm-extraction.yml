@@ -41,7 +41,7 @@ on:
           all chunks). Fast schema-gate iteration only.
         required: false
         default: ""
-      debug_chunks:
+      debug_chunk_decomposition:
         description: >-
           DEBUG ONLY. Print a per-chunk decomposition of the run's
           evals (which chunk produced each blocking verb / within-source
@@ -69,7 +69,7 @@ on:
         required: false
         type: boolean
         default: false
-      single_chunk:
+      debug_single_chunk:
         description: >-
           DEBUG ONLY. Run extraction on ONLY the single largest
           transcript chunk (by character count) — one API call. Prints
@@ -78,9 +78,9 @@ on:
         required: false
         type: boolean
         default: false
-      print_context:
+      debug_print_context:
         description: >-
-          DEBUG ONLY. With single_chunk, also print the first 1000
+          DEBUG ONLY. With debug_single_chunk, also print the first 1000
           characters of the context bundle sent to the model so you can
           confirm the transcript content reached the API call.
         required: false
@@ -130,13 +130,13 @@ jobs:
       DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
       SOURCE_ID: ${{ github.event.inputs.source_id }}
       MAX_CHUNKS: ${{ github.event.inputs.max_chunks }}
-      DEBUG_CHUNKS: ${{ github.event.inputs.debug_chunks }}
+      DEBUG_CHUNKS: ${{ github.event.inputs.debug_chunk_decomposition }}
       PRINT_RAW_RESPONSE: ${{ github.event.inputs.print_raw_response }}
       MINIMAL_REPRO: ${{ github.event.inputs.minimal_repro }}
       DIFF_VS_OPUS: ${{ github.event.inputs.diff_vs_opus }}
       TEST_PARSER_ONLY: ${{ github.event.inputs.test_parser_only }}
-      SINGLE_CHUNK: ${{ github.event.inputs.single_chunk }}
-      PRINT_CONTEXT: ${{ github.event.inputs.print_context }}
+      SINGLE_CHUNK: ${{ github.event.inputs.debug_single_chunk }}
+      PRINT_CONTEXT: ${{ github.event.inputs.debug_print_context }}
       MODEL: ${{ github.event.inputs.model }}
       CASCADE_FILTER: ${{ github.event.inputs.cascade_filter }}
     steps:
