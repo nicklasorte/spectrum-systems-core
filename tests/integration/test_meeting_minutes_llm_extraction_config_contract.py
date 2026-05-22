@@ -192,3 +192,117 @@ def test_cli_writes_full_extraction_config_for_every_model(
     # projection — the same shape the comparison engine rejects when
     # the partial-stamp bug is present.
     jsonschema.Draft202012Validator(_schema()).validate(_flat_for_schema(artifact))
+
+
+# Multi-batch variant of the contract test. The chunk-132 fix changed
+# the success-path aggregation (it filters malformed grounding items),
+# which is only exercised when ``len(chunks) > _CHUNKS_PER_BATCH``. The
+# single-batch contract above never reaches that seam, so a regression
+# in the multi-batch stamping or the aggregation filter would slip past
+# it. This test runs the REAL CLI through subprocess with a 30-turn
+# transcript (> _CHUNKS_PER_BATCH = 25) so the multi-batch aggregator
+# fires; it then asserts the same end-to-end extraction_config contract
+# the single-batch test asserts.
+def _multi_batch_transcript(n_turns: int = 30) -> str:
+    lines = []
+    for i in range(n_turns):
+        lines.append(
+            f"SPEAKER {chr(65 + i // 26)}{chr(65 + i % 26)}: "
+            f"NTIA approved the 7 GHz downlink threshold of minus 47 "
+            f"dBm per megahertz for band {i}."
+        )
+    return "\n".join(lines)
+
+
+def _multi_batch_stub_response(text_for_band_0: str) -> str:
+    # A single deterministic per-call response that is well-formed for
+    # EVERY batch (the stub is shown the same response on every call —
+    # the file-backed transport is one fixture per process).
+    return json.dumps(
+        {
+            "decisions": [
+                {"text": text_for_band_0, "verb": "approved"}
+            ],
+            "action_items": [],
+            "open_questions": [],
+            "technical_parameters": [
+                {
+                    "param_id": "p-band-0",
+                    "parameter_name": "interference threshold",
+                    "value": text_for_band_0,
+                }
+            ],
+            "grounding": [
+                {
+                    "kind": "decision",
+                    "text": text_for_band_0,
+                    "source_turns": ["t0000"],
+                },
+            ],
+        }
+    )
+
+
+def test_multi_batch_sonnet_unconstrained_stamps_prompt_variant(
+    tmp_path: Path,
+) -> None:
+    """End-to-end multi-batch sonnet-unconstrained run stamps the right
+    prompt_variant in the on-disk artifact.
+
+    The chunk-132 fix touches the multi-batch aggregation seam. This
+    contract test pins the property that the cli's extraction_config
+    stamping continues to fire on a multi-batch run, so a regression
+    in the aggregation filter (e.g. accidentally short-circuiting the
+    success path) cannot silently strip ``prompt_variant`` from the
+    artifact and roll back Phase 5's apples-to-apples comparison.
+
+    Pre-existing test (single-batch) covers the same property for
+    smaller inputs; this test covers the >138-chunk production shape
+    that the chunk-132 bisect identified.
+    """
+    lake = tmp_path / "dl"
+    staged = lake / "store" / "raw" / "meetings" / SOURCE_ID
+    staged.mkdir(parents=True)
+    text_for_band_0 = (
+        "NTIA approved the 7 GHz downlink threshold of minus 47 dBm "
+        "per megahertz for band 0."
+    )
+    staged.joinpath("source.txt").write_text(
+        _multi_batch_transcript(30), encoding="utf-8"
+    )
+    stub = tmp_path / "stub_response.json"
+    stub.write_text(_multi_batch_stub_response(text_for_band_0), encoding="utf-8")
+
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    env["MEETING_MINUTES_LLM_STUB_RESPONSE_PATH"] = str(stub)
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "spectrum_systems_core.cli",
+            "meeting-minutes-llm",
+            "--source-id",
+            SOURCE_ID,
+            "--data-lake",
+            str(lake),
+            "--model",
+            "sonnet-unconstrained",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert proc.returncode == 0, (
+        f"CLI exit={proc.returncode}\nSTDOUT:\n{proc.stdout}\n"
+        f"STDERR:\n{proc.stderr}"
+    )
+
+    artifact = _read_produced_artifact(lake)
+    ec = artifact["payload"]["provenance"]["extraction_config"]
+    assert ec.get("prompt_variant") == "opus_prompt_with_sonnet_model", ec
+    # chunk_count > 25 proves the multi-batch path actually fired.
+    assert ec.get("chunk_count", 0) > 25, ec
+    assert "claude-sonnet" in ec["seed_inputs"]["model_id"]
+
+    jsonschema.Draft202012Validator(_schema()).validate(_flat_for_schema(artifact))
