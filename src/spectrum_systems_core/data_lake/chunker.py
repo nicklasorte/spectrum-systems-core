@@ -55,14 +55,77 @@ randomness. The pipeline calls into it; tests assert determinism.
 """
 from __future__ import annotations
 
+import logging
+import os
 import re
 from dataclasses import dataclass
+
+_LOG = logging.getLogger(__name__)
 
 # A speaker label must look like ALL-CAPS letters with optional spaces,
 # hyphens, or dots, ending with a colon and a space. The bound on the
 # label length keeps lines like ``CONTEXT:`` (a prefix marker used by the
 # decision_brief workflow) from being misclassified as speakers.
 SPEAKER_LABEL_RE = re.compile(r"^([A-Z][A-Z\s\-\.]{1,40}):\s(.*)$")
+
+# Phase 2.B: chunk-overlap env var. When > 0, each speaker-turn chunk at
+# position i has its `text` prepended with the text of the prior
+# min(N, i) turns. The recipient chunk records `prepended_overlap_turn_ids`
+# (the source IDs, retained verbatim — overlap turns do NOT get new IDs)
+# and `overlap_turns_prepended` (count). The hard ceiling
+# MAX_LLM_CHUNK_CHARS clamps the overlap count rather than raising — a
+# single oversized chunk should never block the loop.
+CHUNK_OVERLAP_TURNS_ENV = "CHUNK_OVERLAP_TURNS"
+MAX_LLM_CHUNK_CHARS = 8000
+
+
+def _resolve_chunk_overlap_turns() -> int:
+    """Read CHUNK_OVERLAP_TURNS from the environment.
+
+    Invalid / negative values fall back to 0 with a warning so a
+    typo in the env var never silently changes chunker behaviour.
+    """
+    raw = os.environ.get(CHUNK_OVERLAP_TURNS_ENV, "").strip()
+    if not raw:
+        return 0
+    try:
+        value = int(raw)
+    except ValueError:
+        _LOG.warning(
+            "chunk_overlap_turns_invalid: %s=%r -> falling back to 0",
+            CHUNK_OVERLAP_TURNS_ENV,
+            raw,
+        )
+        return 0
+    if value < 0:
+        _LOG.warning(
+            "chunk_overlap_turns_negative: %s=%d -> falling back to 0",
+            CHUNK_OVERLAP_TURNS_ENV,
+            value,
+        )
+        return 0
+    return value
+
+
+def chunking_strategy_version() -> str:
+    """Phase 2.B: return the strategy-version string for the current env.
+
+    Reads ``CHUNK_OVERLAP_TURNS`` once and returns either
+    ``"speaker_turn_v1"`` (zero overlap — the default) or
+    ``"speaker_turn_v1_overlap{N}"`` for N > 0. Stamped onto the
+    ``meeting_minutes`` artifact's provenance block so the comparison
+    engine can halt fail-closed on a cross-strategy diff.
+
+    A reader that encounters an absent / null
+    ``chunking_strategy_version`` field MUST treat the value as
+    ``"speaker_turn_v1"`` (per the data_lake_contract additivity rule)
+    so pre-Phase-2.B artifacts remain comparable to default-off
+    Phase-2.B artifacts without a halt.
+    """
+    n = _resolve_chunk_overlap_turns()
+    if n <= 0:
+        return "speaker_turn_v1"
+    return f"speaker_turn_v1_overlap{n}"
 
 NO_SPEAKER_DETECTED_FINDING = "no_speaker_detected"
 NO_SPEAKER_STRUCTURE_FINDING = "no_speaker_structure"
@@ -160,6 +223,111 @@ def _make_chunk(
         "word_level_timestamps": False,
         "agenda_item_id": agenda_item_id,
     }
+
+
+def _apply_chunk_overlap(
+    chunks: list[dict], overlap_turns: int
+) -> list[dict]:
+    """Prepend the prior ``overlap_turns`` turns' text onto each chunk.
+
+    For each chunk at position ``i >= 1``, the function prepends the
+    text of the last ``min(overlap_turns, i)`` prior chunks onto the
+    current chunk's ``text`` field. The recipient chunk records the
+    source turn IDs in ``prepended_overlap_turn_ids`` and the count in
+    ``overlap_turns_prepended``. When ``overlap_turns == 0`` the chunk
+    list is returned unchanged — the default-off path is byte-identical
+    to pre-Phase-2.B output.
+
+    Hard ceiling: if prepending would push the chunk's char count past
+    ``MAX_LLM_CHUNK_CHARS``, the function reduces the overlap count for
+    that chunk one turn at a time (down to 1, then to 0) and records
+    ``overlap_clamped: True``. Clamping never raises — a single
+    oversized chunk should never block the loop.
+
+    Overlap turns retain their original ``turn_id`` from the source
+    chunk (no new IDs are minted). The first chunk has nothing to
+    prepend; its ``overlap_turns_prepended`` is 0 and the chunk is
+    returned untouched.
+    """
+    if overlap_turns <= 0 or not chunks:
+        return chunks
+
+    # Snapshot the originals BEFORE mutation so the prepend uses the
+    # un-overlapped text from prior chunks. Without this snapshot, a
+    # later chunk would prepend a previously-overlapped chunk's text
+    # (a compounding effect that would explode the char count).
+    original_texts = [c.get("text", "") for c in chunks]
+    original_turn_ids = [c.get("turn_id") for c in chunks]
+
+    for i, chunk in enumerate(chunks):
+        if i == 0:
+            # First chunk has no predecessor — explicitly stamp 0 so
+            # downstream readers always find the field on overlap runs.
+            chunk["overlap_turns_prepended"] = 0
+            chunk["overlap_clamped"] = False
+            chunk["prepended_overlap_turn_ids"] = []
+            continue
+
+        max_available = min(overlap_turns, i)
+        base_text = original_texts[i]
+        clamped = False
+
+        # Hard ceiling: try max_available, then reduce.
+        applied = max_available
+        while applied > 0:
+            prepend_slice_turn_ids = original_turn_ids[i - applied : i]
+            prepend_slice_text = "\n".join(
+                original_texts[i - applied : i]
+            )
+            candidate_text = (
+                prepend_slice_text + "\n" + base_text
+                if prepend_slice_text
+                else base_text
+            )
+            if len(candidate_text) <= MAX_LLM_CHUNK_CHARS:
+                break
+            clamped = True
+            applied -= 1
+
+        if applied == 0:
+            # Either max_available was 0 (handled above) or the ceiling
+            # forced the count down. Stamp the chunk unchanged but
+            # record the clamp so observability surfaces the squeeze.
+            chunk["overlap_turns_prepended"] = 0
+            chunk["overlap_clamped"] = clamped
+            chunk["prepended_overlap_turn_ids"] = []
+            if clamped:
+                _LOG.warning(
+                    "chunk_overlap_clamped_to_zero: chunk %d would "
+                    "exceed %d chars even with overlap=1; skipping",
+                    i,
+                    MAX_LLM_CHUNK_CHARS,
+                )
+            continue
+
+        prepend_slice_turn_ids = original_turn_ids[i - applied : i]
+        prepend_slice_text = "\n".join(
+            original_texts[i - applied : i]
+        )
+        new_text = prepend_slice_text + "\n" + base_text
+        chunk["text"] = new_text
+        chunk["word_count"] = len(new_text.split())
+        chunk["overlap_turns_prepended"] = applied
+        chunk["overlap_clamped"] = clamped
+        chunk["prepended_overlap_turn_ids"] = [
+            tid for tid in prepend_slice_turn_ids if tid is not None
+        ]
+        if clamped:
+            _LOG.warning(
+                "chunk_overlap_clamped: chunk %d clamped from %d to %d "
+                "(MAX_LLM_CHUNK_CHARS=%d)",
+                i,
+                max_available,
+                applied,
+                MAX_LLM_CHUNK_CHARS,
+            )
+
+    return chunks
 
 
 def _propagate_agenda_ids(chunks: list[dict]) -> list[dict]:
@@ -339,10 +507,17 @@ def chunk_transcript(transcript_text: str) -> list[dict]:
         return []
 
     lines = transcript_text.splitlines()
+    overlap_turns = _resolve_chunk_overlap_turns()
 
     by_speaker = _split_on_speaker_labels(lines)
     if by_speaker is not None:
-        return _propagate_agenda_ids(by_speaker)
+        # Overlap applies ONLY to the speaker-turn path. The blank-line
+        # and recursive_512 fallbacks are positional, not speaker-based,
+        # so the "prior turn context" idea has no semantic meaning there.
+        # Phase 2.B scope: speaker-turn chunkers only.
+        return _propagate_agenda_ids(
+            _apply_chunk_overlap(by_speaker, overlap_turns)
+        )
 
     by_blank = _split_on_blank_lines(lines)
     if by_blank is not None:

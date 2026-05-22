@@ -578,6 +578,171 @@ def verify_grounding(
     )
 
 
+# Phase 2.B: extraction-from-overlap-context attribution gate.
+#
+# The CHUNK_OVERLAP_TURNS env var, when > 0, causes both speaker-turn
+# chunkers to prepend prior turns' text onto each chunk. The model
+# therefore sees turns A, B, C as context when extracting from turn D.
+# This gate catches the failure mode where the model attributes an
+# extracted item ENTIRELY to overlap-tagged turn IDs (i.e. the item
+# came from context, not from a "real" turn) and rejects it.
+#
+# The caller computes ``overlap_only_turn_ids`` by inspecting the
+# chunker output: a turn_id belongs to this set iff every occurrence
+# of it in the chunker output carries ``overlap: true`` (or
+# equivalent — see ``compute_overlap_only_turn_ids`` below). For the
+# default chunker design where overlap copies share IDs with native
+# chunks, the set is empty in production and the gate is a no-op,
+# preserving byte-identicality with pre-Phase-2.B behaviour.
+#
+# Two independent checks govern an item:
+# 1. ``_verify_turn_aggregate_item`` (above) — does every source_turn_id
+#    exist in the live transcript turn index? Rejects with
+#    ``grounding_unknown_turn_id`` on a miss.
+# 2. ``verify_no_overlap_only_attribution`` (below) — given that every
+#    source_turn_id IS known, are they ALL flagged as overlap-only?
+#    Rejects with ``failed:extracted_from_overlap_context`` if so.
+# Neither subsumes the other.
+
+
+_OVERLAP_ATTRIBUTION_REASON_CODE = "failed:extracted_from_overlap_context"
+
+
+def compute_overlap_only_turn_ids(
+    chunks: Iterable[Mapping[str, Any]],
+) -> frozenset[str]:
+    """Return the set of turn IDs whose ALL chunk occurrences are overlap.
+
+    A chunk is "overlap" if it carries ``overlap: True`` at the chunk
+    level (a future chunker design that emits distinct overlap-copy
+    entries can set this flag). For the current Phase-2.B chunker
+    design, no chunk carries ``overlap: True`` at the chunk level
+    (the overlap text is prepended INTO the recipient chunk and the
+    source-chunk IDs are recorded in ``prepended_overlap_chunk_ids``/
+    ``prepended_overlap_turn_ids``, not as a separate overlap entry).
+    For that design this function returns the empty set and the gate
+    becomes a no-op — preserving byte-identicality with pre-Phase-2.B
+    behaviour while leaving the gate testable with synthetic chunks
+    that DO set ``overlap: True``.
+
+    A pure function over the iterable; never raises.
+    """
+    seen_by_id: dict[str, list[bool]] = {}
+    for chunk in chunks:
+        if not isinstance(chunk, Mapping):
+            continue
+        turn_id = chunk.get("turn_id") or chunk.get("chunk_id")
+        if not isinstance(turn_id, str) or not turn_id:
+            continue
+        overlap_flag = bool(chunk.get("overlap", False))
+        seen_by_id.setdefault(turn_id, []).append(overlap_flag)
+    overlap_only = {
+        tid
+        for tid, flags in seen_by_id.items()
+        if flags and all(flags)
+    }
+    return frozenset(overlap_only)
+
+
+def verify_no_overlap_only_attribution(
+    artifact: Mapping[str, Any],
+    overlap_only_turn_ids: Iterable[str],
+) -> GroundingReport:
+    """Reject items whose source_turn_ids are ENTIRELY overlap-tagged.
+
+    Phase 2.B overlap-attribution gate. For each item that carries a
+    non-empty ``source_turn_ids`` list:
+
+    - If every id in the list is in ``overlap_only_turn_ids``, the
+      item is rejected with reason code
+      ``failed:extracted_from_overlap_context``.
+    - If at least one id is NOT in the set, the item passes (the item
+      is grounded in real content, even if overlap context aided the
+      model).
+    - If ``source_turn_ids`` is empty or missing, this gate is silent:
+      the existing ``_verify_turn_aggregate_item`` check is the
+      authority on missing-field rejections.
+
+    Items without a ``source_turn_ids`` field at all (verbatim-mode
+    items rely on ``source_quote`` instead) are passed through.
+
+    Args:
+        artifact: meeting_minutes envelope OR a bare payload dict.
+        overlap_only_turn_ids: turn IDs flagged as overlap-only by the
+            chunk envelope (see :func:`compute_overlap_only_turn_ids`).
+
+    Returns:
+        A :class:`GroundingReport` whose ``rejected_items`` contains
+        only the overlap-only-attributed rejections (this gate does
+        NOT re-implement the byte-match or unknown-turn-id checks).
+        ``artifact_blocked`` is False — overlap-only-attribution is a
+        per-item reject; whole-artifact blocking remains the
+        responsibility of the ``GROUNDING_RATE_FLOOR`` check in
+        :func:`verify_grounding`. The caller composes the two reports.
+    """
+    overlap_set = frozenset(str(t) for t in overlap_only_turn_ids)
+    payload = (
+        artifact.get("payload", artifact)
+        if isinstance(artifact, Mapping)
+        else {}
+    )
+    accepted: list[AcceptanceRecord] = []
+    rejected: list[RejectionRecord] = []
+
+    if not isinstance(payload, Mapping):
+        return GroundingReport()
+
+    # The set of payload keys whose items might carry
+    # ``source_turn_ids``. TURN_AGGREGATE_TYPES is the canonical list.
+    for item_type in TURN_AGGREGATE_TYPES:
+        items = payload.get(item_type)
+        if not items or not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            raw = item.get("source_turn_ids")
+            if not raw or not isinstance(raw, list):
+                # Missing / empty source_turn_ids is the existing gate's
+                # concern (``grounding_missing_field``), not ours.
+                continue
+            ids = [str(t) for t in raw]
+            if not ids:
+                continue
+            if all(t in overlap_set for t in ids):
+                rejected.append(
+                    RejectionRecord(
+                        item_type=item_type,
+                        item=item,
+                        reason_code=_OVERLAP_ATTRIBUTION_REASON_CODE,
+                        detail=(
+                            f"every source_turn_id is flagged as "
+                            f"overlap-only: {ids!r}. Item rejected "
+                            f"because it was extracted from overlap "
+                            f"context rather than real content."
+                        ),
+                    )
+                )
+            else:
+                accepted.append(
+                    AcceptanceRecord(
+                        item_type=item_type,
+                        item=item,
+                        grounding_mode="turn_aggregate",
+                    )
+                )
+
+    total = len(accepted) + len(rejected)
+    rate = 1.0 if total == 0 else len(accepted) / total
+    return GroundingReport(
+        accepted_items=tuple(accepted),
+        rejected_items=tuple(rejected),
+        grounding_rate=rate,
+        artifact_blocked=False,
+        block_reason_code=None,
+    )
+
+
 def grounding_rejection_report_payload(
     report: GroundingReport,
     *,

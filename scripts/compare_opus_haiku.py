@@ -86,6 +86,19 @@ _GROUNDING_BINDING_SCHEMA_VERSION = "1.4.0"
 _MIXED_SCHEMA_REASON = "schema_version_mixed"
 _PROMPT_DRIFT_REASON = "prompt_drift_post_merge"
 
+# Phase 2.B: chunking-strategy cross-check halt. Fires when the two
+# artifacts under comparison declare different chunking strategies
+# (e.g. one was produced with CHUNK_OVERLAP_TURNS=0, the other with
+# CHUNK_OVERLAP_TURNS=2). A cross-strategy F1 number is misleading
+# because the input to the model was structurally different; the
+# operator must produce a matched baseline before measuring.
+_CHUNKING_STRATEGY_MISMATCH_REASON = "chunking_strategy_mismatch"
+# Pre-Phase-2.B artifacts omit the provenance field entirely; the
+# reader treats a missing value as this default so legacy artifacts
+# remain comparable with default-off Phase-2.B artifacts (both
+# "speaker_turn_v1") and the halt does not fire on no-op rolls.
+_DEFAULT_CHUNKING_STRATEGY_VERSION = "speaker_turn_v1"
+
 # The model token that a candidate with NO ``provenance.model_id`` is
 # treated as. Historically every ``produced_by == "meeting_minutes_llm"``
 # artifact was the default Haiku extraction (the registry default IS
@@ -1531,6 +1544,57 @@ def _load_expected_post_merge_hash(
     return None
 
 
+def _chunking_strategy_version_of(
+    artifact: Dict[str, Any],
+) -> str:
+    """Phase 2.B: read ``chunking_strategy_version`` off an artifact.
+
+    Looks at ``payload.provenance.chunking_strategy_version`` first
+    (the canonical location in the meeting_minutes schema), then at a
+    bare ``chunking_strategy_version`` on the row (for baseline rows
+    that flatten the provenance into the top-level dict). Returns
+    :data:`_DEFAULT_CHUNKING_STRATEGY_VERSION` (``speaker_turn_v1``)
+    when neither is a non-empty string — pre-Phase-2.B artifacts and
+    Phase-2.B default-off (CHUNK_OVERLAP_TURNS=0) artifacts both omit
+    the field or stamp ``speaker_turn_v1`` explicitly, so the default
+    keeps cross-version comparisons green when neither side opted into
+    overlap.
+    """
+    payload = artifact.get("payload") or {}
+    if isinstance(payload, dict):
+        prov = payload.get("provenance") or {}
+        if isinstance(prov, dict):
+            v = prov.get("chunking_strategy_version")
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    # Baseline rows (opus_reference_minutes.jsonl) flatten the
+    # provenance fields into the row dict itself; tolerate that shape
+    # so a baseline row produced under overlap is detected.
+    flat = artifact.get("chunking_strategy_version")
+    if isinstance(flat, str) and flat.strip():
+        return flat.strip()
+    return _DEFAULT_CHUNKING_STRATEGY_VERSION
+
+
+def _baseline_chunking_strategy_version(
+    baseline_rows: List[Dict[str, Any]],
+) -> str:
+    """Phase 2.B: dominant chunking_strategy_version across baseline rows.
+
+    Mirrors :func:`_baseline_schema_version`: takes the first row's
+    value and treats every later row as conforming. The opus baseline
+    is produced in one run so all rows should agree on the strategy.
+    Returns the default ``speaker_turn_v1`` when no row carries the
+    field — keeps pre-Phase-2.B baselines comparable against
+    default-off Phase-2.B artifacts.
+    """
+    for row in baseline_rows:
+        v = _chunking_strategy_version_of(row)
+        if v:
+            return v
+    return _DEFAULT_CHUNKING_STRATEGY_VERSION
+
+
 def _baseline_schema_version(
     baseline_rows: List[Dict[str, Any]],
 ) -> Optional[str]:
@@ -1667,6 +1731,35 @@ def run_comparison(
         )
     else:
         haiku_artifact, haiku_path = find_haiku_artifact(data_lake, source_id)
+
+    # Phase 2.B: chunking-strategy cross-check. A Haiku artifact
+    # produced under CHUNK_OVERLAP_TURNS=N (stamped
+    # `speaker_turn_v1_overlap{N}`) cannot be honestly diffed against
+    # an Opus baseline produced under the default strategy (stamped
+    # `speaker_turn_v1`). The two F1 numbers are not comparable
+    # because the inputs to the models were structurally different.
+    # Fail closed; the operator's options are to (a) re-run the
+    # reference under the same overlap setting (matched baseline) or
+    # (b) use --allow-strategy-mismatch (future CLI extension; not in
+    # this PR — the halt is the binding gate, the override is a
+    # follow-up). Treats absent / null on either side as
+    # ``speaker_turn_v1`` so pre-Phase-2.B artifacts compared against
+    # default-off Phase-2.B artifacts do NOT halt.
+    haiku_strategy = _chunking_strategy_version_of(haiku_artifact)
+    baseline_strategy = _baseline_chunking_strategy_version(baseline_rows)
+    if haiku_strategy != baseline_strategy:
+        raise ComparisonError(
+            _CHUNKING_STRATEGY_MISMATCH_REASON,
+            (
+                f"Haiku chunking_strategy_version={haiku_strategy!r} differs "
+                f"from baseline chunking_strategy_version={baseline_strategy!r}. "
+                "Re-run the reference baseline under the same "
+                "CHUNK_OVERLAP_TURNS setting to produce a matched "
+                "comparison; cross-strategy F1 numbers are not "
+                "comparable. (Pre-Phase-2.B artifacts default to "
+                "'speaker_turn_v1' and are not affected.)"
+            ),
+        )
 
     # Phase 1 (Step 1.7): schema_version cross-check. A Haiku artifact
     # at a different schema_version than the Opus baseline rows means
