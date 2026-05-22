@@ -1300,7 +1300,7 @@ research script (no CLI surface is added by this PR).
 
 ---
 
-## Phase 2.B — chunk overlap (PR #XXX)
+## Phase 2.B — chunk overlap (PR #217)
 
 ### What this change adds
 
@@ -1422,7 +1422,7 @@ pytest tests/extraction/test_overlap_attribution_gate.py
 pytest tests/comparison/test_chunking_strategy_version_gate.py
 pytest tests/data_lake/test_chunker.py
 pytest tests/extraction/test_chunker.py
-python scripts/verify_rollback_contracts.py --pr XXX
+python scripts/verify_rollback_contracts.py --pr 217
 ```
 
 After revert, the first two test files are expected to disappear.
