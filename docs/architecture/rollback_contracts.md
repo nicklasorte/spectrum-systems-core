@@ -1300,6 +1300,171 @@ research script (no CLI surface is added by this PR).
 
 ---
 
+## Phase 2.B — chunk overlap (PR #XXX)
+
+### What this change adds
+
+- New `CHUNK_OVERLAP_TURNS` environment variable (int, default `0`).
+  Read by both speaker-turn chunkers:
+  `src/spectrum_systems_core/extraction/chunker.py` (cascade pipeline)
+  and `src/spectrum_systems_core/data_lake/chunker.py` (live-LLM
+  extraction). When `> 0`, each speaker-turn chunk at position `i`
+  has its `text` field prepended with the text of the prior
+  `min(N, i)` turns; the recipient chunk records the prepended turn
+  IDs and the prepended count. Hard ceiling: if prepending would
+  push the chunk past `MAX_CHUNK_CHARS` (cascade) or the new
+  `MAX_LLM_CHUNK_CHARS` constant (live-LLM), the overlap count is
+  reduced to 1, then 0, and `overlap_clamped: true` is recorded.
+  Clamping never raises — it logs a warning.
+- Three optional per-chunk metadata fields stamped onto both chunker
+  outputs (absent when `CHUNK_OVERLAP_TURNS=0` — pre-Phase-2.B
+  byte-identicality preserved):
+  - `overlap_turns_prepended: int` — count of overlap turns
+    prepended to this chunk (0 when no overlap applies, e.g. the
+    first chunk).
+  - `overlap_clamped: bool` — true when the hard ceiling forced the
+    overlap count below `CHUNK_OVERLAP_TURNS`.
+  - `prepended_overlap_turn_ids: list[str]` — turn_ids (or
+    chunk_ids for the cascade) of the prepended turns, retained
+    verbatim from the source chunks (no new IDs minted).
+- New optional `chunking_strategy_version: str` field on the
+  `meeting_minutes` artifact's `provenance` block. Stamped at
+  extraction time by `workflows/meeting_minutes_llm.py` (and the
+  Sonnet / Opus / cascade variants). Values:
+  - `"speaker_turn_v1"` — current behaviour, zero overlap. Treated
+    as the default for any pre-Phase-2.B artifact that does NOT
+    carry the field.
+  - `"speaker_turn_v1_overlap{N}"` — overlap of `N` turns.
+- New gate function `verify_no_overlap_only_attribution` in
+  `src/spectrum_systems_core/promotion/gate.py`. Accepts the
+  artifact and an explicit `overlap_only_turn_ids: set[str]`
+  parameter (computed by the caller from the chunk envelope).
+  Emits reason code `failed:extracted_from_overlap_context` when
+  an extracted item's `source_turn_ids` reference ONLY overlap-
+  tagged turn IDs. Mixed (overlap + non-overlap) and pure
+  non-overlap items pass through.
+- New gate in `scripts/compare_opus_haiku.py` that halts with
+  reason code `chunking_strategy_mismatch` when the two artifacts
+  being compared declare different `chunking_strategy_version`
+  values (with absent/None treated as `"speaker_turn_v1"`). The
+  halt is fail-closed; an operator wishing to compare across
+  strategies for measurement-only runs must produce a matched
+  baseline by re-running the reference model under the same
+  `CHUNK_OVERLAP_TURNS` setting.
+- Two new optional aggregate fields on
+  `chunk_merge_summary.json`/`chunk_split_summary.json`:
+  `overlap_turns_prepended_total: int`,
+  `overlap_clamped_count: int`.
+- New workflow `.github/workflows/run-haiku-overlap-extraction.yml`
+  mirroring `run-haiku-extraction.yml` but passing
+  `CHUNK_OVERLAP_TURNS=2`. Phone-safe operator-driven dispatch.
+- New tests:
+  - `tests/extraction/test_overlap_attribution_gate.py` — pins the
+    overlap-attribution gate behaviour (rejection, mixed-pass,
+    happy-path, and CHUNK_OVERLAP_TURNS=0 no-op).
+  - `tests/comparison/test_chunking_strategy_version_gate.py` —
+    pins the comparison-engine halt behaviour (mismatch reject,
+    matched pass, both-null pass, one-null-one-explicit pass).
+  - Additions to `tests/data_lake/test_chunker.py` and
+    `tests/extraction/test_chunker.py` covering the overlap path,
+    the hard-ceiling clamp, and the byte-identical default.
+
+### To roll back
+
+1. Revert this PR. The two chunkers stop reading
+   `CHUNK_OVERLAP_TURNS`; the overlap metadata fields are no longer
+   stamped onto new chunks; the `chunking_strategy_version` field
+   is no longer stamped onto new `meeting_minutes` artifacts.
+2. Existing artifacts in the data lake that carry
+   `chunking_strategy_version` remain readable. The reverted
+   schema retains the field as optional (it is documented additive
+   and `additionalProperties` on `provenance` is intentionally not
+   strict per the meeting_minutes.schema.json comment at line
+   1540). The comparison engine post-revert treats any stamped
+   value as `"speaker_turn_v1"` and proceeds without halting.
+3. Existing chunks on disk in `chunks.jsonl` files that carry the
+   new metadata fields (`overlap_turns_prepended`,
+   `overlap_clamped`, `prepended_overlap_turn_ids`) remain readable
+   under the reverted code because the downstream consumers either
+   read by-key with `.get()` defaults or ignore unknown keys. The
+   reverted chunk schema continues to allow optional fields.
+4. The two gate functions
+   (`verify_no_overlap_only_attribution`, the comparison-engine
+   strategy-mismatch halt) disappear with the revert. Existing
+   `grounding_rejection_report` or `comparison_failure` artifacts
+   that carry the new reason codes remain on disk as inert
+   diagnostics.
+5. The `.github/workflows/run-haiku-overlap-extraction.yml`
+   workflow disappears; any operator who dispatched it before the
+   revert keeps the resulting artifacts (with the overlap
+   provenance stamp) — they are valid for read but not for
+   forward comparison under matched baselines.
+
+### Data migration required for rollback
+
+None. All Phase 2.B additions are additive at every layer:
+
+- `CHUNK_OVERLAP_TURNS` defaults to `0`; the default-off path is
+  byte-identical to pre-Phase-2.B output.
+- `chunking_strategy_version` is optional on `provenance`;
+  artifacts without it validate against both the pre- and
+  post-Phase-2.B schema.
+- `prepended_overlap_turn_ids`, `overlap_turns_prepended`,
+  `overlap_clamped` are optional on the chunk envelope and on the
+  merge/split summaries.
+- The gate functions are net-new; reverting deletes them, and no
+  pre-Phase-2.B caller invokes them.
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/extraction/test_overlap_attribution_gate.py
+pytest tests/comparison/test_chunking_strategy_version_gate.py
+pytest tests/data_lake/test_chunker.py
+pytest tests/extraction/test_chunker.py
+python scripts/verify_rollback_contracts.py --pr XXX
+```
+
+After revert, the first two test files are expected to disappear.
+If either remains and fails, the revert is incomplete — fix
+forward. The chunker test suites remain present and are expected
+to PASS post-revert because they pin behaviour under the default
+`CHUNK_OVERLAP_TURNS=0`, which the revert restores byte-identically.
+
+`verification_command`: `pytest tests/extraction/test_overlap_attribution_gate.py tests/comparison/test_chunking_strategy_version_gate.py tests/data_lake/test_chunker.py tests/extraction/test_chunker.py`
+
+### Cross-PR dependency
+
+`depends_on`: #192 (Phase 1 verbatim grounding gate — this PR adds
+a sibling check `verify_no_overlap_only_attribution` in the same
+module, reusing the `RejectionRecord`/`AcceptanceRecord` types and
+the per-item `source_turn_ids` shape).
+
+`future_dependency`: a follow-up may flip `CHUNK_OVERLAP_TURNS`
+default from `0` to a measured value, or wire it through the CLI
+as an explicit `--chunk-overlap-turns` flag. Either extension
+requires a fresh rollback contract entry because either would
+change F1 measurement against the existing data-lake baseline.
+
+### Operator action after merge
+
+The default path (`CHUNK_OVERLAP_TURNS` unset / 0) is byte-identical
+to pre-Phase-2.B. To measure the overlap effect:
+
+1. Re-run the Opus reference baseline under
+   `CHUNK_OVERLAP_TURNS=2` (matched baseline).
+2. Dispatch
+   `.github/workflows/run-haiku-overlap-extraction.yml` on the
+   Dec 18 transcript.
+3. Compare the new Haiku artifact against the matched Opus
+   baseline via `scripts/compare_opus_haiku.py` (the strategy-
+   version gate will pass because both artifacts now carry
+   `"speaker_turn_v1_overlap2"`).
+4. The PR hard gate is F1 ≥ 39.5% (no regression vs prior
+   baseline of 39.5%).
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new

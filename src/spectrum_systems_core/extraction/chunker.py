@@ -53,6 +53,16 @@ _LOG = logging.getLogger(__name__)
 CHUNK_SIZE = 8
 OVERLAP = 1
 
+# Phase 2.B: chunk-overlap env var. When > 0, each speaker-turn chunk
+# at position i has its `text` prepended with the text of the prior
+# min(N, i) turns. The recipient chunk records prepended_overlap_chunk_ids
+# (the source IDs, retained verbatim) and overlap_turns_prepended (count).
+# The hard ceiling MAX_CHUNK_CHARS clamps the overlap count rather than
+# raising — a single oversized chunk should never block the loop.
+# Overlap applies ONLY to the speaker-turn path; the character-count
+# fallback already has its own OVERLAP=1 unit-level overlap.
+CHUNK_OVERLAP_TURNS_ENV: str = "CHUNK_OVERLAP_TURNS"
+
 # Phase R.0. Roughly 30-50 tokens per the research synthesis -- well below
 # the 400-512 token recommendation but sufficient to eliminate the 2-68
 # char chunks observed on the 7-ghz-downlink-tig-meeting-kickoff
@@ -115,6 +125,131 @@ def _merge_enabled() -> bool:
     if raw in _DISABLED_VALUES:
         return False
     return True
+
+
+def _resolve_chunk_overlap_turns() -> int:
+    """Phase 2.B: read CHUNK_OVERLAP_TURNS from the environment.
+
+    Default `0` preserves byte-identical pre-Phase-2.B output. Invalid
+    or negative values fall back to 0 with a warning so a typo never
+    silently re-shapes chunker output.
+    """
+    raw = os.environ.get(CHUNK_OVERLAP_TURNS_ENV, "").strip()
+    if not raw:
+        return 0
+    try:
+        value = int(raw)
+    except ValueError:
+        _LOG.warning(
+            "chunk_overlap_turns_invalid: %s=%r -> falling back to 0",
+            CHUNK_OVERLAP_TURNS_ENV, raw,
+        )
+        return 0
+    if value < 0:
+        _LOG.warning(
+            "chunk_overlap_turns_negative: %s=%d -> falling back to 0",
+            CHUNK_OVERLAP_TURNS_ENV, value,
+        )
+        return 0
+    return value
+
+
+def _apply_speaker_turn_overlap(
+    chunks: list[dict[str, Any]], overlap_turns: int, max_chars: int
+) -> tuple[list[dict[str, Any]], int, int]:
+    """Phase 2.B: prepend prior turns' text onto each speaker-turn chunk.
+
+    For each chunk at position ``i >= 1``, prepend the text of the
+    prior ``min(overlap_turns, i)`` chunks. The recipient chunk
+    records ``prepended_overlap_chunk_ids`` (the source UUIDs) and
+    ``overlap_turns_prepended`` (count). When ``overlap_turns == 0``
+    the chunk list is returned unchanged — the default-off path is
+    byte-identical to pre-Phase-2.B output.
+
+    Hard ceiling: if prepending would push the chunk past
+    ``max_chars``, reduce the overlap count one turn at a time
+    (down to 1, then 0) and record ``overlap_clamped: True``.
+    Clamping never raises.
+
+    Returns ``(chunks, overlap_turns_prepended_total, overlap_clamped_count)``
+    so the merge/split summary writer can record aggregate observability.
+    """
+    if overlap_turns <= 0 or not chunks:
+        return chunks, 0, 0
+
+    # Snapshot originals BEFORE mutation so the prepend never compounds.
+    original_texts = [c.get("text", "") for c in chunks]
+    original_chunk_ids = [c.get("chunk_id") for c in chunks]
+
+    total_prepended = 0
+    clamped_count = 0
+
+    for i, chunk in enumerate(chunks):
+        if i == 0:
+            chunk["overlap_turns_prepended"] = 0
+            chunk["overlap_clamped"] = False
+            chunk["prepended_overlap_chunk_ids"] = []
+            continue
+
+        max_available = min(overlap_turns, i)
+        base_text = original_texts[i]
+        clamped = False
+        applied = max_available
+        while applied > 0:
+            prepend_slice_text = "\n".join(
+                original_texts[i - applied : i]
+            )
+            candidate_text = (
+                prepend_slice_text + "\n" + base_text
+                if prepend_slice_text
+                else base_text
+            )
+            if len(candidate_text) <= max_chars:
+                break
+            clamped = True
+            applied -= 1
+
+        if applied == 0:
+            chunk["overlap_turns_prepended"] = 0
+            chunk["overlap_clamped"] = clamped
+            chunk["prepended_overlap_chunk_ids"] = []
+            if clamped:
+                clamped_count += 1
+                _LOG.warning(
+                    "chunk_overlap_clamped_to_zero: chunk %d would "
+                    "exceed %d chars even with overlap=1; skipping",
+                    i, max_chars,
+                )
+            continue
+
+        prepend_slice_chunk_ids = original_chunk_ids[i - applied : i]
+        prepend_slice_text = "\n".join(
+            original_texts[i - applied : i]
+        )
+        new_text = prepend_slice_text + "\n" + base_text
+        chunk["text"] = new_text
+        # Recompute the derived fields the chunk schema requires:
+        # char_count and text_hash. These must stay consistent with
+        # `text` or the schema validator will accept stale values.
+        chunk["char_count"] = len(new_text)
+        chunk["text_hash"] = "sha256:" + _sha256_hex(
+            new_text.encode("utf-8")
+        )
+        chunk["overlap_turns_prepended"] = applied
+        chunk["overlap_clamped"] = clamped
+        chunk["prepended_overlap_chunk_ids"] = [
+            cid for cid in prepend_slice_chunk_ids if cid is not None
+        ]
+        total_prepended += applied
+        if clamped:
+            clamped_count += 1
+            _LOG.warning(
+                "chunk_overlap_clamped: chunk %d clamped from %d to %d "
+                "(max_chars=%d)",
+                i, max_available, applied, max_chars,
+            )
+
+    return chunks, total_prepended, clamped_count
 
 
 def _resolve_max_chunk_chars() -> int:
@@ -587,6 +722,8 @@ class Chunker:
 
         chunks: list[dict[str, Any]] | None = None
         chunking_strategy: str = "character_count_fallback"
+        overlap_turns_prepended_total: int = 0
+        overlap_clamped_count: int = 0
         if _is_transcript(source_family, source_id):
             chunks, fallback_reason = self._chunk_by_speaker_turns(
                 units, source_id, source_family
@@ -598,6 +735,19 @@ class Chunker:
                 )
             else:
                 chunking_strategy = "speaker_turn"
+                # Phase 2.B: apply overlap on the speaker-turn path only.
+                # The character-count path already has its own OVERLAP=1
+                # unit-level overlap. Hard ceiling clamps to
+                # MAX_CHUNK_CHARS rather than raising; warning is logged.
+                overlap_turns_cfg = _resolve_chunk_overlap_turns()
+                if overlap_turns_cfg > 0:
+                    chunks, overlap_turns_prepended_total, overlap_clamped_count = (
+                        _apply_speaker_turn_overlap(
+                            chunks,
+                            overlap_turns_cfg,
+                            _resolve_max_chunk_chars(),
+                        )
+                    )
         if chunks is None:
             chunks = self._chunk_by_character_count(
                 units, source_id, source_family

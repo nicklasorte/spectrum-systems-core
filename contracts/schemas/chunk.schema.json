@@ -52,6 +52,20 @@
       "type": "string",
       "enum": ["opening", "middle", "closing"],
       "description": "Phase W (integration wiring): proportional position label assigned by glossary.chunk_position.assign_chunk_positions after all merge/split passes. Used by the extraction runner to inject the attention-direction prompt block on middle chunks."
+    },
+    "overlap_turns_prepended": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Phase 2.B (optional, additive). Count of prior turns whose text was prepended onto this chunk. 0 for the first chunk on an overlap run, or for every chunk when CHUNK_OVERLAP_TURNS=0. Absent on pre-Phase-2.B chunks."
+    },
+    "overlap_clamped": {
+      "type": "boolean",
+      "description": "Phase 2.B (optional, additive). True when the hard MAX_CHUNK_CHARS ceiling forced the overlap count below the configured CHUNK_OVERLAP_TURNS. Absent on pre-Phase-2.B chunks."
+    },
+    "prepended_overlap_chunk_ids": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" },
+      "description": "Phase 2.B (optional, additive). The chunk_ids (UUIDs) of the prior turns whose text was prepended onto this chunk, in source order. Empty when no overlap was applied. The IDs are retained verbatim from the source chunks — no new UUIDs are minted for overlap copies. Absent on pre-Phase-2.B chunks."
     }
   }
 }

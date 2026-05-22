@@ -1549,6 +1549,11 @@
         "phase": {
           "type": "string"
         },
+        "chunking_strategy_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Phase 2.B (optional, additive). Identifies the chunking strategy used to produce this artifact. Values: `speaker_turn_v1` (current behaviour, zero overlap; default for any artifact omitting the field) or `speaker_turn_v1_overlap{N}` (overlap of N turns, e.g. `speaker_turn_v1_overlap2`). The comparison engine halts with `chunking_strategy_mismatch` when two artifacts under comparison declare incompatible values. Pre-Phase-2.B artifacts validate unchanged because the field is optional and `additionalProperties` on `provenance` is intentionally not strict (see this object's description)."
+        },
         "extraction_config": {
           "type": "object",
           "description": "Phase 2 (optional, additive). Captured by `pipeline.governed_pipeline_run` so the run can be re-executed from the artifact alone. Two identical-config invocations must produce identical comparison F1; a perturbed `prompt_content_hash` must produce a different F1. Absent on legacy (pre-Phase-2) artifacts; the comparison engine treats those as `legacy_eval: true`. Phase 3 adds three optional glossary metadata fields: `glossary_version_hash`, `glossary_tokens_added`, `tainted_glossary_drift`. The hash + tokens fields must be present together or absent together (enforced by `pipeline.governed_run.validate_glossary_metadata_consistency`, which JSON Schema cannot natively express because each field is optional in isolation).",

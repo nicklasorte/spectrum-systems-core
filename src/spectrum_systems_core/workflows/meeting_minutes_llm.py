@@ -36,7 +36,7 @@ from pathlib import Path
 from ..artifacts import Artifact, compute_content_hash
 from ..config import LLMConfigError, preflight_llm_config
 from ..config.taxonomy import UNCLASSIFIED_DECISION_VERB
-from ..data_lake.chunker import chunk_transcript
+from ..data_lake.chunker import chunk_transcript, chunking_strategy_version
 
 # NB: the glossary loader is imported lazily inside
 # ``_prepend_glossary_block`` so a disabled run NEVER pays the import
@@ -1133,6 +1133,11 @@ def _make_extract(
             "provenance": {
                 "produced_by": PRODUCED_BY,
                 "model_id": model_id,
+                # Phase 2.B: stamp the chunking strategy used. Always
+                # present on artifacts produced under Phase 2.B onward.
+                # Pre-Phase-2.B artifacts omit the field; the comparison
+                # engine treats missing as ``speaker_turn_v1``.
+                "chunking_strategy_version": chunking_strategy_version(),
             },
         }
         if grounded:
