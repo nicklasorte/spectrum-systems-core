@@ -90,10 +90,15 @@ def _seed(tmp_path: Path, *, with_source_record: bool = True) -> Path:
     return dl
 
 
-def _run(args: list[str]):
+def _run(args: list[str], *, env_extra: dict[str, str] | None = None):
     env = dict(os.environ)
     env["OPUS_REFERENCE_BASELINE_STUB_RESPONSE"] = _STUB_RESPONSE
     env.pop("ANTHROPIC_API_KEY", None)  # prove no real API path is taken
+    # Pin the chunk-overlap env so a stray CI value cannot leak into the
+    # subprocess and quietly change the stamped chunking_strategy_version.
+    env.pop("CHUNK_OVERLAP_TURNS", None)
+    if env_extra:
+        env.update(env_extra)
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
         capture_output=True,
@@ -149,9 +154,40 @@ def test_subprocess_writes_reference_only_baselines(
         assert r["source_id"] == SOURCE_ID
         assert r["meeting_date"] == "2025-12-18"
         assert uuid.UUID(r["pair_id"]).version == 5
+        # Phase 2.B: subprocess path with no CHUNK_OVERLAP_TURNS set in
+        # the env stamps the no-suffix strategy token, matching
+        # compare_opus_haiku.py's default for any baseline row that
+        # omits the field.
+        assert r["chunking_strategy_version"] == "speaker_turn_v1"
     assert {r["extraction_type"] for r in lines} == {
         "decisions", "action_items", "risks"
     }
+
+
+def test_subprocess_chunk_overlap_turns_env_stamps_version(
+    tmp_path: Path,
+) -> None:
+    """Phase 2.B: subprocess path with `CHUNK_OVERLAP_TURNS=2` set in
+    the env stamps `speaker_turn_v1_overlap2` on every row AND the
+    summary dict, so the comparison engine's strategy-version gate
+    finds a matched value against an overlap=2 haiku artifact."""
+    dl = _seed(tmp_path)
+    result = _run(
+        ["--data-lake", str(dl), "--model", MODEL, "--no-skip-existing"],
+        env_extra={"CHUNK_OVERLAP_TURNS": "2"},
+    )
+    assert result.returncode == 0, (
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    summary = json.loads(result.stdout)
+    assert summary["chunk_overlap_turns"] == "2"
+    assert summary["chunking_strategy_version"] == "speaker_turn_v1_overlap2"
+    for ln in _out(dl).read_text(encoding="utf-8").splitlines():
+        if ln.strip():
+            assert (
+                json.loads(ln)["chunking_strategy_version"]
+                == "speaker_turn_v1_overlap2"
+            )
 
 
 def test_subprocess_dry_run_writes_nothing(tmp_path: Path) -> None:

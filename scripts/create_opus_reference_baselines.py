@@ -94,6 +94,10 @@ from typing import Any, Callable, Dict, List, Optional
 
 # Reused pipeline functions — NEVER reimplemented here. A drift in any
 # of these would silently desync this workflow from the Haiku pipeline.
+from spectrum_systems_core.data_lake.chunker import (  # noqa: E402
+    CHUNK_OVERLAP_TURNS_ENV,
+    chunking_strategy_version,
+)
 from spectrum_systems_core.ingestion.docx_extractor import (  # noqa: E402
     DocxExtractor,
 )
@@ -799,6 +803,7 @@ def build_records(
     model: str,
     meeting_date: Optional[str],
     created_at: str,
+    chunking_strategy_version_value: str,
 ) -> List[Dict[str, Any]]:
     """Build every JSONL record for one transcript, or HALT.
 
@@ -854,6 +859,23 @@ def build_records(
                     "schema_version": "1.0.0",
                     "meeting_date": meeting_date,
                     "created_at": created_at,
+                    # Phase 2.B: stamp the chunking strategy on every row
+                    # so compare_opus_haiku.py's per-row
+                    # _chunking_strategy_version_of() lookup finds the
+                    # matched value. The baseline script does NOT itself
+                    # chunk (the whole transcript is sent to Opus in one
+                    # call), but the comparison engine halts fail-closed
+                    # on a strategy mismatch against the haiku artifact —
+                    # so a baseline produced for an overlap=N haiku run
+                    # must carry the matching speaker_turn_v1_overlap{N}
+                    # token. Default `CHUNK_OVERLAP_TURNS=0` yields
+                    # `speaker_turn_v1` (no suffix), byte-compatible with
+                    # pre-Phase-2.B Opus baselines on disk that omit
+                    # the field (the comparator defaults a missing value
+                    # to the same string).
+                    "chunking_strategy_version": (
+                        chunking_strategy_version_value
+                    ),
                 }
             )
     return records
@@ -1004,6 +1026,18 @@ def create_baselines(
     )
     types = extraction_types()
 
+    # Phase 2.B: resolve the chunking strategy ONCE from the environment
+    # so every record in this run carries the same token, and the
+    # summary dict surfaces both the raw env value (for operator
+    # eyeballs) and the resolved version string (the value the
+    # comparison engine reads). Default `CHUNK_OVERLAP_TURNS` unset/0
+    # yields `speaker_turn_v1` so the no-op path is byte-compatible
+    # with pre-Phase-2.B Opus baselines on disk.
+    chunk_overlap_turns_raw = os.environ.get(
+        CHUNK_OVERLAP_TURNS_ENV, ""
+    ).strip() or "0"
+    strategy_version = chunking_strategy_version()
+
     if client is not None:
         active_client: Callable[..., str] = client
     else:
@@ -1070,6 +1104,7 @@ def create_baselines(
             model=model,
             meeting_date=meeting_date,
             created_at=_now_utc_iso(),
+            chunking_strategy_version_value=strategy_version,
         )
 
         # An empty object ``{}`` (or every type-array empty) is valid
@@ -1124,6 +1159,8 @@ def create_baselines(
         "model": model,
         "dry_run": dry_run,
         "skip_existing": skip_existing,
+        "chunk_overlap_turns": chunk_overlap_turns_raw,
+        "chunking_strategy_version": strategy_version,
         "transcripts": len(transcripts),
         "per_transcript": per_transcript,
     }

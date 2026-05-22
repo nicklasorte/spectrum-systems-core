@@ -247,6 +247,7 @@ def test_valid_transcript_writes_correct_fields(tmp_path: Path) -> None:
         "ground_truth_text", "item_data", "human_authored",
         "model_authored", "model_id", "verified", "status",
         "provenance", "schema_version", "meeting_date", "created_at",
+        "chunking_strategy_version",
     }
     for r in lines:
         assert required <= set(r), f"missing fields: {required - set(r)}"
@@ -263,6 +264,10 @@ def test_valid_transcript_writes_correct_fields(tmp_path: Path) -> None:
         assert r["meeting_date"] == "2025-12-18"  # from docx header
         assert r["ground_truth_text"].strip()
         assert r["created_at"].endswith("+00:00")
+        # Phase 2.B: default `CHUNK_OVERLAP_TURNS` unset/0 yields the
+        # no-suffix strategy token, matching the comparator's default
+        # for any baseline row that omits the field.
+        assert r["chunking_strategy_version"] == "speaker_turn_v1"
 
     by_type: dict[str, list] = {}
     for r in lines:
@@ -292,6 +297,64 @@ def test_valid_transcript_writes_correct_fields(tmp_path: Path) -> None:
     assert by_type["decisions"][0]["item_data"] == {
         "text": by_type["decisions"][0]["ground_truth_text"]
     }
+
+
+# --------------------------------------------------------------------------
+# 3b. Phase 2.B: CHUNK_OVERLAP_TURNS env var stamps the matching
+#     chunking_strategy_version on every row, and the summary dict
+#     surfaces both the raw env value and the resolved version.
+# --------------------------------------------------------------------------
+def test_chunk_overlap_turns_env_stamps_version_on_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CHUNK_OVERLAP_TURNS", "2")
+    dl = _seed(tmp_path)
+    result = cob.create_baselines(
+        data_lake=dl,
+        source_id=None,
+        dry_run=False,
+        skip_existing=True,
+        model=MODEL,
+        client=SpyClient(_VALID_RESPONSE),
+    )
+    assert result["chunk_overlap_turns"] == "2"
+    assert result["chunking_strategy_version"] == "speaker_turn_v1_overlap2"
+
+    lines = [
+        json.loads(ln)
+        for ln in _out_path(dl).read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    assert lines, "expected at least one record"
+    for r in lines:
+        assert r["chunking_strategy_version"] == "speaker_turn_v1_overlap2"
+
+
+def test_chunk_overlap_turns_default_yields_no_suffix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default unset/0 must produce the no-suffix `speaker_turn_v1`
+    token, byte-compatible with pre-Phase-2.B Opus baselines on disk
+    that omit the field (the comparator defaults a missing value to
+    the same string)."""
+    monkeypatch.delenv("CHUNK_OVERLAP_TURNS", raising=False)
+    dl = _seed(tmp_path)
+    result = cob.create_baselines(
+        data_lake=dl,
+        source_id=None,
+        dry_run=False,
+        skip_existing=True,
+        model=MODEL,
+        client=SpyClient(_VALID_RESPONSE),
+    )
+    assert result["chunk_overlap_turns"] == "0"
+    assert result["chunking_strategy_version"] == "speaker_turn_v1"
+    for ln in _out_path(dl).read_text(encoding="utf-8").splitlines():
+        if ln.strip():
+            assert (
+                json.loads(ln)["chunking_strategy_version"]
+                == "speaker_turn_v1"
+            )
 
 
 # --------------------------------------------------------------------------
