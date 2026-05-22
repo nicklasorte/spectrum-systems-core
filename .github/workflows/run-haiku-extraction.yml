@@ -1,0 +1,189 @@
+name: Run Haiku Extraction
+
+# Dedicated one-input workflow for the full haiku meeting-minutes-llm
+# run. No debug toggles, no max_chunks, no single-chunk — this is the
+# production-shape extraction that produces a complete promoted
+# meeting_minutes artifact (~138 chunks for the default transcript)
+# and pushes it to nicklasorte/data-lake.
+#
+# Haiku is the CLI default, so this workflow passes no --model flag.
+# That keeps the invocation byte-identical to pre-Phase-5 behavior and
+# makes this the canonical "standard haiku extraction" entry point.
+#
+# Hand-tunable settings (model, debug modes, cascade filter) all
+# already live in debug-llm-extraction.yml. This workflow exists so
+# the operator can dispatch the unconstrained measurement from a
+# phone with a single tap: pick the source, run, read F1 in the
+# step summary of the companion run-comparison.yml workflow.
+#
+# Persistence: mirrors the same data-lake push + verify pattern as
+# debug-llm-extraction.yml. The full run always pushes (there are no
+# diagnostic flags here that would justify suppressing the push).
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_id:
+        description: 'Source ID to extract'
+        required: true
+        default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
+
+permissions:
+  contents: read
+
+jobs:
+  run-haiku:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+      SOURCE_ID: ${{ github.event.inputs.source_id }}
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e .
+
+      - name: Run meeting-minutes-llm (haiku, full run)
+        id: run_llm
+        run: |
+          set +e
+          python -m spectrum_systems_core.cli meeting-minutes-llm \
+            --source-id "${SOURCE_ID}" \
+            --data-lake "${DATA_LAKE_PATH}" \
+            >stdout.log 2>stderr.log
+          rc=$?
+          cat stdout.log
+          cat stderr.log >&2
+          if [ "${rc}" -eq 0 ]; then
+            # The CLI prints "... OK produced_by=... written=<path>"
+            # on the success line only when a promoted artifact was
+            # written (cli.py:3074-3082). Full run, no diagnostic
+            # flags — every successful run is push-eligible.
+            WRITTEN_PATH="$(grep -oE 'written=[^[:space:]]+' stdout.log \
+              | tail -n1 | sed 's/^written=//')"
+            if [ -z "${WRITTEN_PATH}" ]; then
+              {
+                echo "## meeting-minutes-llm exited 0 but wrote no artifact"
+                echo ""
+                echo "stdout tail:"
+                echo '```'
+                tail -n 40 stdout.log
+                echo '```'
+              } >> "${GITHUB_STEP_SUMMARY}"
+              exit 1
+            fi
+            echo "written_path=${WRITTEN_PATH}" >> "${GITHUB_OUTPUT}"
+            echo "should_push=true" >> "${GITHUB_OUTPUT}"
+            {
+              echo "## PROMOTED OK (haiku)"
+              echo ""
+              echo "- source_id: \`${SOURCE_ID}\`"
+              echo "- model: \`haiku\`"
+              echo "- written: \`${WRITTEN_PATH}\`"
+              echo "- push to data-lake: \`true\`"
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          {
+            echo "## meeting-minutes-llm FAILED (exit ${rc})"
+            echo ""
+            echo "- source_id: \`${SOURCE_ID}\`"
+            echo "- model: \`haiku\`"
+            echo ""
+            echo "### reason_codes"
+            echo '```'
+            grep -iE 'reason_codes?=' stdout.log stderr.log \
+              || echo "(no reason_code line emitted)"
+            echo '```'
+            echo ""
+            echo "### stderr (first 2000 chars)"
+            echo '```'
+            head -c 2000 stderr.log
+            echo ""
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+          exit 1
+
+      # ------------------------------------------------------------------
+      # nicklasorte/data-lake bulk-ignores ``processed/``; ``git add`` of
+      # a path under it is a SILENT no-op unless the directory chain AND
+      # the file are re-included first. Mirrors the established
+      # !**/processed/**/source_record.json precedent and the identical
+      # step in debug-llm-extraction.yml. Idempotent.
+      # ------------------------------------------------------------------
+      - name: Ensure data-lake .gitignore negates the meeting_minutes artifact
+        if: ${{ steps.run_llm.outputs.should_push == 'true' }}
+        env:
+          CLONE_PATH: ${{ github.workspace }}/data-lake
+        run: |
+          set -euo pipefail
+          GI="$CLONE_PATH/.gitignore"
+          touch "$GI"
+          add_rule() {
+            grep -qxF "$1" "$GI" || printf '%s\n' "$1" >> "$GI"
+          }
+          add_rule '!**/processed/**/'
+          add_rule '!**/processed/**/meeting_minutes__*.json'
+          echo "Ensured meeting_minutes__*.json negation in data-lake .gitignore"
+
+      - name: Push meeting_minutes_llm artifact to nicklasorte/data-lake
+        if: ${{ steps.run_llm.outputs.should_push == 'true' }}
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            feat(llm-extraction): meeting_minutes_llm haiku artifact for ${{ env.SOURCE_ID }} [skip ci]
+          add_paths: |
+            .gitignore
+            store/processed/meetings/${{ env.SOURCE_ID }}/meeting_minutes__*.json
+
+      - name: Verify artifact landed in remote data-lake
+        if: ${{ steps.run_llm.outputs.should_push == 'true' }}
+        env:
+          CLONE_PATH: ${{ github.workspace }}/data-lake
+          WRITTEN_PATH: ${{ steps.run_llm.outputs.written_path }}
+        run: |
+          set -euo pipefail
+          cd "$CLONE_PATH"
+          REL="${WRITTEN_PATH#${CLONE_PATH}/}"
+          if [ "$REL" = "$WRITTEN_PATH" ] || [ -z "$REL" ]; then
+            echo "::error::could not derive a data-lake-relative path from" \
+                 "WRITTEN_PATH='${WRITTEN_PATH}' (clone='${CLONE_PATH}')"
+            exit 1
+          fi
+          echo "Verifying remote path: $REL"
+          git fetch origin main
+          REMOTE_SHA="$(git rev-parse origin/main)"
+          if ! git cat-file -e "origin/main:${REL}" 2>/dev/null; then
+            echo "::error::artifact NOT found in nicklasorte/data-lake" \
+                 "origin/main at ${REL} (commit ${REMOTE_SHA}). The push" \
+                 "did not persist the promoted artifact."
+            exit 1
+          fi
+          BYTES="$(git cat-file -s "origin/main:${REL}")"
+          if [ "${BYTES}" -le 0 ]; then
+            echo "::error::artifact ${REL} present but empty in" \
+                 "origin/main (commit ${REMOTE_SHA})"
+            exit 1
+          fi
+          echo "OK: ${REL} present in nicklasorte/data-lake @ ${REMOTE_SHA} (${BYTES} bytes)"
+          {
+            echo "## Data-lake push verified"
+            echo ""
+            echo "- path: \`${REL}\`"
+            echo "- remote commit: \`${REMOTE_SHA}\`"
+            echo "- size: ${BYTES} bytes"
+          } >> "${GITHUB_STEP_SUMMARY}"
