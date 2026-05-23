@@ -1,11 +1,12 @@
 ---
-version: 3.B-E
+version: 4.A
 changelog:
   - "Phase 3.A: G-PROMPT-NEGATIVE + G-REASON-FIELD; non-extractable categories enumerated; reason field required on 14 claim-shaped types"
   - "Phase 3.B: G-PROMPT-TRIGGER-TAXONOMY; Fernández (SIGDIAL 2008) four-subtype implicit-decision recognition section with explicit linguistic markers and optional decision_subtype enum (issue|proposal|resolution|scope)"
   - "Phase 3.C: G-MODAL-POLICY; shall/will/should/may/could/would/might routing rules per NTIA Manual Chapter 5"
   - "Phase 3.D: G-GLOSSARY-NTIA; 38-term NTIA/DoD spectrum glossary injected at top of prompt for domain grounding"
   - "Phase 3.E: G-FEWSHOT-IMPLICIT + G-FEWSHOT-SCHEMA + G-FEWSHOT-NEGATIVE; three hand-curated in-domain examples (explicit decision, near-miss non-decision, implicit guidance-as-decision) ordered for recency bias"
+  - "Phase 4.A: G-GROUND-VERBATIM; source_quote required on 14 claim-shaped types; chunk-scoped substring grounding via source_chunk_id; transcription errors reproduced verbatim"
 ---
 
 # NTIA/DoD Spectrum Policy Meeting Extraction — Comprehensive Reference Baseline
@@ -201,6 +202,34 @@ unless the speaker is explicitly invoking a regulation. Frequency
 ranges that appear in technical discussion are technical_parameters
 candidates, but only if they describe a system parameter — not if they
 are just being mentioned in passing.
+
+## VERBATIM SOURCE GROUNDING (REQUIRED)
+
+Every item in the 14 claim-shaped types (decisions, action_items,
+open_questions, commitments, claims, risks, cross_references,
+regulatory_references, issue_registry_entry, position_statement,
+dissent_or_objection, precedent_reference, external_stakeholder_input,
+procedural_ruling) MUST include a `source_quote` field.
+
+`source_quote` rules:
+- 10–1000 characters of VERBATIM text from the transcript chunk
+- Must be a literal substring of the chunk text (after whitespace
+  normalization, the gate will check character-by-character)
+- Reproduce transcription errors AS-IS. Do not correct them. If the
+  transcript says "the seven gig hertz band", emit "the seven gig
+  hertz band" — not "the 7 GHz band".
+- Do not paraphrase, summarize, or compress
+- Do not concatenate spans from different parts of the chunk — pick
+  ONE contiguous span
+- The span should contain the actual evidence for the item, not
+  surrounding context
+
+If you cannot find a verbatim span that supports an item in 10+
+characters, DO NOT extract the item.
+
+Items without a valid `source_quote` will be rejected by the
+grounding gate and excluded from the meeting minutes. This is a
+fail-closed validation — there is no override.
 
 ## Reason field (REQUIRED on 14 claim-shaped types)
 

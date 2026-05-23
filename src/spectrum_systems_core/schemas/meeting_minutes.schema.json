@@ -24,9 +24,10 @@
         "1.1.0",
         "1.2.0",
         "1.3.0",
-        "1.4.0"
+        "1.4.0",
+        "1.5.0"
       ],
-      "description": "Payload schema_version. 1.0.0 = legacy ungrounded; 1.1.0 = Phase Y grounded (PR #128 source_turns contract \u2014 unchanged here); 1.2.0 = additionally permits the optional rationale (decisions) / claims with external_references + evidence_in_transcript / follow_up_required (action_items) / word_level_timestamps / sentiment_indicators / meeting_phases fields; 1.3.0 = additionally permits eight new optional cross-meeting arrays (issue_registry_entry, position_statement, dissent_or_objection, agenda_item, precedent_reference, external_stakeholder_input, glossary_definition, procedural_ruling) plus the optional claim_complexity field on claims items; 1.4.0 = Phase 1 verbatim span grounding: every item-type sub-schema declares a `grounding_mode` discriminator and adds the optional grounding fields (verbatim items add source_quote / quote_offset_normalized / quote_offset_original, turn_aggregate items add source_turn_ids). The new fields are OPTIONAL at the JSON-Schema layer so pre-1.4 artifacts validate unchanged; the promotion gate (`promotion/gate.py`) is what enforces that 1.4.0 artifacts carry them. Additivity: every 1.2.0 / 1.3.0 / 1.4.0 field is optional in the schema, so legacy artifacts validate unchanged and an artifact may declare 1.4.0 without carrying any new field."
+      "description": "Payload schema_version. 1.0.0 = legacy ungrounded; 1.1.0 = Phase Y grounded (PR #128 source_turns contract — unchanged here); 1.2.0 = additionally permits the optional rationale (decisions) / claims with external_references + evidence_in_transcript / follow_up_required (action_items) / word_level_timestamps / sentiment_indicators / meeting_phases fields; 1.3.0 = additionally permits eight new optional cross-meeting arrays (issue_registry_entry, position_statement, dissent_or_objection, agenda_item, precedent_reference, external_stakeholder_input, glossary_definition, procedural_ruling) plus the optional claim_complexity field on claims items; 1.4.0 = Phase 1 verbatim span grounding: every item-type sub-schema declares a `grounding_mode` discriminator and adds the optional grounding fields (verbatim items add source_quote / quote_offset_normalized / quote_offset_original, turn_aggregate items add source_turn_ids). The new fields are OPTIONAL at the JSON-Schema layer so pre-1.4 artifacts validate unchanged; the promotion gate (`promotion/gate.py`) is what enforces that 1.4.0 artifacts carry them. Additivity: every 1.2.0 / 1.3.0 / 1.4.0 field is optional in the schema, so legacy artifacts validate unchanged and an artifact may declare 1.4.0 without carrying any new field.; 1.5.0 = Phase 4.A G-GROUND-VERBATIM: every claim-shaped item adds the optional source_chunk_id field for chunk-scoped grounding, and the new src/spectrum_systems_core/promotion/grounding_gate.py module enforces that source_quote (when present) is a literal substring of the named chunk (or the full transcript when source_chunk_id is omitted) after normalization (whitespace, smart quotes, NFKC). source_quote and source_chunk_id remain OPTIONAL at the JSON-Schema layer so legacy artifacts validate unchanged; the 1.5.0 gate enforces presence and substring-match for the 14 claim-shaped types."
     },
     "title": {
       "type": "string",
@@ -78,7 +79,7 @@
                   "string",
                   "null"
                 ],
-                "description": "Optional (schema_version 1.2.0+). The stated reason or justification WHY this decision was made, as expressed in the transcript \u2014 the explicit 'why', distinct from background decision context. Null or omitted when no rationale was stated; legacy 1.0.0 / 1.1.0 decisions omit it entirely (additivity)."
+                "description": "Optional (schema_version 1.2.0+). The stated reason or justification WHY this decision was made, as expressed in the transcript — the explicit 'why', distinct from background decision context. Null or omitted when no rationale was stated; legacy 1.0.0 / 1.1.0 decisions omit it entirely (additivity)."
               },
               "grounding_mode": {
                 "const": "verbatim",
@@ -107,8 +108,18 @@
               },
               "decision_subtype": {
                 "type": "string",
-                "enum": ["issue", "proposal", "resolution", "scope"],
+                "enum": [
+                  "issue",
+                  "proposal",
+                  "resolution",
+                  "scope"
+                ],
                 "description": "Phase 3.B (additive, optional). Implicit-decision sub-type from the Fernández et al. (SIGDIAL 2008) taxonomy as adapted in workflows/prompts/meeting_minutes_llm.md and meeting_minutes_opus.md: `issue` (problem identification), `proposal` (course of action proposed), `resolution` (group commits without formal vote), `scope` (boundary ruling). Optional at the JSON-Schema layer for additivity (pre-3.B artifacts omit it). The enum is the closed taxonomy; any other string fails the gate."
+              },
+              "source_chunk_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
               }
             }
           }
@@ -140,7 +151,7 @@
                   "in_progress",
                   "completed"
                 ],
-                "description": "Optional. Default \"open\" when absent (default applied by the producer, not enforced by JSON Schema). Only these three values are valid \u2014 e.g. \"done\" fails the gate."
+                "description": "Optional. Default \"open\" when absent (default applied by the producer, not enforced by JSON Schema). Only these three values are valid — e.g. \"done\" fails the gate."
               },
               "owner": {
                 "type": [
@@ -160,7 +171,11 @@
               },
               "priority": {
                 "type": "string",
-                "enum": ["low", "medium", "high"],
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ],
                 "description": "Optional. Derived from the modal verb policy in workflows/prompts/meeting_minutes_llm.md (PR #190): 'shall'/'will' → high, 'should' → medium, 'may' → low. Omit the key entirely when no modal-verb signal is present (additivity: legacy action_item objects validate unchanged). Only these three values are valid; any other (e.g. \"urgent\") fails the gate, and null is rejected."
               },
               "grounding_mode": {
@@ -187,6 +202,11 @@
                 "minLength": 5,
                 "maxLength": 500,
                 "description": "Phase 3.A (additive, optional; superseded Phase 3P, retained for parity with the other 13 reason-bearing types). One-sentence explanation of WHY this action_item was extracted — the trigger phrase, modal verb, or assignment that made it qualify. Required by the prompt; optional in JSON Schema for backward-compat."
+              },
+              "source_chunk_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
               }
             }
           }
@@ -255,6 +275,16 @@
                 "minLength": 5,
                 "maxLength": 500,
                 "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
+              },
+              "source_chunk_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
+              },
+              "source_quote": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). The verbatim transcript substring that supports this item. Reproduce transcription errors AS-IS. The Phase 4.A substring grounding gate enforces a normalized length >= 10 chars and a literal substring match against the chunk named by source_chunk_id (or against the full transcript when source_chunk_id is absent). Optional at the JSON-Schema layer so legacy artifacts validate."
               }
             }
           }
@@ -320,6 +350,11 @@
             "minLength": 5,
             "maxLength": 500,
             "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
+          },
+          "source_chunk_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
           }
         }
       }
@@ -387,6 +422,11 @@
             "minLength": 5,
             "maxLength": 500,
             "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
+          },
+          "source_chunk_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
           }
         }
       }
@@ -425,7 +465,7 @@
           },
           "evidence_in_transcript": {
             "type": "array",
-            "description": "Optional (schema_version 1.2.0+), default [] (applied by the producer/model). turn_ids that provide evidence SUPPORTING this claim \u2014 deliberately distinct from the PR #128 grounding/source_turns contract, which records where the claim was STATED. A claim may be stated in one turn but supported by evidence across multiple turns. This field does NOT alter or re-pin the grounding contract.",
+            "description": "Optional (schema_version 1.2.0+), default [] (applied by the producer/model). turn_ids that provide evidence SUPPORTING this claim — deliberately distinct from the PR #128 grounding/source_turns contract, which records where the claim was STATED. A claim may be stated in one turn but supported by evidence across multiple turns. This field does NOT alter or re-pin the grounding contract.",
             "items": {
               "type": "string"
             }
@@ -435,7 +475,7 @@
               "atomic",
               "compound"
             ],
-            "description": "Optional (schema_version 1.3.0+). atomic = single independently verifiable fact; compound = bundles multiple facts that should be split. Default \"atomic\" (applied by the producer/model, not enforced by JSON Schema): the key is OPTIONAL so every legacy 1.0.0 / 1.1.0 / 1.2.0 claim \u2014 and any claim that simply omits it \u2014 validates unchanged. Only these two values are valid; any other (e.g. \"wrong\") fails the gate."
+            "description": "Optional (schema_version 1.3.0+). atomic = single independently verifiable fact; compound = bundles multiple facts that should be split. Default \"atomic\" (applied by the producer/model, not enforced by JSON Schema): the key is OPTIONAL so every legacy 1.0.0 / 1.1.0 / 1.2.0 claim — and any claim that simply omits it — validates unchanged. Only these two values are valid; any other (e.g. \"wrong\") fails the gate."
           },
           "grounding_mode": {
             "const": "verbatim",
@@ -461,6 +501,11 @@
             "minLength": 5,
             "maxLength": 500,
             "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
+          },
+          "source_chunk_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
           }
         }
       }
@@ -522,6 +567,16 @@
             "minLength": 5,
             "maxLength": 500,
             "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
+          },
+          "source_chunk_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
+          },
+          "source_quote": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). The verbatim transcript substring that supports this item. Reproduce transcription errors AS-IS. The Phase 4.A substring grounding gate enforces a normalized length >= 10 chars and a literal substring match against the chunk named by source_chunk_id (or against the full transcript when source_chunk_id is absent). Optional at the JSON-Schema layer so legacy artifacts validate."
           }
         }
       }
@@ -547,7 +602,7 @@
               "null"
             ],
             "minLength": 1,
-            "description": "The attendee's agency as stated in the transcript. The key is required (the extraction model always emits it) but the value is null when the transcript names a participant without stating their agency \u2014 a named attendee with no stated agency is still a real, faithful extraction (the model must never invent an agency), so agency: null is valid and must not block. minLength still applies to the string branch so an empty-string agency stays rejected; a non-string/non-null value is still rejected fail-closed."
+            "description": "The attendee's agency as stated in the transcript. The key is required (the extraction model always emits it) but the value is null when the transcript names a participant without stating their agency — a named attendee with no stated agency is still a real, faithful extraction (the model must never invent an agency), so agency: null is valid and must not block. minLength still applies to the string branch so an empty-string agency stays rejected; a non-string/non-null value is still rejected fail-closed."
           },
           "role": {
             "type": [
@@ -679,6 +734,11 @@
             "minLength": 5,
             "maxLength": 500,
             "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
+          },
+          "source_chunk_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
           }
         }
       }
@@ -814,7 +874,7 @@
               "string",
               "null"
             ],
-            "description": "The event date as stated in the transcript. The key is required (the extraction model always emits it) but the value is null when no date was explicitly stated \u2014 a scheduled event mentioned without a date is still a real, faithful extraction, so null is valid and must not block (the model must never invent a date)."
+            "description": "The event date as stated in the transcript. The key is required (the extraction model always emits it) but the value is null when no date was explicitly stated — a scheduled event mentioned without a date is still a real, faithful extraction, so null is valid and must not block (the model must never invent a date)."
           },
           "time": {
             "type": [
@@ -855,7 +915,7 @@
     },
     "sentiment_indicators": {
       "type": "array",
-      "description": "Optional (schema_version 1.2.0+), default []. Speaker turns flagged for notable sentiment. Only populated when a speaker expresses clear disagreement, concern, strong endorsement, uncertainty, or frustration \u2014 not routine discussion. Legacy artifacts omit it (additivity).",
+      "description": "Optional (schema_version 1.2.0+), default []. Speaker turns flagged for notable sentiment. Only populated when a speaker expresses clear disagreement, concern, strong endorsement, uncertainty, or frustration — not routine discussion. Legacy artifacts omit it (additivity).",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -969,7 +1029,7 @@
     },
     "issue_registry_entry": {
       "type": "array",
-      "description": "Optional (schema_version 1.3.0+), default []. Substantive technical or policy problems being worked across multiple meetings; an issue persists until resolved. DISTINCT from `open_questions` (a procedural question raised in one meeting) and `decisions` (a resolution). Legacy 1.0.0 / 1.1.0 / 1.2.0 artifacts omit it entirely (additivity \u2014 the array is optional, so absence validates).",
+      "description": "Optional (schema_version 1.3.0+), default []. Substantive technical or policy problems being worked across multiple meetings; an issue persists until resolved. DISTINCT from `open_questions` (a procedural question raised in one meeting) and `decisions` (a resolution). Legacy 1.0.0 / 1.1.0 / 1.2.0 artifacts omit it entirely (additivity — the array is optional, so absence validates).",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -1061,13 +1121,18 @@
             "minLength": 5,
             "maxLength": 500,
             "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
+          },
+          "source_chunk_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
           }
         }
       }
     },
     "position_statement": {
       "type": "array",
-      "description": "Optional (schema_version 1.3.0+), default []. An agency's or participant's stated stance on a topic that may recur or evolve across meetings \u2014 a declared position, NOT a decision (a stance, not a resolution). Legacy artifacts omit it (additivity).",
+      "description": "Optional (schema_version 1.3.0+), default []. An agency's or participant's stated stance on a topic that may recur or evolve across meetings — a declared position, NOT a decision (a stance, not a resolution). Legacy artifacts omit it (additivity).",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -1148,6 +1213,11 @@
             "minLength": 5,
             "maxLength": 500,
             "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
+          },
+          "source_chunk_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
           }
         }
       }
@@ -1227,13 +1297,18 @@
             "minLength": 5,
             "maxLength": 500,
             "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
+          },
+          "source_chunk_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
           }
         }
       }
     },
     "agenda_item": {
       "type": "array",
-      "description": "Optional (schema_version 1.3.0+), default []. Formal agenda structure recoverable from the transcript (numbered or titled sections) \u2014 the organizational spine for cross-meeting document structure, NOT the substantive content (that stays in `topics` / `decisions`). Legacy artifacts omit it (additivity).",
+      "description": "Optional (schema_version 1.3.0+), default []. Formal agenda structure recoverable from the transcript (numbered or titled sections) — the organizational spine for cross-meeting document structure, NOT the substantive content (that stays in `topics` / `decisions`). Legacy artifacts omit it (additivity).",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -1379,13 +1454,18 @@
             "minLength": 5,
             "maxLength": 500,
             "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
+          },
+          "source_chunk_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
           }
         }
       }
     },
     "external_stakeholder_input": {
       "type": "array",
-      "description": "Optional (schema_version 1.3.0+), default []. Input relayed from parties NOT present in the meeting (industry associations, ITU, congressional offices, OSD). Only when a speaker explicitly relays it \u2014 a bare document mention with no relayed content is NOT stakeholder input. Legacy artifacts omit it (additivity).",
+      "description": "Optional (schema_version 1.3.0+), default []. Input relayed from parties NOT present in the meeting (industry associations, ITU, congressional offices, OSD). Only when a speaker explicitly relays it — a bare document mention with no relayed content is NOT stakeholder input. Legacy artifacts omit it (additivity).",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -1461,6 +1541,11 @@
             "minLength": 5,
             "maxLength": 500,
             "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
+          },
+          "source_chunk_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
           }
         }
       }
@@ -1535,7 +1620,7 @@
     },
     "procedural_ruling": {
       "type": "array",
-      "description": "Optional (schema_version 1.3.0+), default []. A chair / co-lead ruling on meeting procedure, scope boundaries, or process \u2014 DISTINCT from a `decisions` item (substantive). Establishes the governance framework. Legacy artifacts omit it (additivity).",
+      "description": "Optional (schema_version 1.3.0+), default []. A chair / co-lead ruling on meeting procedure, scope boundaries, or process — DISTINCT from a `decisions` item (substantive). Establishes the governance framework. Legacy artifacts omit it (additivity).",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -1604,6 +1689,11 @@
             "minLength": 5,
             "maxLength": 500,
             "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
+          },
+          "source_chunk_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
           }
         }
       }
@@ -1661,16 +1751,40 @@
                 "transcript_hash"
               ],
               "properties": {
-                "model_id": { "type": "string", "minLength": 1 },
-                "prompt_content_hash": { "type": "string", "minLength": 1 },
-                "transcript_hash": { "type": "string", "minLength": 1 }
+                "model_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "prompt_content_hash": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "transcript_hash": {
+                  "type": "string",
+                  "minLength": 1
+                }
               }
             },
-            "chunks_full_hash": { "type": "string", "minLength": 1 },
-            "chunk_count": { "type": "integer", "minimum": 0 },
-            "first_chunk_hash": { "type": "string", "minLength": 1 },
-            "last_chunk_hash": { "type": "string", "minLength": 1 },
-            "prompt_content_hash": { "type": "string", "minLength": 1 },
+            "chunks_full_hash": {
+              "type": "string",
+              "minLength": 1
+            },
+            "chunk_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "first_chunk_hash": {
+              "type": "string",
+              "minLength": 1
+            },
+            "last_chunk_hash": {
+              "type": "string",
+              "minLength": 1
+            },
+            "prompt_content_hash": {
+              "type": "string",
+              "minLength": 1
+            },
             "glossary_version_hash": {
               "type": "string",
               "minLength": 1,

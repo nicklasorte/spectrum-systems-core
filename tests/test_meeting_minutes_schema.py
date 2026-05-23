@@ -515,7 +515,9 @@ def _phase(**overrides) -> dict:
 def test_schema_version_enum_has_all_four():
     """Every shipped schema_version sits in the enum (additivity: legacy
     version strings still validate). Phase 1 added 1.4.0 alongside the
-    1.0–1.3 versions for verbatim span grounding."""
+    1.0–1.3 versions for verbatim span grounding. Phase 4.A added 1.5.0
+    for the substring grounding gate (source_chunk_id field on the 14
+    claim-shaped types)."""
     schema = _load_schema(ARTIFACT_TYPE)
     assert schema["properties"]["schema_version"]["enum"] == [
         "1.0.0",
@@ -523,11 +525,12 @@ def test_schema_version_enum_has_all_four():
         "1.2.0",
         "1.3.0",
         "1.4.0",
+        "1.5.0",
     ]
 
 
 @pytest.mark.parametrize(
-    "version", ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"]
+    "version", ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0"]
 )
 @pytest.mark.parametrize(
     "fixture_dir",
