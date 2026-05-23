@@ -2108,6 +2108,212 @@ glossary, or few-shot sections without rolling this PR back.
 
 ---
 
+## Phase 4.A — G-GROUND-VERBATIM source_quote gate (PR #237)
+
+### What this change adds
+
+- `src/spectrum_systems_core/promotion/grounding_gate.py`: new
+  module implementing the Phase 4.A substring-based grounding
+  gate. `normalize_for_grounding` applies smart-quote → straight
+  mapping BEFORE NFKC (so `U+2033` DOUBLE PRIME is not mangled
+  into `''` and lose the double-quote signal), then NFKC, then
+  whitespace collapse; case preserved. `check_grounding` rejects
+  every item in the 14 claim-shaped types whose `source_quote`
+  is missing / empty / `< 10` chars after normalization / not a
+  literal substring of its `source_chunk_id` chunk (or of the
+  full transcript when `source_chunk_id` is absent — logged as a
+  warning). The empty-quote branch is explicit and runs BEFORE
+  the substring check because `"" in chunk_text` returns `True`
+  in Python. `CLAIM_SHAPED_TYPES` frozenset pins the 14 types
+  and is asserted in lockstep with the canonical iteration tuple
+  inside `check_grounding`. Co-exists with the Phase 1
+  `promotion/gate.py` offset-based gate; the two have separate
+  schema-version constants (Phase 1: `GROUNDING_BINDING_SCHEMA_VERSION
+  = "1.4.0"`, Phase 4.A: `GROUNDING_GATE_SCHEMA_VERSION = "1.5.0"`).
+- `src/spectrum_systems_core/schemas/meeting_minutes.schema.json`:
+  `"1.5.0"` added to the `schema_version` enum and the
+  description extended. Optional `source_chunk_id` field added to
+  the structured-object branch of every claim-shaped item type
+  (14 types). Optional `source_quote` field additively added to
+  `open_questions` and `cross_references` (which previously only
+  carried `source_turn_ids`); their `grounding_mode`
+  discriminator stays `"turn_aggregate"` so the Phase 1 gate
+  still uses `source_turn_ids` for those, while the Phase 4.A
+  gate uses the new `source_quote` whenever a producer emits it.
+  Schema-additive only — every new field is OPTIONAL; legacy
+  artifacts validate unchanged. The canonical
+  `promotion.gate.GROUNDING_BINDING_SCHEMA_VERSION` constant is
+  intentionally NOT bumped from `"1.4.0"` to `"1.5.0"` in this
+  PR; the bump cascades into the 1.4.0 Opus baseline (PR #232)
+  and into `scripts/compare_opus_haiku.py`'s
+  `< _GROUNDING_BINDING_SCHEMA_VERSION` filters, and is deferred
+  to a focused follow-up PR that handles the migration.
+- `src/spectrum_systems_core/schemas/comparison_result.schema.json`:
+  13 new optional fields added at the top-level properties —
+  `pre_gate_haiku_count`, `pre_gate_haiku_f1`,
+  `pre_gate_haiku_precision`, `pre_gate_haiku_recall`,
+  `post_gate_haiku_count`, `post_gate_haiku_f1`,
+  `post_gate_haiku_precision`, `post_gate_haiku_recall`,
+  `grounded_count`, `ungrounded_count`, `gate_drop_rate`,
+  `legacy_exempt_count`, `recall_collapse_warning`. Every field
+  is OPTIONAL; pre-4.A comparison artifacts validate unchanged
+  (PR #233's byte-equal invariant preserved — neither
+  `compare_opus_haiku.py` nor `create_opus_reference_baselines.py`
+  is modified by this PR).
+- `scripts/run_grounding_gate.py`: new operator-facing script
+  that locates the most recent `meeting_minutes__*.json` under
+  `<data-lake>/store/processed/meetings/<source-id>/`, validates
+  it via `scripts/_artifact_validator.validate_artifact`
+  (CLAUDE.md integration co-requirement), runs the gate, and
+  writes four artifacts. Carries the `--disable-grounding-gate`
+  rollback flag.
+- `.github/workflows/run-grounding-gate.yml`: phone-safe
+  `workflow_dispatch` wrapper with `source_id` + `disable_gate`
+  choice inputs. Emits a step summary with totals, top-5 failure
+  reasons, and a recall-collapse warning when grounded rate is
+  `< 50%`. Pushes the new artifacts to the data-lake with a
+  commit message ending in the skip-ci marker (no internal
+  spaces) so the data-lake repo does not re-trigger CI.
+- `src/spectrum_systems_core/workflows/prompts/meeting_minutes_llm.md`
+  and `meeting_minutes_opus.md`: new
+  `## VERBATIM SOURCE GROUNDING (REQUIRED)` section added
+  between `## DO NOT EXTRACT` and `## Reason field`. Section text
+  is BYTE-IDENTICAL between the two prompts (asserted by
+  `test_verbatim_grounding_section_byte_identical`). Both prompt
+  frontmatter `version` keys bumped to `4.A` and a new changelog
+  entry appended; the existing 3.A–3.E changelog entries are
+  preserved.
+- Four new artifact types are written by the script (none are
+  promoted product artifacts; all are audit / diagnostic):
+  `grounded_items`, `ungrounded_items` (JSONL audit),
+  `grounding_gate_result`, and `grounding_gate_bypass_record`.
+  None enter `indexes/meetings/artifact_index.jsonl`.
+- 61 new tests: `tests/test_grounding_gate.py` (35),
+  `tests/test_grounding_prompt_section.py` (9),
+  `tests/test_grounding_comparison_artifact.py` (9),
+  `tests/integration/test_run_grounding_gate_script.py` (8).
+  Plus a one-line update to `tests/test_meeting_minutes_schema.py`
+  to include `"1.5.0"` in the canonical enum pin.
+
+### To roll back
+
+1. Revert the PR. The new module, script, workflow, prompt
+   section, and 13 comparison-artifact fields disappear. The
+   schema enum returns to `["1.0.0", "1.1.0", "1.2.0", "1.3.0",
+   "1.4.0"]` and `source_chunk_id` disappears from all 14
+   claim-shaped item-type schemas. The Phase 1
+   `promotion/gate.py` is untouched by this PR and continues to
+   enforce 1.4.0 verbatim-grounding semantics unchanged after
+   revert. The Phase 3.B–E prompt sections (PR #236) and the
+   Phase 3.A `reason` field (PR #235) are untouched by this PR
+   and remain in place after revert.
+2. Existing `meeting_minutes` artifacts that were produced at
+   `schema_version == "1.5.0"` would FAIL strict-schema
+   validation against the reverted schema because `"1.5.0"` is
+   no longer in the enum. Per `docs/contracts/data_lake_contract.md`
+   §8 the data lake is append-only; do NOT delete or rewrite
+   them. Operators have two rollback options, in preference
+   order:
+   - Fix forward: re-apply the additive `"1.5.0"` enum value and
+     the optional `source_chunk_id` field. This restores forward
+     compatibility without touching data.
+   - Re-baseline the affected sources by re-dispatching the
+     production extraction workflow under the reverted (pre-4.A)
+     prompt. The new artifacts will stamp `"1.4.0"` and validate.
+3. Existing `comparison_result` artifacts carrying any of the 13
+   new optional fields validate cleanly against the reverted
+   schema (the comparison schema's root has `additionalProperties:
+   false`, but every removed field is in `properties` — a revert
+   that drops the field definition means an artifact carrying
+   that field would fail validation). The recommended fix is
+   "fix forward" (re-add the additive fields) rather than
+   strict revert; the comparison engine is not modified by this
+   PR so no producer ever populated these fields in this slice.
+4. Existing `grounded_items` / `ungrounded_items` /
+   `grounding_gate_result` / `grounding_gate_bypass_record`
+   files in the data lake are audit-only, non-promoted, and not
+   indexed; they survive revert with no schema attached (no
+   schema was registered for them — they pass through the
+   data-lake's append-only contract unchanged).
+
+### Data migration required for rollback
+
+None for pre-4.A artifacts (additive optional schema changes;
+they continue to validate unchanged). Post-4.A meeting_minutes
+artifacts stamped `"1.5.0"` require re-baselining if a strict
+revert is taken; "fix forward" by re-adding the additive enum
+value and field is the recommended path and requires no data
+migration.
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/test_grounding_gate.py
+```
+
+After revert this test file ceases to exist; the verification
+is that the rest of the test suite still passes (Phase 1's
+`tests/test_data_lake_grounding.py`, the Phase 3.A
+`tests/test_prompt_negative_and_reason_field.py`, and the
+Phase 3.B-E `tests/test_phase_3b_3e_prompt_additions.py` must
+all still pass after revert — no production code path depends
+on the Phase 4.A gate). The standalone
+`scripts/run_grounding_gate.py` is removed by the revert; its
+integration test
+`tests/integration/test_run_grounding_gate_script.py` is
+removed with it.
+
+`verification_command`: `pytest tests/test_grounding_gate.py`
+
+### Cross-PR dependency
+
+`depends_on`: PR #235 (Phase 3.A `reason` field on the 14
+claim-shaped types) and PR #236 (Phase 3.B–E taxonomy / modal
+policy / glossary / few-shot sections). The Phase 4.A prompt
+section is placed AFTER the Phase 3.A DO NOT EXTRACT block and
+BEFORE the Phase 3.A Reason field block, and the Phase 4.A
+schema additions sit alongside the Phase 3.B `decision_subtype`
+enum on the decisions object. Reverting either of #235 / #236
+underneath this PR would leave the Phase 4.A prompt section
+referencing a missing anchor and the schema in an inconsistent
+state. If all three are ever reverted, revert in reverse order:
+#237 first, then #236, then #235.
+
+`no_future_dependency`: this entry does not gate any future PR
+on the prompt or schema axes. The follow-up PR that bumps
+`GROUNDING_BINDING_SCHEMA_VERSION` to `"1.5.0"`, and the
+follow-up PR that wires the gate inline into the orchestrator,
+both depend on PR #237 being merged; their own rollback
+entries will reference this PR by number.
+
+### Operator action after merge
+
+1. Dispatch `.github/workflows/run-grounding-gate.yml` against a
+   representative source_id to confirm the new script discovers
+   the right `meeting_minutes__*.json`, writes the four new
+   artifacts under
+   `processed/meetings/<source-id>/`, and surfaces the step
+   summary on a phone screen. Use `disable_gate=false` for the
+   first dispatch; the second dispatch with `disable_gate=true`
+   confirms the bypass-record audit path.
+2. The follow-up PR that wires the gate inline into the
+   orchestrator (after `meeting-minutes-llm` writes, before
+   `compare-opus-haiku` runs) will reuse this PR's
+   `promotion/grounding_gate.py` module — no module-API change
+   is anticipated.
+3. The follow-up PR that wires
+   `scripts/compare_opus_haiku.py` to populate the 13 new
+   `comparison_result` fields can be authored independently;
+   the schema is already in place.
+4. The follow-up PR that bumps
+   `promotion.gate.GROUNDING_BINDING_SCHEMA_VERSION` to
+   `"1.5.0"` MUST also handle the cascade into the 1.4.0 Opus
+   baseline (re-baseline or migrate) and into
+   `compare_opus_haiku.py`'s legacy-filter logic; do NOT take
+   that bump as a standalone one-line change.
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new
