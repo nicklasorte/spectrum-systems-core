@@ -1494,7 +1494,7 @@ to pre-Phase-2.B. To measure the overlap effect:
 
 ---
 
-## Phase 2.C — cascade filter first dispatch (PR #TBD)
+## Phase 2.C — cascade filter first dispatch (PR #221)
 
 ### What this change adds
 
