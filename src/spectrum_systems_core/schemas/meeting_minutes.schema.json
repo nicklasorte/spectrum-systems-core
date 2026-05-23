@@ -101,8 +101,9 @@
               },
               "reason": {
                 "type": "string",
-                "minLength": 1,
-                "description": "Phase 3P (additive, optional). One-sentence explanation of WHY this item was extracted — the trigger phrase or group affirmation. Required by the prompt; optional in JSON Schema for backward-compat with pre-3P artifacts. A high missing-rate across an extraction is recorded as the `few_shot_reason_missing_rate` diagnostic on the per-run `pipeline_invocation_log`."
+                "minLength": 5,
+                "maxLength": 500,
+                "description": "Phase 3.A (additive, optional; superseded Phase 3P, retained for parity with the other 13 reason-bearing types). One-sentence explanation of WHY this item was extracted — the trigger phrase or group affirmation. Required by the prompt; optional in JSON Schema for backward-compat. A high missing-rate across an extraction is recorded as the `few_shot_reason_missing_rate` diagnostic on the per-run `pipeline_invocation_log`."
               }
             }
           }
@@ -178,8 +179,9 @@
               },
               "reason": {
                 "type": "string",
-                "minLength": 1,
-                "description": "Phase 3P (additive, optional). One-sentence explanation of WHY this action_item was extracted — the trigger phrase, modal verb, or assignment that made it qualify. Required by the prompt; optional in JSON Schema for backward-compat with pre-3P artifacts."
+                "minLength": 5,
+                "maxLength": 500,
+                "description": "Phase 3.A (additive, optional; superseded Phase 3P, retained for parity with the other 13 reason-bearing types). One-sentence explanation of WHY this action_item was extracted — the trigger phrase, modal verb, or assignment that made it qualify. Required by the prompt; optional in JSON Schema for backward-compat."
               }
             }
           }
@@ -242,6 +244,12 @@
                   "type": "integer"
                 },
                 "description": "Phase 1 (schema_version 1.4.0). Turn IDs this Q&A spans. Optional in schema; the gate enforces every id exists in the transcript turn index."
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 500,
+                "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
               }
             }
           }
@@ -301,6 +309,12 @@
             "type": "integer",
             "minimum": 0,
             "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500,
+            "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
           }
         }
       }
@@ -362,6 +376,12 @@
             "type": "integer",
             "minimum": 0,
             "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500,
+            "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
           }
         }
       }
@@ -430,6 +450,12 @@
             "type": "integer",
             "minimum": 0,
             "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500,
+            "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
           }
         }
       }
@@ -485,6 +511,12 @@
               "type": "integer"
             },
             "description": "Phase 1 (schema_version 1.4.0). Turn IDs this aggregate spans. Optional in schema; the gate enforces every id exists in the transcript turn index for 1.4.0 artifacts."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500,
+            "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
           }
         }
       }
@@ -636,6 +668,12 @@
             "type": "integer",
             "minimum": 0,
             "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500,
+            "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
           }
         }
       }
@@ -1012,6 +1050,12 @@
             "type": "integer",
             "minimum": 0,
             "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500,
+            "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
           }
         }
       }
@@ -1093,6 +1137,12 @@
             "type": "integer",
             "minimum": 0,
             "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500,
+            "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
           }
         }
       }
@@ -1166,6 +1216,12 @@
             "type": "integer",
             "minimum": 0,
             "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500,
+            "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
           }
         }
       }
@@ -1312,6 +1368,12 @@
             "type": "integer",
             "minimum": 0,
             "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500,
+            "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
           }
         }
       }
@@ -1388,6 +1450,12 @@
             "type": "integer",
             "minimum": 0,
             "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500,
+            "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
           }
         }
       }
@@ -1525,6 +1593,12 @@
             "type": "integer",
             "minimum": 0,
             "description": "Phase 1 (schema_version 1.4.0). Byte offset against the original transcript (re-derived by the gate from the normalization position map)."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500,
+            "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
           }
         }
       }

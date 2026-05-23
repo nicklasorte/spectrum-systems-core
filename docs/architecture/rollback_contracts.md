@@ -1835,6 +1835,137 @@ every comparison until this fix.
 
 ---
 
+## Phase 3.A — G-PROMPT-NEGATIVE + G-REASON-FIELD (PR #235)
+
+### What this change adds
+
+- `src/spectrum_systems_core/schemas/meeting_minutes.schema.json`:
+  optional `reason` field (string, `minLength: 5`, `maxLength: 500`)
+  added to 12 claim-shaped types — `open_questions`, `commitments`,
+  `claims`, `risks`, `cross_references`, `regulatory_references`,
+  `issue_registry_entry`, `position_statement`, `dissent_or_objection`,
+  `precedent_reference`, `external_stakeholder_input`,
+  `procedural_ruling`. The pre-existing Phase 3P `reason` field on
+  `decisions` and `action_items` is tightened from `minLength: 1`
+  (no max) to the same `minLength: 5, maxLength: 500` for parity
+  with the other 13 reason-bearing types. NO new artifact type. NO
+  new schema version (additive optional fields per the
+  `schema_version` enum policy documented at
+  `meeting_minutes.schema.json` line 29; the canonical
+  `promotion.gate.GROUNDING_BINDING_SCHEMA_VERSION` constant remains
+  `"1.4.0"`).
+- `src/spectrum_systems_core/schemas/meeting_extraction.schema.json`:
+  same optional `reason` field added to the three parallel types
+  (`decisions`, `claims`, `action_items`). Each items schema declares
+  `additionalProperties: false`, so the field had to be admitted at
+  the schema layer before the prompt could emit it; the schema
+  predicates have not changed otherwise.
+- `src/spectrum_systems_core/workflows/prompts/meeting_minutes_llm.md`
+  and `meeting_minutes_opus.md`: new `## DO NOT EXTRACT` section (8
+  non-extractable categories — brainstorming, prior-decision recaps,
+  agenda restatements, conditional/speculative statements,
+  meta-procedural talk, third-party quotes, repeated mentions, bare
+  numeric mentions) and new `## Reason field (REQUIRED on 14
+  claim-shaped types)` section carrying the forcing-function
+  sentence "If you cannot articulate a reason in one sentence, DO
+  NOT extract this item." Both prompts updated in lockstep — the
+  `DO NOT EXTRACT` section is byte-identical between the two so the
+  Haiku/Opus F1 comparison stays interpretable.
+- `tests/test_prompt_negative_and_reason_field.py`: new pinning
+  test file. 27 tests covering byte-identity of `DO NOT EXTRACT`
+  across both prompts, forcing-function sentence presence,
+  per-type `reason` schema presence on the 14 claim-shaped types,
+  per-type absence on the 9 descriptive types
+  (`attendees`, `agenda_item`, `meeting_phases`, `topics`,
+  `scheduled_events`, `technical_parameters`, `named_artifacts`,
+  `sentiment_indicators`, `glossary_definition`), and the
+  canonical-constant invariant.
+- NO new gate. NO new CLI flag. NO new artifact type. NO new
+  workflow. The change is prompt-side (precision-at-extraction) +
+  additive schema fields that match what the prompt now requires.
+
+### To roll back
+
+1. Revert the PR. The 12 newly-added `reason` properties disappear
+   from `meeting_minutes.schema.json`, the 3 from
+   `meeting_extraction.schema.json`. The Phase 3P `reason` field on
+   `decisions` / `action_items` reverts to its pre-3.A form
+   (`minLength: 1`, no `maxLength`). The `## DO NOT EXTRACT` and
+   `## Reason field (REQUIRED on 14 claim-shaped types)` sections
+   disappear from both prompt files. The new test file is removed
+   with the revert.
+2. Existing meeting_minutes artifacts on the data lake that were
+   produced under Phase 3.A and carry a `reason` field on one of
+   the 12 newly-permitted types will FAIL strict-schema validation
+   against the reverted schema, because
+   `additionalProperties: false` on each items schema rejects the
+   unknown field. The data lake is append-only
+   (`docs/contracts/data_lake_contract.md` §8); do NOT delete or
+   rewrite them. Operators have three rollback options, in
+   preference order:
+   - Fix forward: re-apply the additive `reason` field on the
+     affected types. This restores forward compatibility without
+     touching data.
+   - Re-baseline the affected sources by re-dispatching the
+     production extraction workflow under the reverted (pre-3.A)
+     prompt. The new artifacts will omit `reason` and validate
+     cleanly.
+   - Tolerate the validation failure only on sources you
+     deliberately want to retire; promote nothing from them under
+     the reverted schema.
+3. Existing artifacts produced BEFORE this PR (no `reason` on any
+   of the 14 types) validate unchanged against the reverted schema
+   — the field is optional everywhere.
+
+### Data migration required for rollback
+
+None for pre-3.A artifacts (the schema change is additive optional;
+they continue to validate). Post-3.A artifacts carrying `reason` on
+one of the 12 newly-permitted types require re-baselining if a
+strict revert is taken; "fix forward" by re-adding the additive
+field is the recommended path and requires no data migration.
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/test_prompt_negative_and_reason_field.py
+```
+
+After revert this file ceases to exist with the rollback; the
+verification is that the rest of the test suite still passes (no
+production code path depended on the field existing). If any other
+test fails after revert, the rollback was not complete — fix
+forward.
+
+`verification_command`: `pytest tests/test_prompt_negative_and_reason_field.py`
+
+### Cross-PR dependency
+
+`depends_on`: PR #198 (Phase 3P `reason` field on
+`decisions`/`action_items`). PR #235 generalises Phase 3P's
+single-type pattern to 14 types and tightens the length bound for
+parity. Reverting PR #198 underneath PR #235 would leave the
+schema referencing a non-existent prior pattern; if both are ever
+reverted, revert PR #235 first.
+
+`no_future_dependency`: this entry does not gate any future PR.
+Future phases (3.B, 4.x, etc.) may extend or relax the reason
+constraints without rolling this PR back.
+
+### Operator action after merge
+
+1. The next baseline extraction run will emit `reason` on every
+   item of the 14 claim-shaped types. The comparison engine's
+   text-field resolver already handles unknown extra fields via
+   dict iteration; no operator action required to read the new
+   field downstream.
+2. Re-dispatch `.github/workflows/compare-opus-haiku.yml` on the
+   representative source set to measure Phase 3.A F1 against the
+   39.5% gate. That measurement run is OUT OF SCOPE for this PR;
+   the merge does not depend on it.
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new

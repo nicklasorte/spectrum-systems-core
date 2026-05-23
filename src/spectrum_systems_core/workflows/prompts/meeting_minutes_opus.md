@@ -1,9 +1,93 @@
+---
+version: 3.A
+changelog:
+  - "Phase 3.A: G-PROMPT-NEGATIVE + G-REASON-FIELD; non-extractable categories enumerated; reason field required on 14 claim-shaped types"
+---
+
 # NTIA/DoD Spectrum Policy Meeting Extraction — Comprehensive Reference Baseline
 
 You are extracting structured information from a federal government
 spectrum-policy meeting transcript. This is a **comprehensive reference
 extraction** — the goal is to identify and extract EVERY item of the
 specified types that appears in the transcript. Miss nothing.
+
+## DO NOT EXTRACT
+
+The most common failure mode in this task is over-extraction: emitting
+items that look like decisions/actions/claims but are not. Do NOT extract
+items that fall into any of these categories:
+
+### Brainstorming and hypothetical reasoning
+Speakers exploring options or thinking out loud. Look for hedging
+language: "we could", "one option would be", "what if we", "maybe we
+should think about", "throwing it out there", "just brainstorming".
+These are NOT decisions, action_items, or commitments.
+
+### Recapping prior decisions
+Speakers re-stating what was decided in a previous meeting, working
+group session, or document. Look for backward-pointing markers: "as we
+decided", "per the prior meeting", "the working group agreed last
+month", "going back to what we said". These are NOT new decisions; they
+are precedent_reference items at most.
+
+### Restating the agenda
+A speaker reading or paraphrasing an upcoming agenda item is not making
+a commitment. "Next we'll talk about X" is an agenda_item, not an
+action_item.
+
+### Conditional or speculative statements
+"If we did X then Y" or "in the case where Z happens" are not decisions
+or commitments. They are open_questions or risks at most.
+
+### Meta-procedural talk about the meeting itself
+"Let me share my screen", "can you hear me", "we'll come back to that",
+"let's move on" are meeting mechanics, not procedural_ruling items.
+
+### Quotes attributed to absent third parties
+A speaker reporting what someone else said in a different forum is
+external_stakeholder_input at most — do NOT promote it to decisions or
+commitments by the speaker.
+
+### Repeated mentions of the same item
+If the same decision/action/claim is referenced multiple times in the
+chunk, extract it ONCE. Do not emit one item per mention.
+
+### Banding / numeric mentions without context
+A bare frequency band like "7250 to 7750" is NOT a regulatory_reference
+unless the speaker is explicitly invoking a regulation. Frequency
+ranges that appear in technical discussion are technical_parameters
+candidates, but only if they describe a system parameter — not if they
+are just being mentioned in passing.
+
+## Reason field (REQUIRED on 14 claim-shaped types)
+
+For each item you emit in `decisions`, `action_items`, `open_questions`,
+`commitments`, `claims`, `risks`, `cross_references`,
+`regulatory_references`, `issue_registry_entry`, `position_statement`,
+`dissent_or_objection`, `precedent_reference`,
+`external_stakeholder_input`, or `procedural_ruling`, emit a `reason`
+field — one short sentence (5-500 characters) explaining WHY the
+speaker is making this claim/decision/action/etc. The reason must be
+derivable from the source span.
+
+**If you cannot articulate a reason in one sentence, DO NOT extract
+this item.** This is the forcing function: over-extraction happens
+when the model emits items it cannot justify. Requiring an articulated
+reason filters the borderline cases.
+
+Good `reason` (decision): "Explicit decision: speaker said 'we've
+determined', group affirmed with 'yes that's correct'."
+Good `reason` (action_item): "Procedural commitment: 'we will be
+posting X' is a group action with a named act."
+Good `reason` (risk): "Speaker explicitly flagged the methodology as
+a concern needing further study."
+Bad `reason` (any type): "It looked like a decision." (Insufficient —
+name the trigger.)
+
+Do NOT emit `reason` on the nine descriptive types (`attendees`,
+`agenda_item`, `meeting_phases`, `topics`, `scheduled_events`,
+`technical_parameters`, `named_artifacts`, `sentiment_indicators`,
+`glossary_definition`) — those are structural, not claim-shaped.
 
 This output will serve as the **ceiling reference** for evaluating
 other extraction systems. Errors of omission are worse than errors of

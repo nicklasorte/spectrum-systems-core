@@ -116,6 +116,12 @@
               "band_or_spectrum_ref": { "type": ["string", "null"] },
               "constraint_or_condition": { "type": ["string", "null"] }
             }
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500,
+            "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the meeting_minutes prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
           }
         }
       }
@@ -154,7 +160,13 @@
           "grounding_overlap": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
           "grounding_verified": { "type": "boolean" },
           "grounding_overlap_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
-          "speaker_ambiguous": { "type": "boolean" }
+          "speaker_ambiguous": { "type": "boolean" },
+          "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500,
+            "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the meeting_minutes prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
+          }
         }
       }
     },
@@ -191,7 +203,13 @@
           "grounding_verified": { "type": "boolean" },
           "grounding_overlap_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
           "speaker": { "type": ["string", "null"] },
-          "speaker_ambiguous": { "type": "boolean" }
+          "speaker_ambiguous": { "type": "boolean" },
+          "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500,
+            "description": "Phase 3.A (additive, optional). Why the speaker is making this claim/decision/action/etc. Must be derivable from the source span. Required by the meeting_minutes prompt; optional in JSON Schema for backward-compat with pre-3.A artifacts."
+          }
         }
       }
     },
