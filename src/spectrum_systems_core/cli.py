@@ -3374,6 +3374,29 @@ def meeting_minutes_llm(
                 f"invocation={invocation_idx + 1}/{repeat}",
                 file=out,
             )
+            # control.decide_control flattens every failed eval to
+            # ``failed:<eval_type>`` so the top-line reason_codes hide
+            # the SPECIFIC schema_violation / tlc_subeval_failed detail.
+            # That detail is what an operator needs to tell a flaky-model
+            # block (e.g. ``schema_violation:None is not of type
+            # 'string'``) apart from a real regression. Surface it inline
+            # so the next step is not "go open debug__*.json". The
+            # per-eval lines are bounded (one per failed eval, codes
+            # truncated to 240 chars) so the output stays scannable.
+            for ev in result.eval_results:
+                ev_payload = ev.payload if isinstance(ev.payload, dict) else {}
+                if ev_payload.get("status") != "fail":
+                    continue
+                ev_type = ev_payload.get("eval_type", "unknown")
+                ev_reasons = ev_payload.get("reason_codes") or []
+                detail = ",".join(str(c) for c in ev_reasons)
+                if len(detail) > 240:
+                    detail = detail[:237] + "..."
+                print(
+                    f"meeting-minutes-llm [{source_id}] BLOCKED detail "
+                    f"{ev_type}: {detail}",
+                    file=out,
+                )
             return 1
 
         last_written = write_promoted_artifact(
