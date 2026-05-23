@@ -26,8 +26,11 @@ on:
         default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
       use_cascade_output:
         description: 'Compare against cascade-filtered artifact'
-        type: boolean
-        default: false
+        type: choice
+        default: 'false'
+        options:
+          - 'true'
+          - 'false'
       chunking_strategy:
         description: >-
           Optional chunking_strategy_version to filter the haiku

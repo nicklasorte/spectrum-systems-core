@@ -53,7 +53,10 @@ on:
         description: 'Also compare Sonnet artifact if present in data-lake'
         required: false
         default: 'false'
-        type: boolean
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
 permissions:
   contents: read
