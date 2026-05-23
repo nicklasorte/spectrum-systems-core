@@ -1,4 +1,10 @@
-name: Create Opus reference baselines
+name: "[OBSOLETE] Create Opus reference baselines"
+
+# OBSOLETE — superseded by run-opus-baseline-1-4-0.yml
+# This workflow produced schema_version=1.0.0 artifacts (hardcoded in
+# scripts/create_opus_reference_baselines.py before PR #231).
+# DO NOT DISPATCH — use run-opus-baseline-1-4-0.yml instead.
+# Retained for audit trail only.
 
 # Runs an Opus model over the canonical extraction prompt
 # (workflows/prompts/meeting_minutes_llm.md — the SAME prompt the Haiku
@@ -26,34 +32,13 @@ name: Create Opus reference baselines
 # committed to nicklasorte/data-lake.
 
 on:
+  # OBSOLETE — workflow disabled. Use run-opus-baseline-1-4-0.yml.
   workflow_dispatch:
     inputs:
-      source_id:
-        description: 'Transcript slug to process (blank = all transcripts)'
-        required: false
-        default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
-        type: string
-      chunk_overlap_turns:
-        description: 'Number of prior turns to prepend to each chunk (0 = default, no overlap)'
-        required: false
-        default: '0'
-        type: string
-      dry_run:
-        description: 'Dry run: print what would be written, commit nothing'
-        required: false
-        default: 'true'
-        type: choice
-        options:
-          - 'true'
-          - 'false'
-      skip_existing:
-        description: 'Skip sources that already have the baseline JSONL'
-        required: false
-        default: 'true'
-        type: choice
-        options:
-          - 'true'
-          - 'false'
+      _disabled:
+        description: "THIS WORKFLOW IS OBSOLETE. Use run-opus-baseline-1-4-0.yml."
+        required: true
+        default: "DO NOT RUN"
 
 permissions:
   contents: read
@@ -65,6 +50,12 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
     steps:
+      - name: Refuse to run — OBSOLETE workflow
+        run: |
+          echo "::error::This workflow is OBSOLETE. Use run-opus-baseline-1-4-0.yml instead."
+          echo "This workflow produced schema_version=1.0.0 artifacts and is retained for audit only."
+          exit 1
+
       - name: Checkout spectrum-systems-core
         uses: actions/checkout@v4
 

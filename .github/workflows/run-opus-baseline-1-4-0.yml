@@ -1,0 +1,351 @@
+name: Run Opus Baseline (schema 1.4.0)
+
+# Successor to create-opus-reference-baselines.yml (now marked OBSOLETE).
+# Produces Opus reference baseline JSONL files whose per-line
+# schema_version is read from the canonical source
+# (src/spectrum_systems_core/promotion/gate.py:
+# GROUNDING_BINDING_SCHEMA_VERSION = "1.4.0") rather than the previously
+# hardcoded "1.0.0". See PR #231 for the script-side fix that made this
+# era well-formed: the comparison gate requires the binding schema and
+# the prior 1.0.0 artifacts could not pass it.
+#
+# Phone-safe by design: zero boolean inputs, every toggle is a choice
+# input with explicit 'false'/'true' string options. Defaults are biased
+# toward "do the thing" (dry_run=false, skip_existing=false) — a phone
+# operator tapping Run gets a real regeneration, not a no-op.
+#
+# Model pinning: the Opus model string is NOT hardcoded here. The
+# binding no-model-strings-in-workflows CI gate
+# (tests/ci/test_no_model_strings_in_workflows.py) forbids any
+# claude-<tier>-<n> literal on a non-comment line of a workflow file.
+# The pinned string lives in ai/registry/model_registry.json under the
+# "opus_reference_baseline" key. This workflow resolves it at run time
+# into OPUS_MODEL and passes it through --model; the script stamps it
+# into every JSONL line as model_id so a past artifact keeps its exact
+# model even after the registry is rolled forward.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_id:
+        description: 'Transcript slug to process (blank = all transcripts)'
+        required: false
+        default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
+        type: string
+      chunk_overlap_turns:
+        description: 'Number of prior turns to prepend to each chunk (0 = default, no overlap)'
+        required: false
+        default: '0'
+        type: string
+      dry_run:
+        description: 'Dry run: print what would be written, commit nothing'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      skip_existing:
+        description: 'Skip sources that already have the baseline JSONL'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: read
+
+jobs:
+  run-opus-baseline-1-4-0:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install anthropic  # explicit safety net
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      - name: Resolve Opus model from registry
+        id: model
+        run: |
+          set -euo pipefail
+          # The pinned string lives ONLY in this JSON file (kept out of
+          # YAML so the no-model-strings-in-workflows gate stays green).
+          OPUS_MODEL="$(python -c "import json;print(json.load(open('ai/registry/model_registry.json'))['models']['opus_reference_baseline'])")"
+          if [ -z "$OPUS_MODEL" ]; then
+            echo "::error::opus_reference_baseline missing from ai/registry/model_registry.json"
+            exit 1
+          fi
+          echo "OPUS_MODEL=$OPUS_MODEL" >> "$GITHUB_ENV"
+          echo "Resolved Opus model: $OPUS_MODEL"
+
+      - name: Resolve binding schema_version from canonical source
+        id: schema
+        run: |
+          set -euo pipefail
+          # Single source of truth: promotion/gate.py
+          # GROUNDING_BINDING_SCHEMA_VERSION. The script stamps the
+          # same value into every JSONL line; we surface it in the
+          # step summary so a phone reviewer can confirm the era of
+          # the produced artifact without opening files.
+          SCHEMA_VERSION="$(python -c "from spectrum_systems_core.promotion.gate import GROUNDING_BINDING_SCHEMA_VERSION as v; print(v)")"
+          if [ -z "$SCHEMA_VERSION" ]; then
+            echo "::error::Could not resolve GROUNDING_BINDING_SCHEMA_VERSION from promotion.gate"
+            exit 1
+          fi
+          echo "SCHEMA_VERSION=$SCHEMA_VERSION" >> "$GITHUB_ENV"
+          echo "Resolved binding schema_version: $SCHEMA_VERSION"
+
+      - name: Ensure data-lake .gitignore negation
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          CLONE_PATH: ${{ github.workspace }}/data-lake
+        run: |
+          set -euo pipefail
+          # The artifact must be committable BEFORE the script writes it
+          # (the script's own gitignore_blocks_artifact guard runs right
+          # after the write). The data-lake's processed/ tree is bulk
+          # runtime data. Git cannot re-include a file whose parent
+          # directory is excluded, so a bare file negation is not
+          # enough: we must FIRST re-include the directory chain
+          # (!**/processed/**/ — directories only, files stay ignored)
+          # and THEN re-include the specific baseline file.
+          GI="$CLONE_PATH/.gitignore"
+          DIR_RULE='!**/processed/**/'
+          FILE_RULE='!**/processed/**/reference_baselines/opus_reference_minutes.jsonl'
+          touch "$GI"
+          added=0
+          if ! grep -qxF "$DIR_RULE" "$GI"; then
+            printf '\n# Opus reference baselines (model-authored, reference_only)\n%s\n' "$DIR_RULE" >> "$GI"
+            added=1
+          fi
+          if ! grep -qxF "$FILE_RULE" "$GI"; then
+            printf '%s\n' "$FILE_RULE" >> "$GI"
+            added=1
+          fi
+          if [ "$added" -eq 1 ]; then
+            echo "Ensured Opus baseline negation in data-lake .gitignore"
+          else
+            echo "Opus baseline negation already present in data-lake .gitignore"
+          fi
+
+      - name: Create Opus reference baselines
+        id: create
+        env:
+          SOURCE_ID: ${{ github.event.inputs.source_id }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+          SKIP_EXISTING: ${{ github.event.inputs.skip_existing }}
+          # Phase 2.B: read by the script via the shared
+          # chunking_strategy_version() helper in data_lake/chunker.py.
+          # Default '0' produces a baseline stamped speaker_turn_v1
+          # (no overlap suffix) — byte-compatible with pre-Phase-2.B
+          # Opus baselines on disk.
+          CHUNK_OVERLAP_TURNS: ${{ github.event.inputs.chunk_overlap_turns }}
+        run: |
+          set -uo pipefail
+          ARGS=( --data-lake "${{ github.workspace }}/data-lake" --model "$OPUS_MODEL" )
+          if [ -n "$SOURCE_ID" ]; then
+            ARGS+=( --source-id "$SOURCE_ID" )
+          fi
+          if [ "$DRY_RUN" = "true" ]; then
+            ARGS+=( --dry-run )
+          fi
+          if [ "$SKIP_EXISTING" = "true" ]; then
+            ARGS+=( --skip-existing )
+          else
+            ARGS+=( --no-skip-existing )
+          fi
+          # Capture stdout (the script's JSON summary) and stderr
+          # (Python tracebacks / progress) to separate files so the
+          # failure-diagnostics step can quote stderr verbatim. tee
+          # keeps the JSON visible in the live job log.
+          python scripts/create_opus_reference_baselines.py "${ARGS[@]}" \
+            >/tmp/opus_ref_summary.json \
+            2>/tmp/opus_ref_stderr.log
+          rc=$?
+          cat /tmp/opus_ref_summary.json
+          cat /tmp/opus_ref_stderr.log >&2
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          exit "$rc"
+
+      - name: Push baselines to nicklasorte/data-lake
+        if: ${{ github.event.inputs.dry_run != 'true' && success() }}
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            feat(reference): Opus reference baselines (schema 1.4.0)
+            [${{ github.event.inputs.source_id || 'all' }}]
+            model=${{ env.OPUS_MODEL }} [skip ci][baseline-commit]
+          add_paths: |
+            .gitignore
+            store/processed/
+
+      - name: Post summary
+        if: always()
+        env:
+          DISPATCHED_SOURCE_ID: ${{ github.event.inputs.source_id }}
+          DISPATCHED_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          DISPATCHED_SKIP_EXISTING: ${{ github.event.inputs.skip_existing }}
+          DISPATCHED_CHUNK_OVERLAP_TURNS: ${{ github.event.inputs.chunk_overlap_turns }}
+          CREATE_OUTCOME: ${{ steps.create.outcome }}
+        run: |
+          python - <<'EOF'
+          import json, os, pathlib
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/null")
+          summary_json = pathlib.Path("/tmp/opus_ref_summary.json")
+          stderr_log = pathlib.Path("/tmp/opus_ref_stderr.log")
+          create_outcome = os.environ.get("CREATE_OUTCOME", "")
+          schema_version_env = os.environ.get("SCHEMA_VERSION", "")
+          opus_model_env = os.environ.get("OPUS_MODEL", "")
+
+          dispatched = {
+              "source_id": os.environ.get("DISPATCHED_SOURCE_ID", "") or "(all)",
+              "dry_run": os.environ.get("DISPATCHED_DRY_RUN", ""),
+              "skip_existing": os.environ.get("DISPATCHED_SKIP_EXISTING", ""),
+              "chunk_overlap_turns": os.environ.get(
+                  "DISPATCHED_CHUNK_OVERLAP_TURNS", ""
+              ),
+          }
+
+          def _read_first_jsonl_schema(out_path_str):
+              if not out_path_str:
+                  return None
+              p = pathlib.Path(out_path_str)
+              if not p.is_file():
+                  return None
+              with open(p, "r", encoding="utf-8") as fh:
+                  first = fh.readline().strip()
+              if not first:
+                  return None
+              try:
+                  rec = json.loads(first)
+              except json.JSONDecodeError:
+                  return None
+              return rec.get("schema_version")
+
+          with open(summary_path, "a") as f:
+              # Header — make the era explicit so a phone reviewer
+              # cannot confuse this with a pre-1.4.0 run.
+              f.write("## Opus Baseline (schema 1.4.0)\n\n")
+              f.write(f"- binding `schema_version` (gate.py): `{schema_version_env}`\n")
+              f.write(f"- model (registry): `{opus_model_env}`\n")
+              f.write(
+                  "- dispatched inputs: "
+                  f"source_id=`{dispatched['source_id']}`, "
+                  f"dry_run=`{dispatched['dry_run']}`, "
+                  f"skip_existing=`{dispatched['skip_existing']}`, "
+                  f"chunk_overlap_turns=`{dispatched['chunk_overlap_turns']}`\n\n"
+              )
+
+              text = summary_json.read_text(encoding="utf-8").strip() if summary_json.is_file() else ""
+              data = None
+              if text:
+                  try:
+                      data = json.loads(text)
+                  except json.JSONDecodeError:
+                      data = None
+
+              # FAIL path: surface reason codes, failing fields, and
+              # the first 2000 chars of stderr verbatim.
+              if create_outcome != "success" or data is None or data.get("status") != "success":
+                  f.write("### FAILED\n\n")
+                  if data is not None:
+                      reason = data.get("reason") or data.get("status") or "(no reason)"
+                      detail = data.get("detail") or ""
+                      f.write(f"- script `status`: `{data.get('status')}`\n")
+                      f.write(f"- script `reason`: `{reason}`\n")
+                      if detail:
+                          f.write(f"- script `detail`: `{detail}`\n")
+                      # Surface any per-transcript failures
+                      failing = [
+                          t for t in (data.get("per_transcript") or [])
+                          if t.get("status") not in ("written", "dry_run", "skipped")
+                      ]
+                      if failing:
+                          f.write("\n**Per-transcript failures:**\n\n")
+                          for t in failing:
+                              f.write(
+                                  f"- `{t.get('source_id')}`: "
+                                  f"status=`{t.get('status')}` "
+                                  f"reason=`{t.get('reason')}`\n"
+                              )
+                  elif text:
+                      f.write("Script stdout (not valid JSON):\n\n")
+                      f.write("```\n" + text[:2000] + "\n```\n")
+                  else:
+                      f.write("Script produced no stdout summary.\n")
+
+                  if stderr_log.is_file():
+                      stderr_text = stderr_log.read_text(encoding="utf-8", errors="replace")
+                      if stderr_text.strip():
+                          f.write("\n**stderr (first 2000 chars):**\n\n")
+                          f.write("```\n" + stderr_text[:2000] + "\n```\n")
+                  raise SystemExit(0)
+
+              # OK path
+              f.write("### PROMOTED OK\n\n")
+              f.write(f"- status: **{data.get('status')}**\n")
+              f.write(f"- model: `{data.get('model')}`\n")
+              f.write(f"- dry_run: {data.get('dry_run')}\n")
+              f.write(f"- skip_existing: {data.get('skip_existing')}\n")
+              f.write(
+                  f"- chunk_overlap_turns: `{data.get('chunk_overlap_turns')}`\n"
+              )
+              f.write(
+                  f"- chunking_strategy_version: "
+                  f"`{data.get('chunking_strategy_version')}`\n"
+              )
+              f.write(f"- transcripts: {data.get('transcripts')}\n\n")
+
+              # Read schema_version from the FIRST produced JSONL file
+              # to confirm the artifact on disk actually carries the
+              # binding version (belt-and-braces against a future
+              # script drift).
+              jsonl_schema = None
+              for t in data.get("per_transcript", []):
+                  if t.get("status") == "written":
+                      jsonl_schema = _read_first_jsonl_schema(t.get("output_path"))
+                      if jsonl_schema:
+                          break
+              if jsonl_schema is not None:
+                  match = "OK" if jsonl_schema == schema_version_env else "MISMATCH"
+                  f.write(
+                      f"- artifact `schema_version` (first JSONL line): "
+                      f"`{jsonl_schema}` ({match} vs gate.py)\n\n"
+                  )
+
+              f.write("**Per-transcript:**\n\n")
+              for t in data.get("per_transcript", []):
+                  by_type = t.get("by_type") or {}
+                  bt = ", ".join(f"{k}={by_type[k]}" for k in sorted(by_type)) or "-"
+                  f.write(
+                      f"- `{t['source_id']}` | {t['status']} | "
+                      f"total={t['total']} | {bt}\n"
+                  )
+          EOF
+
+      - name: Debug workflow failure
+        if: failure()
+        run: |
+          python scripts/debug_workflow_failure.py \
+            --workflow "${{ github.workflow }}" \
+            --job "${{ github.job }}"
