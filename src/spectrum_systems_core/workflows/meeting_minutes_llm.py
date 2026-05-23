@@ -604,6 +604,92 @@ def _schema_reject_reason(payload: dict) -> str | None:
     return None
 
 
+# Schema paths whose leaf turn-ID values are typed string (or
+# string|null) per meeting_minutes.schema.json and that
+# source_turn_validity additionally enforces as string. The LLM
+# occasionally emits bare integers for these (the
+# ``non_string_turn_id`` failure class); the coercion guard below walks
+# only these documented paths to convert int -> str before any gate
+# runs. NOT a list of every turn-ID field: ``source_turn_ids`` arrays
+# on turn-aggregate items are typed integer in meeting_minutes.schema
+# and are deliberately excluded.
+_TURN_ID_SCALAR_PATHS: tuple[tuple[str, str], ...] = (
+    ("meeting_phases", "start_turn_id"),
+    ("meeting_phases", "end_turn_id"),
+    ("agenda_item", "start_turn_id"),
+    ("agenda_item", "end_turn_id"),
+    ("sentiment_indicators", "turn_id"),
+)
+
+# Same intent for list-of-string paths: grounding[*].source_turns is
+# the source_turn_validity contract and MUST be a list of strings, but
+# the model sometimes emits ``[76, 77]`` instead of ``["76", "77"]``.
+_TURN_ID_LIST_PATHS: tuple[tuple[str, str], ...] = (
+    ("grounding", "source_turns"),
+)
+
+
+def _coerce_int_turn_ids_to_string(payload: dict) -> None:
+    """Coerce integer turn IDs on string-typed paths to strings.
+
+    Defence-in-depth for the ``non_string_turn_id`` failure class: the
+    LLM occasionally emits ``"start_turn_id": 76`` (bare integer) where
+    the schema declares ``["string", "null"]`` or ``"string"``, and
+    ``"grounding[*].source_turns": [76, 77]`` where the
+    ``source_turn_validity`` eval requires strings. The prompts forbid
+    integer values for these paths (Step 3 of the fix); this guard is
+    the safety net so a single mis-typed leaf cannot block an otherwise
+    valid run.
+
+    Mutates ``payload`` in place. ``_parse_llm_payload`` always passes a
+    freshly-built dict, so the raw model response on disk / in the
+    debug log is never altered. Booleans are explicitly skipped (``True``
+    / ``False`` are ``int`` subclasses in Python and must NOT be coerced
+    to ``"True"`` / ``"False"`` — a non-int, non-string value is left
+    in place so the strict-schema eval still rejects it loudly). Every
+    coercion writes one warning to stderr so the operator sees the
+    drift even when the run promotes.
+    """
+    for array_key, field in _TURN_ID_SCALAR_PATHS:
+        arr = payload.get(array_key)
+        if not isinstance(arr, list):
+            continue
+        for idx, item in enumerate(arr):
+            if not isinstance(item, dict) or field not in item:
+                continue
+            value = item[field]
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, int):
+                item[field] = str(value)
+                print(
+                    f"WARN: coerced integer turn_id to string at "
+                    f"path=['{array_key}', {idx}, '{field}']",
+                    file=sys.stderr,
+                )
+
+    for array_key, field in _TURN_ID_LIST_PATHS:
+        arr = payload.get(array_key)
+        if not isinstance(arr, list):
+            continue
+        for idx, item in enumerate(arr):
+            if not isinstance(item, dict) or field not in item:
+                continue
+            ids = item[field]
+            if not isinstance(ids, list):
+                continue
+            for jdx, tid in enumerate(ids):
+                if isinstance(tid, bool):
+                    continue
+                if isinstance(tid, int):
+                    ids[jdx] = str(tid)
+                    print(
+                        f"WARN: coerced integer turn_id to string at "
+                        f"path=['{array_key}', {idx}, '{field}', {jdx}]",
+                        file=sys.stderr,
+                    )
+
+
 def _parse_llm_payload(raw: str) -> dict | None:
     """Parse the model text into the full meeting_minutes content
     payload, or ``None`` if it is not a well-formed object carrying the
@@ -631,8 +717,12 @@ def _parse_llm_payload(raw: str) -> dict | None:
       schema marks them optional and the model is instructed to emit
       them.
 
-    We do NOT coerce, repair, or invent. A malformed response must
-    block, not be patched into something that passes.
+    We do NOT coerce, repair, or invent — with ONE narrow exception
+    (``_coerce_int_turn_ids_to_string``) covering the documented
+    ``non_string_turn_id`` failure class. The prompt is the primary
+    enforcement; the coercion is the safety net so a single mis-typed
+    turn-id leaf cannot block the whole run. Every coercion warns on
+    stderr so the drift is auditable.
     """
     body = _strip_fence(raw)
     if not body:
@@ -673,6 +763,11 @@ def _parse_llm_payload(raw: str) -> dict | None:
     # non-array). The caller drops this key on the ungrounded (1.0.0)
     # path so legacy payloads are byte-identical to before.
     out["grounding"] = doc.get("grounding", [])
+    # Defence-in-depth for the non_string_turn_id failure class. Walks
+    # only the documented string-typed paths; integers become strings
+    # and emit a stderr warning. Operates on ``out`` (the parser's
+    # rebuilt dict), so the raw response is never mutated.
+    _coerce_int_turn_ids_to_string(out)
     return out
 
 
