@@ -1494,6 +1494,124 @@ to pre-Phase-2.B. To measure the overlap effect:
 
 ---
 
+## Phase 2.C — cascade filter first dispatch (PR #TBD)
+
+### What this change adds
+
+- `docs/runbooks/phase_2c_cascade_rollback.md` — operator-facing
+  runbook for the first dispatch of the Stage 2 cascade filter on a
+  real transcript. Documents revert, gate-bug response (drop-rate
+  collapse), and artifact handling.
+- `tests/cascade/fixtures/phase_2c_smoke_items.json` (PR-2) — a static
+  3-item fixture derived from the existing Haiku artifact
+  `d019c5f793c4` (the Dec 18 7 GHz Downlink TIG kickoff). The fixture
+  carries one well-grounded `procedural_ruling` item, one vague
+  `action_items` item, and one synthetic `action_items` item with
+  `source_quote: null`. The fixture is fully static so CI does not
+  read the data-lake.
+- `tests/cascade/test_cascade_smoke_real_items.py` (PR-2) — a smoke
+  test that drives the production `run_cascade_filter` (from
+  `src/spectrum_systems_core/cascade/executor.py`) against the
+  fixture. The test pins three behaviours: keep on the well-grounded
+  item, drop on the vague item, and graceful pass-through (no
+  exception, decision applied) on the null-`source_quote` item.
+- NO changes to `src/spectrum_systems_core/cascade/` (already shipped
+  in PR #203).
+- NO changes to `src/spectrum_systems_core/schemas/`.
+- NO new artifact types.
+- NO changes to `.github/workflows/run-comparison.yml` (the
+  `use_cascade_output` input already exists per the Phase 6 entry
+  above).
+
+The post-merge operator dispatch (`run-comparison.yml` with
+`use_cascade_output=true` on the Dec 18 transcript) is documented
+separately in the runbook above. The dispatch produces three
+append-only on-disk artifacts in the data-lake
+(`meeting_minutes_filtered__*.json`, `cascade_filter_log__*.json`, and
+a `comparison_result` row stamped
+`prompt_variant=production_haiku_with_cascade_filter`); none are
+promoted product artifacts; none enter
+`indexes/meetings/artifact_index.jsonl`.
+
+### To roll back
+
+1. Revert PR-1 (this docs entry + the runbook). Docs-only revert; no
+   on-disk artifact is affected. The companion runbook in
+   `docs/runbooks/phase_2c_cascade_rollback.md` disappears.
+2. Revert PR-2 (the smoke test + fixture). The test and fixture
+   disappear; no on-disk artifact is affected. The cascade module is
+   unchanged, so the cascade behaviour is unchanged.
+3. Stop dispatching the cascade. Subsequent
+   `.github/workflows/run-comparison.yml` invocations leave
+   `use_cascade_output=false` (the default), so the comparison
+   returns to the raw Haiku artifact path. The
+   `--enable-cascade-filter` CLI flag remains opt-in (default OFF) per
+   the Phase 6 entry above.
+4. Existing cascade-filtered artifacts in the data-lake remain on
+   disk. The data-lake is append-only from core's perspective per
+   `docs/contracts/data_lake_contract.md` §8; do NOT delete them. If
+   the cascade output is found to be producing bad output post-run
+   (recall collapse), mark them `superseded: true` per the runbook's
+   gate-bug response section (§3). Comparisons performed AFTER a
+   superseded marker is set MUST skip the superseded artifact and
+   fall back to the base Haiku artifact.
+
+### Data migration required for rollback
+
+None. The cascade was already in place per PR #203; Phase 2.C only
+turns it on and adds a smoke test. Reverting Phase 2.C is opt-in by
+construction — the cascade defaults to OFF on every CLI invocation,
+and the workflow input defaults to `use_cascade_output=false`.
+
+### Verification that the rollback is clean
+
+```bash
+python scripts/verify_rollback_contracts.py --pr <PR-1-number>
+pytest tests/cascade/test_cascade_smoke_real_items.py
+```
+
+`verification_command`: `pytest tests/cascade/test_cascade_smoke_real_items.py`
+
+If `verify_rollback_contracts.py` fails, the entry is incomplete — fix
+forward (the script reads this file and asserts the entry references
+the PR's changed files plus a whitelisted verification command). If
+the smoke test fails after PR-2 has landed, do NOT proceed with the
+operator dispatch step in the runbook — investigate the cascade
+behaviour first.
+
+### Cross-PR dependency
+
+`depends_on`: #203 (Phase 6 — the cascade filter module itself).
+Phase 2.C cannot land without Phase 6 because the cascade dispatch
+path lives in PR #203.
+
+`also_depends_on`: #220 (Phase 2.B strategy-aware haiku selection),
+because the post-merge dispatch step relies on the
+`chunking_strategy` selector to pick the correct Haiku artifact for
+the cascade input. The base Haiku artifact at `d019c5f793c4` was
+produced under `speaker_turn_v1`; PR #220 ensures the selector
+matches that strategy.
+
+### Operator action after merge
+
+1. Dispatch `.github/workflows/run-comparison.yml` with:
+   - `use_cascade_output=true`
+   - `source_id=7-ghz-downlink-tig-meeting-kickoff---transcript-20251218`
+   - `chunking_strategy` blank (auto-detect from the Opus baseline)
+2. Read the step summary. The required fields are: cascade F1 vs
+   Opus, cascade drop rate, Opus baseline artifact path, token cost
+   (if the cost estimator is wired in).
+3. Hard gate: F1 ≥ 39.5% (no regression vs the `speaker_turn_v1`
+   Haiku baseline of 39.5%).
+   - F1 < 39.5%: halt. Apply the gate-bug response in the runbook
+     §3 (likely the drop rate is too aggressive).
+   - 39.5% ≤ F1 < 45%: cascade is working but not at target.
+     Proceed to Phase 2.D.
+   - F1 ≥ 45%: Phase 2.C closes. Proceed to Phase AC (corpus
+     comparison across the 13 transcripts).
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new
