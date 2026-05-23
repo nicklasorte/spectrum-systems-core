@@ -808,3 +808,99 @@ def test_subprocess_empty_artifact_does_not_shadow_on_mtime_collision(
     assert s["total_haiku_items"] == 3, s
     assert s["true_positives"] == 3, s
     assert s["haiku_recall_vs_opus"] == 1.0, s
+
+
+def test_subprocess_selects_artifact_matching_baseline_strategy(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Strategy-aware selection: two haiku artifacts produced under
+    different ``CHUNK_OVERLAP_TURNS`` settings live in the same
+    meeting directory. The Opus baseline declares overlap=2. The
+    comparator must select the haiku artifact whose
+    ``chunking_strategy_version`` matches the baseline
+    (``speaker_turn_v1_overlap2``), NOT the most recent regardless of
+    strategy.
+
+    Both haiku artifacts are produced through the REAL factory + LLM
+    workflow + writer (CLAUDE.md integration rule); the
+    ``chunking_strategy_version`` stamp comes from the real
+    ``chunking_strategy_version()`` helper reading
+    ``CHUNK_OVERLAP_TURNS`` at extraction time. The wrong-strategy
+    artifact is forced strictly NEWER on disk so pre-fix
+    mtime-based selection would pick it; post-fix the strategy
+    filter wins.
+    """
+    dl = tmp_path / "data-lake"
+    store = dl / "store"
+    sid_dir = store / "processed" / "meetings" / SOURCE_ID
+    sid_dir.mkdir(parents=True)
+    source_artifact_id = str(uuid.uuid4())
+    (sid_dir / "source_record.json").write_text(
+        json.dumps(make_source_record(SOURCE_ID, source_artifact_id)),
+        encoding="utf-8",
+    )
+
+    # Opus baseline at overlap=2.
+    monkeypatch.setenv("CHUNK_OVERLAP_TURNS", "2")
+    make_opus_reference_baseline(
+        data_lake_root=dl,
+        source_id=SOURCE_ID,
+        source_artifact_id=source_artifact_id,
+        model=OPUS_MODEL,
+        items_by_type={
+            "decisions": DECISIONS,
+            "action_items": ACTION_ITEMS,
+            "open_questions": OPEN_QUESTIONS,
+        },
+    )
+
+    # Haiku artifact A: wrong strategy (v1). Use the SAME items but
+    # extract under CHUNK_OVERLAP_TURNS=0 so the artifact is stamped
+    # `speaker_turn_v1`.
+    monkeypatch.setenv("CHUNK_OVERLAP_TURNS", "0")
+    wrong_path = make_promoted_meeting_minutes_artifact(
+        lake_root=store,
+        source_id=SOURCE_ID,
+        decisions=DECISIONS,
+        action_items=ACTION_ITEMS,
+        open_questions=OPEN_QUESTIONS,
+    )
+    # Confirm stamping.
+    wrong_doc = json.loads(wrong_path.read_text(encoding="utf-8"))
+    wrong_strategy = (
+        wrong_doc["payload"]["provenance"]["chunking_strategy_version"]
+    )
+    assert wrong_strategy == "speaker_turn_v1", wrong_strategy
+
+    # Haiku artifact B: matching strategy (overlap=2).
+    monkeypatch.setenv("CHUNK_OVERLAP_TURNS", "2")
+    matching_path = make_promoted_meeting_minutes_artifact(
+        lake_root=store,
+        source_id=SOURCE_ID,
+        decisions=DECISIONS,
+        action_items=ACTION_ITEMS,
+        open_questions=OPEN_QUESTIONS,
+    )
+    matching_doc = json.loads(matching_path.read_text(encoding="utf-8"))
+    matching_strategy = (
+        matching_doc["payload"]["provenance"]["chunking_strategy_version"]
+    )
+    assert matching_strategy == "speaker_turn_v1_overlap2", (
+        matching_strategy
+    )
+    assert wrong_path != matching_path, (
+        "factory must produce distinct files for the two strategies"
+    )
+
+    # Force wrong-strategy artifact strictly NEWER on disk so pure
+    # mtime ordering would pick it. Post-fix the strategy filter wins.
+    os.utime(matching_path, (1_000_000, 1_000_000))
+    os.utime(wrong_path, (2_000_000, 2_000_000))
+
+    result = _run(["--data-lake", str(dl), "--source-id", SOURCE_ID])
+    assert result.returncode == 0, (
+        f"stdout={result.stdout}\nstderr={result.stderr}"
+    )
+    data = json.loads(result.stdout)
+    assert data["haiku_artifact_path"] == str(matching_path), data

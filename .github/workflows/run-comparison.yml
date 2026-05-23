@@ -28,6 +28,13 @@ on:
         description: 'Compare against cascade-filtered artifact'
         type: boolean
         default: false
+      chunking_strategy:
+        description: >-
+          Optional chunking_strategy_version to filter the haiku
+          artifact selection by (e.g. `speaker_turn_v1_overlap2`).
+          Blank = auto-detect from the Opus baseline (recommended).
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -38,6 +45,7 @@ jobs:
     env:
       SOURCE_ID: ${{ github.event.inputs.source_id }}
       USE_CASCADE_OUTPUT: ${{ github.event.inputs.use_cascade_output }}
+      CHUNKING_STRATEGY: ${{ github.event.inputs.chunking_strategy }}
     steps:
       - name: Checkout spectrum-systems-core
         uses: actions/checkout@v4
@@ -89,6 +97,9 @@ jobs:
           )
           if [ "$USE_CASCADE_OUTPUT" = "true" ]; then
             ARGS+=( --use-cascade-output )
+          fi
+          if [ -n "$CHUNKING_STRATEGY" ]; then
+            ARGS+=( --chunking-strategy "$CHUNKING_STRATEGY" )
           fi
           # STDOUT is pure JSON (the script sends the human table to
           # STDERR). Tee STDOUT to a file the summary step parses;

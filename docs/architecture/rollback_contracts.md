@@ -1351,6 +1351,21 @@ research script (no CLI surface is added by this PR).
   strategies for measurement-only runs must produce a matched
   baseline by re-running the reference model under the same
   `CHUNK_OVERLAP_TURNS` setting.
+- Strategy-aware haiku artifact selection in
+  `scripts/compare_opus_haiku.py` (PR #220) — when multiple haiku
+  artifacts at different `chunking_strategy_version` values exist
+  in the same meeting directory, the selector filters candidates
+  to those matching the Opus baseline's strategy (or the new
+  `--chunking-strategy <version>` CLI override, surfaced as a
+  `chunking_strategy` workflow input on
+  `.github/workflows/run-comparison.yml`) BEFORE recency / content
+  ordering, halting `no_haiku_artifact_matching_strategy` rather
+  than silently picking a wrong-strategy artifact. The override
+  controls SELECTION only; the `chunking_strategy_mismatch` halt
+  above still fires if the resulting haiku artifact's strategy
+  differs from the baseline's, so the flag is not a gate bypass.
+  Default behaviour (auto-detect from the Opus baseline) is
+  unchanged when only one haiku artifact exists.
 - Two new optional aggregate fields on
   `chunk_merge_summary.json`/`chunk_split_summary.json`:
   `overlap_turns_prepended_total: int`,

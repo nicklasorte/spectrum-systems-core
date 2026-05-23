@@ -467,17 +467,23 @@ def find_candidate_artifact(
     missing_reason: str = "missing_candidate_artifact",
     empty_reason: str = "empty_candidate_artifact",
     invalid_reason: str = "invalid_candidate_artifact",
+    target_chunking_strategy_version: Optional[str] = None,
+    no_strategy_match_reason: str = "no_haiku_artifact_matching_strategy",
 ) -> Tuple[Dict[str, Any], Path]:
     """Locate the promoted LLM ``meeting_minutes`` artifact for a model.
 
     Scans ``meeting_minutes__*.json`` for the source whose
     ``payload.provenance.produced_by`` is ``meeting_minutes_llm`` AND
     whose model identity contains ``model_id_substring`` (see
-    ``_candidate_model_matches``). Recency (file mtime — see
-    ``_haiku_recency_key``) only ORDERS the candidates; a CONTENT check
-    picks the winner. Walking newest → oldest, the first artifact that
-    actually extracted something (≥1 item across the arrays
-    ``compute_comparison`` reads) is selected.
+    ``_candidate_model_matches``). When
+    ``target_chunking_strategy_version`` is not None, candidates are
+    ALSO filtered to those whose ``chunking_strategy_version`` matches
+    the target (with absent/null treated as ``speaker_turn_v1`` per
+    Phase 2.B). Recency (file mtime — see ``_haiku_recency_key``) only
+    ORDERS the remaining candidates; a CONTENT check picks the winner.
+    Walking newest → oldest, the first artifact that actually extracted
+    something (≥1 item across the arrays ``compute_comparison`` reads)
+    is selected.
 
     Why content, not pure recency: PR #183 made selection mtime-based
     so a stale all-empty earlier run could not shadow the real
@@ -510,6 +516,7 @@ def find_candidate_artifact(
     candidates = sorted(mdir.glob("meeting_minutes__*.json"))
     saw_non_llm = False
     saw_other_model = False
+    saw_other_strategy: List[str] = []
     llm_candidates: List[
         Tuple[Tuple[float, str], Dict[str, Any], Path]
     ] = []
@@ -542,6 +549,15 @@ def find_candidate_artifact(
             # selector. Tracked only to make the halt detail precise.
             saw_other_model = True
             continue
+        if target_chunking_strategy_version is not None:
+            candidate_strategy = _chunking_strategy_version_of(artifact)
+            if candidate_strategy != target_chunking_strategy_version:
+                # Right model, wrong chunking strategy. Track it so the
+                # halt detail names what was on disk; never silently
+                # select a wrong-strategy artifact and produce a
+                # cross-strategy F1 number.
+                saw_other_strategy.append(candidate_strategy)
+                continue
         llm_candidates.append(
             (_haiku_recency_key(path), artifact, path)
         )
@@ -596,11 +612,39 @@ def find_candidate_artifact(
             ) from exc
         return artifact, path
 
+    # Wrong-strategy is a DIFFERENT halt than missing-artifact: a
+    # matching-model artifact IS present on disk, it just declares a
+    # different chunking_strategy_version than the target. Surfacing it
+    # as `no_*_matching_strategy` (not as generic `missing_*`) is what
+    # tells the operator the fix is to re-run / re-baseline at the
+    # matched strategy, not to extract anew from scratch. The check is
+    # ordered BEFORE missing_reason because saw_other_strategy implies
+    # there was at least one model-matching artifact on disk.
+    if target_chunking_strategy_version is not None and saw_other_strategy:
+        seen_versions = sorted(set(saw_other_strategy))
+        raise ComparisonError(
+            no_strategy_match_reason,
+            (
+                f"no meeting_minutes_llm artifact at "
+                f"chunking_strategy_version="
+                f"{target_chunking_strategy_version!r} found under "
+                f"{mdir} (model token {model_id_substring!r}); "
+                f"on-disk strategies for matching-model artifacts: "
+                f"{seen_versions}. Re-run extraction at the matched "
+                f"strategy, or pass --chunking-strategy to override."
+            ),
+        )
+
     detail = (
         f"no promoted meeting_minutes artifact with "
         f"provenance.produced_by == {HAIKU_LLM_PROVENANCE!r} and model "
         f"token {model_id_substring!r} under {mdir}"
     )
+    if target_chunking_strategy_version is not None:
+        detail += (
+            f" at chunking_strategy_version="
+            f"{target_chunking_strategy_version!r}"
+        )
     if saw_other_model:
         detail += (
             " (a meeting_minutes_llm artifact for a different model "
@@ -616,7 +660,10 @@ def find_candidate_artifact(
 
 
 def find_haiku_artifact(
-    data_lake: Path, source_id: str
+    data_lake: Path,
+    source_id: str,
+    *,
+    target_chunking_strategy_version: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], Path]:
     """Locate the promoted Haiku ``meeting_minutes`` artifact.
 
@@ -629,6 +676,14 @@ def find_haiku_artifact(
     matches ``"haiku"`` via the default-token clause in
     ``_candidate_model_matches`` — that is what preserves the prior
     contract exactly.
+
+    ``target_chunking_strategy_version`` (Phase 2.B follow-up) filters
+    candidates to the matching strategy before recency / content
+    ordering, so a haiku artifact at a wrong strategy can never silently
+    win when one at the matching strategy exists. When no candidate
+    matches the target strategy the wrapper halts
+    ``no_haiku_artifact_matching_strategy`` rather than falling back to
+    the wrong artifact.
     """
     return find_candidate_artifact(
         data_lake,
@@ -637,6 +692,8 @@ def find_haiku_artifact(
         missing_reason="missing_haiku_llm_output",
         empty_reason="empty_haiku_artifact",
         invalid_reason="invalid_haiku_artifact",
+        target_chunking_strategy_version=target_chunking_strategy_version,
+        no_strategy_match_reason="no_haiku_artifact_matching_strategy",
     )
 
 
@@ -1698,6 +1755,7 @@ def run_comparison(
     include_sonnet: bool = False,
     allow_mixed_schema: bool = False,
     use_cascade_output: bool = False,
+    chunking_strategy_override: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Orchestrate one comparison. Returns a summary dict; raises on halt.
 
@@ -1718,6 +1776,20 @@ def run_comparison(
     """
     types = extraction_types()
     baseline_rows = load_opus_baseline(data_lake, source_id)
+    # Resolve the chunking strategy the haiku selector must filter by.
+    # Auto-detect from the Opus baseline when no explicit override is
+    # given so the default behaviour is strategy-aware — the operator
+    # never needs to specify anything for the common case. An override
+    # (``--chunking-strategy <version>``) lets the operator pin
+    # selection to a specific strategy; the cross-check halt at
+    # ``_CHUNKING_STRATEGY_MISMATCH_REASON`` below still fires if the
+    # override and the baseline disagree, so the flag controls
+    # selection, not gate bypass.
+    baseline_strategy = _baseline_chunking_strategy_version(baseline_rows)
+    if chunking_strategy_override is not None:
+        target_strategy = chunking_strategy_override
+    else:
+        target_strategy = baseline_strategy
     if use_cascade_output:
         # Phase 6 — comparison runs against the cascade-filtered Haiku
         # artifact instead of the raw one. Fail-closed: no cascade
@@ -1725,12 +1797,19 @@ def run_comparison(
         # silently fall through. The grounding re-verification gate
         # below is skipped for cascade artifacts (their items mirror
         # the source by reference; tampering is caught when the source
-        # itself is re-verified).
+        # itself is re-verified). Strategy filtering does NOT apply to
+        # cascade artifacts because the synthetic envelope does not
+        # carry chunking_strategy_version (cascade preserves items by
+        # reference from the source artifact).
         haiku_artifact, haiku_path = find_cascade_filtered_artifact(
             data_lake, source_id
         )
     else:
-        haiku_artifact, haiku_path = find_haiku_artifact(data_lake, source_id)
+        haiku_artifact, haiku_path = find_haiku_artifact(
+            data_lake,
+            source_id,
+            target_chunking_strategy_version=target_strategy,
+        )
 
     # Phase 2.B: chunking-strategy cross-check. A Haiku artifact
     # produced under CHUNK_OVERLAP_TURNS=N (stamped
@@ -2180,6 +2259,23 @@ def main(argv: Optional[List[str]] = None) -> int:
             "default behaviour is byte-identical to pre-Phase-6."
         ),
     )
+    parser.add_argument(
+        "--chunking-strategy",
+        default=None,
+        help=(
+            "Phase 2.B follow-up: override the chunking_strategy_version "
+            "used to filter haiku artifact candidates. When omitted "
+            "(the recommended default) the script auto-detects the "
+            "strategy from the Opus baseline so the selector prefers "
+            "the haiku artifact that MATCHES the baseline. When "
+            "provided, candidates are filtered to those at the given "
+            "version (e.g. `speaker_turn_v1_overlap2`). The flag "
+            "controls SELECTION only; the cross-check halt "
+            "`chunking_strategy_mismatch` still fires if the resulting "
+            "haiku artifact's strategy differs from the baseline's, so "
+            "this flag is NOT a gate bypass."
+        ),
+    )
     args = parser.parse_args(argv)
     for attr in vars(args):
         val = getattr(args, attr)
@@ -2201,6 +2297,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         return 2
 
+    chunking_strategy_override: Optional[str] = (
+        args.chunking_strategy
+        if isinstance(args.chunking_strategy, str)
+        and args.chunking_strategy.strip()
+        else None
+    )
+
     try:
         result = run_comparison(
             data_lake=data_lake,
@@ -2211,6 +2314,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             include_sonnet=args.include_sonnet,
             allow_mixed_schema=args.allow_mixed_schema,
             use_cascade_output=args.use_cascade_output,
+            chunking_strategy_override=chunking_strategy_override,
         )
     except ComparisonError as exc:
         print(
