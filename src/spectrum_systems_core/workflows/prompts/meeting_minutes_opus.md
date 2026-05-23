@@ -99,6 +99,25 @@ arrays of objects (see below). `decisions` items may be plain
 verbatim strings OR objects. The remaining content arrays carry
 structured objects.
 
+## CRITICAL TYPE RULES (binding — apply to EVERY turn ID field)
+
+These rules apply to every turn ID field across every item type and
+the `grounding` array. The schema gate rejects integer values for
+these fields fail-closed and the entire artifact is blocked from
+promotion:
+
+- `turn_id`, `start_turn_id`, `end_turn_id`: MUST be a JSON string (e.g. `"76"`) or null. NEVER a bare integer.
+- `grounding[].source_turns`: MUST be a JSON array of strings (e.g. `["76", "77"]`). NEVER an array of integers.
+- Every `*_turn_id` scalar field on any structured item: MUST be a string or null. NEVER an integer.
+
+Correct:   `"start_turn_id": "76"`, `"source_turns": ["76", "77"]`
+Incorrect: `"start_turn_id": 76`, `"source_turns": [76, 77]`
+
+The ONLY exception is `source_turn_ids` on turn-aggregate items,
+which carries a non-empty list of integer turn IDs (this is the
+documented `source_turn_ids` array contract below). For every other
+turn-id-bearing field, emit strings.
+
 ## Grounding fields (structural, binding — schema_version 1.4.0)
 
 Every structured item you emit MUST carry the grounding fields for

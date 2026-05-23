@@ -606,7 +606,16 @@ def test_multi_batch_filter_drops_missing_and_malformed_source_turns():
     shape the in-loop ``source_turn_validity`` eval rejects on the
     aggregate: missing key, non-list, empty list, non-string entries.
     Each shape would otherwise block the whole multi-batch run on the
-    aggregate even though the batch's other content was clean."""
+    aggregate even though the batch's other content was clean.
+
+    Note on the non-string entry: integer turn_ids are now coerced to
+    strings at ``_parse_llm_payload`` (the ``non_string_turn_id``
+    defence-in-depth guard added when the run-cascade-filter failure
+    surfaced ``"start_turn_id": 76``). To exercise the filter's
+    non-string branch without colliding with that coercion, this test
+    uses ``[None, {"bad": "obj"}]`` — values the guard deliberately
+    leaves alone for the filter to drop.
+    """
 
     class _MixedMalformedGrounding:
         def __init__(self) -> None:
@@ -636,7 +645,11 @@ def test_multi_batch_filter_drops_missing_and_malformed_source_turns():
                             {
                                 "kind": "decision",
                                 "text": text,
-                                "source_turns": [42, None],  # non-string
+                                # non-string entries the coercion guard
+                                # leaves alone (None and dict are not
+                                # int instances) so the filter is what
+                                # drops the entry, not a retry.
+                                "source_turns": [None, {"bad": "obj"}],
                             },
                             {
                                 "kind": "decision",

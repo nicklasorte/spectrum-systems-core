@@ -41,6 +41,17 @@ any other keys. Do not wrap the object in another object.
 }
 ```
 
+CRITICAL TYPE RULES — these apply to every turn ID field, no exceptions:
+
+- `turn_id`, `start_turn_id`, `end_turn_id`: MUST be a JSON string (e.g. `"t0042"` or `"76"`) or null. NEVER a bare integer.
+- `grounding[].source_turns`: MUST be a JSON array of strings (e.g. `["t0007"]` or `["76", "77"]`). NEVER an array of integers.
+- Every `*_turn_id` scalar field on any structured item: MUST be a string or null. NEVER an integer.
+
+Correct:   `"start_turn_id": "76"`, `"source_turns": ["76", "77"]`
+Incorrect: `"start_turn_id": 76`, `"source_turns": [76, 77]`
+
+The schema gate rejects integer values for these fields fail-closed and the entire artifact is blocked from promotion.
+
 `action_items` and `open_questions` stay arrays of plain strings — do
 NOT turn them into objects. A `decisions` item may be a plain verbatim
 string OR an object `{"text","verb","stakeholders","confidence"}`:
