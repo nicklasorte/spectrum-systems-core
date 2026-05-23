@@ -39,6 +39,7 @@ from tests.llm_stub import (
     DEC18_DECISIONS,
     DEC18_OPEN_QUESTIONS,
     DEC18_TECHNICAL_PARAMETERS,
+    _auto_grounding,
     json_stub,
     load_fixture,
 )
@@ -201,6 +202,113 @@ def test_cascade_dispatch_does_not_mutate_source_artifact_bytes(tmp_path):
         )
         == 1
     )
+
+
+def test_blocked_strict_schema_surfaces_detail_under_cascade(tmp_path):
+    """When the upstream extraction blocks on strict_schema, the BLOCKED
+    CLI line MUST carry the per-eval ``schema_violation:...`` detail —
+    not just the flattened ``failed:llm_extraction_strict_schema`` token
+    ``control.decide_control`` emits.
+
+    Why this matters: the operator-reported failure
+    ``reason_codes=failed:llm_extraction_strict_schema,
+    failed:tlc_routed_extraction`` under ``--enable-cascade-filter``
+    cannot be diagnosed from the BLOCKED line alone — the model is
+    non-deterministic, so reproducing it requires the SPECIFIC schema
+    violation (e.g. ``schema_violation:None is not of type 'string' at
+    ['scheduled_events', N, 'date']``, the exact bug class commits
+    d2e23d7 + #182 partially fixed). Surfacing the per-eval reason
+    codes on the BLOCKED line is the only way the operator can
+    self-diagnose without re-clicking through ``debug__*.json`` files.
+
+    Also pins the cascade-source-artifact-invariant contract: when the
+    upstream extraction fails, the cascade dispatch MUST NOT have run
+    (no ``CASCADE OK`` token, no filtered artifact on disk). The block
+    happens at ``cli.py:3377`` BEFORE ``cli.py:3414`` would dispatch
+    cascade — exactly the same gate ordering as a no-cascade run.
+    """
+    lake = _seed_store_lake(tmp_path)
+    out = io.StringIO()
+
+    # A stub that returns a scheduled_events item with
+    # ``event_id: null`` — the schema declares ``event_id`` as a bare
+    # ``type: "string"`` (no null branch, minLength: 1), so jsonschema
+    # rejects it with ``schema_violation:None is not of type
+    # 'string'``. Same bug class as the d2e23d7 attendees.agency fix:
+    # the model emitted a faithful null where the schema required a
+    # non-null string. We need the BLOCKED line to NAME the field so
+    # the operator can decide whether to widen the schema (the d2e23d7
+    # pattern) or correct the prompt.
+    #
+    # Grounding mirrors the well-behaved-model auto-grounding (one
+    # entry per content item citing the real turn_ids in the user
+    # message) so the grounding_coverage gate passes and the run
+    # blocks on strict_schema specifically — the exact failure shape
+    # the operator reported.
+    def _invalid_schema_stub(*, system: str, user: str) -> str:  # noqa: ARG001
+        doc = {
+            "decisions": list(DEC18_DECISIONS),
+            "action_items": list(DEC18_ACTION_ITEMS),
+            "open_questions": list(DEC18_OPEN_QUESTIONS),
+            "commitments": [],
+            "risks": [],
+            "cross_references": [],
+            "attendees": [],
+            "topics": [],
+            "regulatory_references": [],
+            "technical_parameters": list(DEC18_TECHNICAL_PARAMETERS),
+            "named_artifacts": [],
+            "scheduled_events": [
+                {
+                    "event_id": None,
+                    "title": "Working group review",
+                    "date": "2026-01-15",
+                }
+            ],
+        }
+        doc["grounding"] = _auto_grounding(doc, user)
+        return json.dumps(doc)
+
+    rc = meeting_minutes_llm(
+        source_id=MEETING_ID,
+        data_lake=str(lake),
+        model_token="haiku",
+        enable_cascade_filter=True,
+        confirm_cost=True,
+        client=_invalid_schema_stub,
+        cascade_api_client=DeterministicFilterClient(
+            decision_rule=always_keep_rule
+        ),
+        env={"ANTHROPIC_API_KEY": "sk-test"},
+        out_stream=out,
+    )
+    log = out.getvalue()
+
+    # Upstream block; cascade never dispatched. Mirrors the
+    # operator-reported BLOCKED line shape.
+    assert rc == 1, (rc, log)
+    assert "BLOCKED produced_by=meeting_minutes_llm" in log, log
+    assert "failed:llm_extraction_strict_schema" in log, log
+    assert "failed:tlc_routed_extraction" in log, log
+    # Cascade did NOT run — same gate ordering as the no-cascade path.
+    assert "CASCADE OK" not in log, log
+    assert "filtered_written=" not in log, log
+    proc = _processed_dir(lake)
+    if proc.exists():
+        assert not list(proc.glob("meeting_minutes_filtered__*.json"))
+
+    # The new per-eval BLOCKED-detail lines surface the SPECIFIC
+    # schema_violation reason — what the operator needs to diagnose
+    # whether the block is a real regression or a flaky-model sample.
+    assert (
+        "BLOCKED detail llm_extraction_strict_schema:" in log
+    ), log
+    assert "schema_violation" in log, log
+    # The detail line for tlc_routed_extraction carries the
+    # subeval-fail marker that points back at strict_schema, so the
+    # operator sees the two codes are the same root cause.
+    assert "BLOCKED detail tlc_routed_extraction:" in log, log
+    assert "tlc_subeval_failed:llm_extraction_strict_schema" in log, log
 
 
 def test_source_glob_excludes_filtered_filename(tmp_path):
