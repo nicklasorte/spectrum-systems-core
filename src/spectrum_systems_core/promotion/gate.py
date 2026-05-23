@@ -39,6 +39,19 @@ GROUNDING_RATE_FLOOR: float = 0.60
 """Minimum per-artifact grounding rate. Below this the artifact is blocked."""
 
 
+GROUNDING_BINDING_SCHEMA_VERSION: str = "1.4.0"
+"""The meeting_minutes schema_version at which verbatim span grounding
+became binding. This is the SINGLE canonical source for the "current
+active schema version" any new producer should stamp on a
+meeting_minutes-shaped artifact (the Opus reference baseline, the
+cascade synthetic envelope, the comparison engine's grounding-binding
+threshold). At/above this version the gate's verbatim-quote +
+turn-aggregate requirements apply; below it grounding is optional and
+the gate is silent. Bumping the gate's binding version is the SINGLE
+edit required to advance every downstream producer to the new schema —
+do not re-introduce schema_version string literals in scripts."""
+
+
 # Item-type → grounding_mode. Mirrors the schema. The gate uses this
 # table to dispatch per-item verification and to detect bare
 # ``payload[key]`` arrays that the schema knows about. The table is

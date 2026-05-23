@@ -64,6 +64,9 @@ from _artifact_validator import (  # noqa: E402
     ArtifactValidationError,
     validate_artifact,
 )
+from spectrum_systems_core.promotion.gate import (  # noqa: E402
+    GROUNDING_BINDING_SCHEMA_VERSION,
+)
 
 _REPO_ROOT = _SCRIPTS_DIR.parent
 _MEETING_MINUTES_SCHEMA = (
@@ -81,8 +84,13 @@ HAIKU_LLM_PROVENANCE = "meeting_minutes_llm"
 # Phase 1: schema_version at which verbatim span grounding became
 # binding. Comparisons against a 1.4.0+ Haiku artifact re-run the gate
 # on the artifact's promoted items so tampering or transcript mutation
-# is caught BEFORE the comparison's metrics are written.
-_GROUNDING_BINDING_SCHEMA_VERSION = "1.4.0"
+# is caught BEFORE the comparison's metrics are written. The value is
+# imported from the SINGLE canonical source on the gate module so a
+# schema bump there flows through the comparison engine, the cascade
+# synthetic envelope below, and the Opus reference-baseline writer in
+# one edit. Re-aliased to a private name to keep the existing read
+# sites local-scope as before.
+_GROUNDING_BINDING_SCHEMA_VERSION = GROUNDING_BINDING_SCHEMA_VERSION
 _MIXED_SCHEMA_REASON = "schema_version_mixed"
 _PROMPT_DRIFT_REASON = "prompt_drift_post_merge"
 
@@ -819,7 +827,12 @@ def find_cascade_filtered_artifact(
 
     synthetic_envelope: Dict[str, Any] = {
         "artifact_type": "meeting_minutes",
-        "schema_version": "1.4.0",
+        # Read from the canonical source so the cascade synthetic
+        # envelope advances automatically when the gate's binding
+        # version bumps. A literal here is the exact foot-gun that
+        # produced the schema_version_mixed halt on the Opus
+        # baseline writer.
+        "schema_version": GROUNDING_BINDING_SCHEMA_VERSION,
         "payload": synthetic_payload,
         "_cascade_envelope": envelope,
     }
