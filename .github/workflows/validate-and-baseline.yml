@@ -63,8 +63,11 @@ on:
           AFTER the deterministic stages (additive; default off keeps
           behaviour byte-identical for every existing consumer).
         required: false
-        default: false
-        type: boolean
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
       max_chunks:
         description: >-
           DEBUG ONLY. Cap the meeting_minutes_llm step to the first N
@@ -248,7 +251,7 @@ jobs:
       # silently skipped while enabled — there is no continue-on-error.
       # ------------------------------------------------------------------
       - name: Run LLM extraction (meeting_minutes_llm)
-        if: ${{ inputs.llm_extraction_enabled == true }}
+        if: ${{ inputs.llm_extraction_enabled == 'true' }}
         env:
           # Empty string in every production run -> the flag is never
           # appended and behaviour is byte-identical. Non-empty only
@@ -459,7 +462,7 @@ jobs:
       #     !**/processed/**/source_record.json precedent. Idempotent.
       # ------------------------------------------------------------------
       - name: Ensure data-lake .gitignore negates the Haiku artifact
-        if: ${{ success() && inputs.llm_extraction_enabled == true }}
+        if: ${{ success() && inputs.llm_extraction_enabled == 'true' }}
         env:
           CLONE_PATH: ${{ github.workspace }}/data-lake
         run: |
@@ -474,7 +477,7 @@ jobs:
           echo "Ensured meeting_minutes__*.json negation in data-lake .gitignore"
 
       - name: Push Haiku meeting_minutes_llm artifact
-        if: ${{ success() && inputs.llm_extraction_enabled == true }}
+        if: ${{ success() && inputs.llm_extraction_enabled == 'true' }}
         uses: ./.github/actions/push-data-lake
         with:
           data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}

@@ -363,6 +363,8 @@ python -m pytest -k grounding    # filter by name
 
 CI runs only `python -m pytest` on Python 3.11 (`.github/workflows/pytest.yml`). There are no linters, formatters, type-checkers, or coverage gates configured — do not add them without a concrete need (`docs/development/ci.md`).
 
+See `docs/conventions/github_actions_workflows.md` before writing or modifying any GitHub Actions workflow.
+
 ## Core loop architecture
 
 The loop lives in `src/spectrum_systems_core/workflows/_loop.py::run_governed_loop`. Each workflow file (`meeting_minutes.py`, `decision_brief.py`, `agency_question_summary.py`, `meeting_action_log.py`) only supplies an `artifact_type` string and a deterministic `extract(input_text) -> dict` function. The loop does the rest:

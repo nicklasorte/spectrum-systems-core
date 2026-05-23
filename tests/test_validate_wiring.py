@@ -431,9 +431,13 @@ def test_llm_input_defaults_off_and_boolean() -> None:
     inputs = doc[True]["workflow_dispatch"]["inputs"]
     assert "llm_extraction_enabled" in inputs
     spec = inputs["llm_extraction_enabled"]
-    assert spec["type"] == "boolean"
-    # Default MUST be off: no behaviour change for existing consumers.
-    assert spec["default"] is False
+    # Phone-safe workflow contract (docs/conventions/github_actions_workflows.md):
+    # boolean inputs are forbidden on workflows dispatched from mobile because
+    # of GitHub's sticky-toggle bug. The flag is encoded as a two-option
+    # ``choice`` whose default is the string 'false'.
+    assert spec["type"] == "choice"
+    assert spec["default"] == "false"
+    assert sorted(spec["options"]) == ["false", "true"]
 
 
 @pytest.mark.skipif(not YAML_AVAILABLE, reason="PyYAML required")

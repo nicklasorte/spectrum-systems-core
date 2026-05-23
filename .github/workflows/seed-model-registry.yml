@@ -19,9 +19,12 @@ on:
     inputs:
       force:
         description: "Overwrite model_registry.json if it already exists"
-        type: boolean
+        type: choice
         required: false
-        default: false
+        default: 'false'
+        options:
+          - 'true'
+          - 'false'
 
 permissions:
   contents: read
