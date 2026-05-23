@@ -234,6 +234,63 @@ pattern), move the artifact to a different on-disk path, or — if the
 artifact is genuinely runtime-only — flip its manifest entry to
 `Git-tracked: NO` and remove any workflow `git add` that targets it.
 
+### Rollback contracts requirement (non-negotiable)
+
+The `verify-rollback-contracts` CI workflow
+(`.github/workflows/verify-rollback-contracts.yml`) fires on every
+PR that touches any of:
+
+- `src/spectrum_systems_core/schemas/**`
+- `src/spectrum_systems_core/pipeline/**`
+- `src/spectrum_systems_core/calibration/**`
+- `src/spectrum_systems_core/promotion/**`
+- `scripts/verify_rollback_contracts.py`
+- `docs/architecture/rollback_contracts.md`
+
+It runs `scripts/verify_rollback_contracts.py --pr <PR#>` and FAILS
+when `docs/architecture/rollback_contracts.md` does not contain an
+entry that:
+
+1. References the PR number (e.g. `(PR #236)` or `PR #236`).
+2. Mentions at least one of the PR's changed file paths.
+3. Includes a `verification_command` from the whitelist:
+   `pytest <path>`, `python scripts/<name>.py`, or
+   `python -m spectrum_systems_core.<module>`.
+
+Two PRs in a row (Phase 3.A / PR #235 and Phase 3.B-E / PR #236)
+shipped without a rollback entry, hit the `verify` failure on
+GitHub, and needed a follow-up commit to add the entry. The
+purpose of this section is to surface the rule pre-PR so future
+sessions catch it during the SELF-REVIEW pass instead of after CI.
+
+**How to check compliance before opening a PR:**
+
+```bash
+# Substitute the actual PR number once it exists; before that, run
+# the file-presence check below as the pre-PR proxy.
+python scripts/verify_rollback_contracts.py \
+  --pr <PR-NUMBER> \
+  --changed-files "$(git diff --name-only origin/main | paste -sd, -)"
+```
+
+When no PR number exists yet (most of the session), the proxy
+check is: did this session modify any path in the watched globs
+above? If yes, append an entry to
+`docs/architecture/rollback_contracts.md` with the structure
+documented at the bottom of that file ("How to add a new entry"
+section) — at minimum, **What this change adds**, **To roll back**,
+**Data migration required for rollback**, **Verification that the
+rollback is clean**, and a `verification_command:` line on its own
+line from the whitelist. Mirror the most recent existing entry's
+structure.
+
+The entry must reference the PR number that GitHub will assign on
+PR open. Add a placeholder like `PR #TBD` only as a last resort —
+the verify script accepts both `PR #<n>` and `(PR #<n>)`, so the
+clean path is to open the PR first (with the file already present
+modulo the number), read back the assigned number, amend the
+entry, and force-push within the session.
+
 ### Commit message hygiene — never spell out CI skip tokens
 
 GitHub Actions silently skips ALL workflows on the head commit of a push
