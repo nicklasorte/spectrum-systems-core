@@ -220,7 +220,7 @@ calling `git check-ignore`.
   - `position_statement` — array of `{position_id, agency, speaker,
     topic, position_text, position_type, caveats, source_turns}`;
     `position_type` ∈ {support, opposition, conditional, neutral,
-    unclear}. Purpose: agency-attributed stances that recur/evolve
+    unclear, clarification}. Purpose: agency-attributed stances that recur/evolve
     across meetings; not decisions. Scale rationale: position drift
     over a 30-50 meeting arc is a primary analytical signal and is
     invisible without per-meeting position capture. Within-source

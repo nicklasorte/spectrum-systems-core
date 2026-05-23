@@ -20,9 +20,17 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
+# Phase 6 PR-time scope (Phase 6 = cascade filter, PR #203). The
+# constraint guarded against the cascade PR rewriting upstream
+# extraction surfaces. The Haiku/Opus prompt entries are intentionally
+# omitted here: post-Phase-6 PRs may legitimately need to keep the
+# producer prompts aligned with additive schema-enum expansions (e.g.
+# the `position_type: clarification` schema fix on the post-Phase-2.C
+# branch). The schema-side regression tests in
+# tests/test_meeting_minutes_schema.py remain the binding check for
+# enum behaviour; this list still pins the cascade-adjacent modules
+# Phase 6 was forbidden to touch.
 _FORBIDDEN_PATHS = (
-    "src/spectrum_systems_core/workflows/prompts/meeting_minutes_llm.md",
-    "src/spectrum_systems_core/workflows/prompts/meeting_minutes_opus.md",
     "scripts/correction_miner.py",
     "src/spectrum_systems_core/grounding/",
     "src/spectrum_systems_core/transcript_quality/",

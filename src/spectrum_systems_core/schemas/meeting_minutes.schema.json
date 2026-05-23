@@ -1057,9 +1057,10 @@
               "opposition",
               "conditional",
               "neutral",
-              "unclear"
+              "unclear",
+              "clarification"
             ],
-            "description": "Exactly one of the five approved position types. Any other value fails the gate."
+            "description": "Exactly one of the six approved position types. `clarification` covers a participant clarifying their agency's stance without taking a clear support/opposition position (added additively; pre-existing artifacts validate unchanged). Any other value fails the gate."
           },
           "caveats": {
             "type": [

@@ -1612,6 +1612,123 @@ matches that strategy.
 
 ---
 
+## Phase 2.C schema fixes — add `clarification` to `position_type` enum (PR #TBD)
+
+### What this change adds
+
+- Additive enum extension on
+  `src/spectrum_systems_core/schemas/meeting_minutes.schema.json`:
+  `position_statement.position_type` gains the value `clarification`.
+  Before: `["support", "opposition", "conditional", "neutral",
+  "unclear"]`. After: `["support", "opposition", "conditional",
+  "neutral", "unclear", "clarification"]`. Pre-existing artifacts
+  whose `position_type` is any of the original five values validate
+  unchanged. No other field on `position_statement` is touched and no
+  other item type is modified.
+- No `schema_version` bump. Same precedent as the attendees.agency
+  null fix (commit `d2e23d7`) and the Phase 6 cascade prompt-variant
+  additive enum extension above: backward-compatible additive value
+  expansion keeps the const version. The `meeting_minutes.schema.json`
+  `schema_version` enum (`1.0.0` … `1.4.0`) is unchanged. The schema-
+  level additivity rule is documented inline on the `schema_version`
+  property at line 29 of the schema.
+- Prompt updates to keep producers in sync with the schema:
+  `src/spectrum_systems_core/workflows/prompts/meeting_minutes_llm.md`
+  (the enum line on the strict-schema callout) and
+  `src/spectrum_systems_core/workflows/prompts/meeting_minutes_opus.md`
+  (the natural-language enum sentence and the JSON skeleton). No
+  prompt logic is rewritten; only the listed allowed values change.
+- `docs/architecture/artifact_manifest.md` `position_statement` entry
+  updated to reflect the new enum.
+- New tests in `tests/test_meeting_minutes_schema.py`:
+  - `test_position_statement_each_type_validates` now parametrizes
+    over all six values (the original five plus `clarification`).
+  - `test_position_statement_clarification_validates` — explicit
+    happy-path assertion that an artifact carrying
+    `position_type: "clarification"` validates.
+  - `test_position_statement_invalid_value_fails` — explicit
+    rejection assertion that `position_type: "invalid_value"`
+    fails-closed. The pre-existing
+    `test_position_statement_position_type_outside_enum_fails`
+    (rejection with `"maybe"`) is preserved unchanged.
+- NO changes to the agency-level
+  `contracts/schemas/agency/position_entry.schema.json` enum
+  (`supports`, `opposes`, `conditionally_supports`,
+  `requests_clarification`, `raises_concern`). That is a different
+  schema for a different module (`agency/profile_builder.py`) and
+  uses a different taxonomy. Out of scope for this fix.
+- NO new gate, no new eval, no new artifact type.
+
+### Domain candidates noted but NOT added
+
+Two candidate values were considered per the task brief
+(`abstention`, `deferral`). Neither was added because there is no
+evidence of either appearing as a `position_type` value in existing
+extraction fixtures, prompts, or governed-loop fixtures (a repo-wide
+grep finds `deferral` only as a `decision_outcome` enum value in
+`src/spectrum_systems_core/config/taxonomy.py` and the decision
+extractor — a different field, different schema). If a future
+transcript surfaces either value as `position_type`, the same
+additive-extension pattern in this entry applies.
+
+### To roll back
+
+1. Revert the PR. The five-value enum returns to
+   `meeting_minutes.schema.json`. Prompts and the artifact manifest
+   revert in lockstep.
+2. The two new tests
+   (`test_position_statement_clarification_validates`,
+   `test_position_statement_invalid_value_fails`) and the extra
+   parametrize value (`clarification`) disappear.
+3. Existing artifacts in the data-lake that carry
+   `position_type: "clarification"` (the Dec 18 cascade run that
+   motivated this PR is the first known producer) become invalid
+   against the reverted schema and would be blocked by the strict-
+   schema eval on re-validation. The data-lake is append-only per
+   `docs/contracts/data_lake_contract.md` §8; do NOT delete them.
+   If revert is required, re-extract the affected source(s) so a
+   non-`clarification` value is produced, or accept that the
+   superseded artifact is no longer re-validateable.
+
+### Data migration required for rollback
+
+None for the schema or codebase. Any `clarification`-bearing artifact
+on disk falls out of strict-schema validity until either re-extracted
+or until the enum is re-extended in a follow-up PR.
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/test_meeting_minutes_schema.py
+```
+
+`verification_command`: `pytest tests/test_meeting_minutes_schema.py`
+
+### Cross-PR dependency
+
+`depends_on`: PR #182 (the attendees.agency null fix — same fix
+pattern: a semantically valid value emitted by Haiku is widened in
+the schema fail-closed rather than retried) and PR #205 (event_id
+null — same pattern). No code dependency, only the precedent that
+backward-compatible widening of producer-facing constraints is the
+durable fix vs gate retries.
+
+`no_future_dependency`: this entry does not gate any future PR.
+
+### Operator action after merge
+
+1. Re-dispatch `.github/workflows/run-cascade-filter.yml` (or the
+   equivalent extraction workflow per the runbook) on the Dec 18
+   transcript (`source_id=7-ghz-downlink-tig-meeting-kickoff---transcript-20251218`).
+   The `position_type: "clarification"` item that previously blocked
+   the cascade now passes the strict-schema eval.
+2. Dispatch `.github/workflows/run-comparison.yml` with
+   `use_cascade_output=true` and the same `source_id`. Confirm the
+   comparison row is produced (the same F1 / drop-rate gate from the
+   Phase 2.C entry above applies).
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new
