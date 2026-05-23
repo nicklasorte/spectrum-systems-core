@@ -104,6 +104,11 @@
                 "minLength": 5,
                 "maxLength": 500,
                 "description": "Phase 3.A (additive, optional; superseded Phase 3P, retained for parity with the other 13 reason-bearing types). One-sentence explanation of WHY this item was extracted — the trigger phrase or group affirmation. Required by the prompt; optional in JSON Schema for backward-compat. A high missing-rate across an extraction is recorded as the `few_shot_reason_missing_rate` diagnostic on the per-run `pipeline_invocation_log`."
+              },
+              "decision_subtype": {
+                "type": "string",
+                "enum": ["issue", "proposal", "resolution", "scope"],
+                "description": "Phase 3.B (additive, optional). Implicit-decision sub-type from the Fernández et al. (SIGDIAL 2008) taxonomy as adapted in workflows/prompts/meeting_minutes_llm.md and meeting_minutes_opus.md: `issue` (problem identification), `proposal` (course of action proposed), `resolution` (group commits without formal vote), `scope` (boundary ruling). Optional at the JSON-Schema layer for additivity (pre-3.B artifacts omit it). The enum is the closed taxonomy; any other string fails the gate."
               }
             }
           }
