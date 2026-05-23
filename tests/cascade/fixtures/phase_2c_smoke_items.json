@@ -1,0 +1,61 @@
+{
+  "fixture_source": {
+    "derived_from": "d019c5f793c4",
+    "source_id": "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218",
+    "data_lake_path_template": "store/processed/meetings/7-ghz-downlink-tig-meeting-kickoff---transcript-20251218/meeting_minutes__*-d019c5f793c4.json",
+    "derivation_note": "Items A and B carry source_quotes that appear verbatim in the Dec 18 transcript at tests/fixtures/llm_extraction/dec18_transcript.txt. Item C is synthetic (the real schema-1.4.0 artifact carries source_quote on every item; a null-grounding case is constructed to pin the cascade's missing-grounding behaviour). The fixture is intentionally static so CI does NOT read the data-lake."
+  },
+  "fixture_date": "2026-05-23",
+  "fixture_description": "Phase 2.C smoke fixture. Three meeting_minutes-shaped items exercise the cascade's keep/drop dispatch on real-shaped inputs: one well-grounded procedural_ruling (Item A), one vague action_items entry (Item B), one synthetic action_items entry with source_quote: null (Item C). The cascade groups all three into chunk 0 and asks the filter (production code + deterministic stub in CI) to keep/drop each.",
+  "chunk_text": "7 GHz Downlink TIG Meeting Kickoff - transcript 20251218\n\nChair Smith: Good morning everyone, this is the kickoff of the 7 GHz downlink technical interference group. Let's begin with the agenda.\nNTIA Lead: Thank you. NTIA has reviewed the prior comment cycle and is ready to proceed.\nChair Smith: First item. We need to decide on the downlink power threshold for the 7 GHz band.\nNTIA Lead: NTIA approved the 7 GHz downlink threshold of minus 47 dBm per megahertz.\nChair Smith: Noted. The group approved the 7 GHz downlink threshold of minus 47 dBm per megahertz.\nDoD Rep: DoD has a concern about the aggregate interference methodology and would like it revisited.\nChair Smith: The group deferred the aggregate interference methodology pending further study.\nNTIA Lead: We should assign someone to draft the revised methodology.\nChair Smith: Action item. DoD will submit revised ERP values before the next session.\nDoD Rep: Understood. DoD will submit revised ERP values before the next session.\nNTIA Lead: One open question remains. What is the coordination distance for federal incumbents in the 7 GHz band?\nChair Smith: Let's record that as an open question. What is the coordination distance for federal incumbents in the 7 GHz band?\nChair Smith: Any other business? Hearing none, we adjourn. Thank you all.\n",
+  "item_A": {
+    "extraction_type": "procedural_ruling",
+    "expected_decision": "keep",
+    "rationale": "Well-grounded: long verbatim source_quote that anchors a specific threshold ruling (minus 47 dBm per megahertz) on a specific band (7 GHz). The quote appears verbatim in the transcript on Chair Smith's line. A realistic Sonnet filter would keep this item.",
+    "item": {
+      "ruling_id": "PR-001",
+      "ruling_text": "The group approved the 7 GHz downlink threshold of minus 47 dBm per megahertz.",
+      "ruled_by": "Chair Smith",
+      "ruling_type": "other",
+      "binding": true,
+      "grounding_mode": "verbatim",
+      "source_quote": "The group approved the 7 GHz downlink threshold of minus 47 dBm per megahertz.",
+      "quote_offset_normalized": 0,
+      "quote_offset_original": 0
+    }
+  },
+  "item_B": {
+    "extraction_type": "action_items",
+    "expected_decision": "drop",
+    "rationale": "Vague action: source_quote is 'Thank you.' (NTIA Lead's line), which is a routine acknowledgement and does not anchor a real action commitment. The item plausibly represents a Haiku over-extraction. A realistic Sonnet filter would drop this item.",
+    "item": {
+      "action": "Acknowledge NTIA's review of the prior comment cycle",
+      "status": "open",
+      "owner": null,
+      "due": null,
+      "follow_up_required": false,
+      "grounding_mode": "verbatim",
+      "source_quote": "Thank you.",
+      "quote_offset_normalized": 0,
+      "quote_offset_original": 0,
+      "reason": "Haiku flagged this as an action; Sonnet should drop because the quote does not anchor a real commitment."
+    }
+  },
+  "item_C": {
+    "extraction_type": "action_items",
+    "expected_decision": "keep_with_no_special_reason_code",
+    "rationale": "Null source_quote: pins the cascade's missing-grounding behaviour. The cascade's _locate_chunk_for_item bucket the item into chunk 0; _build_chunk_payload_for_filter sees grounding_mode='verbatim' but source_quote is None, so no _chunk_context is added; the item is sent to the filter as-is. The cascade emits NO special reason code (no 'failed:missing_source_quote'). Whatever the filter decides is applied without exception.",
+    "item": {
+      "action": "Follow up with stakeholders on outstanding items",
+      "status": "open",
+      "owner": null,
+      "due": null,
+      "follow_up_required": true,
+      "grounding_mode": "verbatim",
+      "source_quote": null,
+      "quote_offset_normalized": 0,
+      "quote_offset_original": 0,
+      "reason": "Synthetic; the real artifact carries source_quote on every item under schema 1.4.0. This case pins the cascade's null-source_quote behaviour."
+    }
+  }
+}
