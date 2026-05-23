@@ -118,7 +118,7 @@ the cascade artifact must NOT be deleted. Instead:
    extraction_type, and the chunk indices with
    `chunks_with_invalid_filter_response > 0`. The diagnostic file
    `cascade_filter_log__<ts>.json` carries all three.
-4. Do NOT modify `cascade/executor.py` or any cascade schema as part
+4. Do NOT change `cascade/executor.py` or any cascade schema as part
    of the gate-bug response. A code change requires a fresh
    architectural review and its own rollback-contract entry.
 
