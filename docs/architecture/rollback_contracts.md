@@ -1352,7 +1352,7 @@ research script (no CLI surface is added by this PR).
   baseline by re-running the reference model under the same
   `CHUNK_OVERLAP_TURNS` setting.
 - Strategy-aware haiku artifact selection in
-  `scripts/compare_opus_haiku.py` (PR #XXX) — when multiple haiku
+  `scripts/compare_opus_haiku.py` (PR #220) — when multiple haiku
   artifacts at different `chunking_strategy_version` values exist
   in the same meeting directory, the selector filters candidates
   to those matching the Opus baseline's strategy (or the new
