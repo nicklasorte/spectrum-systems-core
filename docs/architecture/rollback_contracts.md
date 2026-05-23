@@ -1966,6 +1966,148 @@ constraints without rolling this PR back.
 
 ---
 
+## Phase 3.B–E — taxonomy, modal policy, glossary, few-shot (PR #236)
+
+### What this change adds
+
+- `src/spectrum_systems_core/schemas/meeting_minutes.schema.json`:
+  optional `decision_subtype` enum (`issue` | `proposal` |
+  `resolution` | `scope`) added to the structured-object branch of
+  `decisions`. The Phase 3.B Fernández (SIGDIAL 2008) implicit-
+  decision sub-type. Schema-additive only — the field is OPTIONAL,
+  legacy artifacts that omit it validate unchanged. NO new artifact
+  type. NO schema_version bump (canonical
+  `promotion.gate.GROUNDING_BINDING_SCHEMA_VERSION` constant
+  remains `"1.4.0"`; additive optional fields do not require it per
+  the schema's `schema_version` enum policy).
+- `src/spectrum_systems_core/schemas/meeting_extraction.schema.json`:
+  same optional `decision_subtype` enum on the `decisions` items
+  schema (which declares `additionalProperties: false`, so the
+  field had to be admitted at the schema layer before the prompt
+  could emit it). Schema predicates have not changed otherwise.
+- `src/spectrum_systems_core/workflows/prompts/meeting_minutes_llm.md`
+  and `meeting_minutes_opus.md`: four new sections added in
+  byte-identical lockstep wrapped in `<!-- *_BEGIN -->` /
+  `<!-- *_END -->` markers — `## NTIA/DoD SPECTRUM GLOSSARY`
+  (38 NTIA/DoD terms, placed at top before DO NOT EXTRACT),
+  `## IMPLICIT DECISION RECOGNITION (Fernández et al., SIGDIAL
+  2008)` (four-subtype taxonomy with explicit linguistic markers
+  and decision_subtype routing), `## MODAL VERB POLICY` (per
+  NTIA Manual Chapter 5: shall/will/should/may/could/would/might
+  routing rules), and `## FEW-SHOT EXAMPLES` (three hand-curated
+  examples in recency-bias order: explicit → near-miss →
+  implicit). Prompt version bumped 3.A → 3.B-E. The Opus prompt's
+  "Why this prompt is different from the Haiku extraction prompt"
+  section was rewritten to reflect the new lockstep alignment.
+- `tests/test_phase_3b_3e_prompt_additions.py`: new pinning test
+  file. 8 tests covering taxonomy section presence (both prompts),
+  taxonomy markers (≥5 canonical markers in each, anti-regression
+  on `what if we`), modal policy section presence with
+  shall/will/should/may classification rules, glossary section
+  presence (≥30 canonical terms in each), byte-identical glossary
+  block across prompts, three few-shot examples in correct order
+  (explicit → near-miss → implicit), byte-identical few-shot block
+  across prompts, no regression on the Phase 3.A DO NOT EXTRACT
+  section, and prompt versions higher than 3.A.
+- NO new gate. NO new CLI flag. NO new artifact type. NO new
+  workflow. NO change to cascade, chunking, comparison, or any
+  pipeline infrastructure. The change is prompt-side
+  (precision-at-extraction-time) + an additive optional schema
+  enum that matches what the prompt now offers.
+
+### To roll back
+
+1. Revert the PR. The `decision_subtype` property disappears from
+   both `meeting_minutes.schema.json` and
+   `meeting_extraction.schema.json`. The four new prompt sections
+   (`NTIA/DoD SPECTRUM GLOSSARY`, `IMPLICIT DECISION RECOGNITION`,
+   `MODAL VERB POLICY`, `FEW-SHOT EXAMPLES`) disappear from both
+   prompt files. The Opus prompt's "Why this prompt is different
+   from the Haiku extraction prompt" section reverts to its
+   pre-3.B-E text. The Haiku prompt's pre-existing Phase 1.4
+   implicit-decision taxonomy block and Phase 3P few-shot block
+   are NOT touched by this PR and remain in place after revert.
+   The new test file is removed with the revert.
+2. Existing meeting_minutes artifacts on the data lake that were
+   produced under Phase 3.B-E and carry `decision_subtype` on a
+   `decisions` item will FAIL strict-schema validation against the
+   reverted schema, because `additionalProperties: false` on the
+   decisions items schema rejects the unknown field. The data lake
+   is append-only (`docs/contracts/data_lake_contract.md` §8); do
+   NOT delete or rewrite them. Operators have three rollback
+   options, in preference order:
+   - Fix forward: re-apply the additive `decision_subtype` enum on
+     `decisions`. This restores forward compatibility without
+     touching data.
+   - Re-baseline the affected sources by re-dispatching the
+     production extraction workflow under the reverted (pre-3.B-E)
+     prompt. The new artifacts will omit `decision_subtype` and
+     validate cleanly.
+   - Tolerate the validation failure only on sources you
+     deliberately want to retire; promote nothing from them under
+     the reverted schema.
+3. Existing artifacts produced BEFORE this PR (no
+   `decision_subtype` on any `decisions` item) validate unchanged
+   against the reverted schema — the field is optional.
+
+### Data migration required for rollback
+
+None for pre-3.B-E artifacts (the schema change is additive
+optional; they continue to validate). Post-3.B-E artifacts
+carrying `decision_subtype` on `decisions` require re-baselining
+if a strict revert is taken; "fix forward" by re-adding the
+additive enum is the recommended path and requires no data
+migration.
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/test_phase_3b_3e_prompt_additions.py
+```
+
+After revert this file ceases to exist with the rollback; the
+verification is that the rest of the test suite still passes (no
+production code path depended on the field existing or on the
+new prompt sections). If `tests/test_prompt_negative_and_reason_field.py`
+(Phase 3.A regression tests) and
+`scripts/verify_trigger_taxonomy.py` (Phase 1.4 baseline) both
+still pass after revert, the rollback is clean.
+
+`verification_command`: `pytest tests/test_phase_3b_3e_prompt_additions.py`
+
+### Cross-PR dependency
+
+`depends_on`: PR #235 (Phase 3.A `DO NOT EXTRACT` + `reason`
+field). PR #236's `FEW-SHOT EXAMPLES` Example 2 references the
+Phase 3.A `DO NOT EXTRACT` brainstorming category by name, and
+the new sections are placed AFTER the Phase 3.A DO NOT EXTRACT /
+Reason field blocks. Reverting PR #235 underneath PR #236 would
+leave dangling references in the few-shot rationale. If both are
+ever reverted, revert PR #236 first.
+
+`no_future_dependency`: this entry does not gate any future PR.
+Future phases may extend or replace the taxonomy, modal policy,
+glossary, or few-shot sections without rolling this PR back.
+
+### Operator action after merge
+
+1. The next baseline extraction run will optionally emit
+   `decision_subtype` on `decisions` object items when the prompt
+   classifier maps the implicit-decision sub-type. The comparison
+   engine's field resolver already handles unknown extra fields
+   via dict iteration; no operator action required to read the
+   new field downstream.
+2. Re-dispatch `.github/workflows/compare-opus-haiku.yml` on the
+   representative source set to measure Phase 3.B-E F1 against
+   the 39.5% gate. That measurement run is OUT OF SCOPE for this
+   PR; the merge does not depend on it.
+3. Human resolution of the `scope` vs `agreement` taxonomy
+   conflict (this PR pinned `scope` to match the existing codebase
+   enum in `scripts/verify_trigger_taxonomy.py`) is still open and
+   not blocked by this PR.
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new
