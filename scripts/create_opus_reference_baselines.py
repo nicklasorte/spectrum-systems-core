@@ -108,6 +108,9 @@ from spectrum_systems_core.orchestration.pipeline_orchestrator import (  # noqa:
     _slugify,
     _stage_transcript_into_meetings,
 )
+from spectrum_systems_core.promotion.gate import (  # noqa: E402
+    GROUNDING_BINDING_SCHEMA_VERSION,
+)
 from spectrum_systems_core.workflows import (  # noqa: E402
     meeting_minutes_llm as _mm_llm,
 )
@@ -856,7 +859,16 @@ def build_records(
                     "verified": False,
                     "status": "reference_only",
                     "provenance": {"produced_by": PRODUCED_BY},
-                    "schema_version": "1.0.0",
+                    # Read schema_version from the canonical source so
+                    # the next schema bump (gate.py's
+                    # GROUNDING_BINDING_SCHEMA_VERSION) flows through
+                    # automatically. A hardcoded literal here is the
+                    # exact foot-gun that produced the
+                    # schema_version_mixed halt: the gate's binding
+                    # version advanced to 1.4.0 while this writer
+                    # silently stayed at "1.0.0", so every comparison
+                    # blocked on a non-existent matching baseline.
+                    "schema_version": GROUNDING_BINDING_SCHEMA_VERSION,
                     "meeting_date": meeting_date,
                     "created_at": created_at,
                     # Phase 2.B: stamp the chunking strategy on every row

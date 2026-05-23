@@ -1729,6 +1729,112 @@ durable fix vs gate retries.
 
 ---
 
+## Opus baseline schema_version canonical source (PR #231)
+
+### What this change adds
+
+- New public constant
+  `GROUNDING_BINDING_SCHEMA_VERSION = "1.4.0"` on
+  `src/spectrum_systems_core/promotion/gate.py`, re-exported from
+  `src/spectrum_systems_core/promotion/__init__.py`. The constant is
+  the SINGLE canonical source for the active `meeting_minutes`
+  schema_version any new producer should stamp. No new gate, no new
+  schema version (1.4.0 was already binding from Phase 1, PR #128 /
+  commit `b14b473`); this PR consolidates the value behind one
+  importable name so future bumps are a one-line edit.
+- `scripts/create_opus_reference_baselines.py` reads
+  `schema_version` for every JSONL row from the canonical constant
+  (was hard-coded `"1.0.0"` at line 859). This is the bug fix that
+  motivated the PR — the `schema_version_mixed` halt fired on every
+  Haiku-vs-Opus comparison because the baseline writer was missed
+  during the Phase 1 schema bump.
+- `scripts/compare_opus_haiku.py` reads
+  `_GROUNDING_BINDING_SCHEMA_VERSION` (the comparator's
+  binding-version threshold) and the cascade synthetic envelope's
+  `schema_version` from the same canonical constant. Both were
+  previously string literals.
+- `tests/test_create_opus_reference_baselines.py` gains a new
+  regression test
+  `test_opus_baseline_schema_version_matches_canonical_source_no_string_literal`
+  asserting every baseline row stamps the canonical value and that
+  the canonical value has not silently reverted to legacy `"1.0.0"`.
+  The pre-existing `test_valid_transcript_writes_correct_fields`
+  schema_version assertion is migrated to read from the canonical
+  constant instead of a string literal.
+- NO new artifact type. NO new schema version. NO new CLI flag. NO
+  new gate. The promotion/gate module's public surface gains exactly
+  one constant, exported from `promotion/__init__.py`.
+
+### To roll back
+
+1. Revert the PR. The constant disappears from
+   `src/spectrum_systems_core/promotion/gate.py` and from
+   `src/spectrum_systems_core/promotion/__init__.py`. The two
+   scripts and the test re-acquire the string literals they had
+   before — `"1.0.0"` in the Opus baseline writer (line 859) and
+   `"1.4.0"` in the comparator's binding constant + cascade
+   synthetic envelope.
+2. Existing `opus_reference_minutes.jsonl` files written under this
+   PR carry `schema_version: "1.4.0"` per the fix. The data lake is
+   append-only (`docs/contracts/data_lake_contract.md` §8); do NOT
+   delete or rewrite them. After revert, the comparator's
+   `_baseline_at_version_exists("1.4.0")` check will still match
+   these files because they continue to declare `1.4.0` — the
+   comparator reads from disk, not from the constant.
+3. Pre-PR baselines on disk that carry `schema_version: "1.0.0"`
+   remain valid against the reverted writer; they will, however,
+   re-trigger the `schema_version_mixed` halt against any 1.4.0+
+   Haiku artifact. Operators who want the comparison to succeed
+   either re-baseline (post-revert the writer still hard-codes
+   `1.0.0` so this does not help) or pass the existing CLI-only
+   `--allow-mixed-schema` override on `compare_opus_haiku.py`. In
+   practice the rollback path is "fix forward" rather than revert.
+
+### Data migration required for rollback
+
+None at the schema or codebase layer. Any baseline JSONL written
+under this PR keeps its `schema_version: "1.4.0"` rows on disk and
+remains comparable against a 1.4.0 Haiku artifact after the revert
+because the comparator's coherence check reads the row's stamped
+value, not the (now-removed) constant.
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/test_create_opus_reference_baselines.py
+```
+
+After revert the new regression test (and the canonical-constant
+import in the migrated existing test) ceases to exist with the
+file; the surviving tests must still all pass. If
+`tests/test_create_opus_reference_baselines.py` fails after revert,
+the rollback was not complete — fix forward.
+
+`verification_command`: `pytest tests/test_create_opus_reference_baselines.py`
+
+### Cross-PR dependency
+
+`depends_on`: PR #128 (commit `b14b473`, Phase 1 verbatim span
+grounding gate + 1.4.0 schema bump). This PR closes a loose end
+from that schema bump: the Opus baseline writer was missed and
+silently stayed at `"1.0.0"`, producing `schema_version_mixed` on
+every comparison until this fix.
+
+`no_future_dependency`: this entry does not gate any future PR.
+
+### Operator action after merge
+
+1. Re-dispatch `.github/workflows/run-opus-baseline.yml` (or
+   equivalent) on every `source_id` whose
+   `opus_reference_minutes.jsonl` still carries
+   `schema_version: "1.0.0"`. The new baseline rows will stamp
+   `"1.4.0"` and the comparator's coherence check will pass.
+2. Re-dispatch `.github/workflows/run-comparison.yml` for the
+   re-baselined sources. The previously-blocked
+   `schema_version_mixed` runs will now succeed.
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new

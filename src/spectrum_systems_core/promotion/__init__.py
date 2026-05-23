@@ -1,4 +1,5 @@
 from .gate import (
+    GROUNDING_BINDING_SCHEMA_VERSION,
     GROUNDING_RATE_FLOOR,
     TURN_AGGREGATE_TYPES,
     VERBATIM_TYPES,
@@ -17,6 +18,7 @@ __all__ = [
     "GroundingReport",
     "RejectionRecord",
     "AcceptanceRecord",
+    "GROUNDING_BINDING_SCHEMA_VERSION",
     "GROUNDING_RATE_FLOOR",
     "VERBATIM_TYPES",
     "TURN_AGGREGATE_TYPES",

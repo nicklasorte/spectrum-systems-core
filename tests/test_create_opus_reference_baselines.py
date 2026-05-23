@@ -22,6 +22,9 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 import create_opus_reference_baselines as cob  # noqa: E402
 
+from spectrum_systems_core.promotion.gate import (  # noqa: E402
+    GROUNDING_BINDING_SCHEMA_VERSION,
+)
 from tests.integration.fixtures import make_source_record  # noqa: E402
 
 MODEL = "claude-opus-4-6"
@@ -259,7 +262,12 @@ def test_valid_transcript_writes_correct_fields(tmp_path: Path) -> None:
         assert r["provenance"] == {
             "produced_by": "opus_reference_baseline_workflow"
         }
-        assert r["schema_version"] == "1.0.0"
+        # Read from the canonical source so the test does not drift
+        # when the gate's binding schema_version bumps. A string
+        # literal here is the bug-class that produced the
+        # schema_version_mixed halt: the writer stayed at "1.0.0" while
+        # the rest of the pipeline advanced to "1.4.0".
+        assert r["schema_version"] == GROUNDING_BINDING_SCHEMA_VERSION
         assert r["source_id"] == SOURCE_ID
         assert r["meeting_date"] == "2025-12-18"  # from docx header
         assert r["ground_truth_text"].strip()
@@ -355,6 +363,62 @@ def test_chunk_overlap_turns_default_yields_no_suffix(
                 json.loads(ln)["chunking_strategy_version"]
                 == "speaker_turn_v1"
             )
+
+
+# --------------------------------------------------------------------------
+# 3c. Opus baseline schema_version mismatch regression. Reproduces the
+#     failure mode where the writer hard-coded "1.0.0" while the
+#     pipeline's grounding-binding schema_version had advanced to
+#     "1.4.0", producing the `schema_version_mixed` halt in the
+#     comparison engine. The test asserts the writer reads from the
+#     canonical source (`gate.GROUNDING_BINDING_SCHEMA_VERSION`), so the
+#     next schema bump flows through automatically without re-touching
+#     this script.
+# --------------------------------------------------------------------------
+def test_opus_baseline_schema_version_matches_canonical_source_no_string_literal(
+    tmp_path: Path,
+) -> None:
+    """Pin the Opus reference baseline schema_version to the canonical
+    `GROUNDING_BINDING_SCHEMA_VERSION` constant.
+
+    Two assertions:
+
+    1. Every written row stamps the canonical version (positive
+       behaviour).
+    2. No row stamps the legacy "1.0.0" literal (regression guard
+       against the schema_version_mismatch foot-gun: a hard-coded
+       string left behind by a schema bump silently mis-tags every
+       baseline row and the comparator's `_baseline_at_version_exists`
+       check then refuses every comparison with `schema_version_mixed`).
+    """
+    dl = _seed(tmp_path)
+    cob.create_baselines(
+        data_lake=dl,
+        source_id=None,
+        dry_run=False,
+        skip_existing=True,
+        model=MODEL,
+        client=SpyClient(_VALID_RESPONSE),
+    )
+    lines = [
+        json.loads(ln)
+        for ln in _out_path(dl).read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    assert lines, "expected at least one record"
+    for r in lines:
+        # Positive: stamped value equals the canonical constant.
+        assert r["schema_version"] == GROUNDING_BINDING_SCHEMA_VERSION, (
+            f"row stamps {r['schema_version']!r}; expected canonical "
+            f"{GROUNDING_BINDING_SCHEMA_VERSION!r}"
+        )
+    # The canonical constant itself must not have silently reverted to
+    # the pre-Phase-1 legacy "1.0.0" — if it does, every comparison
+    # against a 1.4.0+ Haiku artifact halts on schema_version_mixed.
+    assert GROUNDING_BINDING_SCHEMA_VERSION != "1.0.0", (
+        "GROUNDING_BINDING_SCHEMA_VERSION reverted to legacy 1.0.0; "
+        "this re-introduces the schema_version_mismatch bug class."
+    )
 
 
 # --------------------------------------------------------------------------
