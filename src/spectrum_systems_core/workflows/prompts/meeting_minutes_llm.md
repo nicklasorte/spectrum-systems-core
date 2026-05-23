@@ -445,7 +445,7 @@ always safe, but an out-of-list value blocks the entire artifact:
 
 - `issue_registry_entry.issue_type`: technical | policy | procedural | regulatory | coordination
 - `issue_registry_entry.status`: open | in_progress | resolved | deferred
-- `position_statement.position_type`: support | opposition | conditional | neutral | unclear
+- `position_statement.position_type`: support | opposition | conditional | neutral | unclear | clarification
 - `external_stakeholder_input.input_type`: industry_comment | itu_submission | congressional_direction | agency_guidance | public_comment | other  (use `other` if unsure)
 - `procedural_ruling.ruling_type`: scope_boundary | process_rule | meeting_procedure | participation_rule | classification_handling | other  (use `other` if unsure)
 

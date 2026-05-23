@@ -1023,12 +1023,32 @@ def test_issue_registry_entry_each_type_validates(issue_type):
 
 @pytest.mark.parametrize(
     "ptype",
-    ["support", "opposition", "conditional", "neutral", "unclear"],
+    [
+        "support",
+        "opposition",
+        "conditional",
+        "neutral",
+        "unclear",
+        "clarification",
+    ],
 )
 def test_position_statement_each_type_validates(ptype):
     art = _v130_all_populated()
     art["position_statement"] = [_position(position_type=ptype)]
     validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_position_statement_clarification_validates():
+    art = _v130_all_populated()
+    art["position_statement"] = [_position(position_type="clarification")]
+    validate_artifact(art, ARTIFACT_TYPE)
+
+
+def test_position_statement_invalid_value_fails():
+    art = _v130_all_populated()
+    art["position_statement"] = [_position(position_type="invalid_value")]
+    with pytest.raises(ArtifactValidationError):
+        validate_artifact(art, ARTIFACT_TYPE)
 
 
 def test_dissent_resolved_false_validates():

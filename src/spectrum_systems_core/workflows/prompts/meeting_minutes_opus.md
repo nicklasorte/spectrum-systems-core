@@ -526,7 +526,7 @@ be exactly one of `open`, `in_progress`, `resolved`, `deferred`.
 
 Stated stances on a topic that may persist or evolve across meetings.
 `position_type` MUST be exactly one of `support`, `opposition`,
-`conditional`, `neutral`, `unclear`.
+`conditional`, `neutral`, `unclear`, `clarification`.
 
 ```
 {
@@ -535,7 +535,7 @@ Stated stances on a topic that may persist or evolve across meetings.
   "speaker": "<speaker>",
   "topic": "<topic>",
   "position_text": "<verbatim position text>",
-  "position_type": "support|opposition|conditional|neutral|unclear",
+  "position_type": "support|opposition|conditional|neutral|unclear|clarification",
   "caveats": "<caveats or null>",
   "source_turns": [],
   "grounding_mode": "verbatim",
