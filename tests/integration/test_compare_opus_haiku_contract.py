@@ -904,3 +904,119 @@ def test_subprocess_selects_artifact_matching_baseline_strategy(
     )
     data = json.loads(result.stdout)
     assert data["haiku_artifact_path"] == str(matching_path), data
+
+
+# --------------------------------------------------------------------------
+# Phase 4.A — gate fields wired into the subprocess output
+# --------------------------------------------------------------------------
+def test_subprocess_phase_4a_pre_gate_fields_populated(tmp_path: Path) -> None:
+    """When a raw extraction is on disk, the subprocess-produced
+    comparison artifact carries the pre_gate_* fields.
+
+    Defends the wiring at the subprocess layer (not just at the
+    helper-function level): a future refactor that drops the call to
+    ``_compute_phase_4a_fields`` in ``run_comparison`` would surface
+    here as missing fields on the on-disk artifact.
+    """
+    dl = _seed(tmp_path)
+    result = _run(["--data-lake", str(dl), "--source-id", SOURCE_ID])
+    assert result.returncode == 0, result.stderr
+
+    art = json.loads(
+        _comparison_artifact(dl).read_text(encoding="utf-8")
+    )
+    # The seed writes one raw meeting_minutes__*.json with the same
+    # three items the summary measures; the pre_gate readout should
+    # therefore mirror the summary's haiku counts.
+    assert art.get("pre_gate_haiku_count") == 3
+    assert art.get("pre_gate_haiku_f1") is not None
+    assert art.get("pre_gate_haiku_precision") is not None
+    assert art.get("pre_gate_haiku_recall") is not None
+
+
+def test_subprocess_phase_4a_fields_absent_when_gate_did_not_run(
+    tmp_path: Path,
+) -> None:
+    """No grounded_items / grounding_gate_result artifacts on disk →
+    the comparison artifact OMITS the gate-accounting fields (graceful
+    degradation; the schema declares every gate field optional)."""
+    dl = _seed(tmp_path)
+    result = _run(["--data-lake", str(dl), "--source-id", SOURCE_ID])
+    assert result.returncode == 0, result.stderr
+
+    art = json.loads(
+        _comparison_artifact(dl).read_text(encoding="utf-8")
+    )
+    # No gate artifacts → these are absent rather than 0 / False
+    # (None values are filtered out in build_comparison_artifact so
+    # the schema's `additionalProperties: false` block sees the same
+    # shape pre-4.A artifacts had).
+    assert "grounded_count" not in art
+    assert "ungrounded_count" not in art
+    assert "gate_drop_rate" not in art
+    assert "post_gate_haiku_count" not in art
+    assert "recall_collapse_warning" not in art
+
+
+def test_subprocess_phase_4a_post_gate_fields_populated_with_grounded_artifact(
+    tmp_path: Path,
+) -> None:
+    """A grounded_items__*.json on disk produces post_gate_* numbers in
+    the on-disk comparison artifact."""
+    dl = _seed(tmp_path)
+    # Hand-write a grounded_items artifact with two of the three
+    # decisions (proxy for "gate dropped one as ungrounded"). The
+    # gate artifact shape mirrors what run_grounding_gate.py writes.
+    sid_dir = dl / "store" / "processed" / "meetings" / SOURCE_ID
+    grounded_artifact = {
+        "artifact_type": "grounded_meeting_minutes",
+        "schema_version": "1.5.0",
+        "source_id": SOURCE_ID,
+        "run_id": "test-run",
+        "gate_passed": True,
+        "payload": {
+            "title": "x",
+            "summary": "",
+            "decisions": [{"text": DECISIONS[0]}],
+            "action_items": [{"text": ACTION_ITEMS[0]}],
+            "open_questions": [{"text": OPEN_QUESTIONS[0]}],
+            "provenance": {
+                "produced_by": "meeting_minutes_llm",
+                "model_id": "claude-haiku-4-5",
+            },
+        },
+    }
+    (sid_dir / "grounded_items__test-run.json").write_text(
+        json.dumps(grounded_artifact, sort_keys=True), encoding="utf-8"
+    )
+    gate_result = {
+        "artifact_type": "grounding_gate_result",
+        "schema_version": "1.0.0",
+        "source_id": SOURCE_ID,
+        "run_id": "test-run",
+        "trace_id": None,
+        "extraction_artifact_path": "x",
+        "passed": True,
+        "total_items": 3,
+        "grounded_count": 3,
+        "ungrounded_count": 0,
+        "gate_drop_rate": 0.0,
+        "legacy_exempt_count": 0,
+        "failures": [],
+        "warnings": [],
+    }
+    (sid_dir / "grounding_gate_result__test-run.json").write_text(
+        json.dumps(gate_result, sort_keys=True), encoding="utf-8"
+    )
+
+    result = _run(["--data-lake", str(dl), "--source-id", SOURCE_ID])
+    assert result.returncode == 0, result.stderr
+
+    art = json.loads(
+        _comparison_artifact(dl).read_text(encoding="utf-8")
+    )
+    assert art.get("post_gate_haiku_count") == 3
+    assert art.get("grounded_count") == 3
+    assert art.get("ungrounded_count") == 0
+    assert art.get("gate_drop_rate") == 0.0
+    assert art.get("recall_collapse_warning") is False
