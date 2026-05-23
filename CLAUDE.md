@@ -364,6 +364,7 @@ python -m pytest -k grounding    # filter by name
 CI runs only `python -m pytest` on Python 3.11 (`.github/workflows/pytest.yml`). There are no linters, formatters, type-checkers, or coverage gates configured — do not add them without a concrete need (`docs/development/ci.md`).
 
 See `docs/conventions/github_actions_workflows.md` before writing or modifying any GitHub Actions workflow.
+The conventions doc includes standing inventory and diagnosis rules that apply to every fix and every roadmap session, not only to workflow files.
 
 ## Core loop architecture
 

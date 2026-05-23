@@ -301,7 +301,129 @@ the canonical verification step. The same shape appears at
 
 ---
 
-## 7. Checklist before opening a PR
+## 7. Standing Inventory and Diagnosis Constraints
+
+These rules apply to every Claude Code session that inventories the
+repo or drafts a `fix(...)` PR — not only to workflow files. They sit
+in this conventions doc because conventions are the first thing every
+session reads before writing code; CLAUDE.md points here.
+
+### 7.1 Built vs measured (mandatory in every inventory)
+
+When a Claude Code session inventories existing capability in the
+repo, every status it reports MUST be one of these five tokens:
+
+- `present` — code exists, tests exist, **AND** measured end-to-end
+  on a real artifact at least once. Evidence: a written artifact in
+  the data-lake produced by this code path, or a green CI workflow
+  run that exercised the path end-to-end.
+- `present_never_measured` — code exists, tests exist, but the path
+  has NEVER been run end-to-end on a real artifact.
+- `partial` — some pieces exist, others missing.
+- `missing` — nothing exists.
+- `unknown` — could not determine from reading the code.
+
+Status `present` is reserved for paths with end-to-end evidence.
+Absent that evidence, the correct status is
+`present_never_measured` — even when the code looks complete and the
+unit tests pass.
+
+Canonical reference: PR #226
+(`fix(cascade): diagnose and fix items_dropped=0 / chunks_invalid=1`).
+The cascade filter was treated as `present` for 23 PRs between PR #203
+(its build) and PR #226. PR #226 was the first end-to-end measurement
+on the Dec 18 transcript and immediately surfaced two bugs:
+`_locate_chunk_for_item` had no routing logic for `turn_aggregate`
+items (every such item piled into chunk 0), and the per-chunk filter
+call had no `MAX_ITEMS_PER_FILTER_CALL` cap (Sonnet's response
+truncated mid-JSON for the 230-item chunk). Both were invisible to
+the unit suite because no test had run the executor against a real
+transcript's chunk shape. Same pattern at
+`src/spectrum_systems_core/cascade/executor.py` (the pre-PR-226 lines
+the PR description quotes).
+
+PR #214 (`feat(grounding): opt-in per-type min source_quote length
+threshold`) is the secondary reference: the Stage 2 audit found that
+the 1.4.0 verbatim-grounding schema, prompt instructions, per-item
+fields, and Phase 6 cascade filter had ALL already shipped — work
+the original roadmap had prescribed as duplicate. The only genuine
+gap was the per-type minimum-length threshold. Without the built-vs-
+measured distinction the audit would have re-derived the conclusion
+that everything still needed building.
+
+### 7.2 Stochastic vs structural diagnosis (mandatory before any `fix(...)` PR)
+
+Before opening a PR whose title starts with `fix(...)`, a Claude Code
+session MUST search prior commits AND prior closed PRs for the same
+failure mode. The minimum search is two commands plus a GitHub PR
+search:
+
+```bash
+git log --all --grep='<failing_field>' --oneline
+git log --all --grep='<reason_code>' --oneline
+```
+
+…plus a GitHub PR search (via `mcp__github__search_pull_requests`)
+on the same field name and reason code.
+
+If the same failure mode has appeared in **2 or more prior PRs**, the
+correct fix is NOT "fix this instance." The correct fix is "audit the
+generating schema/constraint for the class of failure," because the
+underlying cause is brittleness, not a bug.
+
+Canonical reference: PR #228
+(`fix(schema): add 'clarification' to position_type enum`). The PR
+description itself names the same fix pattern as PR #182
+(`attendees.agency` null) and PR #205 (`event_id` null) — three
+instances of "a faithful Haiku extraction surfaces a real domain
+value outside an over-narrow producer-facing constraint." Adding
+`clarification` to one enum is the third one-at-a-time patch; the
+durable fix is the class-wide schema enum audit in
+`docs/audits/schema_enum_audit_2026_05.md`.
+
+The trigger to switch from "fix this instance" to "audit the class"
+is recurrence count ≥ 2. A first instance is a bug; a second is a
+class. Treating a class as a third bug spends operator time
+re-deriving the same conclusion.
+
+### 7.3 Append-only mutation check (mandatory before any `fix(...)` PR that touches artifact-writing code)
+
+Before opening a PR that modifies any code path that writes to the
+data-lake, a Claude Code session MUST confirm the fix does not
+mutate an existing artifact. The data-lake contract
+(`docs/contracts/data_lake_contract.md` §8 "Boundary Rules") is
+explicit: "Core never deletes anything. The data lake is append-only
+from core's perspective."
+
+Allowed patterns when a previously-written artifact needs to be
+corrected or superseded:
+
+- **Filter at boundary** — drop malformed entries at the aggregation
+  seam before they extend the aggregate payload. Canonical reference:
+  PR #212 (`fix(aggregation): empty batch overwrites required
+  fields`), the `_is_well_formed_grounding_item` filter at
+  `src/spectrum_systems_core/workflows/meeting_minutes_llm.py:1322`
+  (the pre-PR-212 line the PR description quotes).
+- **New artifact + discriminator** — write a new artifact carrying
+  a discriminator field that downstream selection can filter on,
+  leaving the old artifact in place. Canonical reference: PR #220
+  (`fix(comparison): strategy-aware haiku artifact selection`), the
+  `chunking_strategy_version` discriminator on `meeting_minutes`
+  artifacts read by `scripts/compare_opus_haiku.py::find_candidate_artifact`.
+- **Separate artifact path** — write the corrected artifact under a
+  distinct filename so the original stays addressable. Canonical
+  reference: PR #226 (`fix(cascade): diagnose and fix
+  items_dropped=0 / chunks_invalid=1`), the Phase 6 cascade output
+  at `meeting_minutes_filtered__*.json` alongside the raw
+  `meeting_minutes__*.json` (data-lake contract §6 filename rule).
+
+Disallowed pattern: in-place rewrite of an artifact that has been
+promoted to the data-lake. Status changes happen by writing new
+envelopes, never by editing payload in place (system constitution
+§6: "State changes happen by writing new envelopes or updating
+status fields, not by editing payload in place").
+
+## 8. Checklist before opening a PR
 
 For every workflow file added or modified in the PR:
 
