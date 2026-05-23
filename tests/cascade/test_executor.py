@@ -353,3 +353,242 @@ def test_items_in_artifact_count_handles_envelope_and_payload() -> None:
     envelope = make_source_artifact(payload)
     assert items_in_artifact_count(payload) == 3
     assert items_in_artifact_count(envelope) == 3
+
+
+# ---------------------------------------------------------------------------
+# Regression — chunks_evaluated must be proportional to items_in when
+# items are properly grounded; items_dropped > 0 when the filter
+# dispatches drops. The original bug (Dec 18 Phase 6 run) had 230 items
+# all bucketed into chunk 0 because `turn_aggregate` items had no
+# routing logic, producing chunks_evaluated=1 / chunks_invalid=1 /
+# items_dropped=0 (conservative pass-through on a truncated response).
+# ---------------------------------------------------------------------------
+
+
+def test_turn_aggregate_items_distribute_across_chunks() -> None:
+    """Per-turn chunks + turn_aggregate items must produce chunks_evaluated
+    proportional to the items_in, not collapse everything to chunk 0.
+    Pins the fix for the Dec 18 Phase 6 cascade failure (chunks_evaluated=1)."""
+    chunks = [
+        {"turn_id": f"t{i:04d}", "text": f"Turn {i}: content {i}"}
+        for i in range(50)
+    ]
+    topics = [
+        {
+            "topic_id": f"TOP-{i:03d}",
+            "title": f"Topic {i}",
+            "grounding_mode": "turn_aggregate",
+            "source_turn_ids": [i],
+        }
+        for i in range(40)
+    ]
+    payload = make_source_payload(topics=topics)
+    source = make_source_artifact(payload)
+
+    # Content-aware drop rule: drop topics whose numeric suffix is a
+    # multiple of 4 (TOP-000, TOP-004, ...). item_idx is local to each
+    # filter call, so a "drop on item_idx == 0" rule would drop EVERY
+    # item when each chunk has only one item — the test must reach into
+    # the item content to identify drops in a routing-invariant way.
+    def drop_multiples_of_four(entry):
+        item = entry.get("item") or {}
+        title = item.get("title") or ""
+        try:
+            suffix = int(title.split()[-1])
+        except (ValueError, IndexError):
+            return ("keep", "non_numeric_title")
+        if suffix % 4 == 0:
+            return ("drop", f"drop_{suffix}")
+        return ("keep", f"keep_{suffix}")
+
+    client = DeterministicFilterClient(decision_rule=drop_multiples_of_four)
+    result = run_cascade_filter(
+        source_artifact=source,
+        chunks=chunks,
+        api_client=client,
+    )
+
+    # Every item routed to its own chunk → 40 chunks evaluated.
+    assert result.filter_metadata["chunks_evaluated"] == 40, (
+        f"expected chunks_evaluated=40 (one per item); "
+        f"got {result.filter_metadata['chunks_evaluated']}. The cascade "
+        f"is bucketing turn_aggregate items into chunk 0 instead of "
+        f"routing by source_turn_ids."
+    )
+    # All 40 single-item filter calls succeed → no conservative pass-through.
+    assert (
+        result.filter_metadata["chunks_with_invalid_filter_response"] == 0
+    )
+    # Drops dispatch — bug symptom (items_dropped=0) does not recur.
+    assert result.filter_metadata["items_dropped_count"] > 0, (
+        "cascade kept every item despite drop rule; this is the original "
+        "items_dropped=0 failure mode."
+    )
+    # Exactly the dropped indices from the rule: 0, 4, 8, ..., 36 = 10 items.
+    assert result.filter_metadata["items_dropped_count"] == 10
+
+
+def test_chunk_overpacked_with_items_sub_batches_so_drops_dispatch() -> None:
+    """When a chunk accumulates more than MAX_ITEMS_PER_FILTER_CALL items
+    (e.g. paraphrased verbatim quotes that all fall back to chunk 0),
+    the cascade must split the chunk into sub-batches so each filter
+    call has a digestible payload. Without sub-batching, a single 230-item
+    call returns a truncated JSON response, schema validation fails, and
+    every item is conservatively kept (the Dec 18 failure mode)."""
+    # 100 verbatim items whose quotes don't appear in any chunk → all
+    # bucket to chunk 0 via the fallback path.
+    decisions = [
+        {
+            "text": f"d{i}",
+            "grounding_mode": "verbatim",
+            "source_quote": f"QUOTE_NEVER_IN_CHUNK_{i}",
+            "quote_offset_normalized": 0,
+            "quote_offset_original": 0,
+        }
+        for i in range(100)
+    ]
+    payload = make_source_payload(decisions=decisions)
+    source = make_source_artifact(payload)
+
+    seen_batch_sizes: list[int] = []
+
+    def smart_client(*, system: str, user: str, **kwargs) -> str:
+        start = user.find("[")
+        end = user.rfind("]")
+        items = json.loads(user[start : end + 1])
+        seen_batch_sizes.append(len(items))
+        # Drop the first half of each sub-batch so drops actually happen.
+        out = []
+        for entry in items:
+            idx = int(entry["item_idx"])
+            decision = "drop" if idx % 2 == 0 else "keep"
+            out.append(
+                {"item_idx": idx, "decision": decision, "reason": f"r{idx}"}
+            )
+        return json.dumps(out)
+
+    result = run_cascade_filter(
+        source_artifact=source,
+        chunks=[{"turn_id": "t0000", "text": "irrelevant"}],
+        api_client=smart_client,
+    )
+
+    # Sub-batches enforce a per-call ceiling.
+    from spectrum_systems_core.cascade import MAX_ITEMS_PER_FILTER_CALL
+
+    assert max(seen_batch_sizes) <= MAX_ITEMS_PER_FILTER_CALL, (
+        f"per-call payload exceeded the {MAX_ITEMS_PER_FILTER_CALL}-item "
+        f"ceiling: saw {seen_batch_sizes!r}"
+    )
+    # Multiple API calls were made to handle the 100-item bucket.
+    assert len(seen_batch_sizes) > 1, (
+        "expected multiple sub-batches for a 100-item bucket; got "
+        f"{seen_batch_sizes!r}"
+    )
+    # Drops dispatch — items_dropped > 0.
+    assert result.filter_metadata["items_dropped_count"] > 0
+    # No invalid-response pass-through because each sub-batch fits the
+    # output-token budget.
+    assert (
+        result.filter_metadata["chunks_with_invalid_filter_response"] == 0
+    )
+
+
+def test_simulated_dec18_failure_mode_no_longer_repros() -> None:
+    """Simulate the exact Dec 18 production failure: 230 items, 138 per-turn
+    chunks, mostly turn_aggregate items (topics, attendees, meeting_phases
+    — none of which had chunk-routing logic before the fix). The stub
+    emulates Sonnet truncating its JSON response past a per-call output
+    budget, the precise failure surface the Dec 18 cascade hit.
+
+    Before the fix: all 230 items bucket into chunk 0, the single filter
+    call asks Sonnet to judge 230 items, the response is truncated past
+    the budget, schema validation fails on the truncated JSON, conservative
+    pass-through kicks in → items_dropped=0, chunks_invalid=1.
+
+    After the fix: turn_aggregate items route to their source chunks AND
+    sub-batching keeps each filter call under the budget.
+    """
+    from spectrum_systems_core.cascade import MAX_ITEMS_PER_FILTER_CALL
+
+    chunks = [
+        {"turn_id": f"t{i:04d}", "text": f"Turn {i}: content {i}"}
+        for i in range(138)
+    ]
+    topics = [
+        {
+            "topic_id": f"TOP-{i:03d}",
+            "title": f"Topic {i}",
+            "grounding_mode": "turn_aggregate",
+            "source_turn_ids": [i % 138],
+        }
+        for i in range(200)
+    ]
+    decisions = [
+        {
+            "text": f"d{i}",
+            "grounding_mode": "verbatim",
+            "source_quote": f"Turn {i}: content {i}",
+            "quote_offset_normalized": 0,
+            "quote_offset_original": 0,
+        }
+        for i in range(30)
+    ]
+    payload = make_source_payload(topics=topics, decisions=decisions)
+    source = make_source_artifact(payload)
+
+    def truncating_client(*, system: str, user: str, **kwargs) -> str:
+        """Emulates Sonnet truncating its output past the per-call budget.
+
+        If asked about more than MAX_ITEMS_PER_FILTER_CALL items, the
+        response only covers the first MAX_ITEMS_PER_FILTER_CALL — which
+        then fails `item_idx_mismatch` validation and forces conservative
+        pass-through. This is the precise failure surface the Dec 18
+        cascade hit when 230 items piled into a single filter call.
+        """
+        start = user.find("[")
+        end = user.rfind("]")
+        items = json.loads(user[start : end + 1])
+        truncated = items[:MAX_ITEMS_PER_FILTER_CALL]
+        out = []
+        for entry in truncated:
+            item = entry.get("item") or {}
+            title = item.get("title") or ""
+            try:
+                suffix = int(title.split()[-1])
+                decision = "drop" if suffix % 5 == 0 else "keep"
+            except (ValueError, IndexError):
+                decision = "keep"
+            out.append(
+                {
+                    "item_idx": entry["item_idx"],
+                    "decision": decision,
+                    "reason": "r",
+                }
+            )
+        return json.dumps(out)
+
+    result = run_cascade_filter(
+        source_artifact=source,
+        chunks=chunks,
+        api_client=truncating_client,
+    )
+
+    assert result.filter_metadata["chunks_evaluated"] >= 100, (
+        f"Dec 18 failure mode recurring: chunks_evaluated="
+        f"{result.filter_metadata['chunks_evaluated']} (expected >= 100). "
+        f"turn_aggregate items are not routing to their source chunks."
+    )
+    assert result.filter_metadata["items_dropped_count"] > 0, (
+        f"Dec 18 failure mode recurring: items_dropped="
+        f"{result.filter_metadata['items_dropped_count']}. The cascade "
+        f"is not dispatching drops — likely conservative pass-through "
+        f"on an oversized chunk."
+    )
+    assert (
+        result.filter_metadata["chunks_with_invalid_filter_response"] == 0
+    ), (
+        f"no chunk should trip conservative pass-through with proper "
+        f"grounding routing + sub-batching; got "
+        f"{result.filter_metadata['chunks_with_invalid_filter_response']}"
+    )

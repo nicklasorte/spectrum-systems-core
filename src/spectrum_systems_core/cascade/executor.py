@@ -87,6 +87,16 @@ _VERBATIM_CONTEXT_PAD: int = 100
 # per chunk; cascade items are 3-line JSON objects.
 DEFAULT_PER_CHUNK_OUTPUT_TOKENS: int = 800
 
+# Maximum items sent to the filter in a single API call. When a chunk
+# accumulates more items than this (e.g. unlocated-grounding fallbacks
+# bucketed into chunk 0), the chunk is split into sub-batches of at most
+# this many items and one filter call is made per sub-batch. Sized to
+# match `DEFAULT_PER_CHUNK_OUTPUT_TOKENS` (~30 items fits in 800 output
+# tokens with margin). Without this cap, a 230-item bucket sent in one
+# call produces a truncated response whose schema validation fails,
+# triggering conservative pass-through on every item.
+MAX_ITEMS_PER_FILTER_CALL: int = 30
+
 # Approximate bytes/token ratio for the filter cost estimator. Mirrors
 # `cost.estimator._BYTES_PER_TOKEN` so the two estimators stay in sync.
 _BYTES_PER_TOKEN: int = 4
@@ -471,16 +481,56 @@ def _normalize_chunks(
     return out
 
 
+def _build_turn_to_chunk_map(
+    chunks: Sequence[Mapping[str, Any] | str],
+) -> Dict[str, int]:
+    """Build a `{turn_id -> chunk_index}` map from chunks that carry one.
+
+    The production chunker (`data_lake/chunker.py::chunk_transcript`)
+    emits one chunk per speaker turn with `turn_id` like `"t0042"`.
+    Without this map, a `turn_aggregate` item (topics, attendees,
+    meeting_phases, etc.) cannot be routed to its source chunk — the
+    cascade would bucket every such item into chunk 0, producing the
+    pathological `chunks_evaluated=1` / `items_dropped=0` failure mode
+    when a real artifact carries many turn_aggregate items.
+
+    Keys are stored in both the original `turn_id` string form
+    (e.g. `"t0042"`) AND a bare-integer string form (e.g. `"42"`) so
+    items emitting `source_turn_ids` as integers (per the
+    meeting_minutes schema) match the same map as items emitting
+    `"t0042"` strings.
+
+    Bare-string chunks (no mapping form) contribute nothing.
+    """
+    out: Dict[str, int] = {}
+    for idx, ch in enumerate(chunks):
+        if not isinstance(ch, Mapping):
+            continue
+        tid = ch.get("turn_id")
+        if isinstance(tid, str) and tid:
+            out.setdefault(tid, idx)
+            # Also index the bare-integer form: "t0042" -> "42".
+            stripped = tid.lstrip("t").lstrip("0") or "0"
+            out.setdefault(stripped, idx)
+        elif isinstance(tid, int):
+            out.setdefault(str(tid), idx)
+            out.setdefault(f"t{tid:04d}", idx)
+    return out
+
+
 def _assign_items_to_chunks(
     source_payload: Mapping[str, Any],
     chunks: Sequence[Tuple[int, str]],
+    turn_to_chunk: Optional[Mapping[str, int]] = None,
 ) -> List[_ChunkAssignment]:
     """Assign each extraction item to its source chunk.
 
     For verbatim items: the chunk whose text contains `source_quote`.
-    For turn_aggregate items: the chunk whose text overlaps the rendered
-    turn text. The match is a substring search — chunks are normally
-    contiguous transcript spans, so the first match is the correct one.
+    For turn_aggregate items: the chunk whose `turn_id` matches the
+    item's first `source_turn_ids` entry (via `turn_to_chunk`). The
+    match is a substring search for verbatim items — chunks are
+    normally contiguous transcript spans, so the first match is the
+    correct one.
 
     Items with no grounding (or whose grounding cannot be located) are
     assigned to chunk 0. The filter still gets them — they are just
@@ -488,6 +538,7 @@ def _assign_items_to_chunks(
     grounding on every item, so this fallback only fires on synthetic /
     legacy artifacts.
     """
+    turn_map = turn_to_chunk or {}
     assignments: List[_ChunkAssignment] = []
     for etype in _EXTRACTION_ARRAY_KEYS:
         items = source_payload.get(etype)
@@ -495,7 +546,7 @@ def _assign_items_to_chunks(
             continue
         for orig_idx, raw_item in enumerate(items):
             if isinstance(raw_item, dict):
-                chunk_idx = _locate_chunk_for_item(raw_item, chunks)
+                chunk_idx = _locate_chunk_for_item(raw_item, chunks, turn_map)
             else:
                 # Legacy string-form item. No grounding — bucket to
                 # chunk 0 so the filter still sees it.
@@ -512,18 +563,57 @@ def _assign_items_to_chunks(
 
 
 def _locate_chunk_for_item(
-    item: Mapping[str, Any], chunks: Sequence[Tuple[int, str]]
+    item: Mapping[str, Any],
+    chunks: Sequence[Tuple[int, str]],
+    turn_to_chunk: Optional[Mapping[str, int]] = None,
 ) -> int:
-    """Return the index of the chunk that grounds this item."""
+    """Return the index of the chunk that grounds this item.
+
+    Routing rules:
+    * `turn_aggregate` items → the chunk whose `turn_id` matches the
+      first `source_turn_ids` entry. Both string (`"t0042"`) and
+      integer (`42`) forms are accepted because the schema declares
+      `source_turn_ids` as integers but some upstream paths emit the
+      `t0042` string form.
+    * `verbatim` items → the first chunk whose text contains
+      `source_quote` as a substring.
+    * Items whose grounding cannot be located → chunk 0 (fallback so
+      the filter still sees them).
+    """
     if not chunks:
         return 0
+
+    grounding_mode = item.get("grounding_mode")
+
+    if grounding_mode == "turn_aggregate" and turn_to_chunk:
+        turn_ids = item.get("source_turn_ids") or item.get("source_turns") or []
+        if isinstance(turn_ids, list):
+            for tid in turn_ids:
+                if isinstance(tid, (str, int)):
+                    chunk_idx = turn_to_chunk.get(str(tid))
+                    if chunk_idx is not None:
+                        return chunk_idx
+        return 0
+
     quote = item.get("source_quote")
     if isinstance(quote, str) and quote:
         for idx, text in chunks:
             if quote in text:
                 return idx
-        return 0
-    # turn_aggregate / no-grounding fallback: bucket to chunk 0.
+
+    # Verbatim items whose quote could not be located may carry a
+    # secondary turn-id signal (some upstream paths attach
+    # `source_turn_ids` even on verbatim items). Try it before falling
+    # back to chunk 0 so a paraphrase-near-miss still routes to the
+    # right chunk.
+    if turn_to_chunk:
+        turn_ids = item.get("source_turn_ids") or item.get("source_turns") or []
+        if isinstance(turn_ids, list):
+            for tid in turn_ids:
+                if isinstance(tid, (str, int)):
+                    chunk_idx = turn_to_chunk.get(str(tid))
+                    if chunk_idx is not None:
+                        return chunk_idx
     return 0
 
 
@@ -640,9 +730,12 @@ def run_cascade_filter(
 
     chunks_normalized = _normalize_chunks(chunks)
     turn_index = _build_turn_index(turn_records)
+    turn_to_chunk = _build_turn_to_chunk_map(chunks)
 
     # ---- Build chunk -> [item assignment] groupings ------------------
-    assignments = _assign_items_to_chunks(source_payload, chunks_normalized)
+    assignments = _assign_items_to_chunks(
+        source_payload, chunks_normalized, turn_to_chunk
+    )
 
     # Group by chunk_index, preserving original payload order so the
     # filtered subset reads in the same order as the source.
@@ -685,94 +778,117 @@ def run_cascade_filter(
                 chunk_text = text
                 break
 
-        items_for_filter: List[Tuple[str, Dict[str, Any]]] = [
-            (a.extraction_type, a.item) for a in chunk_assignments
-        ]
-        payload_items, chunk_trunc = _build_chunk_payload_for_filter(
-            chunk_text, items_for_filter, turn_index
-        )
-        truncation_count += chunk_trunc
-
-        user_message = _render_filter_prompt(
-            prompt_text, chunk_text, payload_items
-        )
         chunks_evaluated += 1
+        chunk_had_invalid_subbatch = False
 
-        try:
-            client_response = api_client(
-                system=prompt_text,
-                user=user_message,
-                model=filter_model,
-                max_tokens=per_chunk_output_tokens,
-            )
-        except TypeError:
-            # Tolerate api_clients that do not accept `model` /
-            # `max_tokens` kwargs. The stub in tests/cascade/ uses the
-            # 2-arg form for clarity.
-            client_response = api_client(
-                system=prompt_text, user=user_message
-            )
+        # Split the chunk into sub-batches of at most
+        # MAX_ITEMS_PER_FILTER_CALL items. A single API call asked to
+        # judge more than ~30 items is highly likely to truncate its
+        # JSON output and fail schema validation, which would force the
+        # cascade into conservative pass-through for every item in the
+        # bucket (the failure mode observed on the Dec 18 transcript:
+        # 230 items in chunk 0 → one truncated response → 0 drops).
+        for sub_start in range(
+            0, len(chunk_assignments), MAX_ITEMS_PER_FILTER_CALL
+        ):
+            sub_assignments = chunk_assignments[
+                sub_start : sub_start + MAX_ITEMS_PER_FILTER_CALL
+            ]
 
-        # Accept either a bare JSON string OR a `{text, input_tokens,
-        # output_tokens}` dict. Real Anthropic SDK returns the dict
-        # form; the test stubs return strings.
-        response_text: str
-        if isinstance(client_response, Mapping):
-            response_text = str(client_response.get("text") or "")
-            total_filter_tokens += int(
-                client_response.get("input_tokens", 0) or 0
+            items_for_filter: List[Tuple[str, Dict[str, Any]]] = [
+                (a.extraction_type, a.item) for a in sub_assignments
+            ]
+            payload_items, chunk_trunc = _build_chunk_payload_for_filter(
+                chunk_text, items_for_filter, turn_index
             )
-            total_filter_tokens += int(
-                client_response.get("output_tokens", 0) or 0
-            )
-        else:
-            response_text = str(client_response)
+            truncation_count += chunk_trunc
 
-        try:
-            parsed = json.loads(response_text)
-        except json.JSONDecodeError as exc:
-            ok = False
-            message = f"json_decode_error: {exc.msg}"
-            decisions: List[FilterDecision] = []
-        else:
-            ok, message, decisions = _validate_filter_response(
-                parsed, expected_item_count=len(chunk_assignments)
+            user_message = _render_filter_prompt(
+                prompt_text, chunk_text, payload_items
             )
 
-        if not ok:
-            # Conservative pass-through: every item from this chunk is
-            # KEPT, not dropped. Log every item with the failure reason
-            # so a reviewer can trace which chunks fell through.
-            chunks_with_invalid_filter_response += 1
-            for local_idx, a in enumerate(chunk_assignments):
-                kept_indices[a.extraction_type].append(a.original_payload_index)
+            try:
+                client_response = api_client(
+                    system=prompt_text,
+                    user=user_message,
+                    model=filter_model,
+                    max_tokens=per_chunk_output_tokens,
+                )
+            except TypeError:
+                # Tolerate api_clients that do not accept `model` /
+                # `max_tokens` kwargs. The stub in tests/cascade/ uses
+                # the 2-arg form for clarity.
+                client_response = api_client(
+                    system=prompt_text, user=user_message
+                )
+
+            # Accept either a bare JSON string OR a `{text, input_tokens,
+            # output_tokens}` dict. Real Anthropic SDK returns the dict
+            # form; the test stubs return strings.
+            response_text: str
+            if isinstance(client_response, Mapping):
+                response_text = str(client_response.get("text") or "")
+                total_filter_tokens += int(
+                    client_response.get("input_tokens", 0) or 0
+                )
+                total_filter_tokens += int(
+                    client_response.get("output_tokens", 0) or 0
+                )
+            else:
+                response_text = str(client_response)
+
+            try:
+                parsed = json.loads(response_text)
+            except json.JSONDecodeError as exc:
+                ok = False
+                message = f"json_decode_error: {exc.msg}"
+                decisions: List[FilterDecision] = []
+            else:
+                ok, message, decisions = _validate_filter_response(
+                    parsed, expected_item_count=len(sub_assignments)
+                )
+
+            if not ok:
+                # Conservative pass-through for this sub-batch only:
+                # every item in the sub-batch is KEPT (not dropped) and
+                # logged with the failure reason so a reviewer can trace
+                # which sub-batches fell through. Other sub-batches of
+                # the same chunk still get their real decisions.
+                chunk_had_invalid_subbatch = True
+                for local_idx, a in enumerate(sub_assignments):
+                    kept_indices[a.extraction_type].append(
+                        a.original_payload_index
+                    )
+                    log_entries.append(
+                        _LogEntry(
+                            chunk_index=chunk_idx,
+                            item_idx=sub_start + local_idx,
+                            extraction_type=a.extraction_type,
+                            decision=FILTER_RESPONSE_INVALID_PASSTHROUGH,
+                            reason=message,
+                        )
+                    )
+                continue
+
+            # Apply per-item decisions for this sub-batch.
+            for d in decisions:
+                a = sub_assignments[d.item_idx]
+                if d.decision == "keep":
+                    kept_indices[a.extraction_type].append(
+                        a.original_payload_index
+                    )
                 log_entries.append(
                     _LogEntry(
                         chunk_index=chunk_idx,
-                        item_idx=local_idx,
+                        item_idx=sub_start + d.item_idx,
                         extraction_type=a.extraction_type,
-                        decision=FILTER_RESPONSE_INVALID_PASSTHROUGH,
-                        reason=message,
+                        decision=d.decision,
+                        reason=d.reason,
                     )
                 )
-            continue
 
-        # Apply per-item decisions.
-        for d in decisions:
-            a = chunk_assignments[d.item_idx]
-            if d.decision == "keep":
-                kept_indices[a.extraction_type].append(
-                    a.original_payload_index
-                )
-            log_entries.append(
-                _LogEntry(
-                    chunk_index=chunk_idx,
-                    item_idx=d.item_idx,
-                    extraction_type=a.extraction_type,
-                    decision=d.decision,
-                    reason=d.reason,
-                )
-            )
+        if chunk_had_invalid_subbatch:
+            chunks_with_invalid_filter_response += 1
 
     # Splice kept items back into filtered_items in original order.
     for etype in _EXTRACTION_ARRAY_KEYS:
