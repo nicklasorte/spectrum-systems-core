@@ -762,6 +762,36 @@ _GROUND_TRUTH_TEXT_FIELDS = (
 )
 
 
+# --------------------------------------------------------------------------
+# Phase 4.A — generic latest-artifact selector.
+#
+# Byte-identical in compare_opus_haiku.py and
+# create_opus_reference_baselines.py per the PR #233 invariant pattern;
+# tests/test_compare_opus_haiku.py asserts the source strings stay
+# identical. Used to locate the raw extraction, the grounded_items
+# artifact, and the grounding_gate_result artifact for the additive
+# gate-field readout — see _compute_phase_4a_fields below.
+# --------------------------------------------------------------------------
+def _find_latest_artifact(
+    base_dir: Path, glob_pattern: str
+) -> Optional[Path]:
+    """Return the most recently modified file matching ``glob_pattern``.
+
+    ``base_dir`` is searched non-recursively via ``Path.glob`` so the
+    caller controls recursion through the pattern itself. Returns
+    ``None`` when ``base_dir`` is not a directory or no file matches —
+    callers treat that as "artifact absent" and degrade gracefully
+    (Phase 4.A gate fields become ``None`` rather than halting).
+    """
+    if not base_dir.is_dir():
+        return None
+    matches = sorted(
+        (p for p in base_dir.glob(glob_pattern) if p.is_file()),
+        key=lambda p: p.stat().st_mtime,
+    )
+    return matches[-1] if matches else None
+
+
 def extract_ground_truth_text(item: Any, extraction_type: str) -> str:
     """Best-effort ``ground_truth_text`` for one item. NEVER halts.
 

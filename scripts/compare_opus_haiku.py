@@ -304,6 +304,36 @@ def _item_text(etype: str, item: Any) -> str:
 
 
 # --------------------------------------------------------------------------
+# Phase 4.A — generic latest-artifact selector.
+#
+# Byte-identical in compare_opus_haiku.py and
+# create_opus_reference_baselines.py per the PR #233 invariant pattern;
+# tests/test_compare_opus_haiku.py asserts the source strings stay
+# identical. Used to locate the raw extraction, the grounded_items
+# artifact, and the grounding_gate_result artifact for the additive
+# gate-field readout — see _compute_phase_4a_fields below.
+# --------------------------------------------------------------------------
+def _find_latest_artifact(
+    base_dir: Path, glob_pattern: str
+) -> Optional[Path]:
+    """Return the most recently modified file matching ``glob_pattern``.
+
+    ``base_dir`` is searched non-recursively via ``Path.glob`` so the
+    caller controls recursion through the pattern itself. Returns
+    ``None`` when ``base_dir`` is not a directory or no file matches —
+    callers treat that as "artifact absent" and degrade gracefully
+    (Phase 4.A gate fields become ``None`` rather than halting).
+    """
+    if not base_dir.is_dir():
+        return None
+    matches = sorted(
+        (p for p in base_dir.glob(glob_pattern) if p.is_file()),
+        key=lambda p: p.stat().st_mtime,
+    )
+    return matches[-1] if matches else None
+
+
+# --------------------------------------------------------------------------
 # Loaders.
 # --------------------------------------------------------------------------
 def _meeting_dir(data_lake: Path, source_id: str) -> Path:
@@ -1122,6 +1152,178 @@ def _opus_model_id(baseline_rows: List[Dict[str, Any]]) -> str:
     return ""
 
 
+# Phase 4.A — recall-collapse threshold. Mirrors
+# ``scripts/run_grounding_gate.RECALL_COLLAPSE_THRESHOLD`` (post-gate
+# recall under this floor means the gate dropped so many true positives
+# the prompt's verbatim instruction is suspect). Kept as a module
+# constant so the test suite can pin the threshold without re-parsing
+# the workflow source.
+_RECALL_COLLAPSE_THRESHOLD: float = 0.50
+
+
+def _load_payload_from_path(path: Path) -> Optional[Dict[str, Any]]:
+    """Read an envelope at ``path`` and return its payload dict.
+
+    The grounding gate writes ``grounded_items__*.json`` with a top-
+    level ``payload`` object (mirroring the meeting_minutes envelope);
+    raw ``meeting_minutes__*.json`` artifacts use the same shape. The
+    helper degrades to ``None`` on any read/parse error so the caller
+    sets the corresponding Phase 4.A fields to ``None`` instead of
+    halting — these fields are best-effort metadata, not a gate.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    payload = data.get("payload")
+    if isinstance(payload, dict):
+        return payload
+    # Some legacy / synthetic artifacts inline the payload at the top
+    # level. Treat the whole dict as the payload only when it carries
+    # at least one of the claim-shaped array keys (otherwise we would
+    # confuse a stray dict for an extraction).
+    if any(
+        isinstance(data.get(k), list)
+        for k in ("decisions", "action_items", "open_questions",
+                 "claims", "commitments", "risks")
+    ):
+        return data
+    return None
+
+
+def _compute_phase_4a_fields(
+    *,
+    data_lake: Path,
+    source_id: str,
+    baseline_rows: List[Dict[str, Any]],
+    gt_pairs: Optional[List[Dict[str, Any]]],
+    types: List[str],
+) -> Dict[str, Optional[Any]]:
+    """Compute the 13 Phase 4.A gate fields. All values are optional.
+
+    Reads up to three artifacts under
+    ``<data-lake>/store/processed/meetings/<source_id>/``:
+
+      * ``meeting_minutes__*.json`` (most recent) → pre_gate_*
+      * ``grounded_items__*.json``  (most recent) → post_gate_*
+      * ``grounding_gate_result__*.json`` (most recent) →
+        grounded_count / ungrounded_count / gate_drop_rate /
+        legacy_exempt_count
+
+    Every field defaults to ``None`` when the corresponding artifact
+    is absent or unreadable; ``recall_collapse_warning`` is ``None``
+    unless post_gate_haiku_recall is computable. The function never
+    halts — these fields are additive metadata, not a gate.
+    """
+    fields: Dict[str, Optional[Any]] = {
+        "pre_gate_haiku_count": None,
+        "pre_gate_haiku_f1": None,
+        "pre_gate_haiku_precision": None,
+        "pre_gate_haiku_recall": None,
+        "post_gate_haiku_count": None,
+        "post_gate_haiku_f1": None,
+        "post_gate_haiku_precision": None,
+        "post_gate_haiku_recall": None,
+        "grounded_count": None,
+        "ungrounded_count": None,
+        "gate_drop_rate": None,
+        "legacy_exempt_count": None,
+        "recall_collapse_warning": None,
+    }
+    mdir = _meeting_dir(data_lake, source_id)
+
+    # Pre-gate: latest raw meeting_minutes__*.json. The gate's own
+    # output (grounded_items__*.json) lives in the same directory but
+    # under a different prefix, so the glob is unambiguous.
+    raw_path = _find_latest_artifact(mdir, "meeting_minutes__*.json")
+    if raw_path is not None:
+        raw_payload = _load_payload_from_path(raw_path)
+        if raw_payload is not None:
+            pre_metrics = compute_comparison(
+                baseline_rows=baseline_rows,
+                haiku_payload=raw_payload,
+                gt_pairs=gt_pairs,
+                types=types,
+            )
+            ps = pre_metrics["summary"]
+            fields["pre_gate_haiku_count"] = ps["total_haiku_items"]
+            fields["pre_gate_haiku_f1"] = ps["haiku_f1_vs_opus"]
+            fields["pre_gate_haiku_precision"] = ps[
+                "haiku_precision_vs_opus"
+            ]
+            fields["pre_gate_haiku_recall"] = ps["haiku_recall_vs_opus"]
+
+    # Post-gate: latest grounded_items__*.json. When absent, post_gate
+    # fields stay None — the spec says "fall back to the count in the
+    # current comparison input" but the caller's `summary` block
+    # already carries that, so leaving the post_gate keys absent
+    # cleanly distinguishes "gate ran" from "gate has not run yet"
+    # without duplicating the pre_gate numbers.
+    grounded_path = _find_latest_artifact(
+        mdir, "grounded_items__*.json"
+    )
+    if grounded_path is not None:
+        grounded_payload = _load_payload_from_path(grounded_path)
+        if grounded_payload is not None:
+            post_metrics = compute_comparison(
+                baseline_rows=baseline_rows,
+                haiku_payload=grounded_payload,
+                gt_pairs=gt_pairs,
+                types=types,
+            )
+            pos = post_metrics["summary"]
+            fields["post_gate_haiku_count"] = pos["total_haiku_items"]
+            fields["post_gate_haiku_f1"] = pos["haiku_f1_vs_opus"]
+            fields["post_gate_haiku_precision"] = pos[
+                "haiku_precision_vs_opus"
+            ]
+            fields["post_gate_haiku_recall"] = pos[
+                "haiku_recall_vs_opus"
+            ]
+            fields["recall_collapse_warning"] = (
+                pos["haiku_recall_vs_opus"] < _RECALL_COLLAPSE_THRESHOLD
+            )
+
+    # Gate accounting: latest grounding_gate_result__*.json. The
+    # writer (scripts/run_grounding_gate.py via
+    # grounding_gate_result_payload) stamps grounded_count /
+    # ungrounded_count / gate_drop_rate explicitly; legacy_exempt_count
+    # is not yet emitted by the gate (Phase 4.A doesn't bucket pre-1.5.0
+    # items as exempt; that arrives with the schema 1.5.0 migration),
+    # so the comparison reads it tolerantly and defaults to None when
+    # absent — never invented from thin air.
+    result_path = _find_latest_artifact(
+        mdir, "grounding_gate_result__*.json"
+    )
+    if result_path is not None:
+        try:
+            gate_result = json.loads(
+                result_path.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            gate_result = None
+        if isinstance(gate_result, dict):
+            grounded = gate_result.get("grounded_count")
+            ungrounded = gate_result.get("ungrounded_count")
+            drop_rate = gate_result.get("gate_drop_rate")
+            exempt = gate_result.get("legacy_exempt_count")
+            if isinstance(grounded, int) and grounded >= 0:
+                fields["grounded_count"] = grounded
+            if isinstance(ungrounded, int) and ungrounded >= 0:
+                fields["ungrounded_count"] = ungrounded
+            if (
+                isinstance(drop_rate, (int, float))
+                and 0.0 <= float(drop_rate) <= 1.0
+            ):
+                fields["gate_drop_rate"] = float(drop_rate)
+            if isinstance(exempt, int) and exempt >= 0:
+                fields["legacy_exempt_count"] = exempt
+
+    return fields
+
+
 def build_comparison_artifact(
     *,
     source_id: str,
@@ -1129,8 +1331,9 @@ def build_comparison_artifact(
     baseline_rows: List[Dict[str, Any]],
     metrics: Dict[str, Any],
     compared_at: str,
+    phase_4a_fields: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    return {
+    artifact: Dict[str, Any] = {
         "artifact_type": COMPARISON_ARTIFACT_TYPE,
         "schema_version": COMPARISON_SCHEMA_VERSION,
         "source_id": source_id,
@@ -1150,6 +1353,18 @@ def build_comparison_artifact(
         # whether the candidate carries the field or not.
         "haiku_prompt_variant": _prompt_variant_of(haiku_artifact),
     }
+    # Phase 4.A — additive gate-field readout. Only the fields that
+    # were actually computed (non-None) are stamped onto the artifact;
+    # the schema declares every Phase 4.A field optional so absence
+    # means "gate did not run for this source / artifact" rather than
+    # zero. legacy_exempt_count defaults to 0 (the "no exempt items"
+    # signal) so a passing gate still surfaces the field; tests assert
+    # absence vs zero are both schema-valid.
+    if phase_4a_fields:
+        for key, value in phase_4a_fields.items():
+            if value is not None:
+                artifact[key] = value
+    return artifact
 
 
 def is_legacy_eval(haiku_artifact: Dict[str, Any]) -> bool:
@@ -2143,12 +2358,27 @@ def run_comparison(
             "re_verification": haiku_reverification,
         }
 
+    # Phase 4.A — additive gate-field readout. Computed best-effort
+    # from the gate's on-disk artifacts (grounded_items__*.json and
+    # grounding_gate_result__*.json) plus the latest raw extraction
+    # under the same meeting directory. Every field is optional in the
+    # comparison_result schema, so a source whose gate has not run yet
+    # still produces a valid artifact — the fields just stay absent.
+    phase_4a_fields = _compute_phase_4a_fields(
+        data_lake=data_lake,
+        source_id=source_id,
+        baseline_rows=baseline_rows,
+        gt_pairs=gt_pairs,
+        types=types,
+    )
+
     artifact = build_comparison_artifact(
         source_id=source_id,
         haiku_artifact=haiku_artifact,
         baseline_rows=baseline_rows,
         metrics=metrics,
         compared_at=compared_at,
+        phase_4a_fields=phase_4a_fields,
     )
     # Validate our OWN output before writing it (fail-closed: never
     # write a malformed comparison_result).

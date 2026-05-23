@@ -358,7 +358,7 @@ zone calculations in this study. That's the decision."
 ```json
 {
   "decisions": [
-    {"text": "the group has agreed — we will use the propagation methodology from Chapter 5 of the NTIA Manual as the baseline for all protection zone calculations in this study", "decision_subtype": "resolution", "reason": "The chair explicitly states this is the group's decision on methodology."}
+    {"text": "the group has agreed — we will use the propagation methodology from Chapter 5 of the NTIA Manual as the baseline for all protection zone calculations in this study", "decision_subtype": "resolution", "reason": "The chair explicitly states this is the group's decision on methodology.", "source_quote": "we will use the propagation methodology from Chapter 5 of the NTIA Manual as the baseline"}
   ],
   "action_items": [],
   "claims": [],
@@ -366,11 +366,11 @@ zone calculations in this study. That's the decision."
   "risks": [],
   "open_questions": [],
   "cross_references": [
-    {"text": "Chapter 5 of the NTIA Manual", "reason": "Cited as the methodology source for this decision."}
+    {"text": "Chapter 5 of the NTIA Manual", "reason": "Cited as the methodology source for this decision.", "source_quote": "Chapter 5 of the NTIA Manual"}
   ],
   "technical_parameters": [],
   "regulatory_references": [
-    {"text": "NTIA Manual Chapter 5 propagation methodology"}
+    {"text": "NTIA Manual Chapter 5 propagation methodology", "source_quote": "NTIA Manual as the baseline for all protection zone calculations"}
   ],
   "attendees": [],
   "agenda_item": [],
@@ -407,7 +407,7 @@ That would maybe simplify things. But we'd have to think about that."
 {
   "decisions": [],
   "open_questions": [
-    {"text": "whether protected sites in the Pacific theater could be carved out while running the rest of the analysis CONUS-only", "reason": "Speaker explicitly frames this as a hypothetical ('just throwing this out there', 'we'd have to think about that'), not a proposal or resolution."}
+    {"text": "whether protected sites in the Pacific theater could be carved out while running the rest of the analysis CONUS-only", "reason": "Speaker explicitly frames this as a hypothetical ('just throwing this out there', 'we'd have to think about that'), not a proposal or resolution.", "source_quote": "whether we could carve out some protected sites in the Pacific theater and still run the rest of the analysis CONUS-only"}
   ],
   "action_items": [],
   "claims": [],
@@ -454,16 +454,16 @@ make sure the system list reflects that geographic scope?"
 ```json
 {
   "decisions": [
-    {"text": "the scope needs to cover US and Possessions, not just CONUS", "decision_subtype": "scope", "reason": "Speaker states the group is acting on this guidance ('we're moving forward on that basis'), making it an operative scope decision even though written guidance has not arrived."}
+    {"text": "the scope needs to cover US and Possessions, not just CONUS", "decision_subtype": "scope", "reason": "Speaker states the group is acting on this guidance ('we're moving forward on that basis'), making it an operative scope decision even though written guidance has not arrived.", "source_quote": "the scope needs to cover US and Possessions, not just CONUS"}
   ],
   "action_items": [
-    {"text": "Kerry to ensure the system list reflects US and Possessions geographic scope", "owner": "Kerry", "reason": "Explicit assignment from the chair ('Kerry, can you make sure')."}
+    {"text": "Kerry to ensure the system list reflects US and Possessions geographic scope", "owner": "Kerry", "reason": "Explicit assignment from the chair ('Kerry, can you make sure').", "source_quote": "Kerry, can you make sure the system list reflects that geographic scope"}
   ],
   "risks": [
-    {"text": "Written guidance for the US and Possessions scope expansion has not been received", "reason": "Speaker acknowledges they are proceeding without documented authorization ('we haven't gotten that in writing yet')."}
+    {"text": "Written guidance for the US and Possessions scope expansion has not been received", "reason": "Speaker acknowledges they are proceeding without documented authorization ('we haven't gotten that in writing yet').", "source_quote": "We haven't gotten that in writing yet"}
   ],
   "external_stakeholder_input": [
-    {"text": "Lenay's guidance that scope should cover US and Possessions", "reason": "Guidance attributed to an external senior official (Lenay) conveyed through a speaker."}
+    {"text": "Lenay's guidance that scope should cover US and Possessions", "reason": "Guidance attributed to an external senior official (Lenay) conveyed through a speaker.", "source_quote": "what we're hearing from Lenay is that the scope needs to cover US and Possessions"}
   ],
   "claims": [],
   "commitments": [],
@@ -485,7 +485,7 @@ make sure the system list reflects that geographic scope?"
   "procedural_ruling": [],
   "precedent_reference": [],
   "issue_registry_entry": [
-    {"text": "Lack of written documentation for US and Possessions scope expansion", "reason": "An open governance gap identified by the speaker that requires resolution."}
+    {"text": "Lack of written documentation for US and Possessions scope expansion", "reason": "An open governance gap identified by the speaker that requires resolution.", "source_quote": "We haven't gotten that in writing yet, but we're moving forward on that basis"}
   ],
   "dissent_or_objection": []
 }
