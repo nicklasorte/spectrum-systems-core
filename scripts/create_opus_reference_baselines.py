@@ -741,7 +741,9 @@ _GROUND_TRUTH_TEXT_FIELDS = (
     "question_text",
     "commitment_text",
     "risk_text",
+    "claim_text",
     "reference_text",
+    "ref_text",
     "parameter_name",
     # 1.3.0 type-specific primary text fields, listed before the
     # generic name/title fallbacks so e.g. a position_statement
@@ -751,6 +753,7 @@ _GROUND_TRUTH_TEXT_FIELDS = (
     "objection_text",
     "input_text",
     "ruling_text",
+    "text_preview",
     "term",
     "name",
     "title",

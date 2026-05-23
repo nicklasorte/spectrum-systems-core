@@ -75,6 +75,17 @@ def test_primary_text_map_matches_baseline_producer() -> None:
           "commitment_text": "I will file", "source_speaker": "X"}),
         ("risks", {"risk_id": "r1", "risk_text": "interference",
                    "raised_by": "Y"}),
+        ("claims",
+         {"claim_id": "claim-1",
+          "claim_text": "the threshold protects incumbents",
+          "claim_complexity": "atomic", "speaker": "NTIA"}),
+        ("cross_references",
+         {"ref_id": "xref-1", "ref_type": "document",
+          "ref_text": "the prior comment cycle"}),
+        ("sentiment_indicators",
+         {"turn_id": "t0042", "speaker": "DoD Rep",
+          "sentiment": "disagreement",
+          "text_preview": "I strongly object."}),
         ("technical_parameters",
          {"param_id": "p1", "parameter_name": "ERP", "value": "30 dBW"}),
         ("dissent_or_objection",
@@ -86,6 +97,110 @@ def test_primary_text_map_matches_baseline_producer() -> None:
         assert cmp._item_text(etype, item) == crb.extract_ground_truth_text(
             item, etype
         ), (etype, item)
+
+
+def test_claims_text_not_placeholder() -> None:
+    """Regression: a claims dict must resolve on ``claim_text``, never on
+    ``claim_id`` (``claim-1``/``claim-2``) or ``claim_complexity``
+    (``atomic``/``compound``).
+
+    Pre-fix ``_GROUND_TRUTH_TEXT_FIELDS`` was missing ``claim_text``.
+    The resolver fell through to "first non-empty string value" — which
+    is ``claim_id`` ("claim-1") or, depending on the model's dict-key
+    order, ``claim_complexity`` ("atomic"/"compound"). The comparison
+    therefore counted zero true positives for claims because no
+    placeholder string is a substring of the Opus reference claim text.
+    """
+    import create_opus_reference_baselines as crb  # noqa: WPS433
+
+    real_text = (
+        "The 7 GHz downlink threshold of minus 47 dBm per megahertz "
+        "protects federal incumbents."
+    )
+    claim = {
+        "claim_id": "claim-1",
+        "claim_text": real_text,
+        "speaker": "NTIA Lead",
+        "claim_complexity": "atomic",
+        "external_references": ["Draft 7 GHz Study Plan"],
+        "evidence_in_transcript": ["t0003", "t0007"],
+    }
+    assert cmp._item_text("claims", claim) == real_text
+    assert crb.extract_ground_truth_text(claim, "claims") == real_text
+
+    # And with dict-key order that would have exposed ``claim_complexity``
+    # ("compound") first in the legacy fallback.
+    alt = {
+        "claim_complexity": "compound",
+        "claim_id": "claim-2",
+        "claim_text": real_text,
+    }
+    assert cmp._item_text("claims", alt) == real_text
+    assert crb.extract_ground_truth_text(alt, "claims") == real_text
+
+    # End-to-end: an object-form claim must count as one TP against an
+    # Opus baseline built from the same text. Before the fix the
+    # comparison resolved the Haiku item to "claim-1", which is not a
+    # substring of the real claim text, so TP was 0.
+    baseline = [
+        {
+            "extraction_type": "claims",
+            "ground_truth_text": real_text,
+            "model_id": "claude-opus-4-6",
+        }
+    ]
+    haiku_payload = {
+        "claims": [claim],
+        "grounding": [
+            {"kind": "claim", "text": real_text, "source_turns": ["t0003"]}
+        ],
+    }
+    s = cmp.compute_comparison(
+        baseline_rows=baseline,
+        haiku_payload=haiku_payload,
+        gt_pairs=None,
+        types=cmp.extraction_types(),
+    )["summary"]
+    assert s["total_haiku_items"] == 1, s
+    assert s["true_positives"] == 1, s
+    assert s["haiku_recall_vs_opus"] == 1.0, s
+
+
+def test_cross_reference_and_sentiment_resolve_on_primary_field() -> None:
+    """Regression: cross_references and sentiment_indicators dicts must
+    resolve on their declared primary text fields (``ref_text`` and
+    ``text_preview``), not on the ``ref_id`` slug or the ``turn_id``.
+
+    Same root cause as the claims regression above: these fields were
+    missing from ``_GROUND_TRUTH_TEXT_FIELDS`` so the resolver fell
+    through to the first non-empty string value in the dict.
+    """
+    import create_opus_reference_baselines as crb  # noqa: WPS433
+
+    xref = {
+        "ref_id": "xref-1",
+        "ref_type": "document",
+        "ref_text": "the prior comment cycle",
+        "ref_date": None,
+        "ref_url": None,
+    }
+    assert cmp._item_text("cross_references", xref) == "the prior comment cycle"
+    assert crb.extract_ground_truth_text(xref, "cross_references") == (
+        "the prior comment cycle"
+    )
+
+    senti = {
+        "turn_id": "t0042",
+        "speaker": "DoD Rep",
+        "sentiment": "disagreement",
+        "text_preview": "I strongly object to this approach.",
+    }
+    assert cmp._item_text("sentiment_indicators", senti) == (
+        "I strongly object to this approach."
+    )
+    assert crb.extract_ground_truth_text(senti, "sentiment_indicators") == (
+        "I strongly object to this approach."
+    )
 
 
 def test_object_form_decisions_are_read_not_dropped() -> None:
