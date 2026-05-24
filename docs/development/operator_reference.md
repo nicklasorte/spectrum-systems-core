@@ -634,3 +634,76 @@ Secret policy: only `validate-and-baseline.yml` references
 `secrets.ANTHROPIC_API_KEY` (it runs the actual extraction). The
 other four workflows operate on existing artifacts and must NOT pull
 the secret into their job env.
+
+---
+
+## Commands (local development)
+
+```bash
+pip install -e ".[dev]"          # install package + dev extras (pytest)
+python -m pytest                 # run full suite
+python -m pytest tests/test_artifact_model.py            # one file
+python -m pytest tests/test_artifact_model.py::test_name # one test
+python -m pytest -k grounding    # filter by name
+```
+
+CI runs only `python -m pytest` on Python 3.11
+(`.github/workflows/pytest.yml`). There are no linters, formatters,
+type-checkers, or coverage gates configured — do not add them without
+a concrete need (`docs/development/ci.md`).
+
+See `docs/conventions/github_actions_workflows.md` before writing or
+modifying any GitHub Actions workflow. The conventions doc includes
+standing inventory and diagnosis rules that apply to every fix and
+every roadmap session, not only to workflow files.
+
+---
+
+## Phase planning protocol
+
+Before starting a new phase planning cycle, the operator should run:
+
+```
+python -m spectrum_systems_core.cli next-phase-handoff
+```
+
+The output `prompt_opening` should be pasted into the new Claude
+conversation as the seed for STEP 1 inventory. If the briefing's
+`valid_until` is in the past, re-run `verify-pipeline-state` first,
+then re-run `next-phase-handoff`.
+
+---
+
+## Files worth reading before non-trivial changes
+
+- `docs/architecture/system_constitution.md` — binding; precedence
+  over everything else.
+- `docs/contracts/data_lake_contract.md` — binding for `data_lake/`.
+- `src/spectrum_systems_core/workflows/_loop.py` — the loop in
+  ~70 lines.
+- `src/spectrum_systems_core/data_lake/pipeline.py` — the only place
+  data-lake I/O meets the core loop.
+- `docs/decisions/` — judgment records capturing why architectural
+  decisions were made. Read all files here before any change that
+  touches module structure, artifact types, or the core loop.
+- `docs/decisions/2026-05-13-skl-sequencing.judgment_record.json` —
+  specifically: SKL trace extraction pre-conditions. Do not begin
+  SKL trace extraction work without verifying these are met.
+
+---
+
+## Hooks (PostToolUse summary)
+
+`.claude/settings.json` configures a PostToolUse hook that runs
+automatically after every `Edit | Write | MultiEdit`:
+
+- `pytest tests/ -x -q` — stops at first failure, shows last 20 lines
+- `ruff check src/ tests/` — lint check across all source and test
+  files
+
+The Stop hook chain enforces the CLAUDE.md char ceiling, the gitignore
+audit, the `artifact_kind` field-name discipline, the CLAUDE.md
+pattern guard (`scripts/validate_claude_md.py`), the rollback contract
+pre-PR check, and the integration-test coverage check
+(`scripts/_integration_test_check.py`).
+

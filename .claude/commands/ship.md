@@ -34,50 +34,15 @@ If you cannot write a targeted reproduction script, stop and explain why before 
 Re-read the fixed code. Attack it again. List any new findings. Fix them.
 
 ## Step 6 — INTEGRATION TEST CHECK
-Run the compliance check from CLAUDE.md:
+Run both compliance checks:
 
-    python - <<'PY'
-    import pathlib, re, subprocess, sys
-
-    scripts_dir = pathlib.Path("scripts")
-    test_dirs = [pathlib.Path("tests/integration"), pathlib.Path("tests/scripts")]
-    ARTIFACT_TYPE_PATTERN = re.compile(
-        r"validate_artifact|meeting_extraction|correction_candidate|"
-        r"ground_truth_pair|human_review|decision_few_shot_examples"
-    )
-    READS_JSON_PATTERN = re.compile(r"json\.loads?\b|json\.load\(|read_text\(")
-    try:
-        diff = subprocess.check_output(
-            ["git", "diff", "--name-only", "origin/main", "--", "scripts/"], text=True
-        )
-        touched = {pathlib.Path(p).name for p in diff.splitlines() if p.endswith(".py")}
-        untracked = subprocess.check_output(
-            ["git", "ls-files", "--others", "--exclude-standard", "scripts/"], text=True
-        )
-        touched.update(
-            pathlib.Path(p).name for p in untracked.splitlines() if p.endswith(".py")
-        )
-    except subprocess.CalledProcessError:
-        touched = {p.name for p in scripts_dir.glob("*.py")}
-    coverage_text = "\n".join(
-        p.read_text() for d in test_dirs if d.is_dir() for p in d.glob("test_*.py")
-    )
-    missing = [
-        s.name for s in sorted(scripts_dir.glob("*.py"))
-        if s.name in touched
-        and ARTIFACT_TYPE_PATTERN.search(s.read_text())
-        and READS_JSON_PATTERN.search(s.read_text())
-        and s.stem not in coverage_text
-    ]
-    if missing:
-        print(f"MISSING integration tests for: {missing}")
-        sys.exit(1)
-    print("OK: all artifact-reading scripts touched in this PR have integration tests")
-    PY
-
-Also run: `python scripts/_gitignore_audit.py`
+    python scripts/_integration_test_check.py
+    python scripts/_gitignore_audit.py
 
 Both must exit 0. If either fails, fix before proceeding.
+
+See `.claude/integration_test_requirement.md` and
+`.claude/artifact_manifest_requirement.md` for the underlying rules.
 
 ## Step 7 — OPEN PR
 PR description MUST include, in order:
