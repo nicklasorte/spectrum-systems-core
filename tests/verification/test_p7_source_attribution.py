@@ -142,7 +142,7 @@ def test_p7b_legacy_1_0_0_without_grounding_still_validates():
         "title": "Legacy meeting",
         "summary": "No source attribution recorded.",
         "decisions": ["Approve the roadmap."],
-        "action_items": ["Draft the scope."],
+        "action_items": [{"action": "Draft the scope."}],
         "open_questions": ["Do we need a follow-up?"],
         "provenance": {"produced_by": "meeting_minutes_llm"},
     }

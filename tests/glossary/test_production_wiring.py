@@ -533,7 +533,7 @@ def _stub_response(tmp_path: Path) -> Path:
     strict-schema gate."""
     payload = {
         "decisions": ["The team will publish the CBRS sharing report."],
-        "action_items": ["Draft the CBRS sharing report."],
+        "action_items": [{"action": "Draft the CBRS sharing report."}],
         "open_questions": ["What is the CBRS bandwidth ceiling?"],
         "grounding": [
             {

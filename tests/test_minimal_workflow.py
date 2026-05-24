@@ -41,7 +41,7 @@ def test_workflow_payload_contains_required_fields():
         assert key in payload
 
     assert "Approve Q3 spectrum-core roadmap." in payload["decisions"]
-    assert "Draft SSC-002 slice scope." in payload["action_items"]
+    assert {"action": "Draft SSC-002 slice scope."} in payload["action_items"]
     assert "Do we need a separate eval for empty transcripts?" in payload["open_questions"]
 
 

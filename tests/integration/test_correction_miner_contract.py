@@ -45,7 +45,7 @@ DECISIONS = [
     "The group deferred the aggregate interference methodology.",
     "The group landed on the minus 47 dBm per megahertz threshold.",
 ]
-ACTION_ITEMS = ["DoD will submit revised ERP values before next session."]
+ACTION_ITEMS = [{"action": "DoD will submit revised ERP values before next session."}]
 OPEN_QUESTIONS: list[str] = []
 
 
@@ -84,7 +84,7 @@ def _seed(tmp_path: Path) -> Path:
     tdir.mkdir(parents=True)
     (tdir / f"{SOURCE_ID}.txt").write_text(
         "7 GHz Downlink TIG\n"
-        + "\n".join(DECISIONS + ACTION_ITEMS)
+        + "\n".join(DECISIONS + [a['action'] for a in ACTION_ITEMS])
         + "\n",
         encoding="utf-8",
     )
@@ -129,7 +129,7 @@ def _seed_transcript_in_processed_only(tmp_path: Path) -> Path:
 
     doc = Document()
     doc.add_paragraph("7 GHz Downlink TIG")
-    for line in DECISIONS + ACTION_ITEMS:
+    for line in DECISIONS + [a['action'] for a in ACTION_ITEMS]:
         doc.add_paragraph(line)
     doc.save(str(sid_dir / "transcript.docx"))
     return dl
@@ -179,7 +179,7 @@ def _seed_transcript_via_source_record(tmp_path: Path) -> Path:
     transcript.parent.mkdir(parents=True)
     transcript.write_text(
         "7 GHz Downlink TIG\n"
-        + "\n".join(DECISIONS + ACTION_ITEMS)
+        + "\n".join(DECISIONS + [a['action'] for a in ACTION_ITEMS])
         + "\n",
         encoding="utf-8",
     )
@@ -361,7 +361,7 @@ def test_transcript_path_override_via_cli(tmp_path: Path) -> None:
     explicit = tmp_path / "elsewhere" / "explicit_transcript.txt"
     explicit.parent.mkdir(parents=True)
     explicit.write_text(
-        "7 GHz Downlink TIG\n" + "\n".join(DECISIONS + ACTION_ITEMS)
+        "7 GHz Downlink TIG\n" + "\n".join(DECISIONS + [a['action'] for a in ACTION_ITEMS])
         + "\n",
         encoding="utf-8",
     )

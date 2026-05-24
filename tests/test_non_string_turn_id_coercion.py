@@ -184,7 +184,7 @@ def test_parse_llm_payload_coerces_integer_turn_ids_end_to_end(capsys):
     raw = json.dumps(
         {
             "decisions": ["a decision"],
-            "action_items": ["an action"],
+            "action_items": [{"action": "an action"}],
             "open_questions": ["a question"],
             "meeting_phases": [
                 {

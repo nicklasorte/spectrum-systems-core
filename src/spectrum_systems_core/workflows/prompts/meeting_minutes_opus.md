@@ -1,5 +1,5 @@
 ---
-version: 4.A
+version: 4.B
 changelog:
   - "Phase 3.A: G-PROMPT-NEGATIVE + G-REASON-FIELD; non-extractable categories enumerated; reason field required on 14 claim-shaped types"
   - "Phase 3.B: G-PROMPT-TRIGGER-TAXONOMY; Fernández (SIGDIAL 2008) four-subtype implicit-decision recognition section with explicit linguistic markers and optional decision_subtype enum (issue|proposal|resolution|scope)"
@@ -7,6 +7,7 @@ changelog:
   - "Phase 3.D: G-GLOSSARY-NTIA; 38-term NTIA/DoD spectrum glossary injected at top of prompt for domain grounding"
   - "Phase 3.E: G-FEWSHOT-IMPLICIT + G-FEWSHOT-SCHEMA + G-FEWSHOT-NEGATIVE; three hand-curated in-domain examples (explicit decision, near-miss non-decision, implicit guidance-as-decision) ordered for recency bias"
   - "Phase 4.A: G-GROUND-VERBATIM; source_quote required on 14 claim-shaped types; chunk-scoped substring grounding via source_chunk_id; transcription errors reproduced verbatim"
+  - "Phase 4.B: G-PROMPT-PRECISION + G-ACTION-ITEMS-DICT; per-type precision guard with negative examples sourced from haiku_only false positives (decisions, topics, technical_parameters, commitments, precedent_reference, issue_registry_entry); action_items items required to be dict objects (not bare strings) so the grounding gate can check source_quote"
 ---
 
 # NTIA/DoD Spectrum Policy Meeting Extraction — Comprehensive Reference Baseline
@@ -202,6 +203,52 @@ unless the speaker is explicitly invoking a regulation. Frequency
 ranges that appear in technical discussion are technical_parameters
 candidates, but only if they describe a system parameter — not if they
 are just being mentioned in passing.
+
+<!-- PRECISION_GUARD_4B_BEGIN -->
+### Per-type precision guard (from extraction analysis)
+
+**decisions** — Do NOT extract as a decision:
+- Procedural statements about logistics: "we will be finishing before 1:00"
+  → this is a procedural_ruling
+- Importance statements: "validating the system list is crucially important"
+  → this is an action_item or commitment, not a decision
+- Tentative statements: "we're probably going to make a change"
+  → "probably" signals uncertainty; decisions require clear commitment or consensus
+- Responsibility attributions: "this really is an agency responsibility"
+  → this is a position_statement
+A decision requires: (1) a clear outcome was reached, (2) it applies going forward,
+(3) it would appear in formal meeting minutes as a decision point.
+
+**topics** — Do NOT extract:
+- Every subject or concept mentioned in passing
+- Sub-topics of items already captured in agenda_item
+- Background context statements that are not discrete discussion areas
+Topics should match agenda-level discussion areas only. If the meeting had
+5 agenda items, expect roughly 5-8 topics — not 20+.
+
+**technical_parameters** — Do NOT extract:
+- Administrative deadlines: "due by January 14th" → this is a scheduled_event
+- Scope statements: "US and Possessions" → this is part of a decision or claim
+- Named document references → these are named_artifacts
+A technical_parameter MUST have a numeric value, frequency range, power level,
+or measurable engineering quantity.
+
+**commitments** — Do NOT extract:
+- General statements of intent without a named assignee
+- Items already captured as action_items
+A commitment requires a specific person or agency committing to a specific deliverable.
+
+**precedent_reference** — Do NOT extract:
+- General mentions of prior meetings ("as discussed at the working group")
+- Background context about prior work without a specific prior ruling or precedent
+A precedent_reference must cite a prior decision or ruling that constrains current work.
+
+**issue_registry_entry** — Do NOT extract:
+- Open questions that are merely rhetorical or exploratory
+- Background context about known challenges
+An issue_registry_entry must be a named, tracked problem with a specific status
+(open/in-progress/resolved) that will appear in the formal issue log.
+<!-- PRECISION_GUARD_4B_END -->
 
 ## VERBATIM SOURCE GROUNDING (REQUIRED)
 
@@ -760,7 +807,9 @@ meeting is Y", "comments are due Z" — ARE action_items. Be
 comprehensive: every "we will...", "we'll...", "let's...", "[owner]
 will...", and "we need to..." that names a future act belongs here.
 
-An `action_items` item may be a plain verbatim string OR an object:
+An `action_items` item MUST be an object (Phase 4.B — bare strings
+are rejected by the grounding gate as "is a bare value, cannot carry
+source_quote"):
 
 ```
 {
@@ -777,8 +826,28 @@ An `action_items` item may be a plain verbatim string OR an object:
 }
 ```
 
-Prefer the object form when an owner, deadline, or status is
-identifiable.
+<!-- ACTION_ITEMS_DICT_4B_BEGIN -->
+**action_items MUST be extracted as objects, NOT plain strings.** This
+is a Phase 4.B precision requirement: bare-string action_items cannot
+carry a `source_quote` and the grounding gate rejects them as "is a
+bare value, cannot carry source_quote", blocking the whole artifact
+from promotion. Each `action_items` item must be an object with:
+
+- `action`: verbatim action text — word-for-word from the transcript
+- `owner`: who is responsible (use "TBD" if not named)
+- `source_quote`: verbatim transcript text (required, per VERBATIM
+  SOURCE GROUNDING above — 10+ chars, a literal substring of the
+  chunk)
+- `reason`: one short sentence explaining why this qualifies as an
+  action_item
+
+WRONG (bare string): `"action_items": ["validate the system list by January 14th"]`
+CORRECT (object): `"action_items": [{"action": "validate the system list by January 14th", "owner": "all agencies", "source_quote": "validating the system list is is crucially important. That is due right now by the 14th of January", "reason": "explicit deadline with named task and implicit multi-agency assignment"}]`
+<!-- ACTION_ITEMS_DICT_4B_END -->
+
+Always emit the object form. An owner, deadline, or status is
+preferred when identifiable; the minimum is `action` + `source_quote`
++ `reason`.
 
 ### open_questions (turn-aggregate item type)
 

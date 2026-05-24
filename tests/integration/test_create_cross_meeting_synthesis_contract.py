@@ -35,11 +35,11 @@ SID_A = "tig-kickoff-transcript-20251101"
 SID_B = "tig-followup-transcript-20251218"
 
 DECISIONS_A = ["The group approved the 7 GHz downlink threshold."]
-ACTIONS_A = ["DoD will submit revised ERP values before the next session."]
+ACTIONS_A = [{"action": "DoD will submit revised ERP values before the next session."}]
 QUESTIONS_A = ["What is the coordination distance for federal incumbents?"]
 
 DECISIONS_B = ["The group deferred the aggregate interference methodology."]
-ACTIONS_B = ["NTIA will circulate the revised methodology."]
+ACTIONS_B = [{"action": "NTIA will circulate the revised methodology."}]
 QUESTIONS_B = ["What aggregate interference limit applies in band?"]
 
 NARRATIVE = (
@@ -76,13 +76,13 @@ def _stub_response() -> str:
             ],
             "open_actions": [
                 {
-                    "text": ACTIONS_A[0],
+                    "text": ACTIONS_A[0]["action"],
                     "owner": "DoD",
                     "assigned_meeting": SID_A,
                     "closed_meeting": None,
                 },
                 {
-                    "text": ACTIONS_B[0],
+                    "text": ACTIONS_B[0]["action"],
                     "owner": "NTIA",
                     "assigned_meeting": SID_B,
                     "closed_meeting": SID_B,
@@ -187,11 +187,11 @@ def test_subprocess_writes_validated_synthesis(tmp_path: Path) -> None:
     # open_actions status recomputed: A has no closure -> open; B was
     # closed in SID_B (a corpus meeting) -> closed (NOT open).
     by_text = {a["text"]: a for a in art["open_actions"]}
-    assert by_text[ACTIONS_A[0]]["status"] == "open"
-    assert by_text[ACTIONS_A[0]]["closed_meeting"] is None
-    assert by_text[ACTIONS_B[0]]["status"] == "closed"
-    assert by_text[ACTIONS_B[0]]["closed_meeting"] == SID_B
-    assert by_text[ACTIONS_B[0]]["closed_date"] == "2025-12-18"
+    assert by_text[ACTIONS_A[0]["action"]]["status"] == "open"
+    assert by_text[ACTIONS_A[0]["action"]]["closed_meeting"] is None
+    assert by_text[ACTIONS_B[0]["action"]]["status"] == "closed"
+    assert by_text[ACTIONS_B[0]["action"]]["closed_meeting"] == SID_B
+    assert by_text[ACTIONS_B[0]["action"]]["closed_date"] == "2025-12-18"
 
     # Every id is a re-stamped UUID5.
     import uuid as _uuid

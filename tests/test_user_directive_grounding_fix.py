@@ -97,7 +97,7 @@ def _good(*, system: str, user: str) -> str:  # noqa: ARG001
         "pending further study.",
     ]
     doc["action_items"] = [
-        "DoD will submit revised ERP values before the next session."
+        {"action": "DoD will submit revised ERP values before the next session."}
     ]
     doc["open_questions"] = [
         "What is the coordination distance for federal incumbents in "

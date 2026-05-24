@@ -2443,6 +2443,154 @@ in the schema fail-closed rather than retried. No code dependency.
 
 ---
 
+## Phase 4.B — precision negative examples + action_items dict shape (PR #TBD)
+
+### What this change adds
+
+- `meeting_minutes` schema bumped from 1.5.0 to 1.6.0 in the
+  `schema_version` enum on
+  `src/spectrum_systems_core/schemas/meeting_minutes.schema.json`.
+- `action_items.items` on the meeting_minutes schema is tightened
+  from `oneOf [string, object]` to `object`-only. The bare-string
+  branch from 1.0.0-1.5.0 is REMOVED — every action_item must now
+  be a structured object so the Phase 4.A grounding gate can verify
+  its `source_quote`. The object form keeps its existing required
+  field (`action`); `source_quote` remains optional at the JSON-Schema
+  layer (the grounding gate is the enforcement point at runtime).
+- The `Phase 4.B (schema_version 1.6.0)` description on the
+  `action_items` array documents the contract and the motivation
+  (bare strings rejected by the gate as `is a bare value, cannot
+  carry source_quote`).
+- `src/spectrum_systems_core/workflows/prompts/meeting_minutes_llm.md`
+  and `meeting_minutes_opus.md` are both bumped from `version: 4.A`
+  to `version: 4.B`, with a new changelog entry.
+- New `Per-type precision guard (from extraction analysis)`
+  subsection inside `DO NOT EXTRACT` in both prompts, byte-identical
+  between the two. Negative examples are sourced verbatim from the
+  haiku_only list in the 2026-05-24 comparison run (decisions,
+  topics, technical_parameters, commitments, precedent_reference,
+  issue_registry_entry).
+- New action_items dict-shape instruction with `WRONG (bare string)`
+  / `CORRECT (object)` example, byte-identical between the two
+  prompts, inside the HTML-comment markers
+  `<!-- ACTION_ITEMS_DICT_4B_BEGIN -->` / `<!-- ACTION_ITEMS_DICT_4B_END -->`.
+- `src/spectrum_systems_core/workflows/meeting_minutes.py` regex
+  workflow now emits `[{"action": <text>}]` instead of `[<text>]`
+  for `action_items` so its output validates against the tightened
+  1.6.0 schema.
+- New test file `tests/test_phase_4b_precision_prompt.py` (10 tests)
+  pinning the precision guard, the action_items dict-shape instruction,
+  the byte-identical sync between the two prompts, the schema's
+  object-only shape, the version bump, and the section order.
+- Updates to ~12 existing test files / fixtures (and one golden
+  expected.json) so the bare-string `action_items` fixtures they
+  carried are now object-form fixtures; the test_grounding_prompt_section
+  version check is widened to "4.x" so the per-phase test owns the
+  exact-version assertion.
+
+No new gate is added. No new artifact type is added. No new diagnostic
+artifact is written. The grounding gate (already shipped in Phase 4.A)
+remains the runtime enforcement point that catches bare-value items;
+this PR adds the structural enforcement at the schema layer plus the
+prompt-level teaching signal that prevents the producer from emitting
+the failing shape in the first place.
+
+### Motivation
+
+The 2026-05-24 comparison run measured the post-Stage-1 / post-Phase-4.A
+Haiku extraction against the Opus reference baseline:
+
+- Haiku F1 vs Opus: 37.8% (recall 70.1%, precision 25.9%)
+- Haiku emitted 263 items vs Opus 97 — 2.7× over-extraction
+- Worst per-type over-extraction: topics 3.7×, commitments 5.5×,
+  decisions 3.0×, technical_parameters 3.0×, precedent_reference 3.0×
+
+Precision is the bottleneck. The DO NOT EXTRACT section that landed
+in Phase 3.A is too generic to constrain the specific haiku_only false
+positives observed. Phase 4.B adds per-type guards keyed on the actual
+false positives so the model sees a concrete pattern (procedural
+"finishing before 1:00", tentative "we're probably going to make a
+change") it should NOT extract.
+
+Separately, the grounding-gate run produced
+`action_items[0]: is a bare value, cannot carry source_quote` on
+every bare-string action_item, blocking the artifact. The fix is two
+parts: (1) the prompt teaches the model to emit dicts (with a WRONG /
+CORRECT demonstration so the rule is grounded in a concrete shape),
+and (2) the schema is tightened to disallow bare strings so a future
+regression cannot reintroduce them.
+
+### To roll back
+
+1. Revert the PR. The `Per-type precision guard` subsection
+   disappears from both prompts. The action_items dict-shape
+   instruction and its WRONG / CORRECT example disappear from both
+   prompts. The version field in both prompts reverts to `4.A`.
+2. The schema's `action_items.items` reverts to the `oneOf [string,
+   object]` shape. The `1.6.0` enum value is removed from
+   `schema_version`.
+3. The regex `meeting_minutes.py` workflow reverts to emitting
+   bare-string `action_items`.
+4. Existing 1.6.0 artifacts in the data-lake (any Phase 4.B run)
+   become re-validatable against the reverted (1.5.0) schema only if
+   their `schema_version` is rewritten to `1.5.0` AND their
+   `action_items` are bare strings — which they are NOT (Phase 4.B
+   producers emit objects). On revert, those object-form artifacts
+   still validate (the 1.5.0 schema's `oneOf` branch accepted both
+   shapes), but their `schema_version` field's `1.6.0` value is
+   suddenly out of enum. Either bump the data-lake artifacts' field
+   back to `1.5.0` OR accept that the Phase 4.B runs are no longer
+   re-validatable until the schema is re-extended.
+5. Existing pre-Phase-4.B artifacts that carried bare-string
+   action_items (e.g. legacy regex-workflow output) become valid
+   again — they were valid pre-4.B, blocked under 4.B (since the
+   regex workflow was migrated in lockstep), and valid again on
+   revert.
+
+### Data migration required for rollback
+
+None for the schema or codebase. Any 1.6.0 `schema_version` value on
+a data-lake artifact falls out of enum validity until either rewritten
+to 1.5.0 or the enum is re-extended in a follow-up PR. The data-lake
+is append-only per `docs/contracts/data_lake_contract.md` §8; do NOT
+delete the affected artifacts.
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/test_phase_4b_precision_prompt.py tests/test_meeting_minutes_schema.py tests/test_minimal_workflow.py
+```
+
+`verification_command`: `pytest tests/test_phase_4b_precision_prompt.py`
+
+### Cross-PR dependency
+
+`depends_on`: PR #237 (Phase 4.A G-GROUND-VERBATIM) — Phase 4.B's
+schema tightening and prompt instruction both reference the
+grounding gate added in 4.A. Without 4.A's gate, the bare-value
+rejection that motivates the dict-shape rule does not exist. No
+code dependency beyond the prompt-section adjacency.
+
+`no_future_dependency`: this entry does not gate any future PR.
+
+### Operator action after merge
+
+1. Re-dispatch the Haiku Stage 1 extraction workflow. The new prompt
+   instructs the model to emit `action_items` as dicts so the
+   grounding gate can verify `source_quote`. Precision is expected
+   to improve +8-12 pts (per the 2026-05-24 comparison-run
+   projection in the PR description).
+2. Re-run `compare_opus_haiku.py` against the new extraction to
+   measure the F1 / precision / recall delta. The Stage 1 gate is
+   F1 ≥ 39.5% (still below pre-4.B baseline) and the Stage 1
+   ceiling is F1 ≥ 55%; the expected post-4.B F1 lands at 45-50%.
+3. No other workflow needs to be re-dispatched. The control
+   function and promotion gate are unchanged — Phase 4.B touches
+   the producer (the prompt) and the schema's structural shape, not
+   the governance gate.
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new

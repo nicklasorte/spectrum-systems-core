@@ -37,7 +37,7 @@ _VALID_RESPONSE = json.dumps(
             "The group approved the 7 GHz downlink threshold.",
             "The group deferred the aggregate methodology.",
         ],
-        "action_items": ["DoD will submit revised ERP values."],
+        "action_items": [{"action": "DoD will submit revised ERP values."}],
         "open_questions": ["What is the coordination distance?"],
         "commitments": [
             {

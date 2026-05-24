@@ -58,7 +58,7 @@ def _fully_populated() -> dict:
             "The group approved the 7 GHz downlink threshold of minus 47 dBm per megahertz."
         ],
         "action_items": [
-            "Bare legacy action string still allowed.",
+            {"action": "Object form replaces legacy bare string (Phase 4.B)."},
             {
                 "action": "DoD will submit revised ERP values before the next session.",
                 "status": "in_progress",
@@ -188,7 +188,7 @@ def test_legacy_minimal_artifact_validates():
         "title": "Quarterly sync",
         "summary": "Team reviewed Q3 priorities.",
         "decisions": ["Approve Q3 roadmap."],
-        "action_items": ["Draft SSC-002 scope."],
+        "action_items": [{"action": "Draft SSC-002 scope."}],
         "open_questions": ["Do we need a separate empty-transcript eval?"],
     }
     validate_artifact(legacy, ARTIFACT_TYPE)
@@ -526,6 +526,7 @@ def test_schema_version_enum_has_all_four():
         "1.3.0",
         "1.4.0",
         "1.5.0",
+        "1.6.0",
     ]
 
 
@@ -823,7 +824,7 @@ def test_legacy_artifact_without_any_1_2_0_field_validates(version):
         "title": "Quarterly sync",
         "summary": "Team reviewed Q3 priorities.",
         "decisions": ["Approve Q3 roadmap."],
-        "action_items": ["Draft SSC-002 scope."],
+        "action_items": [{"action": "Draft SSC-002 scope."}],
         "open_questions": ["Do we need a separate empty-transcript eval?"],
     }
     validate_artifact(legacy, ARTIFACT_TYPE)
@@ -996,7 +997,7 @@ def test_legacy_minimal_artifact_validates_on_1_3_0_schema():
         "title": "Quarterly sync",
         "summary": "Team reviewed Q3 priorities.",
         "decisions": ["Approve Q3 roadmap."],
-        "action_items": ["Draft SSC-002 scope."],
+        "action_items": [{"action": "Draft SSC-002 scope."}],
         "open_questions": ["Anything left open?"],
     }
     validate_artifact(legacy, ARTIFACT_TYPE)

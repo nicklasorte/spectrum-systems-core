@@ -330,7 +330,7 @@ def _faithful_llm_response_json() -> str:
     return json.dumps(
         {
             "decisions": decisions,
-            "action_items": [action],
+            "action_items": [{"action": action}],
             "open_questions": [question],
             "technical_parameters": [tparam],
             "grounding": grounding,

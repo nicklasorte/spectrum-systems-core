@@ -113,11 +113,17 @@ def test_prompt_section_order_do_not_extract_then_grounding_then_reason() -> Non
 
 
 def test_prompt_version_bumped_to_4a() -> None:
-    """Both prompts MUST declare version 4.A in the frontmatter."""
+    """Both prompts MUST declare version 4.A or later in the frontmatter.
+
+    Phase 4.A pinned the version at "4.A"; Phase 4.B bumped it to "4.B".
+    This test stays valid across the 4.x line — the precise current
+    version is asserted by the per-phase test (e.g.
+    tests/test_phase_4b_precision_prompt.py::test_version_bumped_to_4b_in_both_prompts).
+    """
     for prompt in (LLM_PROMPT, OPUS_PROMPT):
         text = prompt.read_text(encoding="utf-8")
         m = re.search(r"^version:\s*(\S+)", text, re.MULTILINE)
         assert m is not None, f"no version line in {prompt.name}"
-        assert m.group(1) == "4.A", (
-            f"{prompt.name} version is {m.group(1)!r}, expected '4.A'"
+        assert m.group(1).startswith("4."), (
+            f"{prompt.name} version is {m.group(1)!r}, expected '4.x'"
         )

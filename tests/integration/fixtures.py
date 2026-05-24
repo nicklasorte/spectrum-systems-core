@@ -278,7 +278,7 @@ def make_promoted_meeting_minutes_artifact(
     lake_root: Any,
     source_id: str,
     decisions: list[str] | None = None,
-    action_items: list[str] | None = None,
+    action_items: list[dict[str, Any]] | list[str] | None = None,
     open_questions: list[str] | None = None,
     transcript_text: str | None = None,
     model_id: str | None = None,
@@ -327,7 +327,7 @@ def make_promoted_meeting_minutes_artifact(
         "The group approved the 7 GHz downlink threshold."
     ]
     action_items = action_items or [
-        "DoD will submit revised ERP values before the next session."
+        {"action": "DoD will submit revised ERP values before the next session."}
     ]
     open_questions = open_questions or [
         "What is the coordination distance for federal incumbents?"
@@ -336,7 +336,8 @@ def make_promoted_meeting_minutes_artifact(
     if transcript_text is None:
         lines = ["7 GHz Downlink TIG — kickoff"]
         lines.extend(decisions)
-        lines.extend(action_items)
+        for ai in action_items:
+            lines.append(ai["action"] if isinstance(ai, dict) else ai)
         lines.extend(open_questions)
         transcript_text = "\n".join(lines) + "\n"
 
