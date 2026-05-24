@@ -2865,6 +2865,139 @@ producer. No code dependency.
 
 ---
 
+## Human minutes gold standard + F1 comparison (PR #249)
+
+### What this change adds
+
+- New schema:
+  `src/spectrum_systems_core/schemas/human_minutes.schema.json` at
+  `schema_version` `1.0.0`. `artifact_type: "human_minutes"`.
+- New deterministic parser:
+  `src/spectrum_systems_core/workflows/minutes_parser.py`. ZERO LLM
+  calls — text-only section + table parsing. Reads NTIA-authored
+  meeting minutes `.txt` files from the data-lake.
+- New ingestion CLI: `scripts/ingest_human_minutes.py`. Parses one
+  `.txt` minutes file and writes the `human_minutes` artifact at
+  `data-lake/store/processed/meetings/<source_id>/human_minutes__<source_id>.json`.
+- New comparison CLI: `scripts/compare_haiku_vs_human_minutes.py`.
+  Compares any promoted `meeting_minutes` extraction (Haiku, Opus,
+  Sonnet) against the `human_minutes` gold standard using
+  `difflib.SequenceMatcher.ratio` over case-folded text. Writes a
+  `human_minutes_comparison` artifact (`schema_version` `1.0.0`).
+- New phone-safe dispatcher:
+  `.github/workflows/compare-vs-human-minutes.yml`. Ingests, then
+  compares, then pushes both artifacts to nicklasorte/data-lake.
+- New artifact manifest entries: `human_minutes` and
+  `human_minutes_comparison` (both Git-tracked: NO, under
+  `processed/`).
+- New tests:
+  - `tests/test_minutes_parser.py` — 11 unit tests covering Dec 18
+    counts (1/3/1), Jan 22 counts (5/3/1), Slide Ref. column,
+    spacer-row skipping, `N/A` follow-up, determinism, schema
+    validity, and a static scan asserting the parser has no LLM
+    imports.
+  - `tests/test_human_minutes_comparison.py` — 10 unit tests
+    covering perfect-match, no-match, F1 calculation, threshold
+    sensitivity, artifact_type discriminator, zero-division
+    safety, determinism, extreme-over-extraction precision, and a
+    static scan asserting the comparison script has no LLM
+    imports.
+  - `tests/integration/test_ingest_human_minutes_contract.py` and
+    `tests/integration/test_compare_haiku_vs_human_minutes_contract.py`
+    — real-writer-backed integration tests via the new
+    `make_human_minutes_artifact` factory in
+    `tests/integration/fixtures.py`.
+- No schema change to `meeting_minutes.schema.json`. No prompt
+  change. No gate change. No change to
+  `GROUNDING_BINDING_SCHEMA_VERSION` (1.4.0) or
+  `GROUNDING_GATE_SCHEMA_VERSION` (1.5.0).
+- ZERO LLM calls in any new code path. The parser, the ingestion
+  CLI, the comparison CLI, and the workflow all run without an
+  API key.
+
+### Motivation
+
+The single-meeting validation baseline is currently the Opus
+reference extraction. Opus produces 97 items for the Dec 18 kickoff
+and Haiku produces 263, while the NTIA-authored minutes record one
+discussion row, three action items, and one next step (total 5
+human items). Without a human gold standard, the comparison
+infrastructure cannot tell over-extraction from real recall — both
+look like F1 against another LLM. This PR introduces the human
+gold standard as a deterministic, replay-stable artifact so the
+first human-grounded F1 measurement for the Dec 18 pair can land.
+
+### To roll back
+
+1. Revert the PR. The new schema, parser, both CLIs, the workflow,
+   and the two new manifest entries disappear together. Existing
+   `meeting_minutes`, `meeting_extraction`, and `comparison_result`
+   artifacts are unaffected — none reference the new types.
+2. Any `human_minutes__*.json` or
+   `human_minutes_comparison__*.json` artifacts already on disk in
+   nicklasorte/data-lake become orphaned. They remain readable as
+   JSON but no script knows how to validate them. The data-lake is
+   append-only per `docs/contracts/data_lake_contract.md` §8; do
+   NOT delete them.
+3. Operators using the workflow lose the F1-vs-human measurement
+   and fall back to the F1-vs-Opus measurement from
+   `compare-opus-haiku.yml`. No other workflow depends on the
+   human-minutes artifacts.
+
+### Data migration required for rollback
+
+None. No `meeting_minutes` artifact is modified by this PR, no
+`schema_version` is bumped, and no existing artifact field shape
+changes. The rollback removes a measurement capability without
+touching any pre-existing data.
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/test_minutes_parser.py tests/test_human_minutes_comparison.py
+```
+
+(After revert this command fails with `collected 0 items` because
+the test files are gone. To verify the rest of the suite is
+unaffected, run the suites the PR did NOT touch:)
+
+```bash
+pytest tests/test_meeting_minutes_schema.py tests/test_grounding_gate.py
+```
+
+`verification_command`: `pytest tests/test_minutes_parser.py`
+
+### Cross-PR dependency
+
+`depends_on`: none. The schema, the parser, and both CLIs are
+self-contained — they do not import from any other Phase or PR.
+
+`no_future_dependency`: this entry does not gate any future PR
+directly. A later phase that ingests all 12+ paired meetings and
+produces corpus-level F1 will REUSE the
+`human_minutes` artifact and the `compare_haiku_vs_human_minutes.py`
+script unchanged, but the rollback of this PR would force that
+phase to rebuild its inputs — it is a soft dependency only.
+
+### Operator action after merge
+
+1. Run `.github/workflows/compare-vs-human-minutes.yml` from the
+   GitHub Actions UI with the default source_id
+   `7-ghz-downlink-tig-meeting-kickoff---transcript-20251218` and
+   the default minutes_file. The workflow ingests the human
+   minutes and runs the comparison against the most recent
+   promoted `meeting_minutes` extraction for that source.
+2. Read the step summary: precision, recall, F1, and
+   over-extraction ratio vs the human gold standard. Compare
+   against the F1-vs-Opus number from `compare-opus-haiku.yml`
+   on the same source to see the gap between "F1 vs another LLM"
+   and "F1 vs the NTIA-authored gold standard".
+3. No follow-up dispatch is required. The artifacts land in
+   `nicklasorte/data-lake` under
+   `store/processed/meetings/<source_id>/`.
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new
