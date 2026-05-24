@@ -35,12 +35,11 @@ on:
         default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
       run_id:
         description: >-
-          Specific extraction run_id to gate (optional). When provided, the
-          script locates meeting_minutes__<run_id>.json directly and skips
-          the content-aware selector. Leave blank to use the latest
-          extraction (schema_version-aware).
+          Specific extraction run_id to gate. Defaults to the latest
+          known-good Phase 4.A extraction. Override only when targeting
+          a specific artifact.
         required: false
-        default: ''
+        default: '7-ghz-downlink-tig-meeting-kickoff-20251218-175052utc-meeting-re-a01658daa307'
       disable_gate:
         description: 'Bypass the gate (writes audit-only bypass record)'
         required: false
@@ -88,6 +87,7 @@ jobs:
             BYPASS_FLAG="--disable-grounding-gate"
             echo "::warning::grounding gate BYPASSED via workflow input"
           fi
+          echo "::notice::gating source_id=${SOURCE_ID} run_id=${RUN_ID:-(content-aware selector)}"
           RUN_ID_FLAG=()
           if [ -n "${RUN_ID}" ]; then
             RUN_ID_FLAG=(--run-id "${RUN_ID}")
