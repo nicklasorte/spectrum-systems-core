@@ -1,0 +1,232 @@
+name: Run Cascade Filter (Phase 2.C — DEPRECATED)
+
+# DEPRECATED — Phase 2.C cascade workflow. Superseded by Phase 4.C
+# `run-cascade-filter.yml`, which operates on the Phase 4.A grounded
+# items artifact rather than the raw Haiku extraction. Retained for
+# audit trail (the data-lake holds artifacts written by this workflow
+# and the governance contract requires a path back to the producer).
+#
+# DO NOT run this workflow for new precision work. Use
+# `run-cascade-filter.yml` (Phase 4.C) instead.
+#
+# Dedicated one-input workflow for the Phase 6 Stage 2 cascade. Runs
+# meeting-minutes-llm with --enable-cascade-filter --confirm-cost so
+# Haiku extracts items, Sonnet evaluates each item for keep/drop, and
+# a `meeting_minutes_filtered__*.json` artifact is written alongside
+# the raw `meeting_minutes__*.json` and pushed to nicklasorte/data-lake.
+#
+# Reason this workflow exists: run-comparison.yml with
+# use_cascade_output=true looks for the cascade-filtered artifact in
+# the data-lake (scripts/compare_opus_haiku.py raises
+# `cascade_artifact_not_found` when none is present). debug-llm-extraction.yml
+# can produce the cascade artifact when its `cascade_filter` boolean is
+# toggled on, but pushes only the raw `meeting_minutes__*.json`
+# (debug-llm-extraction.yml:330-332). This workflow pushes BOTH so the
+# downstream comparison run finds the cascade artifact.
+#
+# `--confirm-cost` is paired with `--enable-cascade-filter` for the
+# same reason as debug-llm-extraction.yml:193-200: the per-source
+# threshold gate (`cascade_confirmation_item_threshold = 50` —
+# data/cost_constants.json) would otherwise halt the full Dec 18
+# transcript run pre-cascade. It is NOT a debug toggle.
+#
+# Zero boolean inputs by design — the sticky-toggle problem on GitHub
+# mobile is exactly why this workflow exists. One input, one tap, full
+# run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_id:
+        description: 'Source ID to extract'
+        required: true
+        default: '7-ghz-downlink-tig-meeting-kickoff---transcript-20251218'
+
+permissions:
+  contents: read
+
+jobs:
+  run-cascade-filter:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      DATA_LAKE_PATH: ${{ github.workspace }}/data-lake
+      SOURCE_ID: ${{ github.event.inputs.source_id }}
+    steps:
+      - name: Checkout spectrum-systems-core
+        uses: actions/checkout@v4
+
+      - name: Clone nicklasorte/data-lake
+        uses: ./.github/actions/clone-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e .
+
+      - name: Run meeting-minutes-llm (haiku + cascade filter, full run)
+        id: run_llm
+        run: |
+          set +e
+          python -m spectrum_systems_core.cli meeting-minutes-llm \
+            --source-id "${SOURCE_ID}" \
+            --data-lake "${DATA_LAKE_PATH}" \
+            --enable-cascade-filter \
+            --confirm-cost \
+            >stdout.log 2>stderr.log
+          rc=$?
+          cat stdout.log
+          cat stderr.log >&2
+          if [ "${rc}" -eq 0 ]; then
+            # Two distinct success tokens on stdout:
+            #   `written=<path>`           — the raw meeting_minutes__*.json
+            #                                (cli.py:3393-3402)
+            #   `filtered_written=<path>`  — the cascade-filtered
+            #                                meeting_minutes_filtered__*.json
+            #                                (cli.py:3550-3560)
+            # The `(^|[[:space:]])` prefix is what distinguishes the
+            # plain `written=` token from the `filtered_written=` and
+            # `log_written=` tokens (which have `_` — not whitespace —
+            # before `written=`).
+            WRITTEN_PATH="$(grep -oE '(^|[[:space:]])written=[^[:space:]]+' stdout.log \
+              | tail -n1 | sed -E 's/^[[:space:]]*written=//')"
+            FILTERED_PATH="$(grep -oE 'filtered_written=[^[:space:]]+' stdout.log \
+              | tail -n1 | sed 's/^filtered_written=//')"
+            # The cascade IS the whole point of this workflow. A missing
+            # filtered_written token after exit 0 means the cascade
+            # silently no-op'd — fail-closed.
+            if [ -z "${FILTERED_PATH}" ]; then
+              {
+                echo "## meeting-minutes-llm exited 0 but cascade wrote no filtered artifact"
+                echo ""
+                echo "stdout tail:"
+                echo '```'
+                tail -n 40 stdout.log
+                echo '```'
+              } >> "${GITHUB_STEP_SUMMARY}"
+              exit 1
+            fi
+            if [ -z "${WRITTEN_PATH}" ]; then
+              {
+                echo "## meeting-minutes-llm exited 0 but wrote no raw artifact"
+                echo ""
+                echo "stdout tail:"
+                echo '```'
+                tail -n 40 stdout.log
+                echo '```'
+              } >> "${GITHUB_STEP_SUMMARY}"
+              exit 1
+            fi
+            echo "written_path=${WRITTEN_PATH}" >> "${GITHUB_OUTPUT}"
+            echo "filtered_path=${FILTERED_PATH}" >> "${GITHUB_OUTPUT}"
+            echo "should_push=true" >> "${GITHUB_OUTPUT}"
+            {
+              echo "## PROMOTED OK (cascade)"
+              echo ""
+              echo "- source_id: \`${SOURCE_ID}\`"
+              echo "- model: \`cascade\`"
+              echo "- written: \`${FILTERED_PATH}\`"
+              echo "- source meeting_minutes: \`${WRITTEN_PATH}\`"
+              echo "- push to data-lake: \`true\`"
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          {
+            echo "## meeting-minutes-llm FAILED (exit ${rc})"
+            echo ""
+            echo "- source_id: \`${SOURCE_ID}\`"
+            echo "- model: \`cascade\`"
+            echo ""
+            echo "### reason_codes"
+            echo '```'
+            grep -iE 'reason_codes?=' stdout.log stderr.log \
+              || echo "(no reason_code line emitted)"
+            echo '```'
+            echo ""
+            echo "### stderr (first 2000 chars)"
+            echo '```'
+            head -c 2000 stderr.log
+            echo ""
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+          exit 1
+
+      # ------------------------------------------------------------------
+      # nicklasorte/data-lake bulk-ignores ``processed/``; ``git add`` of
+      # a path under it is a SILENT no-op unless the directory chain AND
+      # the file are re-included first. Mirrors the established
+      # !**/processed/**/source_record.json precedent and the identical
+      # step in run-haiku-extraction.yml. Both the raw and the filtered
+      # artifact need a negation entry. Idempotent.
+      # ------------------------------------------------------------------
+      - name: Ensure data-lake .gitignore negates the cascade artifacts
+        if: ${{ steps.run_llm.outputs.should_push == 'true' }}
+        env:
+          CLONE_PATH: ${{ github.workspace }}/data-lake
+        run: |
+          set -euo pipefail
+          GI="$CLONE_PATH/.gitignore"
+          touch "$GI"
+          add_rule() {
+            grep -qxF "$1" "$GI" || printf '%s\n' "$1" >> "$GI"
+          }
+          add_rule '!**/processed/**/'
+          add_rule '!**/processed/**/meeting_minutes__*.json'
+          add_rule '!**/processed/**/meeting_minutes_filtered__*.json'
+          echo "Ensured meeting_minutes(_filtered)__*.json negation in data-lake .gitignore"
+
+      - name: Push cascade-filtered artifact to nicklasorte/data-lake
+        if: ${{ steps.run_llm.outputs.should_push == 'true' }}
+        uses: ./.github/actions/push-data-lake
+        with:
+          data_lake_token: ${{ secrets.DATA_LAKE_TOKEN }}
+          commit_message: >-
+            feat(llm-extraction): meeting_minutes_filtered cascade artifact for ${{ env.SOURCE_ID }} [skip ci]
+          add_paths: |
+            .gitignore
+            store/processed/meetings/${{ env.SOURCE_ID }}/meeting_minutes__*.json
+            store/processed/meetings/${{ env.SOURCE_ID }}/meeting_minutes_filtered__*.json
+
+      - name: Verify cascade artifact landed in remote data-lake
+        if: ${{ steps.run_llm.outputs.should_push == 'true' }}
+        env:
+          CLONE_PATH: ${{ github.workspace }}/data-lake
+          FILTERED_PATH: ${{ steps.run_llm.outputs.filtered_path }}
+        run: |
+          set -euo pipefail
+          cd "$CLONE_PATH"
+          REL="${FILTERED_PATH#${CLONE_PATH}/}"
+          if [ "$REL" = "$FILTERED_PATH" ] || [ -z "$REL" ]; then
+            echo "::error::could not derive a data-lake-relative path from" \
+                 "FILTERED_PATH='${FILTERED_PATH}' (clone='${CLONE_PATH}')"
+            exit 1
+          fi
+          echo "Verifying remote path: $REL"
+          git fetch origin main
+          REMOTE_SHA="$(git rev-parse origin/main)"
+          if ! git cat-file -e "origin/main:${REL}" 2>/dev/null; then
+            echo "::error::cascade artifact NOT found in nicklasorte/data-lake" \
+                 "origin/main at ${REL} (commit ${REMOTE_SHA}). The push" \
+                 "did not persist the filtered artifact."
+            exit 1
+          fi
+          BYTES="$(git cat-file -s "origin/main:${REL}")"
+          if [ "${BYTES}" -le 0 ]; then
+            echo "::error::cascade artifact ${REL} present but empty in" \
+                 "origin/main (commit ${REMOTE_SHA})"
+            exit 1
+          fi
+          echo "OK: ${REL} present in nicklasorte/data-lake @ ${REMOTE_SHA} (${BYTES} bytes)"
+          {
+            echo "## Data-lake push verified"
+            echo ""
+            echo "- path: \`${REL}\`"
+            echo "- remote commit: \`${REMOTE_SHA}\`"
+            echo "- size: ${BYTES} bytes"
+          } >> "${GITHUB_STEP_SUMMARY}"
