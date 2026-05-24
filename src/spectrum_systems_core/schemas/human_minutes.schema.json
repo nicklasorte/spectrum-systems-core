@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spectrum-systems-core/src/schemas/human_minutes.schema.json",
+  "title": "human_minutes",
+  "description": "NTIA-authored meeting minutes parsed deterministically from a .txt source file. Produced by scripts/ingest_human_minutes.py via spectrum_systems_core.workflows.minutes_parser. ZERO LLM calls — replay-stable for the same input file. Acts as the human gold standard for F1 measurement against meeting_minutes extraction artifacts (Haiku, Opus, Sonnet).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "source_id",
+    "meeting_name",
+    "meeting_date",
+    "discussion_items",
+    "action_items"
+  ],
+  "properties": {
+    "artifact_type": {
+      "const": "human_minutes"
+    },
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0"]
+    },
+    "source_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "meeting_name": {
+      "type": "string"
+    },
+    "meeting_date": {
+      "type": "string"
+    },
+    "prepared_by": {
+      "type": "string"
+    },
+    "location": {
+      "type": "string"
+    },
+    "overview": {
+      "type": "string"
+    },
+    "discussion_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "item_number",
+          "category",
+          "question_topic",
+          "asked_by",
+          "response"
+        ],
+        "properties": {
+          "item_number": {"type": "integer"},
+          "category": {"type": "string"},
+          "question_topic": {"type": "string"},
+          "asked_by": {"type": "string"},
+          "response": {"type": "string"},
+          "follow_up": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "action_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "responsible_party"],
+        "properties": {
+          "text": {"type": "string", "minLength": 5},
+          "responsible_party": {"type": "string"},
+          "due_date": {"type": ["string", "null"]},
+          "status": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "next_steps": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 5}
+    },
+    "produced_by": {"type": "string"},
+    "raw_source_hash": {"type": "string"},
+    "source_path": {"type": "string"}
+  }
+}

@@ -273,6 +273,46 @@ def make_human_minutes_gt_pair(
     )
 
 
+def make_human_minutes_artifact(
+    *,
+    data_lake_root: Any,
+    source_id: str,
+    minutes_text: str,
+) -> Any:
+    """Produce a ``human_minutes`` artifact via the REAL writer.
+
+    Calls ``spectrum_systems_core.workflows.minutes_parser.parse_minutes_text``
+    and ``scripts.ingest_human_minutes`` so the output is byte-shape
+    identical to what the live ``ingest_human_minutes.py`` writes. If the
+    writer renames a field, every test that depends on this factory
+    rebuilds against the new shape on the next run (CLAUDE.md
+    integration-test rule). ``data_lake_root`` is the data-lake REPO
+    root (the directory containing ``store/``).
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    scripts_dir = _Path(__file__).resolve().parents[2] / "scripts"
+    if str(scripts_dir) not in _sys.path:
+        _sys.path.insert(0, str(scripts_dir))
+
+    import ingest_human_minutes  # type: ignore  # noqa: WPS433
+    from spectrum_systems_core.workflows.minutes_parser import (  # noqa: WPS433
+        parse_minutes_text,
+    )
+
+    parsed = parse_minutes_text(minutes_text, source_path=f"<fixture>/{source_id}")
+    raw_bytes = minutes_text.encode("utf-8")
+    artifact = ingest_human_minutes.parsed_to_artifact(
+        parsed, source_id=source_id, raw_bytes=raw_bytes
+    )
+    return ingest_human_minutes.write_artifact(
+        artifact,
+        data_lake=_Path(data_lake_root),
+        source_id=source_id,
+    )
+
+
 def make_promoted_meeting_minutes_artifact(
     *,
     lake_root: Any,

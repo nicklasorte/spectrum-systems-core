@@ -1,0 +1,30 @@
+7 GHz Downlink TIG Meeting Minutes
+
+Meeting Name: | 7 GHz Downlink TIG January Working Session | Meeting Date: | 1/22/2026
+Prepared By: | NTIA Spectrum Programs | Location: | Virtual (MS Teams)
+
+Meeting Overview
+
+The 7 GHz Downlink TIG met to walk through the cellular characteristics deck, agree on the propagation model, and review near-term agency homework. Discussion focused on assumptions in the link budget and on how to treat aggregate interference from co-channel federal incumbents.
+
+Discussion/Questions Log
+
+# | Slide Ref. | Category | Question/Topic | Asked By | Initial Response / Discussion | Follow-up / Action Item
+
+1 | Slide 4 | Propagation | Which propagation model is the study planning to use for terrestrial federal incumbents? | Pat M. (DoD) | NTIA confirmed the study uses ITU-R P.452 for ground-to-ground links and P.619 for the FSS uplink path. Both choices were reviewed in the kickoff briefing materials. | Capture the model selection in the study plan revision.
+2 | Slide 6 | Link Budget | Why is the assumed antenna gain at the base station set to 24 dBi when the deployed equipment ranges from 20 to 30 dBi? | Sandeep R. (CTIA) | The 24 dBi value is an industry midpoint provided by carriers for the modeling exercise. Sensitivity runs at 20 and 30 dBi will be included in the appendix. | Add 20 and 30 dBi sensitivity tables to Appendix C.
+3 | Slide 9 | Aggregate Interference | How will aggregate interference from multiple federal incumbents be combined in the analysis? | Karen B. (NASA) | NTIA proposed a sum-of-power approach with a 6 dB cap to bound worst-case stacking. Two attendees flagged that the cap may understate the conservative case in dense regions. | Provide a comparison run without the 6 dB cap by 2/5/26.
+4 | Slide 11 | Geography | Does the analysis treat Alaska and Hawaii separately from CONUS? | Tom L. (USAF) | The study breaks results out by FCC region to make territory-specific findings visible. Alaska and Hawaii each have their own region in the deliverables. | N/A
+5 | Slide 14 | Reporting | When will the draft report be circulated to agencies for review? | Jamie K. (DOE) | NTIA targets late February for the first draft, with a two-week agency review window before the March working session. | NTIA to issue review schedule by 1/30/26.
+
+Next Steps
+
+Agencies will review the cellular characteristics deck and forward any further questions through the TIG mailing list before the next meeting.
+
+Action Items
+
+Item | Responsible Party | Due Date | Status
+
+Add 20 and 30 dBi base-station antenna gain sensitivity tables to Appendix C of the study plan. | NTIA Modeling Team | 2/5/26 | Not started
+Provide an aggregate-interference comparison run without the 6 dB cap. | NTIA Modeling Team | 2/5/26 | Not started
+Circulate the draft report review schedule and pre-read materials to agency points of contact. | NTIA Program Office | 1/30/26 | In progress

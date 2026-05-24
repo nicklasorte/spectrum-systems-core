@@ -1,0 +1,26 @@
+7 GHz Downlink TIG Kickoff Meeting Minutes
+
+Meeting Name: | 7 GHz Downlink TIG Kickoff | Meeting Date: | 12/18/2025
+Prepared By: | NTIA Spectrum Programs | Location: | Virtual (MS Teams)
+
+Meeting Overview
+
+The 7 GHz Downlink Technical Interference Group held its kickoff meeting on December 18, 2025. The meeting introduced the scope of the study, confirmed agency participation, and aligned on near-term review steps. NTIA staff outlined the working assumptions for the draft study plan and invited agency feedback before the next session.
+
+Discussion/Questions Log
+
+# | Category | Question/Topic | Asked By | Initial Response / Discussion | Follow-up / Action Item
+
+1 | Scope / Geography | Why does the study cover the US&P and not only the continental United States? Will it include territories such as Puerto Rico, Guam, and the Virgin Islands? | Keri P. (DOW CIO) | Mike D (NTIA) explained that the US&P framing matches the federal incumbents' operating footprint and that territory coverage will be included consistent with NTIA's standard practice for spectrum studies. The team is reviewing whether additional propagation modeling is required for the Pacific territories. | N/A
+
+Next Steps
+
+Review the cellular network characteristics materials NTIA shared in advance of the January meeting and submit any clarifying questions through the TIG mailing list by January 10, 2026.
+
+Action Items
+
+Item | Responsible Party | Due Date | Status
+
+Review and provide comments on the Draft 7 GHz Study Plan circulated on 12/17/25. | Agencies | 12/19/25 | Completed
+Review the participating agency TIG charters and confirm any conflicts of interest before the next meeting. | Agencies | 1/8/26 | In progress
+Validate the proposed system assignments for the federal incumbents listed in Appendix B of the study plan and report any corrections to NTIA. | Agency Points of Contact | 1/15/26 | In progress

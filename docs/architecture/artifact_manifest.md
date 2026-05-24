@@ -1399,6 +1399,57 @@ debug or runtime state and live under `data-lake/` only when
 - Git-tracked: NO — diagnostic state under `processed/`, covered by
   the `**/processed/**` ignore.
 
+### human_minutes
+- **Writer:** `scripts/ingest_human_minutes.py` (the
+  compare-vs-human-minutes workflow). One JSON object per file
+  containing the full ``human_minutes`` envelope. ZERO LLM calls —
+  the artifact is produced by
+  ``spectrum_systems_core.workflows.minutes_parser.parse_minutes_txt``,
+  a deterministic text parser. Carries
+  ``produced_by == "minutes_parser"`` and
+  ``raw_source_hash`` (sha256 of the .txt bytes) so a reader can prove
+  which source file the parser ran against.
+- **Path template:** `data-lake/store/processed/meetings/<source_id>/human_minutes__<source_id>.json`
+- **Schema:** `src/spectrum_systems_core/schemas/human_minutes.schema.json`
+  (1.0.0). Validated by the script BEFORE the write so a malformed
+  envelope is never persisted.
+- **Git-tracked:** NO — the path lives under `processed/`, which the
+  `nicklasorte/data-lake` repo bulk-ignores via `**/processed/**`. The
+  compare-vs-human-minutes workflow ENSURES the general negation
+  `!**/processed/**/human_minutes__*.json` in the data-lake clone's
+  `.gitignore` (idempotent — only appends when absent) and commits it
+  in the same push, mirroring the existing
+  `!**/processed/**/source_record.json` precedent.
+- **Readers:** `scripts/compare_haiku_vs_human_minutes.py` (the
+  compare-vs-human-minutes workflow). Never read back into the
+  governed loop — the gold standard is a measurement tool, not a
+  pipeline input.
+
+### human_minutes_comparison
+- **Writer:** `scripts/compare_haiku_vs_human_minutes.py` (the
+  compare-vs-human-minutes workflow). ONE JSON object per file
+  containing the full envelope. ZERO LLM calls — the comparison is
+  ``difflib.SequenceMatcher`` similarity over case-folded,
+  whitespace-normalized text. The script reads ONLY the
+  ``human_minutes`` artifact and the promoted ``meeting_minutes``
+  extraction artifact for the same source.
+- **Path template:** `data-lake/store/processed/meetings/<source_id>/human_minutes_comparison__<source_id>.json`
+- **Schema:** No JSON Schema file (the envelope is constructed by the
+  script and includes the comparison metrics — precision, recall,
+  F1, over-extraction ratio, matched pairs, unmatched human items,
+  and a 20-item sample of unmatched extraction items). The
+  ``artifact_type`` discriminator is ``human_minutes_comparison`` and
+  ``schema_version`` is ``1.0.0``. The script's integration test
+  (`tests/integration/test_compare_haiku_vs_human_minutes_contract.py`)
+  pins the on-disk shape.
+- **Git-tracked:** NO — same reasoning as `human_minutes`. The
+  compare-vs-human-minutes workflow ENSURES the general negation
+  `!**/processed/**/human_minutes_comparison__*.json` in the
+  data-lake clone's `.gitignore`.
+- **Readers:** none in-loop. Consumed by humans (the workflow's step
+  summary surfaces the metrics) and by future phases that aggregate
+  F1 vs human across the 12+ paired meetings.
+
 ### transcript_quality_report (Phase 2R, diagnostic)
 - Path: `data-lake/store/processed/meetings/<source_id>/diagnostics/transcript_quality_report__<timestamp>.json`
 - Writer: `src/spectrum_systems_core/transcript_quality/cli_integration.py`
