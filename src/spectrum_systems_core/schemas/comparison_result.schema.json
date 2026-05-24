@@ -176,6 +176,77 @@
     "recall_collapse_warning": {
       "type": "boolean",
       "description": "Phase 4.A (optional). True when post_gate_haiku_recall < 0.50 \u2014 the gate dropped so many true positives that recall halved. Surface this prominently in the workflow step summary; it usually means the prompt's verbatim instruction is broken (model paraphrasing) or the chunk index is out of sync with the transcript."
+    },
+    "pre_cascade_haiku_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Phase 4.C (optional). Item count BEFORE the cascade filter ran. Equals post_gate_haiku_count when both gate and cascade ran for the same run_id; equals total_haiku_items when only the cascade ran. Absence is 'pre-4.C artifact, cascade did not run'."
+    },
+    "pre_cascade_haiku_f1": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Phase 4.C (optional). F1 score against Opus BEFORE the cascade filter ran."
+    },
+    "pre_cascade_haiku_precision": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Phase 4.C (optional). Precision before the cascade."
+    },
+    "pre_cascade_haiku_recall": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Phase 4.C (optional). Recall before the cascade."
+    },
+    "post_cascade_haiku_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Phase 4.C (optional). Item count AFTER the cascade kept/modified items. Equals pre_cascade_haiku_count - cascade_dropped_count."
+    },
+    "post_cascade_haiku_f1": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Phase 4.C (optional). F1 score AFTER the cascade ran."
+    },
+    "post_cascade_haiku_precision": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Phase 4.C (optional). Precision after the cascade."
+    },
+    "post_cascade_haiku_recall": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Phase 4.C (optional). Recall after the cascade."
+    },
+    "cascade_kept_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Phase 4.C (optional). Items the cascade kept verbatim."
+    },
+    "cascade_dropped_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Phase 4.C (optional). Items the cascade dropped (sonnet_drop, sonnet_response_invalid, modify_broke_grounding, or max_batches_exceeded)."
+    },
+    "cascade_modified_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Phase 4.C (optional). Items the cascade modified (source_quote tightened to a narrower verbatim substring)."
+    },
+    "cascade_drop_rate": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Phase 4.C (optional). cascade_dropped_count / pre_cascade_haiku_count. 0.0 when nothing dropped; > 0.5 surfaces the cascade_recall_collapse_warning."
+    },
+    "cascade_recall_collapse_warning": {
+      "type": "boolean",
+      "description": "Phase 4.C (optional). True when post_cascade_haiku_recall < 0.50 \u2014 the cascade is dropping signal too aggressively. Surface in the workflow step summary; usually means the per-type disqualifiers in the prompt are too strict or the cascade is over-trusting drop decisions."
     }
   },
   "allOf": [

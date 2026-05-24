@@ -2591,6 +2591,158 @@ code dependency beyond the prompt-section adjacency.
 
 ---
 
+## Phase 4.C — per-item Sonnet cascade filter on grounded items (PR #246)
+
+### What this change adds
+
+- New module `src/spectrum_systems_core/promotion/cascade_filter.py`
+  implementing the Phase 4.C cascade. Per-item Sonnet adjudication
+  of items that cleared the Phase 4.A grounding gate. Decisions are
+  `keep` / `drop` / `modify`. The module is pure except for the
+  injectable `api_client` callable.
+- New prompt template
+  `src/spectrum_systems_core/workflows/prompts/cascade_filter.md`.
+- New CLI `scripts/run_cascade_filter.py` driven by the
+  `.github/workflows/run-cascade-filter.yml` workflow. Reads the
+  `grounded_items__<run_id>.json` artifact (Phase 4.A output) and
+  the matching `grounding_gate_result__<run_id>.json` (race-condition
+  guard), writes four artifacts under the same processed/meetings
+  directory: `cascade_filtered__<run_id>.json`,
+  `cascade_audit__<run_id>.jsonl`,
+  `cascade_filter_result__<run_id>.json`, and (only on
+  `--disable-cascade`) `cascade_bypass_record__<run_id>.json`.
+- The Phase 2.C cascade workflow
+  `.github/workflows/run-cascade-filter.yml` is renamed to
+  `.github/workflows/run-cascade-filter-phase-2c-deprecated.yml`
+  with a deprecation banner at the top. The Phase 2.C cascade
+  module at `src/spectrum_systems_core/cascade/` is untouched —
+  it operates on raw Haiku extractions, not on grounded items, and
+  is preserved for audit trail and any in-flight Phase 2.C run that
+  has not been re-baselined. New precision work uses Phase 4.C.
+- Per-type disqualifier parser in
+  `promotion/cascade_filter.py::parse_type_disqualifiers` reads the
+  Phase 4.B `<!-- PRECISION_GUARD_4B_BEGIN -->` block from
+  `meeting_minutes_llm.md` and routes each `**type** —` paragraph to
+  the matching claim-shaped type. When the block is absent (older
+  prompts) the parser falls back to the `DO NOT EXTRACT` section.
+- Additive cascade fields on the `comparison_result` artifact:
+  `pre_cascade_haiku_count`, `pre_cascade_haiku_f1`,
+  `pre_cascade_haiku_precision`, `pre_cascade_haiku_recall`,
+  `post_cascade_haiku_count`, `post_cascade_haiku_f1`,
+  `post_cascade_haiku_precision`, `post_cascade_haiku_recall`,
+  `cascade_kept_count`, `cascade_dropped_count`,
+  `cascade_modified_count`, `cascade_drop_rate`,
+  `cascade_recall_collapse_warning`. Each field is optional; absence
+  means "the cascade did not run for this source". The
+  Phase 2.C `production_haiku_with_cascade_filter` enum value stays
+  unchanged (Phase 2.C's cascade still uses it).
+- New constants in the cascade module:
+  `CASCADE_FILTER_MODEL = "claude-sonnet-4-6"`,
+  `CASCADE_FILTER_SCHEMA_VERSION = "1.0.0"`,
+  `CASCADE_BATCH_SIZE = 10`, `CASCADE_MAX_BATCHES_DEFAULT = 30`.
+- No `schema_version` bump on `meeting_minutes.schema.json` or
+  `comparison_result.schema.json` — the cascade fields are additive
+  optional and follow the same lifecycle as the Phase 4.A gate
+  fields (PR #237).
+- No change to `promotion/gate.py` or `promotion/grounding_gate.py`
+  — the cascade reads the gate's output but does not modify the
+  gate itself. `GROUNDING_BINDING_SCHEMA_VERSION = "1.4.0"` and
+  `GROUNDING_GATE_SCHEMA_VERSION = "1.5.0"` are untouched.
+
+### Motivation
+
+After the Phase 4.A grounding gate landed (PR #237) every item the
+extractor emits is guaranteed to be a verbatim transcript substring.
+That defends against hallucination but not against over-extraction:
+the recall-oriented Haiku prompt still emits items that are
+correctly typed by shape but wrong by content (brainstorming
+restated as decisions, the agenda restated as action items, etc.).
+The cascade is the precision pass on top of grounding: Sonnet reads
+each grounded item plus its `source_quote` and decides whether the
+item belongs in its claimed extraction type. Phase 4.B (PR #247)
+added the per-type disqualifier prompt section that the cascade
+reads as its precision signal source.
+
+The Phase 2.C cascade (PR #221) operated on the raw Haiku
+extraction, mixing the precision signal (drop over-extracted items)
+with the noise signal (drop hallucinations). The grounding gate now
+absorbs the noise signal cleanly; the new cascade is therefore a
+narrower, higher-precision filter than Phase 2.C ever could be.
+
+### To roll back
+
+1. Revert the PR. The `cascade_filter.py` module, the prompt, the
+   script, and the workflow disappear. The Phase 2.C
+   `run-cascade-filter.yml` and its accompanying `cascade/`
+   module remain in place — they were not modified — so any Phase
+   2.C automation in flight stays functional. The Phase 2.C
+   workflow that was renamed to
+   `run-cascade-filter-phase-2c-deprecated.yml` is automatically
+   restored to `run-cascade-filter.yml` by the revert.
+2. The Phase 4.C cascade artifacts on disk (`cascade_filtered__*`,
+   `cascade_audit__*`, `cascade_filter_result__*`,
+   `cascade_bypass_record__*`) become orphans. The data-lake is
+   append-only per `data_lake_contract.md` §8; do NOT delete them.
+   They simply have no reader after the revert.
+3. The cascade fields on existing `comparison_result` artifacts
+   become unknown-but-optional keys against the reverted schema.
+   The schema's `additionalProperties: false` will reject these
+   artifacts on re-validation; either re-run the comparison
+   without the cascade fields (the reverted code path will not
+   emit them) or accept the stored artifacts as no-longer-valid.
+
+### Data migration required for rollback
+
+None for code. Cascade artifacts on disk become orphan reads but
+the gate (Phase 4.A) and the upstream extraction are unaffected.
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/test_cascade_filter.py tests/integration/test_run_cascade_filter_script.py tests/test_cascade_comparison_artifact.py
+```
+
+After the revert each of those test modules disappears, so the
+verification command above runs against the test files that are
+still present and reports zero failures. The Phase 4.A grounding
+gate tests (`tests/promotion/test_grounding_gate.py` and
+`tests/integration/test_run_grounding_gate_script.py`) MUST continue
+to pass post-revert — the cascade was a strict superset of
+governance, never a precondition for the gate.
+
+`verification_command`: `pytest tests/test_cascade_filter.py`
+
+### Cross-PR dependency
+
+`depends_on`: PR #237 (Phase 4.A G-GROUND-VERBATIM) and PR #247
+(Phase 4.B precision guard). The cascade reads the grounding gate's
+`grounded_items__<run_id>.json` output and the matching
+`grounding_gate_result__<run_id>.json` and refuses to run without
+both. The Phase 4.B `<!-- PRECISION_GUARD_4B_BEGIN -->` block in
+`meeting_minutes_llm.md` is the cascade's per-type disqualifier
+source (with a fallback to `DO NOT EXTRACT` if the markers are
+absent).
+
+`no_future_dependency`: the cascade does not gate Phase 4.D
+(decision sub-pass) or Stage 3 (per-type confidence thresholds,
+self-consistency). Those phases consume `cascade_filtered__*.json`
+artifacts but the data-lake contract permits a Stage 3 reader to
+fall back to `grounded_items__*.json` when no cascade artifact
+exists.
+
+### Operator action after merge
+
+1. Re-dispatch `run-cascade-filter.yml` on the most recent
+   grounded artifact for the 7-GHz Dec 18 transcript and read the
+   step summary: drop rate, top drop reasons, recall-collapse
+   warning. Calibration target: 20-50% drop rate against a fresh
+   Haiku run, < 5% drop rate against an Opus baseline.
+2. Re-dispatch `run-comparison.yml` with `use_cascade_output=true`
+   to see the post-cascade F1 vs Opus. The comparison artifact
+   will carry the new cascade fields once the cascade has run.
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new

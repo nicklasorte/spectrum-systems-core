@@ -1324,6 +1324,123 @@ def _compute_phase_4a_fields(
     return fields
 
 
+def _compute_phase_4c_fields(
+    *,
+    data_lake: Path,
+    source_id: str,
+    baseline_rows: List[Dict[str, Any]],
+    gt_pairs: Optional[List[Dict[str, Any]]],
+    types: List[str],
+) -> Dict[str, Optional[Any]]:
+    """Compute the 12 Phase 4.C cascade fields. All values are optional.
+
+    Reads up to two artifacts under
+    ``<data-lake>/store/processed/meetings/<source_id>/``:
+
+      * ``cascade_filtered__*.json`` (most recent) → post_cascade_* metrics
+      * ``cascade_filter_result__*.json`` (most recent) → cascade counts
+        (kept / dropped / modified / drop rate)
+
+    The pre_cascade_* fields are computed from the GROUNDED artifact
+    (``grounded_items__*.json``) so the readout is "cascade input vs
+    cascade output", not "raw extraction vs cascade output". When the
+    grounded artifact is absent the pre_cascade fields stay None — the
+    cascade should not run without a gate run anyway.
+
+    Every field is optional in the comparison_result schema; a source
+    that has not run the cascade yet still produces a valid artifact.
+    """
+    fields: Dict[str, Optional[Any]] = {
+        "pre_cascade_haiku_count": None,
+        "pre_cascade_haiku_f1": None,
+        "pre_cascade_haiku_precision": None,
+        "pre_cascade_haiku_recall": None,
+        "post_cascade_haiku_count": None,
+        "post_cascade_haiku_f1": None,
+        "post_cascade_haiku_precision": None,
+        "post_cascade_haiku_recall": None,
+        "cascade_kept_count": None,
+        "cascade_dropped_count": None,
+        "cascade_modified_count": None,
+        "cascade_drop_rate": None,
+        "cascade_recall_collapse_warning": None,
+    }
+    mdir = _meeting_dir(data_lake, source_id)
+
+    # Pre-cascade input: the grounded artifact (Phase 4.A output).
+    grounded_path = _find_latest_artifact(mdir, "grounded_items__*.json")
+    if grounded_path is not None:
+        grounded_payload = _load_payload_from_path(grounded_path)
+        if grounded_payload is not None:
+            pre_metrics = compute_comparison(
+                baseline_rows=baseline_rows,
+                haiku_payload=grounded_payload,
+                gt_pairs=gt_pairs,
+                types=types,
+            )
+            ps = pre_metrics["summary"]
+            fields["pre_cascade_haiku_count"] = ps["total_haiku_items"]
+            fields["pre_cascade_haiku_f1"] = ps["haiku_f1_vs_opus"]
+            fields["pre_cascade_haiku_precision"] = ps[
+                "haiku_precision_vs_opus"
+            ]
+            fields["pre_cascade_haiku_recall"] = ps["haiku_recall_vs_opus"]
+
+    # Post-cascade output: the cascade_filtered artifact.
+    filtered_path = _find_latest_artifact(mdir, "cascade_filtered__*.json")
+    if filtered_path is not None:
+        filtered_payload = _load_payload_from_path(filtered_path)
+        if filtered_payload is not None:
+            post_metrics = compute_comparison(
+                baseline_rows=baseline_rows,
+                haiku_payload=filtered_payload,
+                gt_pairs=gt_pairs,
+                types=types,
+            )
+            pos = post_metrics["summary"]
+            fields["post_cascade_haiku_count"] = pos["total_haiku_items"]
+            fields["post_cascade_haiku_f1"] = pos["haiku_f1_vs_opus"]
+            fields["post_cascade_haiku_precision"] = pos[
+                "haiku_precision_vs_opus"
+            ]
+            fields["post_cascade_haiku_recall"] = pos["haiku_recall_vs_opus"]
+            fields["cascade_recall_collapse_warning"] = (
+                pos["haiku_recall_vs_opus"] < _RECALL_COLLAPSE_THRESHOLD
+            )
+
+    # Counts: read the cascade_filter_result summary verbatim. Each
+    # field is tolerantly typed so a malformed or partial result file
+    # still passes-through best-effort.
+    result_path = _find_latest_artifact(
+        mdir, "cascade_filter_result__*.json"
+    )
+    if result_path is not None:
+        try:
+            cascade_result = json.loads(
+                result_path.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            cascade_result = None
+        if isinstance(cascade_result, dict):
+            kept = cascade_result.get("kept_count")
+            dropped = cascade_result.get("dropped_count")
+            modified = cascade_result.get("modified_count")
+            drop_rate = cascade_result.get("cascade_drop_rate")
+            if isinstance(kept, int) and kept >= 0:
+                fields["cascade_kept_count"] = kept
+            if isinstance(dropped, int) and dropped >= 0:
+                fields["cascade_dropped_count"] = dropped
+            if isinstance(modified, int) and modified >= 0:
+                fields["cascade_modified_count"] = modified
+            if (
+                isinstance(drop_rate, (int, float))
+                and 0.0 <= float(drop_rate) <= 1.0
+            ):
+                fields["cascade_drop_rate"] = float(drop_rate)
+
+    return fields
+
+
 def build_comparison_artifact(
     *,
     source_id: str,
@@ -1332,6 +1449,7 @@ def build_comparison_artifact(
     metrics: Dict[str, Any],
     compared_at: str,
     phase_4a_fields: Optional[Dict[str, Any]] = None,
+    phase_4c_fields: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     artifact: Dict[str, Any] = {
         "artifact_type": COMPARISON_ARTIFACT_TYPE,
@@ -1362,6 +1480,15 @@ def build_comparison_artifact(
     # absence vs zero are both schema-valid.
     if phase_4a_fields:
         for key, value in phase_4a_fields.items():
+            if value is not None:
+                artifact[key] = value
+    # Phase 4.C — additive cascade-field readout. Same lifecycle as
+    # phase_4a_fields: each value is optional; absence means "cascade
+    # did not run for this source". cascade_recall_collapse_warning is
+    # a bool whose absence is distinct from False (False = cascade ran
+    # and recall held; absent = cascade did not run).
+    if phase_4c_fields:
+        for key, value in phase_4c_fields.items():
             if value is not None:
                 artifact[key] = value
     return artifact
@@ -2371,6 +2498,13 @@ def run_comparison(
         gt_pairs=gt_pairs,
         types=types,
     )
+    phase_4c_fields = _compute_phase_4c_fields(
+        data_lake=data_lake,
+        source_id=source_id,
+        baseline_rows=baseline_rows,
+        gt_pairs=gt_pairs,
+        types=types,
+    )
 
     artifact = build_comparison_artifact(
         source_id=source_id,
@@ -2379,6 +2513,7 @@ def run_comparison(
         metrics=metrics,
         compared_at=compared_at,
         phase_4a_fields=phase_4a_fields,
+        phase_4c_fields=phase_4c_fields,
     )
     # Validate our OWN output before writing it (fail-closed: never
     # write a malformed comparison_result).
