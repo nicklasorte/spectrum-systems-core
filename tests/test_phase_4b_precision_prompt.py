@@ -293,22 +293,31 @@ def test_fewshot_3e_action_items_are_dicts() -> None:
 
 
 def test_version_bumped_to_4b_in_both_prompts() -> None:
-    """Both prompts MUST declare ``version: 4.B`` in their YAML
-    frontmatter — and the literal token ``4.A`` may only appear
-    inside changelog entries, not in the active version field."""
+    """Both prompts MUST declare ``version: 4.B`` or later in their
+    YAML frontmatter — and the literal token ``4.A`` may only appear
+    inside changelog entries, not in the active version field.
+
+    Phase 5.A bumped the active version to ``5.A``. This regression
+    test is a *floor* — it asserts the prompt is at the 4.B bump or
+    beyond. The exact ``4.A`` token must remain outside the version
+    line (it lives in the changelog, the persistent record of past
+    phases)."""
+    accepted_versions = {"4.B", "5.A"}
     for path in (_HAIKU_PROMPT_PATH, _OPUS_PROMPT_PATH):
         text = _read(path)
         m = re.search(r"^version:\s*(\S+)\s*$", text, re.MULTILINE)
         assert m is not None, f"{path.name}: no 'version:' line found"
-        assert m.group(1) == "4.B", (
-            f"{path.name}: version is {m.group(1)!r}, expected '4.B' "
-            f"(Phase 4.B bump)"
+        version = m.group(1)
+        assert version in accepted_versions, (
+            f"{path.name}: version is {version!r}, expected one of "
+            f"{sorted(accepted_versions)} (Phase 4.B floor; later "
+            "phases extend this set)"
         )
 
         # The 4.A token must still appear inside the changelog — the
         # changelog is the persistent record of past phases. But it
-        # MUST NOT appear before the version line was bumped to 4.B
-        # (i.e. the active version field itself).
+        # MUST NOT appear in the version line itself (4.A was
+        # superseded by the 4.B bump).
         version_line = m.group(0)
         assert "4.A" not in version_line, (
             f"{path.name}: version line still references 4.A: "

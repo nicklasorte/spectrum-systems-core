@@ -1,5 +1,5 @@
 ---
-version: 4.B
+version: 5.A
 changelog:
   - "Phase 3.A: G-PROMPT-NEGATIVE + G-REASON-FIELD; non-extractable categories enumerated; reason field required on 14 claim-shaped types"
   - "Phase 3.B: G-PROMPT-TRIGGER-TAXONOMY; Fernández (SIGDIAL 2008) four-subtype implicit-decision recognition section with explicit linguistic markers and optional decision_subtype enum (issue|proposal|resolution|scope)"
@@ -8,6 +8,7 @@ changelog:
   - "Phase 3.E: G-FEWSHOT-IMPLICIT + G-FEWSHOT-SCHEMA + G-FEWSHOT-NEGATIVE; three hand-curated in-domain examples (explicit decision, near-miss non-decision, implicit guidance-as-decision) ordered for recency bias"
   - "Phase 4.A: G-GROUND-VERBATIM; source_quote required on 14 claim-shaped types; chunk-scoped substring grounding via source_chunk_id; transcription errors reproduced verbatim"
   - "Phase 4.B: G-PROMPT-PRECISION + G-ACTION-ITEMS-DICT; per-type precision guard with negative examples sourced from haiku_only false positives (decisions, topics, technical_parameters, commitments, precedent_reference, issue_registry_entry); action_items items required to be dict objects (not bare strings) so the grounding gate can check source_quote"
+  - "Phase 5.A: G-SOURCE-CHUNK-ID; Variant A — source_chunk_id field instruction added so items emit the turn_id of their containing chunk, enabling chunk-scoped grounding gate validation rather than full-transcript fallback"
 ---
 
 # NTIA/DoD Spectrum Policy Meeting Extraction — Comprehensive Reference Baseline
@@ -277,6 +278,30 @@ characters, DO NOT extract the item.
 Items without a valid `source_quote` will be rejected by the
 grounding gate and excluded from the meeting minutes. This is a
 fail-closed validation — there is no override.
+
+<!-- VARIANT_A_SOURCE_CHUNK_ID_BEGIN -->
+## source_chunk_id (strongly recommended)
+
+Every item SHOULD include `source_chunk_id` set to the turn_id of the
+speaker-turn chunk containing the `source_quote`. The chunk's turn_id
+is shown in the "=== TRANSCRIPT TURNS ===" lookup table as the bracketed
+token (e.g. `[t0042]`) — emit only the bare identifier in
+`source_chunk_id` (e.g. `"source_chunk_id": "t0042"`), not the brackets.
+
+When `source_chunk_id` is present, the grounding gate validates the
+`source_quote` substring against that specific chunk only (stronger
+check). When absent, the gate falls back to the full transcript
+(weaker — generates a warning).
+
+Including `source_chunk_id` dramatically reduces false positives
+because it forces each item to be anchored to a specific speaker
+turn rather than floating across the full transcript. The same
+turn_id MUST also appear in the matching `grounding[].source_turns`
+entry for the item.
+
+Correct: `{"action": "...", "owner": "...", "source_quote": "...",
+"reason": "...", "source_chunk_id": "t0042"}`
+<!-- VARIANT_A_SOURCE_CHUNK_ID_END -->
 
 ## Reason field (REQUIRED on 14 claim-shaped types)
 
