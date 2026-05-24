@@ -167,7 +167,7 @@ def _two_meeting_lake(tmp_path: Path) -> Path:
         dl,
         "tig-kickoff-transcript-20251101",
         decisions=["Approved the 7 GHz downlink threshold."],
-        action_items=["DoD to submit revised ERP values."],
+        action_items=[{"action": "DoD to submit revised ERP values."}],
         open_questions=["What is the coordination distance?"],
         claims=[
             {

@@ -11,7 +11,7 @@ def _good_minutes():
             "title": "Sync",
             "summary": "Discussed roadmap.",
             "decisions": ["ship v1"],
-            "action_items": ["write docs"],
+            "action_items": [{"action": "write docs"}],
             "open_questions": [],
         },
         trace_id="t-good",

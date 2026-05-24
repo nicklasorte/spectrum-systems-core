@@ -41,7 +41,7 @@ _STUB_RESPONSE = json.dumps(
         "decisions": [
             "The TIG approved the 7 GHz downlink threshold.",
         ],
-        "action_items": ["NTIA to circulate the revised methodology."],
+        "action_items": [{"action": "NTIA to circulate the revised methodology."}],
         "open_questions": [],
         "commitments": [],
         "risks": [

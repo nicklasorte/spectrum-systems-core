@@ -36,7 +36,7 @@ SOURCE_ID = "7-ghz-downlink-tig-meeting-kickoff---transcript-20251218"
 OPUS_MODEL = "claude-opus-4-6"
 
 DECISIONS = ["The group approved the 7 GHz downlink threshold."]
-ACTION_ITEMS = ["DoD will submit revised ERP values before the next session."]
+ACTION_ITEMS = [{"action": "DoD will submit revised ERP values before the next session."}]
 OPEN_QUESTIONS = [
     "What is the coordination distance for federal incumbents?"
 ]
@@ -301,7 +301,9 @@ OBJ_DECISIONS = [
 OBJ_TRANSCRIPT = (
     "7 GHz Downlink TIG kickoff\n"
     + "\n".join(
-        [d["text"] for d in OBJ_DECISIONS] + ACTION_ITEMS + OPEN_QUESTIONS
+        [d["text"] for d in OBJ_DECISIONS]
+        + [a["action"] for a in ACTION_ITEMS]
+        + OPEN_QUESTIONS
     )
     + "\n"
 )

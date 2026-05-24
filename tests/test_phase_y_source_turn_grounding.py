@@ -630,7 +630,7 @@ def test_workflow_direct_path_emits_1_0_0_when_chunks_not_provided():
     assert "grounding" not in payload
     # decisions remains a list of strings.
     assert payload["decisions"] == ["ship"]
-    assert payload["action_items"] == ["write"]
+    assert payload["action_items"] == [{"action": "write"}]
     assert payload["open_questions"] == ["timing?"]
 
 

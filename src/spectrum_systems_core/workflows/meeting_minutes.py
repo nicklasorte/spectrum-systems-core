@@ -22,7 +22,7 @@ def _build_base_payload(input_text: str) -> dict:
     title = lines[0] if lines else "Untitled meeting"
 
     decisions: list[str] = []
-    action_items: list[str] = []
+    action_items: list[dict] = []
     open_questions: list[str] = []
     summary_lines: list[str] = []
 
@@ -31,7 +31,7 @@ def _build_base_payload(input_text: str) -> dict:
         if upper.startswith("DECISION:"):
             decisions.append(line.split(":", 1)[1].strip())
         elif upper.startswith("ACTION:"):
-            action_items.append(line.split(":", 1)[1].strip())
+            action_items.append({"action": line.split(":", 1)[1].strip()})
         elif upper.startswith("QUESTION:"):
             open_questions.append(line.split(":", 1)[1].strip())
         else:
@@ -59,7 +59,8 @@ def _build_grounding_entries(
         ("action_item", "action_items"),
         ("open_question", "open_questions"),
     ):
-        for item_text in payload[key]:
+        for item in payload[key]:
+            item_text = item["action"] if kind == "action_item" else item
             entries.append(
                 {
                     "kind": kind,

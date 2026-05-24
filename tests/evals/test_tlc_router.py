@@ -195,7 +195,7 @@ def test_within_source_miss_warns_not_blocks_combined():
 
 def test_standard_only_skips_regulatory_verb_and_nonempty():
     text = "Alice will circulate the revised ERP table before next session."
-    art = _base(action_items=[text])
+    art = _base(action_items=[{"action": text}])
     res = _run(art, transcript=text).payload
     assert res["status"] == "pass"
     assert res["routed_standard"] == ["action_items"]

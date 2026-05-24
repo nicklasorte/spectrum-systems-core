@@ -7,8 +7,8 @@
     "Schedule the public comment review for next week."
   ],
   "action_items": [
-    "Alice drafts the FCC response by Friday.",
-    "Bob coordinates with NTIA on test schedule."
+    {"action": "Alice drafts the FCC response by Friday."},
+    {"action": "Bob coordinates with NTIA on test schedule."}
   ],
   "open_questions": [
     "Do we need a separate eval for ambiguous sharing rules?",

@@ -153,7 +153,7 @@ def test_gold_actions_match_within_lcs_threshold(tmp_path):
     )
     extracted_actions = result.target.payload.get("action_items", [])
     extracted_texts = [
-        a if isinstance(a, str) else a.get("text", "")
+        a if isinstance(a, str) else a.get("action", a.get("text", ""))
         for a in extracted_actions
     ]
     missing: list[str] = []

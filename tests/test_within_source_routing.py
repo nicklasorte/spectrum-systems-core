@@ -281,7 +281,7 @@ def test_standard_within_source_demoted_to_warn():
     returned (the original failed result is not mutated)."""
     art = _mk(
         _base_payload(
-            action_items=["A paraphrased action item not present at all."]
+            action_items=[{"action": "A paraphrased action item not present at all."}]
         )
     )
     res = run_llm_within_source_eval(art, "totally unrelated transcript body")
@@ -337,7 +337,7 @@ def test_warn_does_not_block_promotion():
         DEC18,
         client=json_stub(
             decisions=[DEC18_DECISIONS[0]],
-            action_items=[_PARAPHRASE_ACTION],
+            action_items=[{"action": _PARAPHRASE_ACTION}],
             open_questions=DEC18_OPEN_QUESTIONS,
             technical_parameters=DEC18_TECHNICAL_PARAMETERS,
         ),
@@ -373,7 +373,7 @@ def test_fabricated_decision_now_promotes_with_warn():
         DEC18,
         client=json_stub(
             decisions=[_FABRICATED_DECISION],
-            action_items=["DoD will submit revised ERP values."],
+            action_items=[{"action": "DoD will submit revised ERP values."}],
             open_questions=DEC18_OPEN_QUESTIONS,
             technical_parameters=DEC18_TECHNICAL_PARAMETERS,
         ),
@@ -411,7 +411,7 @@ def test_warn_appears_in_eval_history(tmp_path):
         DEC18,
         client=json_stub(
             decisions=[DEC18_DECISIONS[0]],
-            action_items=[_PARAPHRASE_ACTION],
+            action_items=[{"action": _PARAPHRASE_ACTION}],
             open_questions=DEC18_OPEN_QUESTIONS,
             technical_parameters=DEC18_TECHNICAL_PARAMETERS,
         ),
@@ -453,7 +453,7 @@ def test_mixed_high_and_standard_within_source_warns():
     art = _mk(
         _base_payload(
             decisions=["A fabricated decision absent from the body."],
-            action_items=["A fabricated action absent from the body."],
+            action_items=[{"action": "A fabricated action absent from the body."}],
         )
     )
     res = run_llm_within_source_eval(art, "totally unrelated transcript body")

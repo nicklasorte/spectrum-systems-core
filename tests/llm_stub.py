@@ -179,7 +179,7 @@ DEC18_DECISIONS = [
     "The group deferred the aggregate interference methodology pending further study.",
 ]
 DEC18_ACTION_ITEMS = [
-    "DoD will submit revised ERP values before the next session.",
+    {"action": "DoD will submit revised ERP values before the next session."},
 ]
 DEC18_OPEN_QUESTIONS = [
     "What is the coordination distance for federal incumbents in the 7 GHz band?",
