@@ -112,9 +112,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--run-id",
         default=None,
         help=(
-            "Run identifier. When omitted, the script derives one from the "
-            "extraction artifact's filename or, failing that, from the current "
-            "UTC timestamp."
+            "Run identifier. When provided, the script also locates the input "
+            "extraction at "
+            "<data-lake>/store/processed/meetings/<source-id>/meeting_minutes__<run_id>.json "
+            "directly, bypassing the content-aware artifact selector. Use this "
+            "when multiple artifacts of the same schema_version exist and you "
+            "need to gate a specific one. When omitted, the script derives a "
+            "run_id from the extraction artifact's filename or, failing that, "
+            "from the current UTC timestamp. Ignored for input selection when "
+            "--extraction-artifact is also set."
         ),
     )
     p.add_argument(
@@ -123,7 +129,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Override path to the extraction artifact. When omitted, the most "
             "recently modified meeting_minutes__*.json under "
-            "<data-lake>/store/processed/meetings/<source-id>/ is used."
+            "<data-lake>/store/processed/meetings/<source-id>/ is used (or the "
+            "artifact selected by --run-id when that flag is provided)."
         ),
     )
     p.add_argument(
@@ -381,6 +388,21 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.extraction_artifact:
         extraction_path = Path(args.extraction_artifact).resolve()
+    elif args.run_id:
+        # Targeted selection: locate meeting_minutes__<run_id>.json
+        # directly and skip _find_latest_extraction entirely. This is the
+        # operator override for the case where multiple artifacts share a
+        # schema_version and the content-aware selector would otherwise
+        # pick the wrong one (e.g. a 1.5.0 artifact that predates the
+        # VERBATIM SOURCE GROUNDING prompt section).
+        extraction_path = processed_dir / f"meeting_minutes__{args.run_id}.json"
+        if not extraction_path.is_file():
+            print(
+                "::error::extraction artifact for "
+                f"run_id '{args.run_id}' not found at: {extraction_path}",
+                file=sys.stderr,
+            )
+            return 2
     else:
         extraction_path_opt = _find_latest_extraction(processed_dir)
         if extraction_path_opt is None:

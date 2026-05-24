@@ -477,6 +477,9 @@ def test_two_runs_produce_byte_identical_artifacts(tmp_path: Path) -> None:
         tmp_path,
         extraction_payload=payload,
         chunks={"c1": "so we will determine the band plan today"},
+        # --run-id below selects the extraction by filename slug, so
+        # align the fixture filename with the run_id we'll pass.
+        extraction_filename="meeting_minutes__fixed.json",
     )
     processed = data_lake / "store" / "processed" / "meetings" / SOURCE_ID
 
@@ -564,6 +567,222 @@ def test_envelope_wrapped_extraction_is_unwrapped_for_schema_validation(
 # --------------------------------------------------------------------------
 # Step summary
 # --------------------------------------------------------------------------
+
+
+def test_run_id_flag_selects_specific_artifact(tmp_path: Path) -> None:
+    """When --run-id is provided, the script locates
+    meeting_minutes__<run_id>.json directly and gates THAT artifact,
+    even when another artifact would otherwise win the content-aware
+    selector (same schema_version, later mtime / name)."""
+    data_lake = tmp_path / "data-lake"
+    processed = data_lake / "store" / "processed" / "meetings" / SOURCE_ID
+    raw = data_lake / "store" / "raw" / "meetings" / SOURCE_ID
+    processed.mkdir(parents=True)
+    raw.mkdir(parents=True)
+    transcript = "so we will determine the band plan today"
+    (raw / "source.txt").write_text(transcript, encoding="utf-8")
+    _write_chunks_jsonl(raw / "chunks.jsonl", {"c1": transcript})
+
+    # Two 1.5.0 artifacts: the "winner" by content-aware selector
+    # (lexicographically-later filename under mtime+schema_version tie)
+    # carries a quote that DOES NOT ground; the targeted one carries a
+    # quote that DOES ground. --run-id must pick the targeted one.
+    targeted = processed / "meeting_minutes__a-targeted.json"
+    selector_default = processed / "meeting_minutes__z-default-pick.json"
+    targeted.write_text(
+        json.dumps({
+            "artifact_type": "meeting_minutes",
+            "schema_version": "1.5.0",
+            "title": "Targeted",
+            "summary": "Targeted artifact — quote grounds cleanly.",
+            "decisions": [{
+                "text": "Determine band plan",
+                "source_quote": "we will determine the band plan",
+                "source_chunk_id": "c1",
+            }],
+            "action_items": [],
+            "open_questions": [],
+        }),
+        encoding="utf-8",
+    )
+    selector_default.write_text(
+        json.dumps({
+            "artifact_type": "meeting_minutes",
+            "schema_version": "1.5.0",
+            "title": "Default pick",
+            "summary": "Default-selected artifact — quote does NOT match.",
+            "decisions": [{
+                "text": "Wrong artifact",
+                "source_quote": "this phrase is not in any chunk",
+                "source_chunk_id": "c1",
+            }],
+            "action_items": [],
+            "open_questions": [],
+        }),
+        encoding="utf-8",
+    )
+    clone_ts = 1_700_000_000
+    _stamp_mtime(targeted, clone_ts)
+    _stamp_mtime(selector_default, clone_ts)
+
+    # First: confirm the BUG case — without --run-id the selector picks
+    # the "z-default-pick" artifact (lexicographically later under
+    # mtime+schema tie) and the gate finds the quote doesn't ground.
+    cp_default = _run("--source-id", SOURCE_ID, "--data-lake", str(data_lake))
+    assert cp_default.returncode == 1, cp_default.stdout + cp_default.stderr
+    default_result = json.loads(
+        next(processed.glob("grounding_gate_result__z-default-pick.json"))
+        .read_text(encoding="utf-8")
+    )
+    assert default_result["grounded_count"] == 0
+    assert default_result["ungrounded_count"] == 1
+
+    # Now: with --run-id the script gates the TARGETED artifact instead.
+    cp = _run(
+        "--source-id", SOURCE_ID,
+        "--data-lake", str(data_lake),
+        "--run-id", "a-targeted",
+    )
+    assert cp.returncode == 0, cp.stdout + cp.stderr
+
+    targeted_result_path = processed / "grounding_gate_result__a-targeted.json"
+    assert targeted_result_path.is_file(), (
+        f"--run-id should produce a result file keyed by run_id: "
+        f"{list(processed.glob('grounding_gate_result__*.json'))}"
+    )
+    targeted_result = json.loads(targeted_result_path.read_text(encoding="utf-8"))
+    assert targeted_result["grounded_count"] == 1
+    assert targeted_result["ungrounded_count"] == 0
+    # The gate result records WHICH input artifact it gated.
+    assert "meeting_minutes__a-targeted.json" in targeted_result.get(
+        "extraction_artifact_path", ""
+    )
+
+
+def test_run_id_flag_exits_2_when_artifact_not_found(tmp_path: Path) -> None:
+    """When --run-id names an artifact that doesn't exist, the script
+    exits 2 (precondition failure) with an error naming the missing
+    path AND the run_id, and writes nothing."""
+    data_lake = tmp_path / "data-lake"
+    processed = data_lake / "store" / "processed" / "meetings" / SOURCE_ID
+    raw = data_lake / "store" / "raw" / "meetings" / SOURCE_ID
+    processed.mkdir(parents=True)
+    raw.mkdir(parents=True)
+    (raw / "source.txt").write_text("any transcript", encoding="utf-8")
+    # Drop a real artifact in so we know the failure is purely from the
+    # --run-id mismatch (not from an empty directory).
+    (processed / "meeting_minutes__exists.json").write_text(
+        json.dumps({
+            "artifact_type": "meeting_minutes",
+            "schema_version": "1.5.0",
+            "title": "Exists",
+            "summary": "Real artifact.",
+            "decisions": [],
+            "action_items": [],
+            "open_questions": [],
+        }),
+        encoding="utf-8",
+    )
+
+    cp = _run(
+        "--source-id", SOURCE_ID,
+        "--data-lake", str(data_lake),
+        "--run-id", "does-not-exist",
+    )
+    assert cp.returncode == 2, cp.stdout + cp.stderr
+    assert "does-not-exist" in cp.stderr
+    assert "meeting_minutes__does-not-exist.json" in cp.stderr
+
+    # No grounded / result / ungrounded artifacts written under that run_id.
+    assert list(processed.glob("grounded_items__does-not-exist*")) == []
+    assert list(processed.glob("grounding_gate_result__does-not-exist*")) == []
+
+
+def test_run_id_flag_bypasses_content_aware_selector(tmp_path: Path) -> None:
+    """The exact production scenario: a 1.5.0 artifact predates the
+    VERBATIM SOURCE GROUNDING prompt section and has no source_quote
+    fields, while a 1.4.0 artifact carries the older but quote-bearing
+    payload. The content-aware selector picks the 1.5.0 artifact on
+    schema_version, the gate reports 100% missing_source_quote, and
+    the operator wants to gate the 1.4.0 artifact instead. --run-id
+    targeting the 1.4.0 artifact must bypass the selector and run the
+    gate against it.
+    """
+    data_lake = tmp_path / "data-lake"
+    processed = data_lake / "store" / "processed" / "meetings" / SOURCE_ID
+    raw = data_lake / "store" / "raw" / "meetings" / SOURCE_ID
+    processed.mkdir(parents=True)
+    raw.mkdir(parents=True)
+    transcript = "so we will determine the band plan today"
+    (raw / "source.txt").write_text(transcript, encoding="utf-8")
+    _write_chunks_jsonl(raw / "chunks.jsonl", {"c1": transcript})
+
+    # 1.5.0 artifact — newer schema, NO source_quote (the "bad" pick).
+    no_quote_15 = processed / "meeting_minutes__no-quote-15.json"
+    # 1.4.0 artifact — older schema, but with source_quote. Note we
+    # build it as a 1.5.0-shaped payload too so the SCHEMA validator
+    # accepts it; what we are simulating is "this is the artifact the
+    # operator wants to gate" via --run-id, not a real 1.4.0 schema.
+    target_with_quote = processed / "meeting_minutes__target-with-quote.json"
+    no_quote_15.write_text(
+        json.dumps({
+            "artifact_type": "meeting_minutes",
+            "schema_version": "1.5.0",
+            "title": "Selector default",
+            "summary": "Selector would pick this — missing source_quote.",
+            "decisions": [{"text": "decision without a quote"}],
+            "action_items": [],
+            "open_questions": [],
+        }),
+        encoding="utf-8",
+    )
+    target_with_quote.write_text(
+        json.dumps({
+            "artifact_type": "meeting_minutes",
+            "schema_version": "1.5.0",
+            "title": "Operator-targeted",
+            "summary": "The artifact the operator wants gated.",
+            "decisions": [{
+                "text": "Determine band plan",
+                "source_quote": "we will determine the band plan",
+                "source_chunk_id": "c1",
+            }],
+            "action_items": [],
+            "open_questions": [],
+        }),
+        encoding="utf-8",
+    )
+    # Make the selector PREFER no_quote_15 by giving it a newer mtime.
+    _stamp_mtime(target_with_quote, 1_700_000_000)
+    _stamp_mtime(no_quote_15, 1_700_000_100)
+
+    # Confirm the bug case first: without --run-id the selector picks
+    # the no-quote artifact and the gate fails with missing_source_quote.
+    cp_default = _run("--source-id", SOURCE_ID, "--data-lake", str(data_lake))
+    assert cp_default.returncode == 1, cp_default.stdout + cp_default.stderr
+    default_result = json.loads(
+        (processed / "grounding_gate_result__no-quote-15.json")
+        .read_text(encoding="utf-8")
+    )
+    assert default_result["grounded_count"] == 0
+    # Confirm the failure reason matches the production scenario.
+    failure_reasons = {f["reason"] for f in default_result.get("failures", [])}
+    assert "missing_source_quote" in failure_reasons, default_result
+
+    # Now: --run-id targeting the quote-bearing artifact bypasses the
+    # content-aware selector and grounds cleanly.
+    cp = _run(
+        "--source-id", SOURCE_ID,
+        "--data-lake", str(data_lake),
+        "--run-id", "target-with-quote",
+    )
+    assert cp.returncode == 0, cp.stdout + cp.stderr
+    targeted_result = json.loads(
+        (processed / "grounding_gate_result__target-with-quote.json")
+        .read_text(encoding="utf-8")
+    )
+    assert targeted_result["grounded_count"] == 1
+    assert targeted_result["ungrounded_count"] == 0
 
 
 def test_step_summary_includes_totals_and_failure_reasons(tmp_path: Path) -> None:
