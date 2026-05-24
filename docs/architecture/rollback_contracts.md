@@ -2743,7 +2743,7 @@ exists.
 
 ---
 
-## source_turns / start_turn / end_turn — additive optional fields (PR #TBD)
+## source_turns / start_turn / end_turn — additive optional fields (PR #248)
 
 ### What this change adds
 
