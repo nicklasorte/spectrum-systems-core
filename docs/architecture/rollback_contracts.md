@@ -2865,7 +2865,7 @@ producer. No code dependency.
 
 ---
 
-## Human minutes gold standard + F1 comparison (PR #TBD)
+## Human minutes gold standard + F1 comparison (PR #249)
 
 ### What this change adds
 
