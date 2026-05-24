@@ -2443,7 +2443,7 @@ in the schema fail-closed rather than retried. No code dependency.
 
 ---
 
-## Phase 4.B — precision negative examples + action_items dict shape (PR #TBD)
+## Phase 4.B — precision negative examples + action_items dict shape (PR #247)
 
 ### What this change adds
 
