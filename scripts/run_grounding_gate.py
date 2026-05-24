@@ -384,18 +384,40 @@ def main(argv: list[str] | None = None) -> int:
     # Live gate path.
     extraction = json.loads(extraction_path.read_text(encoding="utf-8"))
 
+    # The production pipeline writes the full artifact envelope
+    # (artifact_id, content_hash, created_at, input_refs, payload,
+    # status, trace_id, schema_version, artifact_type) to disk; the
+    # legacy / synthetic on-disk shape inlines the meeting_minutes
+    # fields at the top level. The meeting_minutes schema validates the
+    # FLAT shape (additionalProperties: false), so the envelope must be
+    # unwrapped to ``{"artifact_type": "meeting_minutes", **payload}``
+    # before validation. Mirrors ``_load_payload_from_path`` and the
+    # ``flat = {"artifact_type": "meeting_minutes", **payload}`` pattern
+    # in scripts/compare_opus_haiku.py.
+    envelope_payload = extraction.get("payload")
+    if isinstance(envelope_payload, dict):
+        payload = envelope_payload
+        for_validation: dict[str, Any] = {
+            "artifact_type": "meeting_minutes",
+            **payload,
+        }
+    else:
+        payload = extraction
+        for_validation = extraction
+
     # CLAUDE.md integration co-requirement: validate the loaded artifact
     # against its schema BEFORE reading any field off it. A schema drift
     # at read time is exactly the failure class this guard exists to
     # catch — we'd rather refuse to ground a bad artifact than emit
     # silently-wrong grounded_items.
     try:
-        validate_artifact(extraction, "meeting_minutes", str(extraction_path))
+        validate_artifact(
+            for_validation, "meeting_minutes", str(extraction_path)
+        )
     except ArtifactValidationError as e:
         print(f"::error::extraction artifact failed schema validation: {e}", file=sys.stderr)
         return 2
 
-    payload = extraction.get("payload", extraction)
     if not isinstance(payload, dict):
         print(
             f"::error::extraction artifact has no payload object: {extraction_path}",

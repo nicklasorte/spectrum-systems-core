@@ -49,6 +49,7 @@ def _build_minimal_data_lake(
     transcript_text: str = "so we will determine the band plan today",
     chunks: dict[str, str] | None = None,
     extraction_filename: str = "meeting_minutes__abc.json",
+    wrap_envelope: bool = False,
 ) -> Path:
     data_lake = tmp_path / "data-lake"
     processed = data_lake / "store" / "processed" / "meetings" / SOURCE_ID
@@ -60,7 +61,7 @@ def _build_minimal_data_lake(
         _write_chunks_jsonl(raw / "chunks.jsonl", chunks)
     # meeting_minutes is written FLAT (no envelope wrapper) per the
     # schema — title/summary/decisions/etc. live at the top level.
-    extraction_artifact: dict = {
+    flat_payload: dict = {
         "artifact_type": "meeting_minutes",
         "schema_version": "1.5.0",
         "title": "Fixture meeting",
@@ -71,8 +72,24 @@ def _build_minimal_data_lake(
     }
     # Drop in any other claim-shaped types the caller wanted.
     for k, v in extraction_payload.items():
-        if k not in extraction_artifact:
-            extraction_artifact[k] = v
+        if k not in flat_payload:
+            flat_payload[k] = v
+    if wrap_envelope:
+        # Production-pipeline shape: the meeting_minutes fields live
+        # inside ``payload`` under the governed envelope.
+        extraction_artifact: dict = {
+            "artifact_id": "fixture-artifact-id",
+            "artifact_type": "meeting_minutes",
+            "schema_version": 1,
+            "status": "promoted",
+            "created_at": "1970-01-01T00:00:00+00:00",
+            "trace_id": "fixture-trace-id",
+            "input_refs": [],
+            "content_hash": "fixture-hash",
+            "payload": flat_payload,
+        }
+    else:
+        extraction_artifact = flat_payload
     (processed / extraction_filename).write_text(
         json.dumps(extraction_artifact, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -320,6 +337,58 @@ def test_two_runs_produce_byte_identical_artifacts(tmp_path: Path) -> None:
         assert artifacts_after_first[name] == artifacts_after_second[name], (
             f"{name} drift between runs"
         )
+
+
+# --------------------------------------------------------------------------
+# Envelope-wrapped extraction artifact (production pipeline shape)
+# --------------------------------------------------------------------------
+
+
+def test_envelope_wrapped_extraction_is_unwrapped_for_schema_validation(
+    tmp_path: Path,
+) -> None:
+    """Pipeline-written meeting_minutes carry the full Artifact envelope
+    on disk (``artifact_id``, ``content_hash``, ``created_at``,
+    ``input_refs``, ``payload``, ``status``, ``trace_id``); the gate
+    must unwrap ``payload`` before handing the FLAT shape to the
+    schema validator. Without the unwrap the envelope keys trip the
+    schema's ``additionalProperties: false`` and the gate exits 2.
+    """
+    payload = {
+        "decisions": [
+            {
+                "text": "Determine band plan",
+                "source_quote": "we will determine the band plan",
+                "source_chunk_id": "c1",
+            }
+        ]
+    }
+    data_lake = _build_minimal_data_lake(
+        tmp_path,
+        extraction_payload=payload,
+        chunks={"c1": "so we will determine the band plan today"},
+        wrap_envelope=True,
+    )
+    cp = _run("--source-id", SOURCE_ID, "--data-lake", str(data_lake))
+    assert cp.returncode == 0, cp.stdout + cp.stderr
+
+    processed = data_lake / "store" / "processed" / "meetings" / SOURCE_ID
+    grounded_path = next(processed.glob("grounded_items__*.json"))
+    grounded = json.loads(grounded_path.read_text(encoding="utf-8"))
+    # The grounded output keeps the envelope shape (payload + gate
+    # metadata) so compare_opus_haiku.py can read it via the same
+    # _load_payload_from_path helper it uses for the source artifact.
+    assert "payload" in grounded
+    assert grounded["payload"]["decisions"][0]["text"] == "Determine band plan"
+    assert grounded["gate_passed"] is True
+
+    result_path = next(processed.glob("grounding_gate_result__*.json"))
+    result_payload = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result_payload["artifact_type"] == "grounding_gate_result"
+    assert result_payload["total_items"] == 1
+    assert result_payload["grounded_count"] == 1
+    # trace_id is read from the envelope-level field.
+    assert result_payload.get("trace_id") == "fixture-trace-id"
 
 
 # --------------------------------------------------------------------------
