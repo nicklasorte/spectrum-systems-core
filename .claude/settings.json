@@ -23,7 +23,7 @@
       },
       {
         "type": "command",
-        "command": "bash -c 'if git diff --name-only HEAD 2>/dev/null | xargs grep -l \"artifact_kind\" 2>/dev/null | grep -q .; then echo \"artifact_kind found in changed files — use artifact_type instead (constitution invariant)\"; exit 1; fi'"
+        "command": "python scripts/_artifact_kind_check.py"
       },
       {
         "type": "command",
@@ -32,6 +32,10 @@
       {
         "type": "command",
         "command": "bash -c 'if [ -f scripts/_pre_pr_rollback_check.py ]; then python scripts/_pre_pr_rollback_check.py || exit 1; fi'"
+      },
+      {
+        "type": "command",
+        "command": "bash -c 'if [ -f scripts/_integration_test_check.py ]; then python scripts/_integration_test_check.py || exit 1; fi'"
       }
     ]
   }
