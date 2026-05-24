@@ -2314,7 +2314,7 @@ entries will reference this PR by number.
 
 ---
 
-## agenda_item.summary — additive optional field (PR #TBD)
+## agenda_item.summary — additive optional field (PR #241)
 
 ### What this change adds
 
@@ -2351,6 +2351,31 @@ entries will reference this PR by number.
   `test_agenda_item_allocated_minutes_integer_validates`) all
   pass unchanged because `summary` is optional.
 - No new gate, no new eval, no new artifact type.
+
+### Companion tooling shipped in the same PR
+
+- `scripts/finalize_rollback_entry.py` — new automation that takes a
+  PR number and rewrites the `PR #TBD` placeholder in the entry this
+  branch added to `rollback_contracts.md`. Only `##`-headed
+  placeholder lines added by the current branch are rewritten;
+  pre-existing `PR #TBD` headings in already-merged entries and
+  body-text cross-references stay untouched. Idempotent — a second
+  run is a no-op.
+- `scripts/_pre_pr_rollback_check.py` — strengthened Stop hook.
+  Previously caught the "no entry at all" failure mode; now ALSO
+  catches the "entry exists but heading still says `PR #TBD` after
+  the branch was pushed" failure mode that produced verify-rollback
+  CI failures on at least five PRs in a row. The check looks at
+  entry HEADING lines only, so body-text cross-references to other
+  PRs remain valid.
+- `tests/pipeline/test_finalize_rollback_entry.py` — 5 unit tests
+  pinning rewrite-scoping, idempotency, no-op, missing-file, and
+  with-commit behavior.
+
+These tooling additions are not gates and do not change the
+verify-rollback-contracts CI workflow's behavior; they automate the
+post-PR-open finalization step that CLAUDE.md already documents but
+which sessions have been silently skipping.
 
 ### Motivation
 
@@ -2399,7 +2424,8 @@ pytest tests/test_meeting_minutes_schema.py
 ### Cross-PR dependency
 
 `depends_on`: PR #182 (attendees.agency null fix) and the Phase 2.C
-`position_type` enum extension (PR #TBD above) — same fix pattern:
+`position_type` enum extension (PR #TBD above; pre-existing entry) —
+same fix pattern:
 a semantically valid value/field emitted by a producer is widened
 in the schema fail-closed rather than retried. No code dependency.
 

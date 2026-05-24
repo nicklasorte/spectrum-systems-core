@@ -257,20 +257,11 @@ entry that:
    `pytest <path>`, `python scripts/<name>.py`, or
    `python -m spectrum_systems_core.<module>`.
 
-Two PRs in a row (Phase 3.A / PR #235 and Phase 3.B-E / PR #236)
-shipped without a rollback entry, hit the `verify` failure on
-GitHub, and needed a follow-up commit to add the entry. The
-purpose of this section is to surface the rule pre-PR so future
-sessions catch it during the SELF-REVIEW pass instead of after CI.
-
-**How to check compliance before opening a PR:**
+**Pre-PR compliance check:**
 
 ```bash
-# Substitute the actual PR number once it exists; before that, run
-# the file-presence check below as the pre-PR proxy.
-python scripts/verify_rollback_contracts.py \
-  --pr <PR-NUMBER> \
-  --changed-files "$(git diff --name-only origin/main | paste -sd, -)"
+python scripts/verify_rollback_contracts.py --pr <N> \
+  --changed-files "$(git diff --name-only origin/main|paste -sd,-)"
 ```
 
 When no PR number exists yet (most of the session), the proxy
@@ -284,12 +275,11 @@ rollback is clean**, and a `verification_command:` line on its own
 line from the whitelist. Mirror the most recent existing entry's
 structure.
 
-The entry must reference the PR number that GitHub will assign on
-PR open. Add a placeholder like `PR #TBD` only as a last resort —
-the verify script accepts both `PR #<n>` and `(PR #<n>)`, so the
-clean path is to open the PR first (with the file already present
-modulo the number), read back the assigned number, amend the
-entry, and force-push within the session.
+The entry heading must reference the assigned PR number. After
+opening the PR, run `python scripts/finalize_rollback_entry.py
+--pr <N> --commit && git push`. The Stop hook
+`scripts/_pre_pr_rollback_check.py` blocks on both "no entry" and
+"heading still says `PR #TBD` after push".
 
 ### Commit message hygiene — never spell out CI skip tokens
 
