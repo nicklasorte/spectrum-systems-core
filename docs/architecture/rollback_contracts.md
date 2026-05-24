@@ -2743,6 +2743,128 @@ exists.
 
 ---
 
+## source_turns / start_turn / end_turn — additive optional fields (PR #248)
+
+### What this change adds
+
+- Additive optional properties on
+  `src/spectrum_systems_core/schemas/meeting_minutes.schema.json`:
+  - Four aggregate item types (`topics`, `meeting_phases`,
+    `agenda_item`, `scheduled_events`) gain three new optional
+    properties: `source_turns` (array of strings — speaker turn_ids
+    as strings), `start_turn` (string or null), `end_turn` (string
+    or null).
+  - Five citation item types (`decisions` object branch,
+    `action_items`, `commitments`, `risks`, `claims`) gain one new
+    optional property: `source_turns` (array of strings).
+  None of the new fields appear in any `required` array, so
+  pre-existing artifacts that omit them validate unchanged.
+- No `schema_version` bump. Same precedent as the agenda_item
+  `summary` additive (PR #241 above) and the Phase 2.C
+  `position_type` enum extension: a backward-compatible additive
+  field keeps the `schema_version` enum unchanged. The
+  `meeting_minutes.schema.json` `schema_version` enum
+  (`1.0.0` … `1.6.0`) is unchanged.
+- `additionalProperties: false` stays in place on every modified
+  items sub-schema. Only the listed new fields are newly permitted;
+  any other unknown field is still rejected fail-closed.
+- The existing integer-typed `source_turn_ids` arrays on the four
+  aggregate types (Phase 1 grounding contract) are unchanged. The
+  new string-typed `source_turns` field is the parallel form
+  producers MAY emit when they reason about turn ids as strings
+  (e.g. `"turn-001"`); the existing `source_turn_ids` integer form
+  is the form the Phase 1 promotion gate reads. No gate reads
+  `source_turns`.
+- No prompt change. The strict-schema callout in
+  `workflows/prompts/meeting_minutes_llm.md` and the
+  natural-language guidance in `meeting_minutes_opus.md` continue
+  to list the original fields per item type; the new fields are
+  opportunistic — a producer MAY emit them but is NOT required to.
+  No producer relies on the fields being present.
+- No mirror change to
+  `src/spectrum_systems_core/schemas/meeting_extraction.schema.json`:
+  that schema does not define `topics`, `meeting_phases`,
+  `agenda_item`, `scheduled_events`, `commitments`, or `risks`
+  (verified by `grep` on the file). The three types it does
+  define (`action_items`, `claims`, `decisions`) already carry a
+  string-typed `source_turn_ids` array that serves the same role,
+  so no additive change is needed there — the producer can record
+  string-typed turn ids today via the existing field.
+- No new test file is added. The existing
+  `tests/test_meeting_minutes_schema.py` tests (187 passing) all
+  pass unchanged because the new fields are optional and the
+  `additionalProperties: false` rejection paths are unaffected.
+- No new gate, no new eval, no new artifact type.
+
+### Motivation
+
+Haiku Stage 1 extraction was BLOCKED with
+`Additional properties are not allowed ('source_turns' was unexpected)
+at path=['topics', 0]`. The strict-schema gate rejected a `topics`
+item carrying a `source_turns` field. The field is a natural
+emission given the Stage 1 prompt's turn-id awareness, and the
+semantically similar `issue_registry_entry`, `position_statement`,
+`dissent_or_objection`, `precedent_reference`,
+`external_stakeholder_input`, `glossary_definition`, and
+`procedural_ruling` item types all already carry an optional
+`source_turns` field with the identical shape. Widening the schema
+to accept the field on the remaining item types is the durable fix
+vs retrying the producer. Same lesson and same pattern as PR #241
+(`agenda_item.summary` additive). Per the PR description's
+guidance ("Do this all in one PR — same lesson as #241. Fix every
+likely violation now rather than one-at-a-time."), the additive
+also covers the four aggregate types' `start_turn`/`end_turn`
+fields and the five citation types' `source_turns` field in one
+shot.
+
+### To roll back
+
+1. Revert the PR. The new properties disappear from each modified
+   items sub-schema. Producers that have started emitting any of
+   the new fields will be re-blocked by the strict-schema gate.
+2. Existing artifacts in the data-lake that carry any of the new
+   fields become invalid against the reverted schema and would be
+   blocked on re-validation. The data-lake is append-only per
+   `docs/contracts/data_lake_contract.md` §8; do NOT delete them.
+   If revert is required, re-extract the affected source(s) so the
+   new fields are not emitted, or accept that the superseded
+   artifacts are no longer re-validateable.
+
+### Data migration required for rollback
+
+None for the schema or codebase. Any artifact carrying the new
+fields falls out of strict-schema validity until either
+re-extracted or until the fields are re-added in a follow-up PR.
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/test_meeting_minutes_schema.py
+```
+
+`verification_command`: `pytest tests/test_meeting_minutes_schema.py`
+
+### Cross-PR dependency
+
+`depends_on`: PR #241 (`agenda_item.summary` additive) — same fix
+pattern: a semantically valid field emitted by a producer is
+widened in the schema fail-closed rather than retried at the
+producer. No code dependency.
+
+`no_future_dependency`: this entry does not gate any future PR.
+
+### Operator action after merge
+
+1. Re-dispatch the Haiku Stage 1 extraction workflow on the
+   transcript that previously blocked. The `topics` item that
+   emitted `source_turns` now passes the strict-schema eval.
+2. No other workflow needs to be re-dispatched. Downstream
+   consumers (gate, comparison, promotion) read the existing
+   `source_turn_ids` (integer) / `source_quote` fields and are
+   unaffected by the new optional fields.
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new

@@ -121,6 +121,13 @@
                 "type": "string",
                 "minLength": 1,
                 "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
+              },
+              "source_turns": {
+                "type": "array",
+                "description": "Optional, default []. Speaker turn_ids (as strings) supporting this decision. Mirrors the `source_turns` field on `issue_registry_entry` / `position_statement`. Distinct from the Phase 1 / Phase 4.A verbatim grounding contract (`source_quote` + `source_chunk_id`), which the gate enforces independently. Optional in schema so legacy artifacts validate unchanged.",
+                "items": {
+                  "type": "string"
+                }
               }
             }
           }
@@ -203,6 +210,13 @@
             "type": "string",
             "minLength": 1,
             "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
+          },
+          "source_turns": {
+            "type": "array",
+            "description": "Optional, default []. Speaker turn_ids (as strings) supporting this action_item. Mirrors the `source_turns` field on `issue_registry_entry` / `position_statement`. Distinct from the Phase 1 / Phase 4.A verbatim grounding contract (`source_quote` + `source_chunk_id`), which the gate enforces independently. Optional in schema so legacy artifacts validate unchanged.",
+            "items": {
+              "type": "string"
+            }
           }
         }
       }
@@ -349,6 +363,13 @@
             "type": "string",
             "minLength": 1,
             "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
+          },
+          "source_turns": {
+            "type": "array",
+            "description": "Optional, default []. Speaker turn_ids (as strings) supporting this commitment. Mirrors the `source_turns` field on `issue_registry_entry` / `position_statement`. Distinct from the Phase 1 / Phase 4.A verbatim grounding contract (`source_quote` + `source_chunk_id`), which the gate enforces independently. Optional in schema so legacy artifacts validate unchanged.",
+            "items": {
+              "type": "string"
+            }
           }
         }
       }
@@ -421,6 +442,13 @@
             "type": "string",
             "minLength": 1,
             "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
+          },
+          "source_turns": {
+            "type": "array",
+            "description": "Optional, default []. Speaker turn_ids (as strings) supporting this risk. Mirrors the `source_turns` field on `issue_registry_entry` / `position_statement`. Distinct from the Phase 1 / Phase 4.A verbatim grounding contract (`source_quote` + `source_chunk_id`), which the gate enforces independently. Optional in schema so legacy artifacts validate unchanged.",
+            "items": {
+              "type": "string"
+            }
           }
         }
       }
@@ -500,6 +528,13 @@
             "type": "string",
             "minLength": 1,
             "description": "Phase 4.A G-GROUND-VERBATIM (schema_version 1.5.0). Optional chunk identifier the source_quote was lifted from. When present, the Phase 4.A substring grounding gate (`promotion/grounding_gate.py`) scopes its check to this chunk only. When absent, the gate falls back to checking against the full transcript text (weaker — and logged as a warning in the grounding_gate_result artifact). Optional at the JSON-Schema layer so legacy 1.0.0-1.4.0 artifacts validate unchanged."
+          },
+          "source_turns": {
+            "type": "array",
+            "description": "Optional, default []. Speaker turn_ids (as strings) supporting this claim. Mirrors the `source_turns` field on `issue_registry_entry` / `position_statement`. Distinct from `evidence_in_transcript` (turns providing supporting evidence, schema_version 1.2.0+) and from the Phase 1 / Phase 4.A verbatim grounding contract (`source_quote` + `source_chunk_id`), which the gate enforces independently. Optional in schema so legacy artifacts validate unchanged.",
+            "items": {
+              "type": "string"
+            }
           }
         }
       }
@@ -659,6 +694,27 @@
               "string",
               "null"
             ]
+          },
+          "source_turns": {
+            "type": "array",
+            "description": "Optional, default []. Speaker turn_ids (as strings) supporting this entry. Mirrors the `source_turns` field on `issue_registry_entry` / `position_statement` / `dissent_or_objection`. Distinct from the integer-typed `source_turn_ids` (Phase 1 grounding contract). Optional in schema so legacy artifacts validate unchanged.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "start_turn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional (additive). First speaker turn where this topic appears. Mirrors the existing `start_timestamp` and complements `meeting_phases.start_turn_id` / `agenda_item.start_turn_id`. Null or omitted when not stated."
+          },
+          "end_turn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional (additive). Last speaker turn where this topic appears. Mirrors the existing `end_timestamp` and complements `meeting_phases.end_turn_id` / `agenda_item.end_turn_id`. Null or omitted when not stated."
           },
           "grounding_mode": {
             "const": "turn_aggregate",
@@ -888,6 +944,27 @@
               "null"
             ]
           },
+          "source_turns": {
+            "type": "array",
+            "description": "Optional, default []. Speaker turn_ids (as strings) supporting this entry. Mirrors the `source_turns` field on `issue_registry_entry` / `position_statement`. Distinct from the integer-typed `source_turn_ids` (Phase 1 grounding contract). Optional in schema so legacy artifacts validate unchanged.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "start_turn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional (additive). First speaker turn where this scheduled event was discussed. Null or omitted when not stated."
+          },
+          "end_turn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional (additive). Last speaker turn where this scheduled event was discussed. Null or omitted when not stated."
+          },
           "grounding_mode": {
             "const": "turn_aggregate",
             "description": "Phase 1 (schema_version 1.4.0). Discriminator: this item type AGGREGATES across multiple transcript turns rather than pointing to one quote. Optional in schema; the gate enforces presence + every source_turn_ids entry exists in the transcript turn index."
@@ -1005,6 +1082,27 @@
               "string",
               "null"
             ]
+          },
+          "source_turns": {
+            "type": "array",
+            "description": "Optional, default []. Speaker turn_ids (as strings) supporting this entry. Mirrors the `source_turns` field on `issue_registry_entry` / `position_statement`. Distinct from the integer-typed `source_turn_ids` (Phase 1 grounding contract). Optional in schema so legacy artifacts validate unchanged.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "start_turn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional (additive). First speaker turn where this phase begins. Mirrors the existing `start_turn_id` field. Null or omitted when not stated."
+          },
+          "end_turn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional (additive). Last speaker turn where this phase ends. Mirrors the existing `end_turn_id` field. Null or omitted when not stated."
           },
           "grounding_mode": {
             "const": "turn_aggregate",
@@ -1360,6 +1458,27 @@
             "minLength": 1,
             "maxLength": 500,
             "description": "Optional (additive). Brief description of what this agenda item covers. Mirrors the existing `summary` field on `topics` and `meeting_phases`. Optional in schema so legacy 1.3.0/1.4.0 artifacts validate unchanged."
+          },
+          "source_turns": {
+            "type": "array",
+            "description": "Optional, default []. Speaker turn_ids (as strings) supporting this entry. Mirrors the `source_turns` field on `issue_registry_entry` / `position_statement`. Distinct from the integer-typed `source_turn_ids` (Phase 1 grounding contract). Optional in schema so legacy artifacts validate unchanged.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "start_turn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional (additive). First speaker turn where this agenda item begins. Mirrors the existing `start_turn_id` field. Null or omitted when not stated."
+          },
+          "end_turn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional (additive). Last speaker turn where this agenda item ends. Mirrors the existing `end_turn_id` field. Null or omitted when not stated."
           },
           "grounding_mode": {
             "const": "turn_aggregate",
