@@ -159,16 +159,69 @@ def _raw_dir(data_lake: Path, source_id: str) -> Path:
     return data_lake / "store" / "raw" / "meetings" / source_id
 
 
+def _payload_schema_version(path: Path) -> tuple[int, ...]:
+    """Return the artifact's meeting_minutes schema_version as a tuple.
+
+    A "1.5.0" string parses to ``(1, 5, 0)``; absent / unparseable
+    versions sort LAST as ``(0,)`` so they only win when no better
+    candidate exists. The on-disk artifact may be envelope-wrapped
+    (production: schema_version lives under ``payload``) or flat
+    (legacy/synthetic: schema_version lives at the top level); both
+    shapes are inspected so the selector is robust across writers.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return (0,)
+    if not isinstance(data, dict):
+        return (0,)
+    inner = data.get("payload")
+    container = inner if isinstance(inner, dict) else data
+    version_str = container.get("schema_version")
+    if not isinstance(version_str, str):
+        return (0,)
+    try:
+        return tuple(int(part) for part in version_str.split("."))
+    except ValueError:
+        return (0,)
+
+
 def _find_latest_extraction(processed_dir: Path) -> Path | None:
-    """Return the most recently modified meeting_minutes__*.json file."""
+    """Return the meeting_minutes__*.json best suited to feed the gate.
+
+    Selection key (descending priority):
+      1. Payload ``schema_version`` parsed as a tuple of ints. A
+         1.5.0 (Phase 4.A) artifact ALWAYS beats a 1.4.0 (legacy)
+         artifact regardless of mtime — the content signal that lets
+         the gate find the Phase 4.A artifact even when a stale
+         legacy artifact shares the directory.
+      2. ``st_mtime`` — within one schema version, newer wins.
+      3. ``path.name`` — total-deterministic tiebreaker when mtimes
+         AND schema versions tie. Required because ``clone-data-lake``
+         (``git clone``) stamps EVERY checked-out file's mtime with
+         the single clone time, so a pure-mtime sort collapses onto
+         ``Path.glob`` iteration order, which is filesystem-dependent
+         and not stable across CI runners. The exact bug pattern
+         ``find_candidate_artifact`` in ``scripts/compare_opus_haiku.py``
+         already documents (PR #185); the same fix lives here.
+    """
     if not processed_dir.is_dir():
         return None
-    candidates = sorted(
-        (p for p in processed_dir.glob("meeting_minutes__*.json") if p.is_file()),
-        key=lambda p: p.stat().st_mtime,
+    candidates = [
+        p for p in processed_dir.glob("meeting_minutes__*.json")
+        if p.is_file()
+    ]
+    if not candidates:
+        return None
+    candidates.sort(
+        key=lambda p: (
+            _payload_schema_version(p),
+            p.stat().st_mtime,
+            p.name,
+        ),
         reverse=True,
     )
-    return candidates[0] if candidates else None
+    return candidates[0]
 
 
 def _load_chunks(raw_dir: Path) -> dict[str, str]:

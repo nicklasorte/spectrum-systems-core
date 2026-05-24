@@ -284,6 +284,176 @@ def test_missing_data_lake_exits_2(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------
+# Artifact selection — content-aware (schema_version) tiebreaker.
+#
+# Regression for the production mtime-tie failure: when the data-lake is
+# fresh-cloned in CI, git stamps EVERY checked-out file's mtime with the
+# single clone timestamp. A pure-mtime sort then collapses onto
+# Path.glob iteration order (filesystem-dependent), so the gate could
+# pick a stale 1.4.0 artifact (no source_quote) over the current 1.5.0
+# artifact and report 100% missing_source_quote even when the right
+# artifact sits in the same directory. The fix sorts by
+# (schema_version, mtime, name) descending so the Phase 4.A artifact
+# wins on the content signal, mtime ties or not.
+# --------------------------------------------------------------------------
+
+
+def _stamp_mtime(path: Path, ts: float) -> None:
+    os.utime(path, (ts, ts))
+
+
+def test_find_latest_extraction_prefers_phase_4a_over_legacy_when_mtimes_tie(
+    tmp_path: Path,
+) -> None:
+    """The production scenario: a 1.4.0 (legacy) and a 1.5.0 (Phase 4.A)
+    artifact share a directory with IDENTICAL mtimes (git-clone
+    collision). The selector must pick the 1.5.0 artifact on the
+    schema_version signal."""
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    from run_grounding_gate import _find_latest_extraction
+
+    d = tmp_path / "processed"
+    d.mkdir()
+    legacy = d / "meeting_minutes__legacy-efd6ce63609a.json"
+    phase4a = d / "meeting_minutes__phase4a-a01658daa307.json"
+    legacy.write_text(
+        json.dumps({
+            "artifact_type": "meeting_minutes",
+            "payload": {"schema_version": "1.4.0", "title": "legacy"},
+        }),
+        encoding="utf-8",
+    )
+    phase4a.write_text(
+        json.dumps({
+            "artifact_type": "meeting_minutes",
+            "payload": {"schema_version": "1.5.0", "title": "phase 4a"},
+        }),
+        encoding="utf-8",
+    )
+    clone_ts = 1_700_000_000
+    _stamp_mtime(legacy, clone_ts)
+    _stamp_mtime(phase4a, clone_ts)
+
+    result = _find_latest_extraction(d)
+    assert result == phase4a, (
+        f"selected the legacy artifact under mtime collision: {result}"
+    )
+
+
+def test_find_latest_extraction_uses_mtime_within_same_schema_version(
+    tmp_path: Path,
+) -> None:
+    """When schema versions tie, recency (mtime) still wins."""
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    from run_grounding_gate import _find_latest_extraction
+
+    d = tmp_path / "processed"
+    d.mkdir()
+    older = d / "meeting_minutes__older.json"
+    newer = d / "meeting_minutes__newer.json"
+    body = json.dumps({"payload": {"schema_version": "1.5.0"}})
+    older.write_text(body, encoding="utf-8")
+    newer.write_text(body, encoding="utf-8")
+    _stamp_mtime(older, 1_700_000_000)
+    _stamp_mtime(newer, 1_700_000_100)
+
+    assert _find_latest_extraction(d) == newer
+
+
+def test_find_latest_extraction_uses_filename_when_schema_and_mtime_tie(
+    tmp_path: Path,
+) -> None:
+    """Pure-mtime sort under git-clone gave non-deterministic results
+    across filesystems. With (schema_version, mtime, name) descending,
+    two artifacts sharing schema_version AND mtime resolve by filename
+    (the lexicographically later name wins). The total order matters
+    more than which side wins — the test pins it so a future refactor
+    that drops the tiebreaker is caught."""
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    from run_grounding_gate import _find_latest_extraction
+
+    d = tmp_path / "processed"
+    d.mkdir()
+    a_name = d / "meeting_minutes__a.json"
+    b_name = d / "meeting_minutes__b.json"
+    body = json.dumps({"payload": {"schema_version": "1.5.0"}})
+    a_name.write_text(body, encoding="utf-8")
+    b_name.write_text(body, encoding="utf-8")
+    same_ts = 1_700_000_000
+    _stamp_mtime(a_name, same_ts)
+    _stamp_mtime(b_name, same_ts)
+
+    # Descending name order means "b" > "a".
+    assert _find_latest_extraction(d) == b_name
+
+
+def test_run_grounding_gate_picks_phase_4a_artifact_over_legacy(
+    tmp_path: Path,
+) -> None:
+    """End-to-end: the script run against a directory carrying BOTH a
+    legacy and a Phase 4.A artifact (identical mtimes) must run the
+    gate against the 1.5.0 artifact — proven by the resulting
+    grounded_count > 0 (the 1.5.0 item has source_quote and grounds
+    cleanly). Picking the legacy artifact would yield
+    missing_source_quote and grounded_count == 0."""
+    data_lake = tmp_path / "data-lake"
+    processed = data_lake / "store" / "processed" / "meetings" / SOURCE_ID
+    raw = data_lake / "store" / "raw" / "meetings" / SOURCE_ID
+    processed.mkdir(parents=True)
+    raw.mkdir(parents=True)
+    transcript = "so we will determine the band plan today"
+    (raw / "source.txt").write_text(transcript, encoding="utf-8")
+    _write_chunks_jsonl(raw / "chunks.jsonl", {"c1": transcript})
+
+    legacy = processed / "meeting_minutes__legacy-efd6ce63609a.json"
+    phase4a = processed / "meeting_minutes__phase4a-a01658daa307.json"
+    legacy.write_text(
+        json.dumps({
+            "artifact_type": "meeting_minutes",
+            "schema_version": "1.4.0",
+            "title": "Legacy",
+            "summary": "Legacy artifact — no source_quote field.",
+            "decisions": [{"text": "old decision — no quote"}],
+            "action_items": [],
+            "open_questions": [],
+        }),
+        encoding="utf-8",
+    )
+    phase4a.write_text(
+        json.dumps({
+            "artifact_type": "meeting_minutes",
+            "schema_version": "1.5.0",
+            "title": "Phase 4.A",
+            "summary": "Phase 4.A artifact with source_quote.",
+            "decisions": [{
+                "text": "Determine band plan",
+                "source_quote": "we will determine the band plan",
+                "source_chunk_id": "c1",
+            }],
+            "action_items": [],
+            "open_questions": [],
+        }),
+        encoding="utf-8",
+    )
+    clone_ts = 1_700_000_000
+    _stamp_mtime(legacy, clone_ts)
+    _stamp_mtime(phase4a, clone_ts)
+
+    cp = _run("--source-id", SOURCE_ID, "--data-lake", str(data_lake))
+    assert cp.returncode == 0, cp.stdout + cp.stderr
+
+    result_path = next(processed.glob("grounding_gate_result__*.json"))
+    result_payload = json.loads(result_path.read_text(encoding="utf-8"))
+    # Picking the 1.5.0 artifact: 1 item, 1 grounded, 0 ungrounded.
+    # Picking the legacy 1.4.0 (the bug): 1 item, 0 grounded, 1
+    # ungrounded with reason "missing_source_quote".
+    assert result_payload["grounded_count"] == 1, (
+        f"selector picked the legacy 1.4.0 artifact: {result_payload!r}"
+    )
+    assert result_payload["ungrounded_count"] == 0
+
+
+# --------------------------------------------------------------------------
 # Determinism
 # --------------------------------------------------------------------------
 
