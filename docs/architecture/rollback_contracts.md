@@ -2314,6 +2314,135 @@ entries will reference this PR by number.
 
 ---
 
+## agenda_item.summary — additive optional field (PR #241)
+
+### What this change adds
+
+- Additive optional property on
+  `src/spectrum_systems_core/schemas/meeting_minutes.schema.json`:
+  `agenda_item` items gain a new optional `summary` field
+  (`type: string`, `minLength: 1`, `maxLength: 500`). The field is
+  NOT added to the `required` array on `agenda_item` items, so
+  pre-existing artifacts that omit `summary` validate unchanged.
+- No `schema_version` bump. Same precedent as the Phase 2.C
+  `position_type` enum extension above and the attendees.agency
+  null fix (commit `d2e23d7`): a backward-compatible additive
+  field keeps the `schema_version` enum unchanged. The
+  `meeting_minutes.schema.json` `schema_version` enum
+  (`1.0.0` … `1.5.0`) is unchanged.
+- `additionalProperties: false` on the `agenda_item` items
+  schema stays in place. The only new key permitted is `summary`;
+  any other unknown field is still rejected.
+- No prompt change. The strict-schema callout in
+  `workflows/prompts/meeting_minutes_llm.md` (line 532) and the
+  natural-language guidance in `meeting_minutes_opus.md` continue
+  to list the original eight `agenda_item` fields; `summary`
+  remains an opportunistic field a producer MAY emit but is NOT
+  required to. No producer relies on the field being present.
+- No mirror change to
+  `src/spectrum_systems_core/schemas/meeting_extraction.schema.json`:
+  that schema does not define `agenda_item` (verified by
+  `grep '"agenda_item"' meeting_extraction.schema.json` returning
+  zero hits).
+- No new test file is added. The existing `agenda_item` tests in
+  `tests/test_meeting_minutes_schema.py`
+  (`test_agenda_item_item_number_null_validates`,
+  `test_agenda_item_minimal_required_only_validates`,
+  `test_agenda_item_allocated_minutes_integer_validates`) all
+  pass unchanged because `summary` is optional.
+- No new gate, no new eval, no new artifact type.
+
+### Companion tooling shipped in the same PR
+
+- `scripts/finalize_rollback_entry.py` — new automation that takes a
+  PR number and rewrites the `PR #TBD` placeholder in the entry this
+  branch added to `rollback_contracts.md`. Only `##`-headed
+  placeholder lines added by the current branch are rewritten;
+  pre-existing `PR #TBD` headings in already-merged entries and
+  body-text cross-references stay untouched. Idempotent — a second
+  run is a no-op.
+- `scripts/_pre_pr_rollback_check.py` — strengthened Stop hook.
+  Previously caught the "no entry at all" failure mode; now ALSO
+  catches the "entry exists but heading still says `PR #TBD` after
+  the branch was pushed" failure mode that produced verify-rollback
+  CI failures on at least five PRs in a row. The check looks at
+  entry HEADING lines only, so body-text cross-references to other
+  PRs remain valid.
+- `tests/pipeline/test_finalize_rollback_entry.py` — 5 unit tests
+  pinning rewrite-scoping, idempotency, no-op, missing-file, and
+  with-commit behavior.
+
+These tooling additions are not gates and do not change the
+verify-rollback-contracts CI workflow's behavior; they automate the
+post-PR-open finalization step that CLAUDE.md already documents but
+which sessions have been silently skipping.
+
+### Motivation
+
+Haiku Stage 1 extraction was BLOCKED with
+`Additional properties are not allowed ('summary' was unexpected)
+at path=['agenda_item', 1]`. The strict-schema gate rejected an
+`agenda_item` item carrying a `summary` field. The field is a
+natural emission given the Stage 1 prompt enrichment and the fact
+that the semantically similar `topics` and `meeting_phases` item
+types both already carry an optional `summary`. Widening the
+schema to accept the field is the durable fix vs retrying the
+producer.
+
+### To roll back
+
+1. Revert the PR. The `summary` property disappears from the
+   `agenda_item` items sub-schema. The eight original properties
+   (`item_id`, `item_number`, `title`, `presenter`,
+   `allocated_minutes`, `start_turn_id`, `end_turn_id`, `outcome`)
+   plus the two Phase 1 grounding fields (`grounding_mode`,
+   `source_turn_ids`) remain as before.
+2. Existing artifacts in the data-lake that carry an
+   `agenda_item[].summary` (Haiku Stage 1 runs starting with the
+   one that motivated this PR) become invalid against the reverted
+   schema and would be blocked by the strict-schema eval on
+   re-validation. The data-lake is append-only per
+   `docs/contracts/data_lake_contract.md` §8; do NOT delete them.
+   If revert is required, re-extract the affected source(s) so the
+   `summary` field is not emitted, or accept that the superseded
+   artifact is no longer re-validateable.
+
+### Data migration required for rollback
+
+None for the schema or codebase. Any `agenda_item[].summary`-bearing
+artifact on disk falls out of strict-schema validity until either
+re-extracted or until the field is re-added in a follow-up PR.
+
+### Verification that the rollback is clean
+
+```bash
+pytest tests/test_meeting_minutes_schema.py
+```
+
+`verification_command`: `pytest tests/test_meeting_minutes_schema.py`
+
+### Cross-PR dependency
+
+`depends_on`: PR #182 (attendees.agency null fix) and the Phase 2.C
+`position_type` enum extension (PR #TBD above; pre-existing entry) —
+same fix pattern:
+a semantically valid value/field emitted by a producer is widened
+in the schema fail-closed rather than retried. No code dependency.
+
+`no_future_dependency`: this entry does not gate any future PR.
+
+### Operator action after merge
+
+1. Re-dispatch the Haiku Stage 1 extraction workflow on the
+   transcript that previously blocked. The `agenda_item` item
+   that emitted `summary` now passes the strict-schema eval.
+2. No other workflow needs to be re-dispatched. Downstream
+   consumers (gate, comparison, promotion) read the `agenda_item`
+   `item_id` / `title` fields and are unaffected by the new
+   optional `summary`.
+
+---
+
 ## How to add a new entry
 
 When a future PR adds a versioned schema, a new gate, or a new
