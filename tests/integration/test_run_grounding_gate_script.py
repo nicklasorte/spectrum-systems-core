@@ -55,7 +55,7 @@ def _build_minimal_data_lake(
     raw = data_lake / "store" / "raw" / "meetings" / SOURCE_ID
     processed.mkdir(parents=True)
     raw.mkdir(parents=True)
-    (raw / "transcript.txt").write_text(transcript_text, encoding="utf-8")
+    (raw / "source.txt").write_text(transcript_text, encoding="utf-8")
     if chunks:
         _write_chunks_jsonl(raw / "chunks.jsonl", chunks)
     # meeting_minutes is written FLAT (no envelope wrapper) per the
@@ -253,7 +253,7 @@ def test_missing_extraction_artifact_exits_2(tmp_path: Path) -> None:
     data_lake = tmp_path / "data-lake"
     raw = data_lake / "store" / "raw" / "meetings" / SOURCE_ID
     raw.mkdir(parents=True)
-    (raw / "transcript.txt").write_text("anything", encoding="utf-8")
+    (raw / "source.txt").write_text("anything", encoding="utf-8")
     (data_lake / "store" / "processed" / "meetings" / SOURCE_ID).mkdir(parents=True)
     cp = _run("--source-id", SOURCE_ID, "--data-lake", str(data_lake))
     assert cp.returncode == 2

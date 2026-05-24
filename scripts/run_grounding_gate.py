@@ -11,7 +11,7 @@ For a given ``--source-id``:
      ``<data-lake>/store/processed/meetings/<source-id>/``. The
      extraction artifact is the gate's input.
   2. Locate the raw transcript at
-     ``<data-lake>/store/raw/meetings/<source-id>/transcript.txt`` (and
+     ``<data-lake>/store/raw/meetings/<source-id>/source.txt`` (and
      the optional ``chunks.jsonl`` next to it) for the gate's haystack.
   3. Run :func:`spectrum_systems_core.promotion.grounding_gate.check_grounding`
      against every claim-shaped item type in the artifact's payload.
@@ -342,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"::error::extraction artifact not found: {extraction_path}", file=sys.stderr)
         return 2
 
-    transcript_path = raw_dir / "transcript.txt"
+    transcript_path = raw_dir / "source.txt"
     if not transcript_path.is_file():
         print(f"::error::transcript not found: {transcript_path}", file=sys.stderr)
         return 2
