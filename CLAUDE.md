@@ -74,6 +74,103 @@ These imports are operative — read them when their trigger fires.
 @.claude/rollback_contracts.md
 @.claude/commit_message_hygiene.md
 
+## Behavioral Principles (Karpathy)
+
+Four principles addressing the most common mistakes in this codebase.
+The Execution Standard governs the loop; these govern the thinking.
+
+### 1. Think Before Coding
+
+State assumptions before writing code.
+
+- Read the schema before editing a field name — don't assume
+  `text`/`assignee` when it says `action`/`owner` (PR #247).
+- Adding an optional field to one array type → audit every sibling
+  (PR #248: `source_turns` added to `topics` only, 8 types missed).
+- Adding a cascade filter → read the existing one; no parallel
+  implementations (PR #246: Phase 2.C left coexisting with 4.C).
+- "Add optional X to type Y" → ask whether X applies to other types
+  and state the answer before coding.
+
+### 2. Simplicity First
+
+Minimum code that solves the problem. Nothing speculative.
+
+- No schema fields "for future use".
+- No CLI flags not wired and tested end-to-end.
+- No error handling for conditions the fail-closed pipeline prevents.
+- Existing gate (e.g. `promotion/grounding_gate.py`) → import, don't
+  rebuild.
+
+### 3. Surgical Changes
+
+Touch only what the task requires.
+
+- Change only the section the task names; don't restructure adjacent
+  code.
+- Deprecating a workflow → rename `*-deprecated.yml`, don't delete.
+- Unrelated finding → mention in PR description, don't fix silently.
+- Match existing field ordering, indentation, and comment style.
+
+Remove imports your changes made unused; don't remove pre-existing
+dead code. Every changed line must trace to the PR's stated goal.
+
+### 4. Goal-Driven Execution
+
+Express every task as a verifiable outcome, not an imperative:
+
+- "Add `source_quote` to action_items" → write a test that fails when
+  `source_quote` is missing, then pass it.
+- "Fix the cascade filter" → write a test reproducing the modify-span
+  bug, then fix it.
+- "Raise `max_tokens`" → write a test proving prior truncation is
+  gone, then raise.
+
+State a brief plan — each step paired with its verification. Weak
+criteria ("make it work") produce field-name class bugs.
+
+### Spectrum Systems pre-PR checks
+
+Run before every PR:
+
+1. **Schema field names.** `action_items` use `action` + `owner`, not
+   `text` + `assignee`. Cross-check prompt examples against the
+   `*.schema.json`.
+
+2. **Array type completeness.** When adding an optional field to one
+   array type in `meeting_minutes.schema.json`, audit siblings:
+   ```bash
+   python -c "
+   import json
+   s = json.load(open('src/spectrum_systems_core/schemas/meeting_minutes.schema.json'))
+   for typ, defn in s['properties'].items():
+       props = defn.get('items', {}).get('properties', {})
+       if props and 'source_turns' not in props:
+           print(f'MISSING source_turns: {typ}')
+   "
+   ```
+
+3. **`artifact_type` never `artifact_kind`** (reinforces the
+   Execution Standard self-review item):
+   ```bash
+   grep -rn "artifact_kind" src/ scripts/ tests/
+   ```
+   Compare against the pre-PR baseline; the count must not grow. New
+   code uses `artifact_type`; legacy `obsidian_bridge` usages are
+   tracked separately.
+
+4. **Model string discipline.** Model strings live in constants, not
+   inline literals. New code must not add inline literals:
+   ```bash
+   grep -rn 'claude-haiku\|claude-sonnet\|claude-opus' src/ scripts/ \
+     | grep -v 'model_id\s*=\s*"\|MODEL\s*=\s*"\|# \|\.md\|\.json'
+   ```
+   Compare against the pre-PR baseline; the count must not grow.
+
+5. **Single active workflow per pipeline step.** Before adding a new
+   workflow, `ls .github/workflows/run-*.yml`. If a prior version
+   exists, deprecate it.
+
 ## Governing documents
 
 - `docs/governance/PR_FAILURE_PROTOCOL.md` — failure classification
