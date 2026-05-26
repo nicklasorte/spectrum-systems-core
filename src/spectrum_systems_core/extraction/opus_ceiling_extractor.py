@@ -82,7 +82,9 @@ def _real_opus_call(transcript_text: str) -> list[CeilingItem]:
     )
     try:
         client = Anthropic(api_key=api_key)
-        response = client.messages.create(
+        # Stream so a long-transcript ceiling extraction does not trip
+        # the SDK's 10-minute non-streaming cap.
+        with client.messages.stream(
             model=OPUS_MODEL,
             max_tokens=16384,
             messages=[
@@ -91,7 +93,8 @@ def _real_opus_call(transcript_text: str) -> list[CeilingItem]:
                     "content": f"{prompt}\n\n---TRANSCRIPT---\n{transcript_text}",
                 }
             ],
-        )
+        ) as stream:
+            response = stream.get_final_message()
     except Exception as exc:  # noqa: BLE001 — any SDK/transport error
         raise CeilingError(
             f"opus_call_failed:{type(exc).__name__}:{exc}",

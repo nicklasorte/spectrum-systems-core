@@ -303,12 +303,14 @@ class ClaimExtractor:
         client = anthropic.Anthropic()
 
         def _call(prompt: str) -> str:
-            message = client.messages.create(
+            # Stream to stay under the SDK's 10-minute non-streaming cap.
+            with client.messages.stream(
                 model=EXTRACTION_MODEL,
                 max_tokens=MAX_TOKENS,
                 temperature=EXTRACTION_TEMPERATURE,
                 messages=[{"role": "user", "content": prompt}],
-            )
+            ) as stream:
+                message = stream.get_final_message()
             parts: list[str] = []
             for block in message.content:
                 text = getattr(block, "text", None)

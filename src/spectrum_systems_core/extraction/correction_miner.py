@@ -120,11 +120,13 @@ def _default_opus_call(fn_texts: list[str], current_prompt: str) -> str:
         f"CURRENT PROMPT:\n{current_prompt}\n\nMISSED ITEMS:\n{joined}"
     )
     client = Anthropic(api_key=api_key)
-    response = client.messages.create(
+    # Stream to stay under the SDK's 10-minute non-streaming cap.
+    with client.messages.stream(
         model=OPUS_MODEL,
         max_tokens=512,
         messages=[{"role": "user", "content": ask}],
-    )
+    ) as stream:
+        response = stream.get_final_message()
     parts: list[str] = []
     for block in getattr(response, "content", []) or []:
         text = getattr(block, "text", None)

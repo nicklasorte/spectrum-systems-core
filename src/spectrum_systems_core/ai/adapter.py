@@ -360,12 +360,14 @@ class AIAdapter:
         import anthropic  # imported lazily so tests run without it
 
         client = anthropic.Anthropic()
-        message = client.messages.create(
+        # Stream to stay under the SDK's 10-minute non-streaming cap.
+        with client.messages.stream(
             model=task_def["model"],
             max_tokens=int(task_def["max_tokens"]),
             temperature=0,
             messages=[{"role": "user", "content": prompt}],
-        )
+        ) as stream:
+            message = stream.get_final_message()
         parts: list[str] = []
         for block in message.content:
             text = getattr(block, "text", None)

@@ -68,14 +68,17 @@ def real_extract(transcript: str) -> OpusExtractionResult:
 
     client = Anthropic(api_key=api_key)
     start = time.monotonic()
-    response = client.messages.create(
+    # Stream so a long-transcript Opus extraction does not trip the
+    # SDK's 10-minute non-streaming cap.
+    with client.messages.stream(
         model=OPUS_MODEL,
         max_tokens=8192,
         messages=[{
             "role": "user",
             "content": f"{OPUS_EXTRACTION_PROMPT}\n\n{transcript}",
         }],
-    )
+    ) as stream:
+        response = stream.get_final_message()
     latency_ms = int((time.monotonic() - start) * 1000)
 
     parts: list[str] = []

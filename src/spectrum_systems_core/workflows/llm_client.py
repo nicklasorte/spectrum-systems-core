@@ -99,7 +99,15 @@ class AnthropicJSONClient:
                 call_kwargs.pop("temperature", None)
                 call_kwargs.pop("top_p", None)
                 call_kwargs.pop("top_k", None)
-            message = client.messages.create(**call_kwargs)
+            # Streaming required: a full-schema extraction over a large
+            # transcript can run past the 10-minute non-streaming cap
+            # the Anthropic SDK enforces (the Feb 17 P2P transcript hit
+            # it as 9a41870d5ac0). ``messages.stream`` accepts the same
+            # kwargs and ``get_final_message`` returns the same Message
+            # shape -- stop_reason / content / usage stay intact, so
+            # the downstream truncation check and text join are unchanged.
+            with client.messages.stream(**call_kwargs) as stream:
+                message = stream.get_final_message()
         except Exception as exc:  # noqa: BLE001 - transport is opaque; fail closed
             raise LLMClientError(
                 f"live extraction call failed: {type(exc).__name__}: {exc}"

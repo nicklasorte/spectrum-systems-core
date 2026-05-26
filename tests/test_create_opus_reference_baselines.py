@@ -1283,10 +1283,22 @@ def test_opus_47_no_sampling_params_in_api_call(
     class _FakeMessage:
         content = [_FakeContent()]
 
-    class _FakeMessages:
-        def create(self, **kwargs: object) -> _FakeMessage:
+    class _FakeStream:
+        def __init__(self, **kwargs: object) -> None:
             captured.update(kwargs)
+
+        def __enter__(self) -> "_FakeStream":
+            return self
+
+        def __exit__(self, *exc_info) -> None:
+            return None
+
+        def get_final_message(self) -> _FakeMessage:
             return _FakeMessage()
+
+    class _FakeMessages:
+        def stream(self, **kwargs: object) -> _FakeStream:
+            return _FakeStream(**kwargs)
 
     class _FakeAnthropic:
         messages = _FakeMessages()

@@ -115,13 +115,17 @@ def real_extract(transcript_with_turn_ids: str) -> HaikuExtractionResult:
 
     client = Anthropic(api_key=api_key)
     start = time.monotonic()
-    response = client.messages.create(
+    # Stream so a long-transcript extraction does not trip the SDK's
+    # 10-minute non-streaming cap. ``get_final_message`` exposes the
+    # same Message shape as ``create`` (content / usage / stop_reason).
+    with client.messages.stream(
         model=HAIKU_MODEL,
         max_tokens=4096,
         temperature=0,
         system=HAIKU_EXTRACTION_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": transcript_with_turn_ids}],
-    )
+    ) as stream:
+        response = stream.get_final_message()
     latency_ms = int((time.monotonic() - start) * 1000)
 
     parts: list[str] = []

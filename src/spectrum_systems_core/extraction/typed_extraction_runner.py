@@ -291,12 +291,15 @@ def _build_anthropic_caller(
         # hence zero items, which X-1's empty-items gate would then
         # have to catch downstream).
         def _send() -> Any:
-            return client.messages.create(
+            # Stream so a long-transcript extraction does not trip the
+            # SDK's 10-minute non-streaming cap.
+            with client.messages.stream(
                 model=model,
                 max_tokens=max_tokens,
                 temperature=0,
                 messages=[{"role": "user", "content": prompt}],
-            )
+            ) as stream:
+                return stream.get_final_message()
 
         try:
             message = call_with_backoff(_send)
@@ -351,12 +354,14 @@ def _build_anthropic_batch_classifier_caller(
 
     def _call(prompt: str) -> dict[str, Any]:
         def _send() -> Any:
-            return client.messages.create(
+            # Stream to stay under the SDK's 10-minute non-streaming cap.
+            with client.messages.stream(
                 model=model,
                 max_tokens=max_tokens,
                 temperature=0,
                 messages=[{"role": "user", "content": prompt}],
-            )
+            ) as stream:
+                return stream.get_final_message()
 
         try:
             message = call_with_backoff(_send)
@@ -411,12 +416,14 @@ def _build_anthropic_async_batch_classifier_caller(
         from ._resilience import MAX_RETRIES as _MAX_RETRIES
         for attempt in range(_MAX_RETRIES):
             try:
-                message = await client.messages.create(
+                # Stream to stay under the SDK's 10-minute non-streaming cap.
+                async with client.messages.stream(
                     model=model,
                     max_tokens=max_tokens,
                     temperature=0,
                     messages=[{"role": "user", "content": prompt}],
-                )
+                ) as stream:
+                    message = await stream.get_final_message()
                 break
             except anthropic.RateLimitError as exc:
                 last_exc = exc
