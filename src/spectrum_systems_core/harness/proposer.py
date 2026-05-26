@@ -179,12 +179,14 @@ def _default_opus_call(system_prompt: str, context: ProposerContext) -> dict:
         f"HARNESS_SNAPSHOTS:\n{json.dumps(context.harness_snapshot_paths)}"
     )
     client = Anthropic(api_key=api_key)
-    response = client.messages.create(
+    # Stream to stay under the SDK's 10-minute non-streaming cap.
+    with client.messages.stream(
         model=OPUS_MODEL,
         max_tokens=2048,
         system=system_prompt,
         messages=[{"role": "user", "content": user}],
-    )
+    ) as stream:
+        response = stream.get_final_message()
     parts: list[str] = []
     for block in getattr(response, "content", []) or []:
         text = getattr(block, "text", None)

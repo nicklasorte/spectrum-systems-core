@@ -90,7 +90,7 @@ def test_real_extract_does_not_touch_network_in_unit_tests(monkeypatch):
 
         class messages:  # noqa: N801
             @staticmethod
-            def create(*a, **k):
+            def stream(*a, **k):
                 raise RuntimeError("network blocked in unit test")
 
     fake = types.ModuleType("anthropic")
@@ -130,14 +130,24 @@ def test_real_extract_rejects_wrong_shape_json(monkeypatch):
         content = [_Block()]
         usage = _Usage()
 
+    class _Stream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return None
+
+        def get_final_message(self):
+            return _Resp()
+
     class _FakeClient:
         def __init__(self, *a, **k):
             pass
 
         class messages:  # noqa: N801
             @staticmethod
-            def create(*a, **k):
-                return _Resp()
+            def stream(*a, **k):
+                return _Stream()
 
     fake = types.ModuleType("anthropic")
     fake.Anthropic = _FakeClient

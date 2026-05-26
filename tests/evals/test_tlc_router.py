@@ -376,10 +376,22 @@ def test_registry_model_reaches_the_api_call(monkeypatch):
         content = [_Content()]
         stop_reason = "end_turn"
 
-    class _Messages:
-        def create(self, **kwargs):
+    class _Stream:
+        def __init__(self, **kwargs):
             captured.update(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return None
+
+        def get_final_message(self):
             return _Message()
+
+    class _Messages:
+        def stream(self, **kwargs):
+            return _Stream(**kwargs)
 
     class _Anthropic:
         messages = _Messages()

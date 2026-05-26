@@ -385,12 +385,14 @@ class PostHocVerifier:
 
         import anthropic  # local import: SDK not required for tests
         client = anthropic.Anthropic()
-        message = client.messages.create(
+        # Stream to stay under the SDK's 10-minute non-streaming cap.
+        with client.messages.stream(
             model=self._model_spec["model"],
             max_tokens=2000,
             temperature=0,
             messages=[{"role": "user", "content": prompt}],
-        )
+        ) as stream:
+            message = stream.get_final_message()
         parts: list[str] = []
         for block in getattr(message, "content", []) or []:
             text = getattr(block, "text", None)

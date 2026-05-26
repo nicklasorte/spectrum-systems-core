@@ -37,10 +37,22 @@ def _fake_anthropic(stop_reason, text='{"decisions": []}'):
 
     _Message.stop_reason = stop_reason
 
-    class _Messages:
-        def create(self, **kw: object) -> _Message:
+    class _Stream:
+        def __init__(self, **kw: object) -> None:
             captured.update(kw)
+
+        def __enter__(self) -> "_Stream":
+            return self
+
+        def __exit__(self, *exc_info) -> None:
+            return None
+
+        def get_final_message(self) -> _Message:
             return _Message()
+
+    class _Messages:
+        def stream(self, **kw: object) -> _Stream:
+            return _Stream(**kw)
 
     class _Anthropic:
         messages = _Messages()
@@ -88,9 +100,19 @@ def test_missing_stop_reason_does_not_raise(monkeypatch):
     class _Message:
         content = [_Content()]  # NOTE: no stop_reason attribute
 
-    class _Messages:
-        def create(self, **kw: object) -> _Message:
+    class _Stream:
+        def __enter__(self) -> "_Stream":
+            return self
+
+        def __exit__(self, *exc_info) -> None:
+            return None
+
+        def get_final_message(self) -> _Message:
             return _Message()
+
+    class _Messages:
+        def stream(self, **kw: object) -> _Stream:
+            return _Stream()
 
     class _Anthropic:
         messages = _Messages()
@@ -104,3 +126,29 @@ def test_missing_stop_reason_does_not_raise(monkeypatch):
     assert llm_client.AnthropicJSONClient()(system="s", user="u") == (
         '{"decisions": []}'
     )
+
+
+def test_extraction_uses_streaming_not_create(monkeypatch):
+    """Regression: the extraction path MUST invoke ``messages.stream``.
+
+    The Anthropic SDK enforces streaming for requests that may exceed
+    10 minutes (the Feb 17 P2P transcript hit this as 9a41870d5ac0).
+    A fake SDK whose ``messages`` namespace only exposes ``create``
+    must therefore raise ``LLMClientError`` -- proving the production
+    code does not silently fall back to the non-streaming path.
+    """
+    class _Messages:
+        def create(self, **kw: object):  # pragma: no cover - must not be called
+            raise AssertionError("create() should not be called by streaming client")
+
+    class _Anthropic:
+        messages = _Messages()
+
+        def __init__(self) -> None:
+            pass
+
+    mod = types.ModuleType("anthropic")
+    mod.Anthropic = _Anthropic  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "anthropic", mod)
+    with pytest.raises(llm_client.LLMClientError):
+        llm_client.AnthropicJSONClient()(system="s", user="u")

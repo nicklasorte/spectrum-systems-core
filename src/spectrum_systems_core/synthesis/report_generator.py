@@ -251,12 +251,14 @@ class ReportGenerator:
         client = anthropic.Anthropic()
 
         def _call(prompt: str) -> tuple[str, int, int]:
-            message = client.messages.create(
+            # Stream to stay under the SDK's 10-minute non-streaming cap.
+            with client.messages.stream(
                 model=GENERATION_MODEL,
                 max_tokens=MAX_TOKENS_PER_SECTION,
                 temperature=GENERATION_TEMPERATURE,
                 messages=[{"role": "user", "content": prompt}],
-            )
+            ) as stream:
+                message = stream.get_final_message()
             parts: list[str] = []
             for block in message.content:
                 text = getattr(block, "text", None)
