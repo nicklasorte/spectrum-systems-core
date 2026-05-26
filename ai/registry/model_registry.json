@@ -14,6 +14,13 @@
       "notes": "claude-opus-4-7: sampling params deprecated, omit entirely"
     }
   },
+  "codex_reference_baseline": {
+    "model_id": "gpt-5.5",
+    "provider": "openai",
+    "display_name": "GPT-5.5 / Codex (local)",
+    "max_tokens": 32768,
+    "notes": "One-time reference baseline per transcript. Produced locally by the operator running GPT-5.5 via ChatGPT/Codex on Mac and pushed to the data lake via scripts/ingest_codex_baseline.py. No CI workflow and no in-repo OpenAI API integration — operator-initiated only. Same canonical extraction prompt as workflows/prompts/meeting_minutes_llm.md. Stamped into every codex_reference_minutes.jsonl line as model_id."
+  },
   "meeting_minutes_extraction": {
     "model_id": "claude-haiku-4-5-20251001",
     "purpose": "Full 21-type meeting minutes extraction. Routes to claude-haiku-4-5-20251001. This entry supersedes the prior P8-A Sonnet upgrade: the meeting_minutes_extraction lane is migrated back to claude-haiku-4-5-20251001 by operator direction.",
