@@ -560,6 +560,50 @@ calling `git check-ignore`.
   into the governed loop). Consumed by humans / future eval comparison
   only.
 
+### codex_reference_minutes
+- **Writer:** `scripts/ingest_codex_baseline.py`. ONE JSONL line per
+  extracted item, byte-shape identical to `opus_reference_minutes`
+  (same fields, same sort_keys + minimal-separator serialisation, same
+  single trailing newline). The model is GPT-5.5 / Codex, run
+  **locally** by the operator on a Mac against the canonical
+  extraction prompt (`workflows/prompts/meeting_minutes_llm.md`); the
+  ingest script is the gate between Nick's local JSON output and the
+  data lake. There is no CI workflow and no OpenAI API integration in
+  this repo. The model string is never hardcoded: the script resolves
+  it from `ai/registry/model_registry.json::codex_reference_baseline`
+  at ingest time and stamps it into every line as `model_id`, so a
+  past baseline keeps its exact model even after the registry is
+  rolled forward. Each line carries `human_authored: false`,
+  `model_authored: true`, `verified: false`,
+  `status: "reference_only"`,
+  `provenance.produced_by == "codex_reference_baseline_workflow"`, and
+  `provenance.operator == <--operator>`. These are NOT ground truth
+  and NOT product artifacts — they are a second reference baseline
+  alongside Opus, produced with the SAME canonical extraction prompt
+  on the SAME raw transcript, for human / future eval comparison only.
+- **Path template:** `data-lake/store/processed/meetings/<source_id>/reference_baselines/codex_reference_minutes.jsonl`
+- **Schema:** per-item `item_data` conforms to the matching array-item
+  shape in `src/spectrum_systems_core/schemas/meeting_minutes.schema.json`
+  (the ingest script validates the full input JSON against the schema
+  before exploding it into the JSONL rows). Extraction types are
+  derived from the same schema array properties as the Opus baseline
+  via `create_opus_reference_baselines.extraction_types`, so a new
+  schema type flows through both writers in one edit.
+- **Git-tracked:** NO — same reasoning as `opus_reference_minutes`:
+  the path lives under `processed/`, which the `nicklasorte/data-lake`
+  repo bulk-ignores via `**/processed/**`. Per-artifact gitignore
+  enforcement inside the data-lake repo is that repo's
+  responsibility; `_gitignore_audit.py` only audits `Git-tracked: YES`
+  entries, so this entry does not gate CI. The data-lake repo's
+  `.gitignore` needs an entry analogous to
+  `!**/processed/**/reference_baselines/codex_reference_minutes.jsonl`
+  before the baseline can be committed; the ingest script does not
+  yet manage that negation (a follow-up parallels the Opus producer's
+  `gitignore_blocks_artifact` halt).
+- **Readers:** none in this PR (comparison wiring is deferred — see
+  `docs/codex-baseline-howto.md`). When wired up the comparator will
+  read this file the same way it reads the Opus baseline.
+
 ### comparison_result
 - **Writer:** `scripts/compare_opus_haiku.py` (the compare-opus-haiku
   workflow — System 1 of the self-improvement loop). ONE JSON object
