@@ -515,22 +515,47 @@ calling `git check-ignore`.
   negation is in place.
 
 ### opus_reference_minutes
-- **Writer:** `scripts/create_opus_reference_baselines.py` (the
-  create-opus-reference-baselines workflow). One JSONL line per
-  extracted item. The Opus model string is NEVER hardcoded: the
-  workflow resolves it from `ai/registry/model_registry.json` (the
-  `opus_reference_baseline` key) at run time and the script stamps it
-  into every line as `model_id`, so a past baseline keeps its exact
-  model even after the registry is rolled forward. Each line carries
-  `human_authored: false`, `model_authored: true`, `verified: false`,
-  `status: "reference_only"`, and
-  `provenance.produced_by == "opus_reference_baseline_workflow"`. These
-  are NOT ground truth and NOT product artifacts — they are a stronger
-  model's read of the SAME raw transcript, produced with the SAME
-  canonical extraction prompt (`workflows/prompts/meeting_minutes_llm.md`)
-  the Haiku pipeline uses, for human/eval comparison only. The script
-  reads ONLY the raw transcript `.docx` and `source_record.json` (the
-  ingestion identity record) — never any existing extraction artifact.
+- **Writers:** TWO writers target this artifact; both produce
+  byte-shape-identical JSONL rows (same field set, same `sort_keys` +
+  minimal-separator serialisation, same single trailing newline) and
+  both share the same frozen `pair_id` UUID5 namespace
+  (`3f1c9d8e-2b6a-5c7d-9e0f-1a2b3c4d5e6f`) keyed on
+  `opus-ref-{source_id}-{etype}-{index}`, so a row produced by either
+  writer for the same item slot is byte-identical. The two writers
+  enforce mutual exclusion via the `already_ingested` halt: whichever
+  writer runs first wins; the second halts and is never silently
+  overwritten.
+    1. `scripts/create_opus_reference_baselines.py` (the
+       create-opus-reference-baselines workflow): API-calling producer
+       that runs against every raw transcript `.docx`. The Opus model
+       string is NEVER hardcoded: the workflow resolves it from
+       `ai/registry/model_registry.json::models.opus_reference_baseline`
+       at run time and the script stamps it into every line as
+       `model_id`, so a past baseline keeps its exact model even after
+       the registry is rolled forward. The script reads ONLY the raw
+       transcript `.docx` and `source_record.json` (the ingestion
+       identity record) — never any existing extraction artifact.
+    2. `scripts/ingest_opus_baseline.py`: operator-initiated, LLM-free
+       ingest of a locally-produced Opus meeting_minutes JSON
+       (analogous to `scripts/ingest_codex_baseline.py` but for Opus).
+       NO Anthropic SDK import, NO network or LLM call. Validates the
+       input JSON against the meeting_minutes schema, looks up the
+       canonical UUID from an existing `source_record.json`, and
+       explodes the payload into the same JSONL shape the API-calling
+       producer writes. Reads `models.opus_reference_baseline` from
+       the registry by default (overridable via `--model`).  Accepts
+       `--operator` on the CLI for parity with the codex ingest but
+       does NOT stamp it into the rows — the Opus baseline shape on
+       disk does not carry a `provenance.operator` key (that is the
+       codex shape, see `codex_reference_minutes` below).
+  Every line from EITHER writer carries `human_authored: false`,
+  `model_authored: true`, `verified: false`, `status: "reference_only"`,
+  and `provenance.produced_by == "opus_reference_baseline_workflow"`.
+  These are NOT ground truth and NOT product artifacts — they are a
+  stronger model's read of the SAME raw transcript, produced with the
+  SAME canonical extraction prompt
+  (`workflows/prompts/meeting_minutes_llm.md`) the Haiku pipeline uses,
+  for human/eval comparison only.
 - **Path template:** `data-lake/store/processed/meetings/<source_id>/reference_baselines/opus_reference_minutes.jsonl`
 - **Schema:** per-item `item_data` conforms to the matching array-item
   shape in `src/spectrum_systems_core/schemas/meeting_minutes.schema.json`
