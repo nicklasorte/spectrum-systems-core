@@ -12,6 +12,7 @@ reports every slug as ``already_present`` and never overwrites.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import uuid
@@ -186,6 +187,34 @@ def test_verify_script_passes_after_initialize_subprocess(
     assert verify_summary["status"] == "success"
     assert verify_summary["passed"] == 32
     assert verify_summary["counts"] == {"pass": 32}
+
+
+def test_initialize_restores_data_lake_path_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No-weakening: initialize_all must NOT leak DATA_LAKE_PATH.
+
+    A previous version of this script set ``os.environ["DATA_LAKE_PATH"]``
+    without restoring it on return, which broke any in-process consumer
+    that read the env later in the same pytest session (notably
+    ``ingestion.obsidian_projection._resolve_phase_c_dir``, exercised
+    by ``tests/paper/test_claim_extractor.py``). This test asserts the
+    env var is byte-identical before vs after — for both branches:
+    (a) the env was previously unset, and (b) the env was previously
+    set to a different value.
+    """
+    _stage_synthetic_data_lake(tmp_path)
+
+    # Branch (a): previously unset.
+    monkeypatch.delenv("DATA_LAKE_PATH", raising=False)
+    initialize_all(data_lake=tmp_path)
+    assert "DATA_LAKE_PATH" not in os.environ
+
+    # Branch (b): previously set to an unrelated value.
+    sentinel = "/some/other/data/lake/path"
+    monkeypatch.setenv("DATA_LAKE_PATH", sentinel)
+    initialize_all(data_lake=tmp_path)
+    assert os.environ.get("DATA_LAKE_PATH") == sentinel
 
 
 def test_verify_script_detects_missing_record(tmp_path: Path) -> None:

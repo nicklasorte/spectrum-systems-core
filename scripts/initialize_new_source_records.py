@@ -143,13 +143,29 @@ def initialize_all(
     *, data_lake: Path, source_ids: tuple[str, ...] = SOURCE_IDS
 ) -> Dict[str, Any]:
     store_root = data_lake / "store"
-    os.environ["DATA_LAKE_PATH"] = str(data_lake)
 
-    per_source: List[Dict[str, Any]] = []
-    for sid in source_ids:
-        per_source.append(
-            initialize_one(source_id=sid, store_root=store_root)
-        )
+    # SourceLoader._resolve_store_root reads DATA_LAKE_PATH from the
+    # environment, so we must set it before each .load() call. Mutating
+    # os.environ globally would leak into any later in-process consumer
+    # of the same env var (e.g. the obsidian projection's
+    # _resolve_phase_c_dir, which is exercised by tests/paper/
+    # test_claim_extractor.py). Mirror the try/finally restore pattern
+    # already used by create_opus_reference_baselines.py::
+    # _ensure_source_record so the global is back to its prior value
+    # the moment this function returns — pass or fail.
+    prev = os.environ.get("DATA_LAKE_PATH")
+    os.environ["DATA_LAKE_PATH"] = str(data_lake)
+    try:
+        per_source: List[Dict[str, Any]] = []
+        for sid in source_ids:
+            per_source.append(
+                initialize_one(source_id=sid, store_root=store_root)
+            )
+    finally:
+        if prev is None:
+            os.environ.pop("DATA_LAKE_PATH", None)
+        else:
+            os.environ["DATA_LAKE_PATH"] = prev
 
     counts: Dict[str, int] = {}
     for entry in per_source:
