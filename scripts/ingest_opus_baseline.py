@@ -36,8 +36,14 @@ Fail-closed contract:
 * ``input_file_not_found`` / ``invalid_input_json`` — the JSON the
   operator pushed is missing or unparseable.
 * ``schema_violation`` — the parsed JSON does not match the
-  ``meeting_minutes`` schema. The script never massages the input; a
-  schema mismatch halts so the bad artifact never enters the data lake.
+  ``meeting_minutes`` schema. Before validation the script self-heals
+  three reproducible Opus output quirks — a `````json`` markdown fence,
+  leading preamble prose, and the hallucinated ``source_chunk_id``
+  field that ``additionalProperties:false`` item types reject (see
+  ``_extract_json_object_text`` / ``_strip_disallowed_keys``). These
+  repairs touch only the serialization envelope and the known stray
+  key; they never alter the extracted content. Any OTHER schema
+  mismatch still HALTs so the bad artifact never enters the data lake.
 * ``missing_source_record`` / ``invalid_source_record`` — no canonical
   transcript UUID for this ``source_id``. Run the normal ingestion (or
   ``create_opus_reference_baselines.py``) first.
@@ -200,6 +206,76 @@ def _resolve_source_artifact_id(
             f"{artifact_id!r} is not a valid UUID: {exc}",
         ) from exc
     return artifact_id
+
+
+# Keys Opus reproducibly hallucinates onto items whose schema item-type
+# sets ``additionalProperties: false`` and does NOT declare the key
+# (``technical_parameters`` / ``issue_registry_entry``). They are
+# extraction noise, never trusted grounding, so they are stripped
+# everywhere before validation. This mirrors the proven manual cleanup
+# pattern that produced the existing committed Opus baselines, so a row
+# emitted by this self-healing path is byte-identical to one the operator
+# would have produced by hand-stripping the key first. See
+# ``_strip_disallowed_keys``.
+_DISALLOWED_OPUS_KEYS = ("source_chunk_id",)
+
+
+def _extract_json_object_text(raw_text: str, input_file: Path) -> str:
+    """Return the JSON object substring from the first ``{`` to the last
+    ``}`` inclusive, tolerating two reproducible Opus output quirks:
+
+    (a) the whole object wrapped in a `````json ... `````
+        markdown fence, and
+    (b) a leading preamble line such as
+        ``Now I have everything needed to extract...`` before the object.
+
+    Brace-slicing absorbs both without a regex: the fence markers and the
+    preamble live OUTSIDE the outermost braces, and the canonical
+    meeting_minutes payload is a single JSON object, so the first ``{``
+    and last ``}`` bound exactly the object Opus intended to emit. This
+    is a serialization-envelope repair only — it never alters bytes
+    between the braces, so a genuine schema violation inside the object
+    still reaches the validator and still HALTs.
+
+    Halts ``invalid_input_json`` when no balanced ``{ ... }`` pair is
+    present (e.g. truncated output), so a non-JSON blob never silently
+    becomes an empty ingest.
+    """
+    start = raw_text.find("{")
+    end = raw_text.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        raise OpusIngestError(
+            "invalid_input_json",
+            f"{input_file} contains no JSON object (no balanced "
+            f"'{{' ... '}}' found); the extraction likely produced "
+            f"prose or was truncated",
+        )
+    return raw_text[start : end + 1]
+
+
+def _strip_disallowed_keys(value: Any) -> Any:
+    """Recursively return ``value`` with every key in
+    ``_DISALLOWED_OPUS_KEYS`` removed from every nested object.
+
+    Opus invents ``source_chunk_id`` on item types whose schema forbids
+    extra properties; the ``meeting_minutes`` schema rejects the whole
+    artifact rather than the one stray key. Popping the key everywhere
+    before validation lets a structurally-sound extraction self-heal
+    while still failing closed on any OTHER schema violation. Stripping
+    everywhere (not only on the two offending item types) matches the
+    proven manual cleanup and keeps determinism: the same input always
+    yields the same stripped object regardless of where Opus sprayed the
+    key.
+    """
+    if isinstance(value, dict):
+        return {
+            k: _strip_disallowed_keys(v)
+            for k, v in value.items()
+            if k not in _DISALLOWED_OPUS_KEYS
+        }
+    if isinstance(value, list):
+        return [_strip_disallowed_keys(item) for item in value]
+    return value
 
 
 def _extract_payload(
@@ -412,13 +488,23 @@ def ingest(
             "input_file_not_found",
             f"no input JSON at {input_file}",
         )
+    raw_text = input_file.read_text(encoding="utf-8")
+    # Self-heal the two serialization-envelope quirks (markdown fence,
+    # preamble prose) by slicing to the outermost braces before parsing.
+    json_text = _extract_json_object_text(raw_text, input_file)
     try:
-        raw_input = json.loads(input_file.read_text(encoding="utf-8"))
+        raw_input = json.loads(json_text)
     except json.JSONDecodeError as exc:
         raise OpusIngestError(
             "invalid_input_json",
             f"{input_file} is not valid JSON: {exc}",
         ) from exc
+
+    # Self-heal the hallucinated-field quirk by dropping the keys the
+    # schema forbids on additionalProperties:false item types. Runs
+    # BEFORE schema validation so a structurally-sound extraction passes,
+    # while any OTHER schema violation still HALTs (fail-closed).
+    raw_input = _strip_disallowed_keys(raw_input)
 
     payload, meeting_date = _extract_payload(raw_input)
     envelope = _build_meeting_minutes_envelope(payload)

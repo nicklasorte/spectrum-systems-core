@@ -437,6 +437,166 @@ def test_ingest_pair_id_uses_opus_namespace_not_codex(
         )
 
 
+def _read_rows(out_path: Path) -> list[dict]:
+    return [
+        json.loads(line)
+        for line in out_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def test_ingest_self_heals_markdown_json_fence(tmp_path: Path) -> None:
+    """Opus quirk (a): output wrapped in a ```json ... ``` markdown
+    fence is parsed by slicing to the outermost braces, and ingests
+    successfully."""
+    data_lake, _ = _seed_data_lake(tmp_path)
+    input_file = tmp_path / "fenced.json"
+    input_file.write_text(
+        "```json\n" + json.dumps(_OPUS_INPUT) + "\n```\n",
+        encoding="utf-8",
+    )
+    result = _run(
+        [
+            "--input-file", str(input_file),
+            "--source-id", SOURCE_ID,
+            "--data-lake", str(data_lake),
+            "--operator", "test-operator",
+        ]
+    )
+    assert result.returncode == 0, (
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    out_path = (
+        data_lake / "store" / "processed" / "meetings" / SOURCE_ID
+        / "reference_baselines" / "opus_reference_minutes.jsonl"
+    )
+    assert out_path.is_file()
+    assert len(_read_rows(out_path)) >= 4
+
+
+def test_ingest_self_heals_preamble_prose(tmp_path: Path) -> None:
+    """Opus quirk (b): leading preamble prose before the JSON object is
+    stripped by the outermost-brace slice."""
+    data_lake, _ = _seed_data_lake(tmp_path)
+    input_file = tmp_path / "preamble.json"
+    input_file.write_text(
+        "Now I have everything needed to extract the meeting minutes.\n\n"
+        + json.dumps(_OPUS_INPUT),
+        encoding="utf-8",
+    )
+    result = _run(
+        [
+            "--input-file", str(input_file),
+            "--source-id", SOURCE_ID,
+            "--data-lake", str(data_lake),
+            "--operator", "test-operator",
+        ]
+    )
+    assert result.returncode == 0, (
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    out_path = (
+        data_lake / "store" / "processed" / "meetings" / SOURCE_ID
+        / "reference_baselines" / "opus_reference_minutes.jsonl"
+    )
+    assert len(_read_rows(out_path)) >= 4
+
+
+def test_ingest_self_heals_hallucinated_source_chunk_id(
+    tmp_path: Path,
+) -> None:
+    """Opus quirk (c): a ``source_chunk_id`` key invented on a
+    ``technical_parameters`` item (whose schema item-type sets
+    ``additionalProperties: false`` and does NOT declare the key) would
+    otherwise HALT schema_violation. The recursive strip removes it and
+    the ingest succeeds; the stored item_data no longer carries the key.
+    """
+    data_lake, _ = _seed_data_lake(tmp_path)
+    payload = dict(_OPUS_INPUT)
+    payload["technical_parameters"] = [
+        {
+            "param_id": "tp1",
+            "parameter_name": "FSS uplink ERP cap",
+            "value": "33 dBm/MHz",
+            "source_chunk_id": "turn-42",  # hallucinated, schema rejects
+        }
+    ]
+    input_file = _write_input(tmp_path, payload)
+    result = _run(
+        [
+            "--input-file", str(input_file),
+            "--source-id", SOURCE_ID,
+            "--data-lake", str(data_lake),
+            "--operator", "test-operator",
+        ]
+    )
+    assert result.returncode == 0, (
+        f"expected self-heal to succeed; "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    out_path = (
+        data_lake / "store" / "processed" / "meetings" / SOURCE_ID
+        / "reference_baselines" / "opus_reference_minutes.jsonl"
+    )
+    rows = _read_rows(out_path)
+    tp_rows = [r for r in rows if r["extraction_type"] == "technical_parameters"]
+    assert tp_rows, "technical_parameters row must be present"
+    for r in tp_rows:
+        assert "source_chunk_id" not in r["item_data"], (
+            "the hallucinated key must be stripped from item_data"
+        )
+
+
+def test_ingest_still_halts_on_real_schema_violation_after_strip(
+    tmp_path: Path,
+) -> None:
+    """Fail-closed is preserved: stripping ``source_chunk_id`` does not
+    rescue a genuinely malformed artifact. A wrong-typed required field
+    (``decisions`` as an object, not a list) still HALTs
+    schema_violation and writes nothing."""
+    data_lake, _ = _seed_data_lake(tmp_path)
+    bad = dict(_OPUS_INPUT)
+    bad["decisions"] = {"source_chunk_id": "x", "text": "not a list"}
+    input_file = _write_input(tmp_path, bad)
+    result = _run(
+        [
+            "--input-file", str(input_file),
+            "--source-id", SOURCE_ID,
+            "--data-lake", str(data_lake),
+            "--operator", "test-operator",
+        ]
+    )
+    assert result.returncode == 1, (
+        f"expected schema_violation halt; stdout={result.stdout!r}"
+    )
+    assert json.loads(result.stdout)["reason"] == "schema_violation"
+    out_path = (
+        data_lake / "store" / "processed" / "meetings" / SOURCE_ID
+        / "reference_baselines" / "opus_reference_minutes.jsonl"
+    )
+    assert not out_path.exists()
+
+
+def test_ingest_halts_invalid_json_when_no_braces(tmp_path: Path) -> None:
+    """A truncated / prose-only extraction with no balanced braces halts
+    ``invalid_input_json`` (exit 2), never a silent empty ingest."""
+    data_lake, _ = _seed_data_lake(tmp_path)
+    input_file = tmp_path / "prose.json"
+    input_file.write_text(
+        "I was unable to read the transcript file.", encoding="utf-8"
+    )
+    result = _run(
+        [
+            "--input-file", str(input_file),
+            "--source-id", SOURCE_ID,
+            "--data-lake", str(data_lake),
+            "--operator", "test-operator",
+        ]
+    )
+    assert result.returncode == 2, result.stdout
+    assert json.loads(result.stdout)["reason"] == "invalid_input_json"
+
+
 def test_ingest_pair_id_is_deterministic_per_input(
     tmp_path: Path,
 ) -> None:
