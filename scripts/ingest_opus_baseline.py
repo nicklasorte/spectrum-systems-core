@@ -37,12 +37,35 @@ Fail-closed contract:
   operator pushed is missing or unparseable.
 * ``schema_violation`` — the parsed JSON does not match the
   ``meeting_minutes`` schema. Before validation the script self-heals
-  three reproducible Opus output quirks — a `````json`` markdown fence,
-  leading preamble prose, and the hallucinated ``source_chunk_id``
-  field that ``additionalProperties:false`` item types reject (see
-  ``_extract_json_object_text`` / ``_strip_disallowed_keys``). These
-  repairs touch only the serialization envelope and the known stray
-  key; they never alter the extracted content. Any OTHER schema
+  the reproducible, LOSSLESS Opus output quirks the operator previously
+  repaired by hand before ingest (the manual ``prepare.py`` step):
+
+    1. a `````json`` markdown fence and leading preamble prose around
+       the object (``_extract_json_object_text``);
+    2. the hallucinated ``source_chunk_id`` field, stripped EVERYWHERE
+       (``_strip_global_disallowed_keys``) — it is pure extraction noise
+       on every item type, including open types like ``decisions`` where
+       the schema would tolerate it but the committed baselines still
+       dropped it; and
+    3-4. per-item-type, schema-driven input normalization
+       (``_normalize_items_against_schema``): on item types whose schema
+       sets ``additionalProperties:false``, OTHER stray keys the schema
+       does not declare (e.g. a ``reason`` / ``source_quote`` sprayed
+       onto a descriptive type) are stripped; and an optional key the
+       model emitted as ``null`` instead of omitting it
+       (``source_turns: null``, ``rationale: null``) is dropped because
+       the schema types it as non-nullable. Open item types
+       (``decisions`` / ``open_questions``) keep every OTHER key.
+
+  These repairs touch only the serialization envelope and known
+  stray/null keys; they never alter a present, non-null content value,
+  so a self-healed row is byte-identical to one the operator produced by
+  hand-repairing the same quirks (proven against the five committed
+  baselines in ``scripts/_verify_opus_extract_repro.py``). The gate
+  deliberately does NOT fabricate a value for a missing/null REQUIRED
+  field: such an artifact still HALTs ``schema_violation`` so a real
+  completeness signal is never masked (see the class-4 / completeness
+  TODO above ``_normalize_items_against_schema``). Any OTHER schema
   mismatch still HALTs so the bad artifact never enters the data lake.
 * ``missing_source_record`` / ``invalid_source_record`` — no canonical
   transcript UUID for this ``source_id``. Run the normal ingestion (or
@@ -208,16 +231,54 @@ def _resolve_source_artifact_id(
     return artifact_id
 
 
-# Keys Opus reproducibly hallucinates onto items whose schema item-type
-# sets ``additionalProperties: false`` and does NOT declare the key
-# (``technical_parameters`` / ``issue_registry_entry``). They are
-# extraction noise, never trusted grounding, so they are stripped
-# everywhere before validation. This mirrors the proven manual cleanup
-# pattern that produced the existing committed Opus baselines, so a row
-# emitted by this self-healing path is byte-identical to one the operator
-# would have produced by hand-stripping the key first. See
-# ``_strip_disallowed_keys``.
-_DISALLOWED_OPUS_KEYS = ("source_chunk_id",)
+# The canonical meeting_minutes schema — the single source of truth for
+# which item-type keys are allowed and which fields forbid a JSON null.
+# Resolved through the SAME path
+# ``create_opus_reference_baselines._MEETING_MINUTES_SCHEMA`` uses so the
+# two scripts can never drift on the schema location.
+_MEETING_MINUTES_SCHEMA_PATH = (
+    _SRC_DIR
+    / "spectrum_systems_core"
+    / "schemas"
+    / "meeting_minutes.schema.json"
+)
+
+# Keys Opus reproducibly hallucinates as pure extraction noise and which
+# the committed baselines removed EVERYWHERE, regardless of item type.
+# ``source_chunk_id`` (the Phase 5.A chunk-grounding field) is sprayed
+# onto both closed item types — where ``additionalProperties:false``
+# would reject it — AND open types such as ``decisions`` /
+# ``open_questions``, where the schema would tolerate it but the
+# committed baselines still dropped it. The per-type schema-driven strip
+# below removes undeclared keys only on CLOSED types, so this global
+# strip is what keeps an open-type ``source_chunk_id`` out — preserving
+# the prior ingest behavior that produced the committed baselines.
+_GLOBAL_DISALLOWED_KEYS = ("source_chunk_id",)
+
+
+def _strip_global_disallowed_keys(value: Any) -> Any:
+    """Recursively return ``value`` with every key in
+    ``_GLOBAL_DISALLOWED_KEYS`` removed from every nested object.
+
+    This is the original ``source_chunk_id`` self-heal, retained as a
+    type-agnostic pass: the key is extraction noise on EVERY item type
+    (not just the closed ones the schema rejects), and the committed
+    baselines have it removed everywhere. The schema-driven
+    :func:`_normalize_items_against_schema` strips OTHER undeclared keys
+    only on closed types; this global pass is what removes a hallucinated
+    ``source_chunk_id`` from an open type like ``decisions``. Stripping
+    everywhere keeps determinism: the same input always yields the same
+    stripped object regardless of where Opus sprayed the key.
+    """
+    if isinstance(value, dict):
+        return {
+            k: _strip_global_disallowed_keys(v)
+            for k, v in value.items()
+            if k not in _GLOBAL_DISALLOWED_KEYS
+        }
+    if isinstance(value, list):
+        return [_strip_global_disallowed_keys(item) for item in value]
+    return value
 
 
 def _extract_json_object_text(raw_text: str, input_file: Path) -> str:
@@ -253,29 +314,117 @@ def _extract_json_object_text(raw_text: str, input_file: Path) -> str:
     return raw_text[start : end + 1]
 
 
-def _strip_disallowed_keys(value: Any) -> Any:
-    """Recursively return ``value`` with every key in
-    ``_DISALLOWED_OPUS_KEYS`` removed from every nested object.
+def _load_meeting_minutes_schema() -> Dict[str, Any]:
+    """Read the canonical meeting_minutes schema, or HALT.
 
-    Opus invents ``source_chunk_id`` on item types whose schema forbids
-    extra properties; the ``meeting_minutes`` schema rejects the whole
-    artifact rather than the one stray key. Popping the key everywhere
-    before validation lets a structurally-sound extraction self-heal
-    while still failing closed on any OTHER schema violation. Stripping
-    everywhere (not only on the two offending item types) matches the
-    proven manual cleanup and keeps determinism: the same input always
-    yields the same stripped object regardless of where Opus sprayed the
-    key.
+    The normalizer is schema-driven, so a missing/unreadable schema is a
+    fail-closed halt (``missing_schema``) — never a silent skip that
+    would let an unrepaired quirk slip straight to the validator.
     """
-    if isinstance(value, dict):
-        return {
-            k: _strip_disallowed_keys(v)
-            for k, v in value.items()
-            if k not in _DISALLOWED_OPUS_KEYS
-        }
-    if isinstance(value, list):
-        return [_strip_disallowed_keys(item) for item in value]
-    return value
+    try:
+        return json.loads(
+            _MEETING_MINUTES_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        raise OpusIngestError(
+            "missing_schema",
+            f"cannot read meeting_minutes schema at "
+            f"{_MEETING_MINUTES_SCHEMA_PATH}: {exc}",
+        ) from exc
+
+
+def _schema_forbids_null(field_schema: Dict[str, Any]) -> bool:
+    """True when ``field_schema`` does NOT permit a JSON ``null``.
+
+    Mirrors the manual ``prepare.py`` ``null_allowed`` inversion: a field
+    typed as a bare ``string``/``array`` (or with an implicit type whose
+    ``enum`` does not list ``None``) forbids null; a field whose ``type``
+    list includes ``"null"`` permits it.
+    """
+    t = field_schema.get("type")
+    if t is None:
+        # No explicit type (e.g. enum/const): null is permitted only when
+        # the enum explicitly lists it.
+        enum = field_schema.get("enum")
+        return not (isinstance(enum, list) and None in enum)
+    if isinstance(t, list):
+        return "null" not in t
+    return t != "null"
+
+
+# ---------------------------------------------------------------------------
+# TODO (deferred — Foundation Design eval system): completeness gating.
+#
+# This normalizer performs ONLY the lossless input-repair classes 1-3
+# (envelope strip, disallowed-key strip, null-forbidden-key drop). It
+# deliberately does NOT implement repair class 4 — filling a missing/null
+# REQUIRED field with a sentinel such as "Unknown" — because the ingest
+# must never fabricate a value to pass its own schema gate. A null
+# required field is left un-filled so it surfaces as a real
+# ``schema_violation`` signal. Completeness gating (including
+# null-required handling and partial-extraction scoring) belongs in a
+# separate ``evidence_coverage:meeting_minutes`` eval_case, not in this
+# input normalizer. Do NOT add value-fabrication here.
+# ---------------------------------------------------------------------------
+def _normalize_items_against_schema(
+    payload: Dict[str, Any], schema: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Lossless, schema-driven input normalization (repair classes 2-3).
+
+    Generalizes the prior single-key ``source_chunk_id`` strip into a
+    per-item-type, schema-driven pass over every content array. For each
+    array property the schema declares, and each dict item in it:
+
+    * **Strip disallowed keys (class 2).** When the item type's schema
+      sets ``additionalProperties: false``, any key the schema does not
+      declare is removed — a hallucinated ``source_chunk_id``, or a
+      stray ``reason`` / ``source_quote`` sprayed onto a descriptive
+      type that has no slot for it. Open item types (``decisions`` /
+      ``open_questions``, whose schema does not set
+      ``additionalProperties: false``) keep every key, exactly matching
+      the committed baselines where a ``decisions`` row still carries
+      ``reason`` and ``source_quote``.
+    * **Drop null-valued keys the schema forbids null on (class 3).**
+      An optional key the model emitted as ``null`` instead of omitting
+      it (``source_turns: null``, ``rationale: null``) is dropped,
+      because the schema types it as a non-nullable array/string and the
+      strict validator would otherwise reject the whole artifact.
+
+    It NEVER alters a present, non-null content value, and (by design)
+    never fills a missing/null REQUIRED field — see the class-4 TODO
+    above. The same input therefore always yields the same normalized
+    object, and a normalized row is byte-identical to one the operator
+    produced by hand-repairing the same quirks. Mutates and returns
+    ``payload``.
+    """
+    props = schema.get("properties", {})
+    for key, value in payload.items():
+        if not isinstance(value, list):
+            continue
+        spec = props.get(key)
+        if not isinstance(spec, dict):
+            continue
+        item_schema = spec.get("items")
+        if not isinstance(item_schema, dict):
+            continue
+        item_props = item_schema.get("properties", {})
+        closed = item_schema.get("additionalProperties") is False
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            # Class 2: strip keys a closed item type does not declare.
+            if closed:
+                for stray in [k for k in item if k not in item_props]:
+                    del item[stray]
+            # Class 3: drop a key the model set to null when the schema
+            # forbids null for it. Runs after the strip so a stray null
+            # key on a closed type is already gone.
+            for field in list(item.keys()):
+                if item[field] is None and _schema_forbids_null(
+                    item_props.get(field, {})
+                ):
+                    del item[field]
+    return payload
 
 
 def _extract_payload(
@@ -500,13 +649,23 @@ def ingest(
             f"{input_file} is not valid JSON: {exc}",
         ) from exc
 
-    # Self-heal the hallucinated-field quirk by dropping the keys the
-    # schema forbids on additionalProperties:false item types. Runs
-    # BEFORE schema validation so a structurally-sound extraction passes,
-    # while any OTHER schema violation still HALTs (fail-closed).
-    raw_input = _strip_disallowed_keys(raw_input)
+    # Global noise strip: remove the hallucinated ``source_chunk_id``
+    # everywhere (all item types, any depth), preserving the original
+    # self-heal that the committed baselines were produced with.
+    raw_input = _strip_global_disallowed_keys(raw_input)
 
     payload, meeting_date = _extract_payload(raw_input)
+
+    # Self-heal the remaining lossless input quirks (classes 2-3) with a
+    # schema-driven normalizer: strip OTHER keys a closed item type
+    # forbids (e.g. a stray ``reason`` / ``source_quote``) and drop
+    # null-valued keys the schema forbids null on. Runs BEFORE schema
+    # validation so a structurally-sound extraction passes, while any
+    # OTHER schema violation — including a null/missing REQUIRED field,
+    # which is deliberately NOT filled — still HALTs (fail-closed).
+    schema = _load_meeting_minutes_schema()
+    payload = _normalize_items_against_schema(payload, schema)
+
     envelope = _build_meeting_minutes_envelope(payload)
     try:
         validate_artifact(
