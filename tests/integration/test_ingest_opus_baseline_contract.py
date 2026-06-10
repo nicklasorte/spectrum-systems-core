@@ -547,6 +547,165 @@ def test_ingest_self_heals_hallucinated_source_chunk_id(
         )
 
 
+def test_ingest_strips_disallowed_key_on_closed_type(
+    tmp_path: Path,
+) -> None:
+    """Class-2 generalization: a stray key the schema does not declare on
+    a CLOSED item type (``technical_parameters`` has
+    ``additionalProperties: false``) is stripped, not just the historic
+    ``source_chunk_id``. Here a hallucinated ``reason`` on a
+    technical_parameter would HALT schema_violation; the schema-driven
+    self-heal removes it and the row ingests without the key."""
+    data_lake, _ = _seed_data_lake(tmp_path)
+    payload = dict(_OPUS_INPUT)
+    payload["technical_parameters"] = [
+        {
+            "param_id": "tp1",
+            "parameter_name": "FSS uplink ERP cap",
+            "value": "33 dBm/MHz",
+            "reason": "stray descriptive key the closed schema rejects",
+        }
+    ]
+    input_file = _write_input(tmp_path, payload)
+    result = _run(
+        [
+            "--input-file", str(input_file),
+            "--source-id", SOURCE_ID,
+            "--data-lake", str(data_lake),
+            "--operator", "test-operator",
+        ]
+    )
+    assert result.returncode == 0, (
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    rows = _read_rows(
+        data_lake / "store" / "processed" / "meetings" / SOURCE_ID
+        / "reference_baselines" / "opus_reference_minutes.jsonl"
+    )
+    tp = [r for r in rows if r["extraction_type"] == "technical_parameters"]
+    assert tp
+    for r in tp:
+        assert "reason" not in r["item_data"], (
+            "stray reason must be stripped from the closed item type"
+        )
+
+
+def test_ingest_keeps_stray_key_on_open_type(tmp_path: Path) -> None:
+    """Class-2 is per-type: an OPEN item type (``decisions`` does NOT set
+    ``additionalProperties: false``) keeps a non-declared key like
+    ``reason`` — matching the committed baselines, where a decisions row
+    still carries ``reason``/``source_quote``. Only the global
+    ``source_chunk_id`` noise key is removed from open types."""
+    data_lake, _ = _seed_data_lake(tmp_path)
+    payload = dict(_OPUS_INPUT)
+    payload["decisions"] = [
+        {
+            "text": "Defer the next revision.",
+            "verb": "deferred",
+            "reason": "explicit decision, group affirmed",
+            "source_quote": "we're going to defer",
+            "source_chunk_id": "turn-9",  # global noise -> stripped
+        }
+    ]
+    input_file = _write_input(tmp_path, payload)
+    result = _run(
+        [
+            "--input-file", str(input_file),
+            "--source-id", SOURCE_ID,
+            "--data-lake", str(data_lake),
+            "--operator", "test-operator",
+        ]
+    )
+    assert result.returncode == 0, (
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    rows = _read_rows(
+        data_lake / "store" / "processed" / "meetings" / SOURCE_ID
+        / "reference_baselines" / "opus_reference_minutes.jsonl"
+    )
+    dec = [r for r in rows if r["extraction_type"] == "decisions"]
+    assert dec
+    row = dec[0]
+    assert row["item_data"]["reason"] == "explicit decision, group affirmed"
+    assert row["item_data"]["source_quote"] == "we're going to defer"
+    assert "source_chunk_id" not in row["item_data"], (
+        "the hallucinated source_chunk_id is stripped even on open types"
+    )
+
+
+def test_ingest_drops_null_key_schema_forbids_null(tmp_path: Path) -> None:
+    """Class-3: an optional key the model emitted as ``null`` (instead of
+    omitting it) on a type whose schema forbids null for that field is
+    dropped, so the strict validator does not reject the whole artifact.
+    ``rationale`` on a decision is typed as a bare string."""
+    data_lake, _ = _seed_data_lake(tmp_path)
+    payload = dict(_OPUS_INPUT)
+    payload["decisions"] = [
+        {"text": "A decision.", "verb": "resolved", "rationale": None}
+    ]
+    input_file = _write_input(tmp_path, payload)
+    result = _run(
+        [
+            "--input-file", str(input_file),
+            "--source-id", SOURCE_ID,
+            "--data-lake", str(data_lake),
+            "--operator", "test-operator",
+        ]
+    )
+    assert result.returncode == 0, (
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    rows = _read_rows(
+        data_lake / "store" / "processed" / "meetings" / SOURCE_ID
+        / "reference_baselines" / "opus_reference_minutes.jsonl"
+    )
+    dec = [r for r in rows if r["extraction_type"] == "decisions"]
+    assert dec
+    assert "rationale" not in dec[0]["item_data"], (
+        "a null rationale the schema forbids null on must be dropped"
+    )
+
+
+def test_ingest_does_not_fabricate_missing_required_field(
+    tmp_path: Path,
+) -> None:
+    """Class-4 guard (the deliberate non-fold): a missing REQUIRED field
+    is NEVER filled with a sentinel to pass the gate. ``position_statement``
+    requires ``agency``; omitting it HALTs ``schema_violation`` (exit 1)
+    and writes nothing — the gap surfaces as a real signal, not a silent
+    ``"Unknown"``."""
+    data_lake, _ = _seed_data_lake(tmp_path)
+    payload = dict(_OPUS_INPUT)
+    payload["position_statement"] = [
+        {
+            "position_id": "p1",
+            "position_text": "We oppose the relaxation.",
+            # 'agency' (required) absent on purpose.
+        }
+    ]
+    input_file = _write_input(tmp_path, payload)
+    result = _run(
+        [
+            "--input-file", str(input_file),
+            "--source-id", SOURCE_ID,
+            "--data-lake", str(data_lake),
+            "--operator", "test-operator",
+        ]
+    )
+    assert result.returncode == 1, (
+        f"expected schema_violation halt; stdout={result.stdout!r}"
+    )
+    payload_out = json.loads(result.stdout)
+    assert payload_out["reason"] == "schema_violation"
+    assert "agency" in payload_out["detail"]
+    assert "Unknown" not in payload_out["detail"]
+    out_path = (
+        data_lake / "store" / "processed" / "meetings" / SOURCE_ID
+        / "reference_baselines" / "opus_reference_minutes.jsonl"
+    )
+    assert not out_path.exists()
+
+
 def test_ingest_still_halts_on_real_schema_violation_after_strip(
     tmp_path: Path,
 ) -> None:
