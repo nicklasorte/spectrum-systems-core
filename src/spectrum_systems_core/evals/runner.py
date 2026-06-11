@@ -263,6 +263,31 @@ def _check_required_fields(
     return _eval_result(eval_type, target, passed=True, reason_codes=[])
 
 
+def check_ceiling_minimum_counts(
+    hits: object, counts: object
+) -> tuple[bool, list[str], list[str]]:
+    """The ONE minimum-counts comparison, shared by every path that
+    holds an extraction to the keyword-trigger completeness standard:
+    the opus_ceiling eval below AND the Opus baseline extraction gate
+    (``scripts/extract_opus_baseline.py``). Factored so the two paths
+    cannot drift — do not copy this loop anywhere.
+
+    Returns ``(passed, reason_codes, failed_types)``. Fail-closed:
+    inputs that are not both dicts fail with
+    ``ceiling_missing_gate_inputs`` — the gate never passes by absence
+    (red-team: bypassable gate via missing input).
+    """
+    if not isinstance(hits, dict) or not isinstance(counts, dict):
+        return False, ["ceiling_missing_gate_inputs"], []
+    reason_codes: list[str] = []
+    failed_types: list[str] = []
+    for schema_type, hit in sorted(hits.items()):
+        if hit and int(counts.get(schema_type, 0)) < 1:
+            failed_types.append(schema_type)
+            reason_codes.append(f"ceiling_zero_for_keyword_hit:{schema_type}")
+    return not failed_types, reason_codes, failed_types
+
+
 def _check_ceiling_minimum_counts(target: Artifact) -> Artifact:
     """Phase Y.1 gate. For every schema_type the transcript visibly
     discusses (``transcript_keyword_hits[type] is True``), the ceiling
@@ -270,36 +295,16 @@ def _check_ceiling_minimum_counts(target: Artifact) -> Artifact:
     against a keyword-hit type is a ceiling miss and fails closed with
     the offending types named in ``failed_types`` so the failure is
     explainable from the eval_result alone (CLAUDE.md self-review).
+
+    The comparison itself lives in ``check_ceiling_minimum_counts``
+    (shared with the baseline extraction path); this wrapper only
+    reads the artifact payload and shapes the eval_result.
     """
     payload = target.payload
-    hits = payload.get("transcript_keyword_hits")
-    counts = payload.get("per_type_counts")
-    reason_codes: list[str] = []
-    failed_types: list[str] = []
-    if not isinstance(hits, dict) or not isinstance(counts, dict):
-        # Missing the very inputs the gate reads -> fail closed, never
-        # pass by absence (red-team: bypassable gate via missing input).
-        reason_codes.append("ceiling_missing_gate_inputs")
-        eval_payload = {
-            "eval_type": "ceiling_minimum_counts",
-            "target_artifact_id": target.artifact_id,
-            "status": "fail",
-            "score": 0.0,
-            "reason_codes": reason_codes,
-            "failed_types": [],
-        }
-        return new_artifact(
-            artifact_type="eval_result",
-            payload=eval_payload,
-            trace_id=target.trace_id,
-            status="evaluated",
-            input_refs=[target.artifact_id],
-        )
-    for schema_type, hit in sorted(hits.items()):
-        if hit and int(counts.get(schema_type, 0)) < 1:
-            failed_types.append(schema_type)
-            reason_codes.append(f"ceiling_zero_for_keyword_hit:{schema_type}")
-    passed = not failed_types
+    passed, reason_codes, failed_types = check_ceiling_minimum_counts(
+        payload.get("transcript_keyword_hits"),
+        payload.get("per_type_counts"),
+    )
     eval_payload = {
         "eval_type": "ceiling_minimum_counts",
         "target_artifact_id": target.artifact_id,

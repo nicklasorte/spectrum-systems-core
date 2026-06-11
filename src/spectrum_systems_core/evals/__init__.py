@@ -42,6 +42,7 @@ from .runner import (
     REQUIRED_FIELDS_BY_TYPE,
     REQUIRED_MEETING_ACTION_LOG_FIELDS,
     REQUIRED_MEETING_MINUTES_FIELDS,
+    check_ceiling_minimum_counts,
     run_required_evals,
 )
 from .source_turn_validity import (
@@ -73,6 +74,7 @@ from .tlc_router import (
 
 __all__ = [
     "run_required_evals",
+    "check_ceiling_minimum_counts",
     "REQUIRED_MEETING_MINUTES_FIELDS",
     "REQUIRED_DECISION_BRIEF_FIELDS",
     "REQUIRED_AGENCY_QUESTION_SUMMARY_FIELDS",

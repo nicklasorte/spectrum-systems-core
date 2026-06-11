@@ -36,7 +36,16 @@ End-to-end flow (one transcript):
      arrays into JSONL), so synthesizing them is envelope scaffolding,
      NOT content fabrication. ``title`` is the transcript's first
      non-empty line; ``summary`` is labelled as ingest scaffolding.
-  7. Hand the prepared file to ``ingest_opus_baseline.ingest`` — the
+  7. Run the minimum-counts completeness gate over the prepared
+     extraction: for every schema_type whose deterministic keyword
+     trigger (``extraction/ceiling_triggers.py``) fires on the
+     transcript, the extraction must contain at least one item of that
+     type. Uses the SAME shared helper as the pipeline's
+     ``ceiling_minimum_counts`` eval
+     (``evals.runner.check_ceiling_minimum_counts``) so the baseline is
+     held to the SAME completeness standard via the SAME code. A zero
+     count for a keyword-hit type HALTs before anything is ingested.
+  8. Hand the prepared file to ``ingest_opus_baseline.ingest`` — the
      single fail-closed gate. It self-heals the lossless input quirks
      (markdown fence / preamble, the hallucinated ``source_chunk_id``,
      stray disallowed keys on closed item types, and null-valued keys
@@ -65,6 +74,16 @@ Fail-closed contract (every gate HALTs; nothing partial is ingested):
   stub is set). Checked BEFORE the call.
 * ``extract_transport_error`` — the CLI exits non-zero or returns empty
   stdout. No fallback model, no partial file.
+* ``ceiling_minimum_counts_failed`` — the extraction has zero items for
+  a schema_type whose deterministic keyword trigger fires on the
+  transcript (``extraction/ceiling_triggers.py``). Checked BEFORE the
+  ingest via the SAME shared helper the pipeline's
+  ``ceiling_minimum_counts`` eval uses
+  (``evals.runner.check_ceiling_minimum_counts``), so a truncated
+  extraction halts instead of becoming a committed baseline.
+* ``ceiling_type_unmapped`` — a CEILING_SCHEMA_TYPES entry has no
+  content-array mapping for the baseline gate. Guards against a future
+  trigger addition silently escaping this gate.
 * every ``ingest_opus_baseline`` halt (``invalid_input_json``,
   ``schema_violation``, ``missing_source_record``, ``already_ingested``,
   …) propagates unchanged — the ingest stays the one authority.
@@ -99,6 +118,13 @@ import ingest_opus_baseline as iob  # noqa: E402
 from create_opus_reference_baselines import (  # noqa: E402
     load_extraction_prompt,
 )
+from spectrum_systems_core.evals.runner import (  # noqa: E402
+    check_ceiling_minimum_counts,
+)
+from spectrum_systems_core.extraction.ceiling_triggers import (  # noqa: E402
+    CEILING_SCHEMA_TYPES,
+    transcript_keyword_hits,
+)
 from spectrum_systems_core.promotion.gate import (  # noqa: E402
     GROUNDING_BINDING_SCHEMA_VERSION,
 )
@@ -122,6 +148,21 @@ _TRANSCRIPT_SEPARATOR = "\n\n=== RAW TRANSCRIPT ===\n\n"
 # from writing to stdout/stderr mid-run (it would corrupt the captured
 # JSON), matching the operator's invocation.
 _CLAUDE_BIN = "claude"
+
+# Ceiling schema_type -> the meeting_minutes content array that carries
+# it in the prepared extraction. The minimum-counts gate speaks the
+# ceiling vocabulary (singular); the baseline document speaks the
+# schema's array names (plural). Every CEILING_SCHEMA_TYPES entry MUST
+# have a mapping here — `_baseline_per_type_counts` halts on an
+# unmapped type so a future trigger addition cannot silently skip the
+# baseline gate.
+_BASELINE_ARRAY_BY_CEILING_TYPE: Dict[str, str] = {
+    "decision": "decisions",
+    "action_item": "action_items",
+    "open_question": "open_questions",
+    "claim": "claims",
+    "topics": "topics",
+}
 
 
 class ExtractError(RuntimeError):
@@ -284,6 +325,65 @@ def _scaffold_metadata(
     return doc
 
 
+def _baseline_per_type_counts(prepared: Dict[str, Any]) -> Dict[str, int]:
+    """Per-CEILING_SCHEMA_TYPES item counts from the prepared document.
+
+    Counts the content arrays the ingest will explode into JSONL rows
+    (the self-heal strips keys but never adds or drops items, so the
+    pre-ingest count equals the post-ingest by_type count). A non-list
+    value counts as 0 — fail-closed: garbage where an array should be
+    must never satisfy the gate (schema validation rejects it later
+    regardless). An unmapped ceiling type HALTs rather than silently
+    exempting itself from the gate.
+    """
+    counts: Dict[str, int] = {}
+    for schema_type in CEILING_SCHEMA_TYPES:
+        array_key = _BASELINE_ARRAY_BY_CEILING_TYPE.get(schema_type)
+        if array_key is None:
+            raise ExtractError(
+                "ceiling_type_unmapped",
+                f"CEILING_SCHEMA_TYPES contains {schema_type!r} but "
+                f"_BASELINE_ARRAY_BY_CEILING_TYPE has no entry for it; "
+                f"add the mapping so the baseline gate covers the new "
+                f"type instead of skipping it",
+            )
+        value = prepared.get(array_key)
+        counts[schema_type] = len(value) if isinstance(value, list) else 0
+    return counts
+
+
+def _check_baseline_minimum_counts(
+    *,
+    prepared: Dict[str, Any],
+    transcript_text: str,
+    source_id: str,
+) -> None:
+    """Hold the Opus baseline to the SAME completeness standard as the
+    pipeline ceiling, via the SAME code: for every schema_type whose
+    keywords fire on the transcript, the extraction must contain at
+    least one item of that type. The comparison is
+    ``evals.runner.check_ceiling_minimum_counts`` — the one shared
+    helper the opus_ceiling eval also calls — so the two gates cannot
+    drift. A zero count for a keyword-hit type HALTs before the ingest
+    commits anything; a truncated extraction never becomes a committed
+    baseline.
+    """
+    hits = transcript_keyword_hits(transcript_text)
+    counts = _baseline_per_type_counts(prepared)
+    passed, reason_codes, failed_types = check_ceiling_minimum_counts(
+        hits, counts
+    )
+    if not passed:
+        raise ExtractError(
+            "ceiling_minimum_counts_failed",
+            f"extraction for {source_id} has zero items for "
+            f"keyword-hit type(s) {failed_types} "
+            f"(reason_codes={reason_codes}); the transcript visibly "
+            f"discusses these types, so this is a truncated/incomplete "
+            f"extraction — nothing ingested; re-run the extraction",
+        )
+
+
 def extract(
     *,
     data_lake: Path,
@@ -323,6 +423,16 @@ def extract(
     prepared_out.write_text(
         json.dumps(prepared, ensure_ascii=False, indent=2),
         encoding="utf-8",
+    )
+
+    # Minimum-counts completeness gate — BEFORE the ingest commits.
+    # Same standard, same shared helper as the pipeline's
+    # ceiling_minimum_counts eval. HALTs on a truncated extraction
+    # (zero items for a type the transcript's keywords say is present).
+    _check_baseline_minimum_counts(
+        prepared=prepared,
+        transcript_text=transcript_text,
+        source_id=source_id,
     )
 
     # Hand to the single fail-closed gate. It performs the lossless
@@ -457,7 +567,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         # Exit codes mirror ingest_opus_baseline:
         #   2 — input/transport problem (file-not-found, malformed JSON,
         #       missing prompt/transcript/model, CLI transport)
-        #   1 — schema/data-shape rejection
+        #   1 — schema/data-shape rejection (includes
+        #       ceiling_minimum_counts_failed / ceiling_type_unmapped:
+        #       the extraction itself is the defective input)
         if exc.reason in (
             "input_file_not_found",
             "invalid_input_json",

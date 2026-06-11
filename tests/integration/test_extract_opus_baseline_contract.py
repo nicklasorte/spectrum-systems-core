@@ -64,7 +64,24 @@ _CONTENT_ONLY = {
 }
 
 
-def _seed(tmp_path: Path) -> tuple[Path, str]:
+# Keyword-free transcript: no ceiling trigger (decision / action_item /
+# open_question / claim / topics) fires, so the minimum-counts gate
+# stays silent — the integration-level negative fixture.
+_NO_KEYWORD_TRANSCRIPT = (
+    "7 GHz SPD-SEAD Sync — Test Transcript\n\nAlice 00:01\nHello.\n"
+)
+
+# Same transcript with an agenda line: the validated topics trigger
+# fires, so the gate now requires >=1 topics item in the extraction.
+_AGENDA_TRANSCRIPT = (
+    "7 GHz SPD-SEAD Sync — Test Transcript\n\nAlice 00:01\n"
+    "Welcome; the agenda today covers the downlink study plan.\n"
+)
+
+
+def _seed(
+    tmp_path: Path, transcript: str = _NO_KEYWORD_TRANSCRIPT
+) -> tuple[Path, str]:
     data_lake = tmp_path / "data-lake"
     meeting_dir = data_lake / "store" / "processed" / "meetings" / SOURCE_ID
     meeting_dir.mkdir(parents=True)
@@ -75,10 +92,7 @@ def _seed(tmp_path: Path) -> tuple[Path, str]:
     )
     raw_dir = data_lake / "store" / "raw" / "meetings" / SOURCE_ID
     raw_dir.mkdir(parents=True)
-    (raw_dir / "source.txt").write_text(
-        "7 GHz SPD-SEAD Sync — Test Transcript\n\nAlice 00:01\nHello.\n",
-        encoding="utf-8",
-    )
+    (raw_dir / "source.txt").write_text(transcript, encoding="utf-8")
     return data_lake, artifact_id
 
 
@@ -210,6 +224,86 @@ def test_extract_halts_on_missing_transcript(tmp_path: Path) -> None:
     )
     assert result.returncode == 2, result.stdout
     assert json.loads(result.stdout)["reason"] == "missing_transcript"
+
+
+def test_extract_halts_on_truncated_topics(tmp_path: Path) -> None:
+    """Topics A-wide gate, positive direction: the transcript's agenda
+    keyword fires but the extraction has NO topics items — the exact
+    structural-truncation failure mode the 2026-06-10 calibration found
+    in the committed 7ghz-spd-sead-sync baselines. The script must HALT
+    ``ceiling_minimum_counts_failed`` naming ``topics`` BEFORE the
+    ingest commits anything."""
+    data_lake, _ = _seed(tmp_path, transcript=_AGENDA_TRANSCRIPT)
+    result = _run(
+        [
+            "--source-id", SOURCE_ID,
+            "--data-lake", str(data_lake),
+            "--operator", "test-operator",
+            "--work-dir", str(tmp_path / "work"),
+        ],
+        stub=json.dumps(_CONTENT_ONLY),  # no "topics" array
+    )
+    assert result.returncode == 1, (
+        f"expected minimum-counts halt; stdout={result.stdout!r}"
+    )
+    payload = json.loads(result.stdout)
+    assert payload["reason"] == "ceiling_minimum_counts_failed"
+    assert "topics" in payload["detail"]
+    # Fail closed: the truncated extraction never reached the data-lake.
+    assert not _out_path(data_lake).exists()
+
+
+def test_extract_passes_with_topics_present(tmp_path: Path) -> None:
+    """Topics keyword fires AND the extraction has a topics item — the
+    gate passes and the topics rows land in the baseline."""
+    data_lake, _ = _seed(tmp_path, transcript=_AGENDA_TRANSCRIPT)
+    content = dict(_CONTENT_ONLY)
+    content["topics"] = [
+        {"topic_id": "top1", "title": "Downlink study plan review"}
+    ]
+    result = _run(
+        [
+            "--source-id", SOURCE_ID,
+            "--data-lake", str(data_lake),
+            "--operator", "test-operator",
+            "--work-dir", str(tmp_path / "work"),
+        ],
+        stub=json.dumps(content),
+    )
+    assert result.returncode == 0, (
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    rows = _rows(_out_path(data_lake))
+    topics = [r for r in rows if r["extraction_type"] == "topics"]
+    assert len(topics) == 1
+    assert topics[0]["item_data"]["title"] == "Downlink study plan review"
+
+
+def test_extract_negative_fixture_no_topics_keyword_no_block(
+    tmp_path: Path,
+) -> None:
+    """Topics A-wide gate, negative direction: a transcript with NO
+    agenda/topic keyword and an extraction with NO topics items must
+    ingest cleanly — the trigger stays silent when the type is absent.
+    (The 47-meeting calibration corpus could not prove this direction:
+    every corpus meeting has topics.)"""
+    data_lake, _ = _seed(tmp_path, transcript=_NO_KEYWORD_TRANSCRIPT)
+    result = _run(
+        [
+            "--source-id", SOURCE_ID,
+            "--data-lake", str(data_lake),
+            "--operator", "test-operator",
+            "--work-dir", str(tmp_path / "work"),
+        ],
+        stub=json.dumps(_CONTENT_ONLY),  # no "topics" array
+    )
+    assert result.returncode == 0, (
+        f"negative fixture must not block; stdout={result.stdout!r} "
+        f"stderr={result.stderr!r}"
+    )
+    rows = _rows(_out_path(data_lake))
+    assert rows  # ingest actually happened
+    assert not any(r["extraction_type"] == "topics" for r in rows)
 
 
 def test_extract_resolves_pinned_model_from_registry(tmp_path: Path) -> None:
